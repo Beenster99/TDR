@@ -8,12 +8,14 @@
   "optimal_temp_c": 85.0,
   "temp_window_c": 30.0,
   "cold_falloff": 0.06,
-  "hot_falloff": 0.10,
+  "hot_falloff": 0.1,
   "min_grip_factor": 0.65,
   "heat_from_slip": 0.12,
   "heat_from_rolling": 0.016,
   "cool_to_air": 0.009,
   "cool_to_track": 0.004,
   "wet_grip_factor": 0.55,
-  "wear_rate": 0.0
+  "wear_rate": 0.0,
+  "kind": "dry",
+  "aquaplaning": 0.28
 }

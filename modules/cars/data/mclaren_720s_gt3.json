@@ -1,0 +1,102 @@
+{
+  "format": 1,
+  "id": "mclaren_720s_gt3",
+  "name": "McLaren 720S GT3 Evo",
+  "description": "Mid-engined 4.0 twin-turbo V8 GT3 racer (2023-).",
+  "class_tag": "GT3",
+  "colour": "#ff8000",
+  "mass_kg": 1250,
+  "weight_front": 0.42,
+  "wheelbase_m": 2.67,
+  "cg_height_m": 0.39,
+  "track_width_m": 1.68,
+  "length_m": 4.67,
+  "width_m": 2.04,
+  "inertia_factor": 1.0,
+  "engine": {
+    "idle_rpm": 1500,
+    "redline_rpm": 8000,
+    "shift_up_rpm": 7850,
+    "shift_down_rpm": 4800,
+    "torque_curve": [
+      [
+        1500,
+        400
+      ],
+      [
+        3000,
+        620
+      ],
+      [
+        4500,
+        650
+      ],
+      [
+        6500,
+        630
+      ],
+      [
+        7500,
+        560
+      ],
+      [
+        8000,
+        500
+      ]
+    ],
+    "engine_brake_nm": 85,
+    "cylinders": 8
+  },
+  "gearbox": {
+    "ratios": [
+      3.08,
+      2.25,
+      1.79,
+      1.48,
+      1.26,
+      1.09
+    ],
+    "final_drive": 3.26,
+    "efficiency": 0.9
+  },
+  "drivetrain": "RWD",
+  "awd_front_split": 0.0,
+  "wheel_radius_m": 0.345,
+  "brakes": {
+    "max_force_n": 26500,
+    "bias_front": 0.58
+  },
+  "steering": {
+    "max_angle_deg": 28,
+    "rate_deg_s": 260
+  },
+  "aero": {
+    "cda": 0.97,
+    "cla": 2.45,
+    "balance_front": 0.42
+  },
+  "tyre_compound": "race_slick",
+  "fuel": {
+    "capacity_l": 110,
+    "bsfc_l_per_kwh": 0.28
+  },
+  "tuning_ranges": {
+    "brake_bias_front": [
+      0.52,
+      0.6399999999999999
+    ],
+    "aero_cla": [
+      1.96,
+      2.94
+    ],
+    "final_drive": [
+      3.0,
+      3.52
+    ]
+  },
+  "chassis": {
+    "front_grip": 1.0,
+    "rear_grip": 1.12,
+    "roll_stiffness_front": 0.6
+  }
+}

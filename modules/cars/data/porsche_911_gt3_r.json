@@ -1,0 +1,102 @@
+{
+  "format": 1,
+  "id": "porsche_911_gt3_r",
+  "name": "Porsche 911 GT3 R (992)",
+  "description": "Rear-engined 4.2 flat-six GT3 racer (2023-).",
+  "class_tag": "GT3",
+  "colour": "#f2f2f2",
+  "mass_kg": 1260,
+  "weight_front": 0.39,
+  "wheelbase_m": 2.51,
+  "cg_height_m": 0.4,
+  "track_width_m": 1.66,
+  "length_m": 4.62,
+  "width_m": 2.05,
+  "inertia_factor": 1.0,
+  "engine": {
+    "idle_rpm": 1500,
+    "redline_rpm": 9400,
+    "shift_up_rpm": 9250,
+    "shift_down_rpm": 5640,
+    "torque_curve": [
+      [
+        1500,
+        280
+      ],
+      [
+        3500,
+        400
+      ],
+      [
+        6000,
+        470
+      ],
+      [
+        7500,
+        490
+      ],
+      [
+        8750,
+        460
+      ],
+      [
+        9400,
+        410
+      ]
+    ],
+    "engine_brake_nm": 80,
+    "cylinders": 6
+  },
+  "gearbox": {
+    "ratios": [
+      2.94,
+      2.18,
+      1.75,
+      1.46,
+      1.25,
+      1.09
+    ],
+    "final_drive": 3.92,
+    "efficiency": 0.9
+  },
+  "drivetrain": "RWD",
+  "awd_front_split": 0.0,
+  "wheel_radius_m": 0.345,
+  "brakes": {
+    "max_force_n": 26000,
+    "bias_front": 0.56
+  },
+  "steering": {
+    "max_angle_deg": 28,
+    "rate_deg_s": 260
+  },
+  "aero": {
+    "cda": 1.0,
+    "cla": 2.4,
+    "balance_front": 0.4
+  },
+  "tyre_compound": "race_slick",
+  "fuel": {
+    "capacity_l": 104,
+    "bsfc_l_per_kwh": 0.28
+  },
+  "tuning_ranges": {
+    "brake_bias_front": [
+      0.5,
+      0.6200000000000001
+    ],
+    "aero_cla": [
+      1.92,
+      2.88
+    ],
+    "final_drive": [
+      3.61,
+      4.23
+    ]
+  },
+  "chassis": {
+    "front_grip": 1.0,
+    "rear_grip": 1.16,
+    "roll_stiffness_front": 0.62
+  }
+}

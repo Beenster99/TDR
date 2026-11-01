@@ -7,6 +7,7 @@ var session: RaceSession
 var local_input := LocalInput.new()
 var autodrive: AIDriver = null
 var track_view: TrackView
+var weather_view: WeatherView
 var car_views: Array[CarView] = []
 var camera: Camera2D
 var hud: RaceHud
@@ -35,9 +36,14 @@ func _ready() -> void:
 	track_view = TrackView.new()
 	add_child(track_view)
 	track_view.setup(session.sim.track)
+	weather_view = WeatherView.new()
+	add_child(weather_view)
+	weather_view.setup(session.sim.env, session.sim.track, track_view)
 	for i in session.sim.car_count():
 		var v := CarView.new()
 		v.setup(session.sim.defs[i], session.sim.cars[i], session.sim.entries[i].driver_name, i == session.local_car)
+		v.set_environment(session.sim.env)
+		weather_view.add_headlights(v, session.sim.defs[i].length)
 		add_child(v)
 		car_views.append(v)
 	race_audio = RaceAudio.new()
@@ -60,8 +66,10 @@ func _ready() -> void:
 	if GameData.arg("autodrive") and session.local_car >= 0:
 		autodrive = AIDriver.for_car(session.sim, session.local_car)
 	if DisplayServer.get_name() == "headless":
-		print("[race] %s, %d cars, %d laps, local car %d" % [RaceSession.Mode.keys()[session.mode],
-			session.sim.car_count(), session.sim.settings.laps, session.local_car])
+		var env := session.sim.env
+		print("[race] %s, %d cars, %d laps, local car %d, %s %02d:00, air %d C, track %d C" % [RaceSession.Mode.keys()[session.mode],
+			session.sim.car_count(), session.sim.settings.laps, session.local_car, env.weather,
+			int(env.time_of_day_h), roundi(env.ambient_c), roundi(env.track_c)])
 
 
 func _on_returned_to_lobby() -> void:

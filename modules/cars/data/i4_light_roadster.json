@@ -1,8 +1,8 @@
 {
   "id": "i4_light_roadster",
-  "name": "Featherweight S",
-  "description": "Lightweight mid-engined supercharged roadster (Exige-style).",
-  "class_tag": "GT",
+  "name": "Lotus Exige Cup 430",
+  "description": "Lightweight mid-engined supercharged V6 road car (2017-2021).",
+  "class_tag": "Road",
   "colour": "#2fae5a",
   "mass_kg": 1150,
   "weight_front": 0.38,
@@ -43,7 +43,8 @@
         360
       ]
     ],
-    "engine_brake_nm": 50
+    "engine_brake_nm": 50,
+    "cylinders": 6
   },
   "gearbox": {
     "ratios": [

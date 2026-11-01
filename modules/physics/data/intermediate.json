@@ -1,0 +1,22 @@
+{
+  "id": "intermediate",
+  "name": "Intermediate",
+  "kind": "intermediate",
+  "peak_mu": 1.24,
+  "peak_slip_angle_deg": 8.0,
+  "shape_c": 1.4,
+  "load_sensitivity": 0.12,
+  "optimal_temp_c": 70.0,
+  "temp_window_c": 28.0,
+  "cold_falloff": 0.06,
+  "hot_falloff": 0.16,
+  "min_grip_factor": 0.6,
+  "heat_from_slip": 0.16,
+  "heat_from_rolling": 0.02,
+  "cool_to_air": 0.009,
+  "cool_to_track": 0.004,
+  "cool_to_water": 0.022,
+  "wet_grip_factor": 0.74,
+  "aquaplaning": 0.14,
+  "wear_rate": 0.0
+}
