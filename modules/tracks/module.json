@@ -1,9 +1,9 @@
 {
   "id": "tracks",
   "name": "Tracks",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "status": "active",
-  "summary": "Circuit layouts: centre line, widths, racing line, sectors, surfaces (track, kerb, grass, barrier), grid slots. Track files are JSON in data/, made by tools/import_tumftm_track.py.",
+  "summary": "Circuit layouts: centre line, widths, racing line, sectors, surfaces (track, kerb, grass, barrier), grid slots. Track files are JSON in data/, made by tools/build_tracks.py from tools/tracks.json.",
   "depends": {
     "core": "1"
   },
@@ -12,5 +12,5 @@
     "TrackCatalog"
   ],
   "internal": [],
-  "notes": "New tracks are new JSON files. Pit lanes arrive here in wave 3."
+  "notes": "New tracks: add an entry to tools/tracks.json and run tools/build_tracks.py (see docs/ADDING_CONTENT.md). Every track has a pit_lane (path, side, entry/exit, speed limit, boxes) for wave 3."
 }

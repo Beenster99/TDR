@@ -1,0 +1,102 @@
+{
+  "format": 1,
+  "id": "mercedes_amg_gt3",
+  "name": "Mercedes-AMG GT3 Evo",
+  "description": "Front-mid-engined 6.2 V8 GT3 racer with a transaxle (2020-).",
+  "class_tag": "GT3",
+  "colour": "#a7b0b8",
+  "mass_kg": 1285,
+  "weight_front": 0.48,
+  "wheelbase_m": 2.63,
+  "cg_height_m": 0.42,
+  "track_width_m": 1.7,
+  "length_m": 4.75,
+  "width_m": 2.05,
+  "inertia_factor": 1.0,
+  "engine": {
+    "idle_rpm": 1000,
+    "redline_rpm": 7500,
+    "shift_up_rpm": 7350,
+    "shift_down_rpm": 4500,
+    "torque_curve": [
+      [
+        1000,
+        450
+      ],
+      [
+        2500,
+        620
+      ],
+      [
+        4500,
+        690
+      ],
+      [
+        5800,
+        680
+      ],
+      [
+        7000,
+        590
+      ],
+      [
+        7500,
+        530
+      ]
+    ],
+    "engine_brake_nm": 110,
+    "cylinders": 8
+  },
+  "gearbox": {
+    "ratios": [
+      3.0,
+      2.2,
+      1.76,
+      1.47,
+      1.26,
+      1.1
+    ],
+    "final_drive": 3.21,
+    "efficiency": 0.9
+  },
+  "drivetrain": "RWD",
+  "awd_front_split": 0.0,
+  "wheel_radius_m": 0.355,
+  "brakes": {
+    "max_force_n": 27000,
+    "bias_front": 0.6
+  },
+  "steering": {
+    "max_angle_deg": 28,
+    "rate_deg_s": 260
+  },
+  "aero": {
+    "cda": 1.02,
+    "cla": 2.45,
+    "balance_front": 0.44
+  },
+  "tyre_compound": "race_slick",
+  "fuel": {
+    "capacity_l": 120,
+    "bsfc_l_per_kwh": 0.28
+  },
+  "tuning_ranges": {
+    "brake_bias_front": [
+      0.54,
+      0.6599999999999999
+    ],
+    "aero_cla": [
+      1.96,
+      2.94
+    ],
+    "final_drive": [
+      2.95,
+      3.47
+    ]
+  },
+  "chassis": {
+    "front_grip": 1.0,
+    "rear_grip": 1.08,
+    "roll_stiffness_front": 0.58
+  }
+}

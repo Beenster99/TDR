@@ -4,11 +4,14 @@ A top-down racing game in Godot 4 with physics-based sports cars, real-world
 track layouts, AI drivers, and online multiplayer.
 Keyboard and game controller are supported.
 
-**Wave 1 (this build):** one real circuit (Spielberg, Austria) and four
-sports cars. Tyre temperatures react to driving, air temperature and track
-temperature. You can play a single race against AI, or host and join an
-online race with friends (set up like Torque Shed's co-op). The HUD shows
-timing, standings, tyre temperatures and a minimap.
+**Wave 2:** 23 real circuits (Mugello, Monza, Spa, Silverstone, Suzuka and
+most of the F1 calendar), each with its real pit lane ready for pit stops,
+and ten real cars in two classes: GT3 racers (Ferrari 296, Porsche 911 GT3 R,
+Mercedes-AMG, BMW M4, Lamborghini Huracán, McLaren 720S) and road sports cars.
+Races can be one class or multi-class. Tyre temperatures react to driving,
+air temperature and track temperature. You can play a single race against
+AI, or host and join an online race with friends (set up like Torque Shed's
+co-op). The HUD shows timing, standings, tyre temperatures and a minimap.
 
 ## Play
 

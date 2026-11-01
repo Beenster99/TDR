@@ -7,6 +7,11 @@ var track_id: String = "spielberg"
 var laps: int = 3
 var ai_count: int = 5
 var seed: int = 12345
+## Which cars race: a class name (e.g. "GT3") = everyone in that class,
+## CLASS_MULTI = classes mixed (AI spread over all classes), "" = open (AI
+## drive the classes the players picked).
+var car_class: String = ""
+const CLASS_MULTI := "multi"
 var environment: Dictionary = {}   ## empty = track default
 ## Wave 3 switches (already read by the sim where noted)
 var fuel_enabled: bool = false     ## sim burns fuel when true
@@ -22,7 +27,7 @@ var countdown_s: float = 4.0
 
 func to_dict() -> Dictionary:
 	return {
-		"track_id": track_id, "laps": laps, "ai_count": ai_count, "seed": seed,
+		"track_id": track_id, "car_class": car_class, "laps": laps, "ai_count": ai_count, "seed": seed,
 		"environment": environment, "fuel_enabled": fuel_enabled, "fuel_rate": fuel_rate,
 		"start_fuel_l": start_fuel_l, "tyre_wear_enabled": tyre_wear_enabled,
 		"damage_enabled": damage_enabled, "safety_car_enabled": safety_car_enabled,

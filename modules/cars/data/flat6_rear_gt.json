@@ -1,8 +1,8 @@
 {
   "id": "flat6_rear_gt",
-  "name": "Flat-Six RS",
-  "description": "Rear-engined flat-six track-focused coupe (992-era GT3-style).",
-  "class_tag": "GT",
+  "name": "Porsche 911 GT3 (992)",
+  "description": "Rear-engined 4.0 flat-six track-focused road car (2021-).",
+  "class_tag": "Road",
   "colour": "#e8c547",
   "mass_kg": 1435,
   "weight_front": 0.39,
@@ -43,7 +43,8 @@
         400
       ]
     ],
-    "engine_brake_nm": 60
+    "engine_brake_nm": 60,
+    "cylinders": 6
   },
   "gearbox": {
     "ratios": [
