@@ -1,0 +1,102 @@
+{
+  "id": "v8_mid_berlinetta",
+  "name": "Berlinetta V8T",
+  "description": "Mid-engined twin-turbo V8 supercar (F8-style).",
+  "class_tag": "GT",
+  "colour": "#d1302f",
+  "mass_kg": 1485,
+  "weight_front": 0.42,
+  "wheelbase_m": 2.65,
+  "cg_height_m": 0.44,
+  "track_width_m": 1.66,
+  "length_m": 4.61,
+  "width_m": 1.98,
+  "inertia_factor": 1.0,
+  "engine": {
+    "idle_rpm": 1000,
+    "redline_rpm": 8000,
+    "shift_up_rpm": 7800,
+    "shift_down_rpm": 4200,
+    "torque_curve": [
+      [
+        1000,
+        350
+      ],
+      [
+        2500,
+        600
+      ],
+      [
+        3250,
+        770
+      ],
+      [
+        6000,
+        770
+      ],
+      [
+        7000,
+        700
+      ],
+      [
+        8000,
+        600
+      ]
+    ],
+    "engine_brake_nm": 70
+  },
+  "gearbox": {
+    "ratios": [
+      3.08,
+      2.19,
+      1.63,
+      1.29,
+      1.03,
+      0.84,
+      0.69
+    ],
+    "final_drive": 4.44,
+    "efficiency": 0.88
+  },
+  "drivetrain": "RWD",
+  "awd_front_split": 0.0,
+  "wheel_radius_m": 0.35,
+  "brakes": {
+    "max_force_n": 20500,
+    "bias_front": 0.62
+  },
+  "steering": {
+    "max_angle_deg": 30,
+    "rate_deg_s": 250
+  },
+  "aero": {
+    "cda": 0.78,
+    "cla": 0.8,
+    "balance_front": 0.42
+  },
+  "tyre_compound": "road_semi_slick",
+  "fuel": {
+    "capacity_l": 78,
+    "bsfc_l_per_kwh": 0.3
+  },
+  "tuning_ranges": {
+    "brake_bias_front": [
+      0.52,
+      0.72
+    ],
+    "aero_cla": [
+      0.6,
+      1.1
+    ],
+    "final_drive": [
+      4.0,
+      4.8
+    ]
+  },
+  "format": 1,
+  "chassis": {
+    "front_grip": 1.0,
+    "rear_grip": 1.1,
+    "roll_stiffness_front": 0.6
+  }
+}

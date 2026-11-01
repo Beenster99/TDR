@@ -1,0 +1,162 @@
+{
+  "format": 1,
+  "trait_notes": {
+    "skill": "0..1, scales cornering speed target and braking precision",
+    "aggression": "0..1, later braking + willingness to overtake/defend (wave 2)",
+    "consistency": "0..1, lower = more lap-to-lap variation and mistakes",
+    "tyre_management": "0..1, how much the AI backs off when tyres are out of window (wave 2)",
+    "racecraft": "0..1, awareness of other cars, avoidance and defending (wave 2)"
+  },
+  "drivers": [
+    {
+      "name": "Ada Kessler",
+      "traits": {
+        "skill": 0.97,
+        "aggression": 0.7,
+        "consistency": 0.92,
+        "tyre_management": 0.6,
+        "racecraft": 0.8
+      }
+    },
+    {
+      "name": "Rui Matsuda",
+      "traits": {
+        "skill": 0.95,
+        "aggression": 0.4,
+        "consistency": 0.97,
+        "tyre_management": 0.9,
+        "racecraft": 0.7
+      }
+    },
+    {
+      "name": "Leo Brandt",
+      "traits": {
+        "skill": 0.93,
+        "aggression": 0.9,
+        "consistency": 0.8,
+        "tyre_management": 0.4,
+        "racecraft": 0.6
+      }
+    },
+    {
+      "name": "Nina Okafor",
+      "traits": {
+        "skill": 0.96,
+        "aggression": 0.5,
+        "consistency": 0.9,
+        "tyre_management": 0.8,
+        "racecraft": 0.9
+      }
+    },
+    {
+      "name": "Mateo Ruiz",
+      "traits": {
+        "skill": 0.91,
+        "aggression": 0.6,
+        "consistency": 0.85,
+        "tyre_management": 0.5,
+        "racecraft": 0.5
+      }
+    },
+    {
+      "name": "Sven Halvorsen",
+      "traits": {
+        "skill": 0.92,
+        "aggression": 0.3,
+        "consistency": 0.95,
+        "tyre_management": 0.7,
+        "racecraft": 0.6
+      }
+    },
+    {
+      "name": "Priya Nair",
+      "traits": {
+        "skill": 0.94,
+        "aggression": 0.6,
+        "consistency": 0.88,
+        "tyre_management": 0.6,
+        "racecraft": 0.8
+      }
+    },
+    {
+      "name": "Tomas Vidal",
+      "traits": {
+        "skill": 0.9,
+        "aggression": 0.8,
+        "consistency": 0.82,
+        "tyre_management": 0.4,
+        "racecraft": 0.5
+      }
+    },
+    {
+      "name": "Yuki Arai",
+      "traits": {
+        "skill": 0.95,
+        "aggression": 0.5,
+        "consistency": 0.93,
+        "tyre_management": 0.8,
+        "racecraft": 0.7
+      }
+    },
+    {
+      "name": "Femi Adeyemi",
+      "traits": {
+        "skill": 0.92,
+        "aggression": 0.7,
+        "consistency": 0.86,
+        "tyre_management": 0.5,
+        "racecraft": 0.7
+      }
+    },
+    {
+      "name": "Clara Weiss",
+      "traits": {
+        "skill": 0.93,
+        "aggression": 0.4,
+        "consistency": 0.91,
+        "tyre_management": 0.9,
+        "racecraft": 0.6
+      }
+    },
+    {
+      "name": "Diego Santos",
+      "traits": {
+        "skill": 0.89,
+        "aggression": 0.9,
+        "consistency": 0.78,
+        "tyre_management": 0.3,
+        "racecraft": 0.4
+      }
+    },
+    {
+      "name": "Hana Lindqvist",
+      "traits": {
+        "skill": 0.94,
+        "aggression": 0.5,
+        "consistency": 0.9,
+        "tyre_management": 0.7,
+        "racecraft": 0.8
+      }
+    },
+    {
+      "name": "Omar Haddad",
+      "traits": {
+        "skill": 0.91,
+        "aggression": 0.6,
+        "consistency": 0.87,
+        "tyre_management": 0.6,
+        "racecraft": 0.6
+      }
+    },
+    {
+      "name": "Ivy Chen",
+      "traits": {
+        "skill": 0.96,
+        "aggression": 0.6,
+        "consistency": 0.89,
+        "tyre_management": 0.7,
+        "racecraft": 0.9
+      }
+    }
+  ]
+}

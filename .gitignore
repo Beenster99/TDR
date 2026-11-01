@@ -1,3 +1,5 @@
 .godot/
 *.import
 export/
+/android/
+build/

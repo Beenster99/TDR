@@ -1,0 +1,16 @@
+{
+  "id": "tracks",
+  "name": "Tracks",
+  "version": "1.0.0",
+  "status": "active",
+  "summary": "Circuit layouts: centre line, widths, racing line, sectors, surfaces (track, kerb, grass, barrier), grid slots. Track files are JSON in data/, made by tools/import_tumftm_track.py.",
+  "depends": {
+    "core": "1"
+  },
+  "api": [
+    "TrackData",
+    "TrackCatalog"
+  ],
+  "internal": [],
+  "notes": "New tracks are new JSON files. Pit lanes arrive here in wave 3."
+}

@@ -1,0 +1,19 @@
+{
+  "id": "race_slick",
+  "name": "Race slick",
+  "peak_mu": 1.42,
+  "peak_slip_angle_deg": 6.5,
+  "shape_c": 1.45,
+  "load_sensitivity": 0.10,
+  "optimal_temp_c": 95.0,
+  "temp_window_c": 25.0,
+  "cold_falloff": 0.09,
+  "hot_falloff": 0.12,
+  "min_grip_factor": 0.55,
+  "heat_from_slip": 0.14,
+  "heat_from_rolling": 0.017,
+  "cool_to_air": 0.009,
+  "cool_to_track": 0.004,
+  "wet_grip_factor": 0.35,
+  "wear_rate": 0.0
+}

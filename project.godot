@@ -1,0 +1,38 @@
+; Engine configuration file.
+; Godot 4.6
+
+config_version=5
+
+[application]
+
+config/name="Top Down Racer"
+config/version="0.1.0"
+config/description="Multiplayer-ready top-down racing with physics-based cars."
+run/main_scene="res://modules/ui/main_menu.tscn"
+config/features=PackedStringArray("4.6", "GL Compatibility")
+config/icon="res://icon.svg"
+
+[autoload]
+
+GameData="*res://modules/core/game_data.gd"
+Game="*res://modules/game/game.gd"
+Net="*res://modules/multiplayer/net.gd"
+
+[display]
+
+window/size/viewport_width=1600
+window/size/viewport_height=900
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+
+[physics]
+
+common/physics_ticks_per_second=60
+common/max_physics_steps_per_frame=8
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+anti_aliasing/quality/msaa_2d=2
+environment/defaults/default_clear_color=Color(0.2, 0.36, 0.18, 1)
