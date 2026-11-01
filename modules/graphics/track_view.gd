@@ -11,6 +11,7 @@ const EDGE := Color(0.92, 0.92, 0.92)
 const KERB_A := Color(0.85, 0.15, 0.15)
 const KERB_B := Color(0.95, 0.95, 0.95)
 const BARRIER := Color(0.55, 0.55, 0.6)
+const PIT_BOX := Color(0.95, 0.85, 0.3)
 
 
 func setup(p_track: TrackData) -> void:
@@ -40,6 +41,8 @@ func _draw() -> void:
 		var ro := track.runoff
 		_quad(track.points[i] - ni * (track.width_left[i] + ro), track.points[j] - nj * (track.width_left[j] + ro),
 			track.points[j] + nj * (track.width_right[j] + ro), track.points[i] + ni * (track.width_right[i] + ro), RUNOFF)
+	if track.has_pit_lane():
+		_draw_pit_lane()
 	for i in n:
 		draw_circle(track.points[i], minf(track.width_left[i], track.width_right[i]), ASPHALT)
 	for i in n:
@@ -82,6 +85,35 @@ func _draw() -> void:
 		var gd := Vector2.from_angle(slot["heading"])
 		var gn := Vector2(-gd.y, gd.x)
 		draw_polyline(PackedVector2Array([gp + gd * 2.6 - gn * 1.3, gp + gd * 2.6 + gn * 1.3]), EDGE, 0.2)
+
+
+## Pit lane: tarmac, the pit wall on the track side, speed-limit lines and
+## the boxes (used from wave 3).
+func _draw_pit_lane() -> void:
+	var path := track.pit_path
+	var w := track.pit_width
+	draw_polyline(path, ASPHALT, w)
+	for p in path:
+		draw_circle(p, w * 0.5, ASPHALT)
+	# Pit wall between lane and track, along the speed-limited part.
+	var wall := PackedVector2Array()
+	var d := track.pit_limit_start
+	while d <= track.pit_limit_end:
+		wall.append(track.pit_position_at(d, -track.pit_side * (w * 0.5 + 0.4)))
+		d += 4.0
+	if wall.size() >= 2:
+		draw_polyline(wall, BARRIER, 0.8)
+	for lim in [track.pit_limit_start, track.pit_limit_end]:
+		var a := track.pit_position_at(lim, -w * 0.5)
+		var b := track.pit_position_at(lim, w * 0.5)
+		draw_line(a, b, EDGE, 0.6)
+	for i in track.pit_box_count:
+		var box := track.pit_box(i)
+		var bd := Vector2.from_angle(box["heading"])
+		var bn := Vector2(-bd.y, bd.x)
+		var c: Vector2 = box["pos"]
+		draw_polyline(PackedVector2Array([c - bd * 2.6 - bn * 1.4, c + bd * 2.6 - bn * 1.4,
+			c + bd * 2.6 + bn * 1.4, c - bd * 2.6 + bn * 1.4, c - bd * 2.6 - bn * 1.4]), PIT_BOX, 0.2)
 
 
 func _quad(a: Vector2, b: Vector2, c: Vector2, d: Vector2, col: Color) -> void:

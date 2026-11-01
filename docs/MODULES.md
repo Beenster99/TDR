@@ -17,11 +17,11 @@ to bottom (top layer).
 | Module | Version | Owns | Public API | Uses |
 |---|---|---|---|---|
 | **core** | 1.0.0 | Shared basics: the driver-intent contract, JSON reading, the module registry, shared game state | `CarInput`, `JsonData`, `ModuleRegistry`, autoload `GameData` | nothing |
-| **cars** | 1.0.0 | What each car is (engine, gears, mass, aero, brakes, aids, tyres); car JSON in `data/` | `CarDefinition`, `CarCatalog` | core |
-| **tracks** | 1.0.0 | Circuit layouts, surfaces, sectors, grid slots; track JSON in `data/`; track importer in `tools/` | `TrackData` (incl. `TrackData.Surface`), `TrackCatalog` | core |
+| **cars** | 1.1.0 | What each car is (engine, gears, mass, aero, brakes, aids, tyres) and its class (GT3, Road); car JSON in `data/` | `CarDefinition`, `CarCatalog` | core |
+| **tracks** | 1.1.0 | Circuit layouts, surfaces, sectors, grid slots, pit lanes; track JSON in `data/`; track builder in `tools/` | `TrackData` (incl. `TrackData.Surface`), `TrackCatalog` | core |
 | **input** | 1.0.0 | Keyboard and controller bindings, turning them into `CarInput` | `LocalInput`, `InputSetup` | core |
 | **physics** | 1.1.0 | How cars move: vehicle model, tyre grip and temperatures (dry, intermediate and wet compounds); weather and time of day (clock, air and track temperature, rain, standing water, drying line, rubber); tyre JSON in `data/` | `CarState`, `CarPhysics`, `TyreCompound`, `TyreCatalog`, `SimEnvironment` | core, cars, tracks |
-| **race** | 1.1.0 | Race rules: countdown, laps, sectors, positions, finish, contacts, snapshots, settings, entries and crews, building a race from start data | `RaceSim`, `RaceSettings`, `RaceEntry`, `RaceFactory` | core, cars, tracks, physics |
+| **race** | 1.2.0 | Race rules: countdown, laps, sectors, positions, finish, contacts, snapshots, settings, entries and crews, building a race from start data | `RaceSim`, `RaceSettings`, `RaceEntry`, `RaceFactory` | core, cars, tracks, physics |
 | **ai** | 1.0.0 | Computer drivers; AI names and traits in `data/` | `AIDriver`, `DriverCatalog` | core, cars, tracks, physics, race |
 | **graphics** | 1.1.0 | Drawing the track and the cars, daylight, rain, spray and headlights | `TrackView`, `CarView`, `WeatherView` | core, cars, tracks, physics |
 | **multiplayer** | 1.1.0 | Online play the Torque Shed way (lobby, ENet, UPnP, streaming cars) and running a race offline / as host / as client | `RaceSession`, `NetTimeline`, autoload `Net` | core, physics, race, ai |
@@ -66,7 +66,8 @@ registers controls and loads all content into `GameData`, `Net`
 ## Adding things
 
 - **A car, track, tyre or AI driver:** add a JSON file to that module's
-  `data/` folder. No code, no version bump needed beyond a patch.
+  `data/` folder. No code, no version bump needed beyond a patch. Tracks
+  are built rather than hand-written: see `docs/ADDING_CONTENT.md`.
 - **A new class:** put it in the right module, give it a `class_name`, and
   add it to `api` or `internal` in `module.json`. Adding to `api` is a minor
   version bump.

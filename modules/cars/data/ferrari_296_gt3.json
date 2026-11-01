@@ -1,0 +1,102 @@
+{
+  "format": 1,
+  "id": "ferrari_296_gt3",
+  "name": "Ferrari 296 GT3",
+  "description": "Mid-engined 2.9 twin-turbo V6 GT3 racer (2023-).",
+  "class_tag": "GT3",
+  "colour": "#d40000",
+  "mass_kg": 1250,
+  "weight_front": 0.43,
+  "wheelbase_m": 2.66,
+  "cg_height_m": 0.4,
+  "track_width_m": 1.7,
+  "length_m": 4.71,
+  "width_m": 2.05,
+  "inertia_factor": 1.0,
+  "engine": {
+    "idle_rpm": 1500,
+    "redline_rpm": 8000,
+    "shift_up_rpm": 7850,
+    "shift_down_rpm": 4800,
+    "torque_curve": [
+      [
+        1500,
+        380
+      ],
+      [
+        3000,
+        600
+      ],
+      [
+        4500,
+        660
+      ],
+      [
+        6500,
+        640
+      ],
+      [
+        7500,
+        560
+      ],
+      [
+        8000,
+        500
+      ]
+    ],
+    "engine_brake_nm": 90,
+    "cylinders": 6
+  },
+  "gearbox": {
+    "ratios": [
+      3.08,
+      2.25,
+      1.79,
+      1.48,
+      1.26,
+      1.09
+    ],
+    "final_drive": 3.29,
+    "efficiency": 0.9
+  },
+  "drivetrain": "RWD",
+  "awd_front_split": 0.0,
+  "wheel_radius_m": 0.345,
+  "brakes": {
+    "max_force_n": 26500,
+    "bias_front": 0.58
+  },
+  "steering": {
+    "max_angle_deg": 28,
+    "rate_deg_s": 260
+  },
+  "aero": {
+    "cda": 0.98,
+    "cla": 2.5,
+    "balance_front": 0.43
+  },
+  "tyre_compound": "race_slick",
+  "fuel": {
+    "capacity_l": 105,
+    "bsfc_l_per_kwh": 0.28
+  },
+  "tuning_ranges": {
+    "brake_bias_front": [
+      0.52,
+      0.6399999999999999
+    ],
+    "aero_cla": [
+      2.0,
+      3.0
+    ],
+    "final_drive": [
+      3.03,
+      3.55
+    ]
+  },
+  "chassis": {
+    "front_grip": 1.0,
+    "rear_grip": 1.12,
+    "roll_stiffness_front": 0.6
+  }
+}

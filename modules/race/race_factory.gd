@@ -11,8 +11,26 @@ extends RefCounted
 static func plan(settings: RaceSettings, humans: Array, cars: Dictionary, drivers: Array) -> Dictionary:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = settings.seed
-	var car_ids: Array = cars.keys()
-	car_ids.sort()
+	var all_ids: Array = cars.keys()
+	all_ids.sort()
+	var fixed_class := settings.car_class != "" and settings.car_class != RaceSettings.CLASS_MULTI \
+		and not CarCatalog.ids_in_class(cars, settings.car_class).is_empty()
+	var class_ids: Array = CarCatalog.ids_in_class(cars, settings.car_class) if fixed_class else all_ids
+	# Human cars: their pick, unless it's outside a fixed class.
+	var human_cars := []
+	for h in humans:
+		var id: String = h.get("car_id", "")
+		human_cars.append(id if id in class_ids else class_ids[0])
+	# AI cars come from these classes, taken in turn so every class is used.
+	var ai_classes: Array = []
+	if fixed_class:
+		ai_classes = [settings.car_class]
+	elif settings.car_class == RaceSettings.CLASS_MULTI or humans.is_empty():
+		ai_classes = CarCatalog.classes(cars)
+	else:
+		for id in human_cars:
+			if not cars[id].class_tag in ai_classes:
+				ai_classes.append(cars[id].class_tag)
 	var entries := []
 	var pool := drivers.duplicate()
 	var start_weather := SimEnvironment.resolve_start_weather(settings.environment, {}, settings.seed)
@@ -27,13 +45,15 @@ static func plan(settings: RaceSettings, humans: Array, cars: Dictionary, driver
 			var d: Dictionary = pool.pop_at(rng.randi_range(0, pool.size() - 1))
 			e.driver_name = d.get("name", "AI")
 			e.traits = d.get("traits", {})
-		e.car_id = car_ids[rng.randi_range(0, car_ids.size() - 1)]
+		var in_class: Array = CarCatalog.ids_in_class(cars, ai_classes[k % ai_classes.size()])
+		e.car_id = in_class[rng.randi_range(0, in_class.size() - 1)]
 		_fit_tyres(e, "auto", start_weather)
 		entries.append(e.describe())
-	for h in humans:
+	for k in humans.size():
+		var h: Dictionary = humans[k]
 		var e := RaceEntry.new()
 		e.driver_name = h.get("name", "Player")
-		e.car_id = h.get("car_id", "") if cars.has(h.get("car_id", "")) else car_ids[0]
+		e.car_id = human_cars[k]
 		e.crew = h.get("crew", [{"peer_id": 0, "name": e.driver_name, "role": RaceEntry.ROLE_DRIVER}])
 		_fit_tyres(e, h.get("tyre", "auto"), start_weather)
 		entries.append(e.describe())

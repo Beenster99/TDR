@@ -36,7 +36,7 @@ modules/
   cars/          car_definition.gd (parsed spec, with_overrides() for upgrades/tuning),
                  car_catalog.gd, data/*.json car specs
   tracks/        track_data.gd (geometry, projection, Surface enum, grid slots),
-                 track_catalog.gd, data/*.json circuits, tools/import_tumftm_track.py
+                 track_catalog.gd, data/*.json circuits, tools/build_tracks.py + tracks.json
   physics/       car_state.gd (one car's physical state + serialize), car_physics.gd
                  (vehicle model, one substep), tyre_compound.gd, sim_environment.gd,
                  tyre_catalog.gd, data/*.json tyre compounds
@@ -125,13 +125,24 @@ A 2D "bicycle" model with per-tyre temperatures:
 
 ### Track data
 
-`modules/tracks/tools/import_tumftm_track.py` converts the TUMFTM racetrack-database
-(LGPL-3.0, OpenStreetMap-derived) into `modules/tracks/data/<id>.json`. The fields
-are a centre line with left/right widths, an optimised racing line, sector
-split fractions, run-off width, default environment, and `pit_lane` (null
-for now). Index 0 is the start/finish line and points run in race direction.
-The Y axis is flipped for Godot. 20+ real circuits are available from the
-same source.
+`modules/tracks/tools/build_tracks.py` builds every circuit listed in
+`modules/tracks/tools/tracks.json` into `modules/tracks/data/<id>.json`. Centre
+lines, widths and racing lines come from the TUMFTM racetrack-database
+(LGPL-3.0, OpenStreetMap-derived); tracks it doesn't have (Mugello, Imola) come
+straight from OpenStreetMap (ODbL) with a racing line worked out by the tool.
+The tool also lines OpenStreetMap up with each layout to find the real pit
+lane. The fields are a centre line with left/right widths, an optimised racing
+line, sector split fractions, run-off width, default environment, optional
+`climate` hints, and `pit_lane` (path, side, entry/exit distance, width, speed
+limit, speed-limit zone, box count). Index 0 is the start/finish line and
+points run in race direction. The Y axis is flipped for Godot. Steps for
+adding a track: `docs/ADDING_CONTENT.md`.
+
+Pit lane: `TrackData.pit_path` runs from where the lane leaves the track to
+where it rejoins. `pit_box(i)`, `pit_position_at(d)`, `project_pit(pos)`,
+`in_pit_lane(pos)` and `pit_spans(s)` are ready for wave 3. The lane counts as
+tarmac (`surface_for`), and the graphics module draws it with its pit wall,
+speed-limit lines and boxes.
 
 Surfaces: on track, kerb (track edge + `kerb_width_m`), grass (to
 `runoff_m`), then a soft barrier.
@@ -251,12 +262,12 @@ every option adjustable with left/right.
 
 ## Naming and licensing
 
-Cars are generic and unbranded ("Flat-Six RS", "Berlinetta V8T", "Grand
-Tourer V8", "Featherweight S"). Each one's description says what kind of
-real car it's modelled on, and the specs are realistic. Tracks use real
-layouts with place names ("Spielberg GP Circuit"), not sponsor or
-commercial circuit names. Track data attribution is in
-`modules/tracks/data/ATTRIBUTION.md`.
+The user chose real names for cars and tracks (plan doc, wave 1 questions),
+and made-up names for AI drivers. Names live only in the data files (`name` in
+each car JSON, `name`/`short_name` in `tracks.json`), so they can be swapped
+for generic ones without touching code if licensing ever needs it. Car ids
+are stable and don't carry brand names for the wave 1 cars. Track data
+attribution is in `modules/tracks/data/ATTRIBUTION.md`.
 
 ## Extension points by feature
 

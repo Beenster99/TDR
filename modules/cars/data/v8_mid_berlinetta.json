@@ -1,8 +1,8 @@
 {
   "id": "v8_mid_berlinetta",
-  "name": "Berlinetta V8T",
-  "description": "Mid-engined twin-turbo V8 supercar (F8-style).",
-  "class_tag": "GT",
+  "name": "Ferrari F8 Tributo",
+  "description": "Mid-engined 3.9 twin-turbo V8 supercar (2019-2023).",
+  "class_tag": "Road",
   "colour": "#d1302f",
   "mass_kg": 1485,
   "weight_front": 0.42,
@@ -43,7 +43,8 @@
         600
       ]
     ],
-    "engine_brake_nm": 70
+    "engine_brake_nm": 70,
+    "cylinders": 8
   },
   "gearbox": {
     "ratios": [

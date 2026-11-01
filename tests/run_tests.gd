@@ -12,6 +12,8 @@ func _init() -> void:
 	test_data_loads()
 	test_input_wire_format()
 	test_tyre_temperature_matters()
+	test_car_classes()
+	test_every_track()
 	test_weather_and_time()
 	test_wet_grip()
 	test_race_settings_and_grid()
@@ -139,6 +141,97 @@ func test_data_loads() -> void:
 	for id in d["cars"]:
 		var c: CarDefinition = d["cars"][id]
 		print("       %-22s %4.0f kg %4.0f kW" % [c.display_name, c.mass, c.peak_power_kw()])
+
+
+## Classes: a fixed class gives everyone that class's cars; multi-class
+## spreads the AI over every class.
+func test_car_classes() -> void:
+	print("car classes")
+	var d := _data()
+	var classes := CarCatalog.classes(d["cars"])
+	check(classes.size() >= 2 and classes[0] == "GT3", "classes, fastest first: %s" % [classes])
+	var s := RaceSettings.new()
+	s.ai_count = 9
+	s.car_class = "GT3"
+	var start := RaceFactory.plan(s, [{"name": "P", "car_id": "v8_mid_berlinetta"}], d["cars"], d["drivers"])
+	var all_gt3 := true
+	for e in start["entries"]:
+		all_gt3 = all_gt3 and d["cars"][e["car_id"]].class_tag == "GT3"
+	check(all_gt3, "GT3 race: every car is a GT3 (a player's road car is swapped)")
+	s.car_class = RaceSettings.CLASS_MULTI
+	start = RaceFactory.plan(s, [], d["cars"], d["drivers"])
+	var seen := {}
+	for e in start["entries"]:
+		seen[d["cars"][e["car_id"]].class_tag] = true
+	check(seen.size() == classes.size(), "multi-class race uses every class (%s)" % [seen.keys()])
+	s.car_class = ""
+	start = RaceFactory.plan(s, [{"name": "P", "car_id": "flat6_rear_gt"}], d["cars"], d["drivers"])
+	var road := true
+	for e in start["entries"]:
+		road = road and d["cars"][e["car_id"]].class_tag == "Road"
+	check(road, "open class: AI match the player's class")
+
+
+## Every track: loads, is the real length, has a usable pit lane, and an AI
+## car can drive a clean lap of it.
+func test_every_track() -> void:
+	print("tracks")
+	var d := _data()
+	var list := TrackCatalog.list_all()
+	check(list.size() >= 5, "%d tracks listed" % list.size())
+	for info in list:
+		var t := TrackCatalog.load_track(info["id"])
+		if t == null:
+			check(false, "%s loads" % info["id"])
+			continue
+		var problems: Array[String] = []
+		if not t.has_pit_lane():
+			problems.append("no pit lane")
+		else:
+			var a := t.project(t.pit_path[0])
+			var b := t.project(t.pit_path[t.pit_path.size() - 1])
+			if absf(a["offset"]) > t.width_right[a["idx"]] + t.width_left[a["idx"]]:
+				problems.append("pit entry %.0f m off the track" % a["offset"])
+			if absf(b["offset"]) > t.width_right[b["idx"]] + t.width_left[b["idx"]]:
+				problems.append("pit exit %.0f m off the track" % b["offset"])
+			var box := t.pit_box(0)
+			if not t.in_pit_lane(box["pos"]):
+				problems.append("pit box 0 outside the lane")
+			if t.surface_for(t.project(box["pos"])) != TrackData.Surface.TRACK:
+				problems.append("pit lane isn't tarmac")
+			if t.pit_length < 150.0:
+				problems.append("pit lane only %.0f m" % t.pit_length)
+		var lap := _solo_lap(t, d)
+		if lap["time"] <= 0.0:
+			problems.append("AI didn't finish a lap")
+		if lap["offs"] > 6:  # the AI thread is still improving how cleanly it drives
+			problems.append("AI went off %d times" % lap["offs"])
+		for pr in problems:
+			printerr("       ", t.id, ": ", pr)
+		check(problems.is_empty(), "%-34s %5.0f m, pit lane %4.0f m (%s), AI lap %s, %d offs" % [t.display_name,
+			t.length, t.pit_length, "right" if t.pit_side > 0 else "left", _laptime(lap["time"]), lap["offs"]])
+
+
+## One AI car (a GT3) drives one flying lap of a track on its own.
+func _solo_lap(track: TrackData, d: Dictionary) -> Dictionary:
+	var s := RaceSettings.new()
+	s.track_id = track.id
+	s.ai_count = 0
+	s.laps = 2
+	s.countdown_s = 0.5
+	var start := RaceFactory.plan(s, [{"name": "bot", "car_id": "porsche_911_gt3_r"}], d["cars"], [])
+	var sim := RaceFactory.build_sim(start, d["cars"], d["tyres"], track)
+	var ai := AIDriver.new(track, sim.defs[0], sim.compounds[0], {"skill": 0.95, "consistency": 1.0}, 1)
+	var offs := 0
+	var was_off := false
+	while sim.entries[0].laps_done < 2 and sim.tick < 60 * 600:
+		sim.step([ai.get_input(sim, 0)])
+		var off := sim.cars[0].surface >= TrackData.Surface.GRASS
+		if off and not was_off:
+			offs += 1
+		was_off = off
+	var e := sim.entries[0]
+	return {"time": e.lap_times[1] if e.lap_times.size() > 1 else -1.0, "offs": offs}
 
 
 func test_input_wire_format() -> void:
