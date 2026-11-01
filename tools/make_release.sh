@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Builds a release zip: TopDownRacer.exe + README.txt (the release notes).
+# Builds a release zip: TopDownRacer.exe + ReleaseNotes.html (Torque Shed style notes).
 #   GODOT=/path/to/godot-4.6.2 tools/make_release.sh 0.1.0
-# Needs release_notes/<version>.txt and the 4.6.2 Windows export template.
-# Output: build/TopDownRacer-<version>.zip
+# Needs release_notes/<version>.html and the 4.6.2 Windows export template.
+# Output: build/TopDownRacer-v<version>-windows.zip
 set -euo pipefail
 VERSION="${1:?version, e.g. 0.1.0}"
 GODOT="${GODOT:-godot}"
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
-NOTES="$DIR/release_notes/$VERSION.txt"
+NOTES="$DIR/release_notes/$VERSION.html"
 [ -f "$NOTES" ] || { echo "missing $NOTES"; exit 1; }
 cd "$DIR"
 sed -i "s/^application\/file_version=.*/application\/file_version=\"$VERSION.0\"/; s/^application\/product_version=.*/application\/product_version=\"$VERSION.0\"/" export_presets.cfg
@@ -17,14 +17,13 @@ grep -q '^config/version=' project.godot || sed -i "s/^config\/name=\"Top Down R
 STAGE="build/release/TopDownRacer-$VERSION"
 rm -rf "$STAGE" && mkdir -p "$STAGE"
 "$GODOT" --headless --path . --export-release "Windows Desktop" "$STAGE/TopDownRacer.exe"
-# Windows line endings so Notepad shows it properly.
-sed 's/$/\r/' "$NOTES" > "$STAGE/README.txt"
-rm -f "build/TopDownRacer-$VERSION.zip"
+cp "$NOTES" "$STAGE/ReleaseNotes.html"
+rm -f "build/TopDownRacer-v$VERSION-windows.zip"
 (cd build/release && python3 -c "
 import sys, zipfile, os
 v = sys.argv[1]
-with zipfile.ZipFile(f'../TopDownRacer-{v}.zip', 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as z:
-    for f in ('TopDownRacer.exe', 'README.txt'):
+with zipfile.ZipFile(f'../TopDownRacer-v{v}-windows.zip', 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+    for f in ('TopDownRacer.exe', 'ReleaseNotes.html'):
         z.write(os.path.join(f'TopDownRacer-{v}', f), f'TopDownRacer-{v}/{f}')
 " "$VERSION")
-ls -la "build/TopDownRacer-$VERSION.zip"
+ls -la "build/TopDownRacer-v$VERSION-windows.zip"

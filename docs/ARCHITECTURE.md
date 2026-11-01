@@ -57,7 +57,7 @@ tests/
                       determinism, snapshots)
   net_loopback.sh     dedicated server + 2 bot clients over localhost
   debug_ai.gd         solo AI laps per car, for tuning
-tools/make_release.sh  builds the release zip (exe + README.txt)
+tools/make_release.sh  builds the release zip (exe + ReleaseNotes.html)
 ```
 
 ## Simulation
@@ -310,9 +310,11 @@ https://claude.ai/artifact/4yY11Dm9qpB9XUBczLi2HP
 
 ## Releases
 
-Every release goes out as a zip holding `TopDownRacer.exe` and a
-`README.txt` with what's new, written in plain English like Torque Shed's
-notes. Write `release_notes/<version>.txt`, then run:
+Every release goes out as `TopDownRacer-v<version>-windows.zip` holding
+`TopDownRacer.exe` and `ReleaseNotes.html`, laid out like Torque Shed's
+release notes (masthead, at a glance, one entry per feature, then Try it /
+Known limits / Coming next). Copy the last `release_notes/<version>.html`,
+write the new one, then run:
 
 ```
 GODOT=/path/to/godot-4.6.2 tools/make_release.sh <version>
