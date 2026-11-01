@@ -1,0 +1,62 @@
+{
+ "bmw_m4_gt3": {
+  "pattern": "bmw",
+  "secondary": "#ffffff",
+  "accent": "#16588e",
+  "front_overhang": 0.98
+ },
+ "ferrari_296_gt3": {
+  "pattern": "stripes",
+  "secondary": "#ffffff",
+  "accent": "#111111",
+  "front_overhang": 1.08
+ },
+ "flat6_rear_gt": {
+  "pattern": "solid",
+  "secondary": "#111111",
+  "accent": "#111111",
+  "front_overhang": 1.0
+ },
+ "i4_light_roadster": {
+  "pattern": "stripes",
+  "secondary": "#f2d000",
+  "accent": "#111111",
+  "front_overhang": 0.85
+ },
+ "lamborghini_huracan_gt3": {
+  "pattern": "chevron",
+  "secondary": "#111111",
+  "accent": "#ffffff",
+  "front_overhang": 1.0
+ },
+ "mclaren_720s_gt3": {
+  "pattern": "split",
+  "secondary": "#1d1d1d",
+  "accent": "#ffffff",
+  "front_overhang": 1.05
+ },
+ "mercedes_amg_gt3": {
+  "pattern": "split",
+  "secondary": "#00a19b",
+  "accent": "#111111",
+  "front_overhang": 1.05
+ },
+ "porsche_911_gt3_r": {
+  "pattern": "sash",
+  "secondary": "#111111",
+  "accent": "#d5001c",
+  "front_overhang": 1.03
+ },
+ "v8_front_gt": {
+  "pattern": "solid",
+  "secondary": "#111111",
+  "accent": "#111111",
+  "front_overhang": 0.95
+ },
+ "v8_mid_berlinetta": {
+  "pattern": "solid",
+  "secondary": "#111111",
+  "accent": "#111111",
+  "front_overhang": 1.0
+ }
+}
