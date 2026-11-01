@@ -1,0 +1,16 @@
+{
+  "id": "input",
+  "name": "Input",
+  "version": "1.0.0",
+  "status": "active",
+  "summary": "Keyboard and game controller: action bindings and turning them into CarInput (deadzones, steering curve, smoothing).",
+  "depends": {
+    "core": "1"
+  },
+  "api": [
+    "LocalInput",
+    "InputSetup"
+  ],
+  "internal": [],
+  "notes": "A rebinding screen and vibration belong here."
+}

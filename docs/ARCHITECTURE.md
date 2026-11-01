@@ -6,7 +6,8 @@ wave 1 is put together and where each later feature plugs in.
 
 ## Principles
 
-1. **The simulation is pure data.** Everything under `src/sim/` is
+1. **The simulation is pure data.** The core, cars, tracks, physics, race
+   and ai modules are
    `RefCounted` and has no nodes, no `Input`, no clock and no rendering. It runs
    the same on a headless dedicated server, a listen-server host, a client, or
    in a unit test.
@@ -20,43 +21,43 @@ wave 1 is put together and where each later feature plugs in.
    `apply_snapshot()` capture and restore the full authoritative state. Both
    properties are covered by tests.
 5. **Data-driven content.** Cars, tyre compounds, tracks and AI drivers are
-   JSON in `data/`. New content needs no code.
+   JSON in each module's `data/` folder. New content needs no code.
 
 ## Folder map
 
+The code is split into modules, each with its own version, dependencies and
+public API. See [MODULES.md](MODULES.md) for the rules and the full map.
+
 ```
-data/
-  cars/*.json         car specs (engine curve, gears, mass, aero, brakes, tyres)
-  tyres/*.json        tyre compounds (grip, temperature window, heating/cooling)
-  tracks/*.json       centre line + widths + racing line, sectors, defaults
-  ai/drivers.json     AI driver names + traits
-src/
-  sim/                authoritative simulation (no nodes)
-    car_input.gd        per-tick driver intent + wire format
-    car_state.gd        one car's physical state (+ serialize)
-    car_definition.gd   parsed car spec, with_overrides() for upgrades/tuning
-    tyre_compound.gd    grip vs temperature/load, lateral force curve
-    sim_environment.gd  air/track temp, time of day, weather hooks
-    track_data.gd       track geometry, projection, surfaces, grid slots
-    car_physics.gd      vehicle model (one substep)
-    race_settings.gd    host options (laps, AI, fuel/damage/SC switches...)
-    race_entry.gd       competitor, crew (players + roles), timing
-    race_sim.gd         race state machine, laps, positions, collisions, snapshots
-  ai/ai_driver.gd     placeholder AI producing CarInput
-  race/
-    race_factory.gd     plan() (host) + build() (everyone) => identical sims
-    race_session.gd     runs a race in OFFLINE / SERVER / CLIENT mode
-    race_scene.gd       views, camera, local input, results
-  net/net.gd          autoload: ENet lobby + RPC transport
-  input/local_input.gd  keyboard + gamepad -> CarInput
-  view/               track, car and HUD drawing
-  ui/                 menu, lobby, controller-friendly Stepper
-  core/               GameData autoload (content cache, input map, cmdline), DataLoader
+modules/
+  core/          car_input.gd (per-tick driver intent + wire format), json_data.gd,
+                 module_registry.gd, game_data.gd (autoload GameData: content,
+                 cmdline, active session, scene paths)
+  cars/          car_definition.gd (parsed spec, with_overrides() for upgrades/tuning),
+                 car_catalog.gd, data/*.json car specs
+  tracks/        track_data.gd (geometry, projection, Surface enum, grid slots),
+                 track_catalog.gd, data/*.json circuits, tools/import_tumftm_track.py
+  physics/       car_state.gd (one car's physical state + serialize), car_physics.gd
+                 (vehicle model, one substep), tyre_compound.gd, sim_environment.gd,
+                 tyre_catalog.gd, data/*.json tyre compounds
+  race/          race_sim.gd (state machine, laps, positions, contacts, snapshots),
+                 race_settings.gd, race_entry.gd (competitor, crew, timing),
+                 race_factory.gd (plan() on the host + build_sim() everywhere)
+  ai/            ai_driver.gd (placeholder AI producing CarInput; for_car/for_all_ai),
+                 driver_catalog.gd, data/drivers.json
+  input/         local_input.gd (keyboard + gamepad -> CarInput), input_setup.gd
+  graphics/      track_view.gd, car_view.gd
+  multiplayer/   net.gd (autoload Net: ENet lobby + RPC transport), net_timeline.gd,
+                 race_session.gd (runs a race OFFLINE / SERVER / CLIENT)
+  ui/            main_menu.gd + main_menu.tscn (menu, lobby), hud.gd, stepper.gd
+  game/          game.gd (autoload Game: start-up wiring), race_scene.gd + race.tscn
+  business/      planned for wave 4 (module.json only)
 tests/
-  run_tests.gd        headless sim tests (data, physics, AI race, determinism, snapshots)
+  run_tests.gd        module boundaries + headless sim tests (data, physics, AI race,
+                      determinism, snapshots)
   net_loopback.sh     dedicated server + 2 bot clients over localhost
   debug_ai.gd         solo AI laps per car, for tuning
-tools/import_tumftm_track.py   converts open track data to our format
+tools/make_release.sh  builds the release zip (exe + README.txt)
 ```
 
 ## Simulation
@@ -107,8 +108,8 @@ A 2D "bicycle" model with per-tyre temperatures:
 
 ### Track data
 
-`tools/import_tumftm_track.py` converts the TUMFTM racetrack-database
-(LGPL-3.0, OpenStreetMap-derived) into `data/tracks/<id>.json`. The fields
+`modules/tracks/tools/import_tumftm_track.py` converts the TUMFTM racetrack-database
+(LGPL-3.0, OpenStreetMap-derived) into `modules/tracks/data/<id>.json`. The fields
 are a centre line with left/right widths, an optimised racing line, sector
 split fractions, run-off width, default environment, and `pit_lane` (null
 for now). Index 0 is the start/finish line and points run in race direction.
@@ -189,7 +190,8 @@ dedicated server (`--server`) owns only the AI, and auto-starts when
 
 **Start:** the host's `RaceFactory.plan()` picks the AI drivers and cars
 from the seed, and puts players into crews. Everyone then builds the same
-race from that start data with `RaceFactory.build()`.
+race from that start data with `RaceFactory.build_sim()`. The machine
+that runs the AI adds drivers with `AIDriver.for_all_ai()`.
 
 **Disconnects:** when a driver leaves mid-race, another crew member takes
 over that car, or the host's AI takes it from where it was. Car ownership
@@ -208,7 +210,7 @@ still hold. They're the base for replays, spectating and late join.
 
 ## Input and controllers
 
-`GameData` registers all actions in code. Keyboard: WASD or arrows.
+`InputSetup` (input module) registers all actions in code at start-up. Keyboard: WASD or arrows.
 Gamepad: RT throttle, LT brake, left-stick steering (analog, with
 deadzones), A/X as digital throttle/brake for pads without triggers, Y
 camera, Back restart, Start menu. `LocalInput` passes analog input straight
@@ -227,7 +229,7 @@ every option adjustable with left/right.
 - Quick race: `godot --path . -- --single --laps 2 --ai 5`
 - Bots: add `--autodrive` (the AI drives your car), `--ready`, `--quit-after-race`
 - Screenshot: `--screenshot out.png --screenshot-at 20`
-- Export: include `data/*` in the export filter, since the JSON files aren't resources.
+- Export: the export filter includes `modules/*.json`, since the JSON files aren't resources.
 
 ## Naming and licensing
 
@@ -236,7 +238,7 @@ Tourer V8", "Featherweight S"). Each one's description says what kind of
 real car it's modelled on, and the specs are realistic. Tracks use real
 layouts with place names ("Spielberg GP Circuit"), not sponsor or
 commercial circuit names. Track data attribution is in
-`data/tracks/ATTRIBUTION.md`.
+`modules/tracks/data/ATTRIBUTION.md`.
 
 ## Extension points by feature
 
@@ -271,7 +273,7 @@ make AI drivers feel like people.
    - Track select, and time of day with a lighting tint.
    - Weather presets: dry, overcast, damp, wet, changing. Uses a
      deterministic `SimEnvironment` timeline, track temperature that follows
-     sun and cloud, and wet-tyre compounds (`data/tyres/wet.json`,
+     sun and cloud, and wet-tyre compounds (`modules/physics/data/wet.json`,
      `intermediate.json`).
    - Driver aids per player (TC/ABS on/off, auto/manual gears). Manual
      shifting via the `shift_up`/`shift_down` flags.

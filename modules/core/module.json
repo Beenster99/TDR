@@ -1,0 +1,18 @@
+{
+  "id": "core",
+  "name": "Core",
+  "version": "1.0.0",
+  "status": "active",
+  "summary": "Shared basics every module may use: the driver-intent contract (CarInput), JSON reading, the module registry, and the GameData autoload (content, command line, active race, scene paths).",
+  "depends": {},
+  "api": [
+    "CarInput",
+    "JsonData",
+    "ModuleRegistry"
+  ],
+  "internal": [],
+  "autoloads": [
+    "GameData"
+  ],
+  "notes": "Nothing game-specific. Changes here affect everyone, so keep them rare and additive."
+}

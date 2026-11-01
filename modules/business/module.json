@@ -1,0 +1,15 @@
+{
+  "id": "business",
+  "name": "Business",
+  "version": "0.1.0",
+  "status": "planned",
+  "summary": "Planned for wave 4: championships and seasons, prize money, car purchases and upgrades, team management.",
+  "depends": {
+    "core": "1",
+    "cars": "1",
+    "race": "1"
+  },
+  "api": [],
+  "internal": [],
+  "notes": "No code yet. It will read race results (the race_finished event) and change cars only through CarDefinition.with_overrides()."
+}

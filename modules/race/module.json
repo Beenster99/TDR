@@ -1,0 +1,21 @@
+{
+  "id": "race",
+  "name": "Race rules",
+  "version": "1.0.0",
+  "status": "active",
+  "summary": "The race itself: countdown, laps, sectors, positions, finish, car-to-car contacts, snapshots, race settings and entries (crews), and building a race from start data.",
+  "depends": {
+    "core": "1",
+    "cars": "1",
+    "tracks": "1",
+    "physics": "1"
+  },
+  "api": [
+    "RaceSim",
+    "RaceSettings",
+    "RaceEntry",
+    "RaceFactory"
+  ],
+  "internal": [],
+  "notes": "Pure data, no nodes, deterministic. Safety car, pit stops and fuel rules plug in here."
+}

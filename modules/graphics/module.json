@@ -1,0 +1,19 @@
+{
+  "id": "graphics",
+  "name": "Graphics",
+  "version": "1.0.0",
+  "status": "active",
+  "summary": "Drawing the world: the track (tarmac, kerbs, grass, barriers) and the cars.",
+  "depends": {
+    "core": "1",
+    "cars": "1",
+    "tracks": "1",
+    "physics": "1"
+  },
+  "api": [
+    "TrackView",
+    "CarView"
+  ],
+  "internal": [],
+  "notes": "Only reads state, never changes the race. Skid marks, smoke, lighting and better sprites go here."
+}

@@ -1,0 +1,21 @@
+{
+  "id": "physics",
+  "name": "Physics",
+  "version": "1.0.0",
+  "status": "active",
+  "summary": "How cars move: the vehicle model, tyre grip and temperatures, air and track temperature, weather hooks. Tyre compounds are JSON in data/.",
+  "depends": {
+    "core": "1",
+    "cars": "1",
+    "tracks": "1"
+  },
+  "api": [
+    "CarState",
+    "CarPhysics",
+    "TyreCompound",
+    "TyreCatalog",
+    "SimEnvironment"
+  ],
+  "internal": [],
+  "notes": "Pure data, no nodes, deterministic. Damage values are read here; wave 3 writes them."
+}

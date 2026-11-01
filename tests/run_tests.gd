@@ -8,6 +8,7 @@ var failures := 0
 
 func _init() -> void:
 	var t0 := Time.get_ticks_msec()
+	test_module_boundaries()
 	test_data_loads()
 	test_input_wire_format()
 	test_tyre_temperature_matters()
@@ -26,9 +27,103 @@ func check(cond: bool, msg: String) -> void:
 		printerr("  FAIL ", msg)
 
 
+## Modules (docs/MODULES.md): manifests are valid, and every module only
+## uses the public API of modules it declares in "depends".
+func test_module_boundaries() -> void:
+	print("modules")
+	var mods := ModuleRegistry.load_all()
+	check(mods.size() >= 12, "%d module manifests load" % mods.size())
+	var problems := ModuleRegistry.check(mods)
+	for p in problems:
+		printerr("       ", p)
+	check(problems.is_empty(), "dependencies exist, match versions and have no cycles")
+	# Which module owns each public name (class_name or autoload).
+	var owner := {}
+	var declared := {}
+	for id in mods:
+		for name in mods[id].get("api", []) + mods[id].get("autoloads", []):
+			owner[name] = id
+	var leaks: Array[String] = []
+	var sources := {}
+	for id in mods:
+		var files := _gd_files("res://modules/" + id)
+		for f in files:
+			var code := _strip_comments(FileAccess.get_file_as_string(f))
+			sources[f] = [id, code]
+			var m := RegEx.create_from_string("(?m)^class_name\\s+(\\w+)").search(code)
+			if m:
+				declared[m.get_string(1)] = [id, f]
+	for name in declared:
+		var home: String = declared[name][0]
+		if owner.get(name, "") != home and not name in mods[home].get("internal", []):
+			leaks.append("%s declares class %s, but its module.json lists it in neither api nor internal" % [declared[name][1], name])
+	var word := RegEx.create_from_string("\\b[A-Z][A-Za-z0-9_]*\\b")
+	for f in sources:
+		var id: String = sources[f][0]
+		var deps: Dictionary = mods[id].get("depends", {})
+		var seen := {}
+		for m in word.search_all(sources[f][1]):
+			var name := m.get_string()
+			if seen.has(name):
+				continue
+			seen[name] = true
+			var other: String = owner.get(name, "")
+			if other == "" and declared.has(name):
+				other = declared[name][0]
+			if other == "" or other == id:
+				continue
+			if not deps.has(other):
+				leaks.append("%s uses %s from module %s, which isn't in its depends" % [f, name, other])
+			elif name in mods[other].get("internal", []):
+				leaks.append("%s uses %s, which is internal to module %s" % [f, name, other])
+	for l in leaks:
+		printerr("       ", l)
+	check(leaks.is_empty(), "modules only use public API of modules they depend on")
+	var order := ModuleRegistry.ordered(mods)
+	print("       ", ", ".join(order.map(func(i): return "%s %s" % [i, mods[i]["version"]])))
+
+
+func _gd_files(dir: String) -> PackedStringArray:
+	var out := PackedStringArray()
+	for f in DirAccess.get_files_at(dir):
+		if f.ends_with(".gd"):
+			out.append(dir + "/" + f)
+	for d in DirAccess.get_directories_at(dir):
+		out.append_array(_gd_files(dir + "/" + d))
+	return out
+
+
+## Drops comments and string contents so only real code is scanned.
+func _strip_comments(code: String) -> String:
+	var out := PackedStringArray()
+	for line in code.split("\n"):
+		var kept := ""
+		var quote := ""
+		for ch in line:
+			if quote != "":
+				if ch == quote:
+					quote = ""
+				continue
+			if ch == "#":
+				break
+			if ch == "\"" or ch == "'":
+				quote = ch
+				continue
+			kept += ch
+		out.append(kept)
+	return "\n".join(out)
+
+
 func _data() -> Dictionary:
-	return {"cars": DataLoader.load_cars(), "tyres": DataLoader.load_tyres(),
-		"drivers": DataLoader.load_drivers(), "track": DataLoader.load_track("spielberg")}
+	return {"cars": CarCatalog.load_all(), "tyres": TyreCatalog.load_all(),
+		"drivers": DriverCatalog.load_all(), "track": TrackCatalog.load_track("spielberg")}
+
+
+## Plans and builds an AI-only race. Returns {sim, ai}.
+func _race(settings: RaceSettings, d: Dictionary) -> Dictionary:
+	var start := RaceFactory.plan(settings, [], d["cars"], d["drivers"])
+	var sim := RaceFactory.build_sim(start, d["cars"], d["tyres"], d["track"])
+	return {"sim": sim, "ai": AIDriver.for_all_ai(sim)}
 
 
 func test_data_loads() -> void:
@@ -81,7 +176,7 @@ func test_ai_race_completes() -> Dictionary:
 	settings.laps = 2
 	settings.ai_count = 8
 	settings.seed = 777
-	var race := RaceFactory.create(settings, [], d["cars"], d["tyres"], d["drivers"], d["track"])
+	var race := _race(settings, d)
 	var sim: RaceSim = race["sim"]
 	var ai: Dictionary = race["ai"]
 	var recorded: Array = []
@@ -138,7 +233,7 @@ func _laptime(t: float) -> String:
 
 func _fresh_sim(settings: RaceSettings) -> RaceSim:
 	var d := _data()
-	return RaceFactory.create(settings, [], d["cars"], d["tyres"], d["drivers"], d["track"])["sim"]
+	return _race(settings, d)["sim"]
 
 
 ## Server-authoritative core property: same settings + same inputs => same state.
