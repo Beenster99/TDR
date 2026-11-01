@@ -3,13 +3,14 @@
 # clients that drive with the AI as "human" input. Passes when both clients
 # receive the server's results.
 #   GODOT=/path/to/godot tests/net_loopback.sh
+#   SERVER_ARGS="--weather heavy_rain --time 20 --clock-speed 60" ... (race options for the host)
 set -u
 GODOT="${GODOT:-godot}"
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PORT="${PORT:-24791}"
 LOG="$(mktemp -d)"
 COMMON=(--headless --path "$DIR")
-"$GODOT" "${COMMON[@]}" -- --server --port "$PORT" --laps 1 --ai 2 --min-players 2 --quit-after-race >"$LOG/server.log" 2>&1 &
+"$GODOT" "${COMMON[@]}" -- --server --port "$PORT" --laps 1 --ai 2 --min-players 2 --quit-after-race ${SERVER_ARGS:-} >"$LOG/server.log" 2>&1 &
 S=$!
 sleep 2
 "$GODOT" "${COMMON[@]}" -- --join 127.0.0.1 --port "$PORT" --name Alice --car v8_mid_berlinetta --autodrive --ready --quit-after-race >"$LOG/alice.log" 2>&1 &

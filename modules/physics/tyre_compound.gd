@@ -19,7 +19,10 @@ var heat_from_slip: float = 0.2      ## degC/s per kW of slip power
 var heat_from_rolling: float = 0.012 ## degC/s per (m/s * load ratio)
 var cool_to_air: float = 0.006
 var cool_to_track: float = 0.004
-var wet_grip_factor: float = 0.55    ## used by weather (wave 2)
+var cool_to_water: float = 0.03      ## extra cooling per unit of track wetness
+var wet_grip_factor: float = 0.55    ## share of grip left on a fully wet track
+var aquaplaning: float = 0.3         ## grip lost at speed on standing water
+var kind: String = "dry"             ## "dry" | "intermediate" | "wet"
 var wear_rate: float = 0.0           ## used by tyre wear (wave 3/4)
 
 
@@ -40,7 +43,10 @@ static func from_dict(d: Dictionary) -> TyreCompound:
 	t.heat_from_rolling = d.get("heat_from_rolling", t.heat_from_rolling)
 	t.cool_to_air = d.get("cool_to_air", t.cool_to_air)
 	t.cool_to_track = d.get("cool_to_track", t.cool_to_track)
+	t.cool_to_water = d.get("cool_to_water", t.cool_to_water)
 	t.wet_grip_factor = d.get("wet_grip_factor", t.wet_grip_factor)
+	t.aquaplaning = d.get("aquaplaning", t.aquaplaning)
+	t.kind = d.get("kind", t.kind)
 	t.wear_rate = d.get("wear_rate", t.wear_rate)
 	# Simplified Pacejka: F = sin(C * atan(B * alpha)) peaks where C*atan(B*a) = PI/2
 	t.shape_b = tan(PI / (2.0 * t.shape_c)) / t.peak_slip_angle

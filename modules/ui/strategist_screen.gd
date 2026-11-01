@@ -7,7 +7,7 @@ extends Control
 ## other teams' radio and strategy calls.
 ##
 ## Controller first: D-pad up/down picks a car, left/right filters the feed,
-## B (or Tab / Esc) closes. Drawn immediate-mode at 1600x900 and scaled by
+## B (or P / Esc) closes. Drawn immediate-mode at 1600x900 and scaled by
 ## the window's stretch, so it stays sharp at 4K.
 
 const FILTERS := [["All", []], ["Radio", ["radio"]], ["Strategy", ["strategy"]], ["Pit", ["pit"]],
@@ -164,7 +164,7 @@ func _draw() -> void:
 	_draw_car(Rect2(rx, 58 + radar_h + 10, rw, car_h), sim, tel)
 	var fy := 58 + radar_h + 10 + car_h + 10
 	_draw_feed(Rect2(rx, fy, rw, vp.y - fy - 34), tel)
-	_text(Vector2(16, vp.y - 12), "D-pad ↑↓ choose car    ←→ filter feed    B / Tab close    The race keeps running", 13, DIM)
+	_text(Vector2(16, vp.y - 12), "D-pad ↑↓ choose car    ←→ filter feed    B / P close    The race keeps running", 13, DIM)
 
 
 func _draw_header(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:

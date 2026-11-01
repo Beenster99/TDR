@@ -18,6 +18,10 @@ var drivers: Array = []                 ## AI drivers (ai module)
 ## Session the race scene should run (offline, server or client). A
 ## RaceSession from the multiplayer module; untyped so core doesn't depend on it.
 var active_session = null
+## This player's own choices, kept between races.
+##   driving_help: 2 = full (traction control, ABS, stability), 1 = TC + ABS, 0 = off
+##   zoom: camera zoom level the player last used (0 = close, 1 = whole track)
+var prefs: Dictionary = {"driving_help": 2, "zoom": 0.15}
 ## Parsed command line (after "--"), e.g. --server --port 7777 --autodrive
 var args: Dictionary = {}
 

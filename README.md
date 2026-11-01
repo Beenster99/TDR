@@ -46,6 +46,12 @@ address into the join box and pick **Connect**. The game uses UDP port
 | Camera rotate | C | Y |
 | Restart (single race) | R | Back |
 | Menu | Esc | Start |
+| Zoom in / out (hold) | E / Q, + / -, mouse wheel | LB / RB, right stick up / down, D-pad up / down |
+| Whole track and back | Z or Tab | Click the right stick |
+
+**Driving help** (main menu): Full adds a stability assist that catches
+slides and counter-steers for you, on top of traction control and ABS. Some
+is traction control and ABS only. Off is the raw car.
 
 Menus work fully with a controller: D-pad or stick to move, A to select, B
 to go back, left/right to change a value.
@@ -56,11 +62,16 @@ to go back, left/right to change a value.
 godot --headless --path . -- --server --port 24690 --laps 5 --ai 6 --min-players 2
 ```
 
+Race options work here and with `--single` / `--host`: `--weather heavy_rain`
+(`dry`, `overcast`, `light_rain`, `heavy_rain`, `random`), `--weather-changes`,
+`--time 20` (start hour), `--clock-speed 60` (60x clock), `--grid reversed`.
+
 ## Tests
 
 ```
 godot --headless --path . --script res://tests/run_tests.gd   # module boundaries, sim, physics, AI race, determinism
 GODOT=godot tests/net_loopback.sh                             # server + 2 clients over localhost
+godot --headless --path . --script res://tests/handling_probe.gd  # spins in beginner manoeuvres (--raw: no driving help)
 ```
 
 The code is split into modules (core, cars, tracks, physics, race, ai, input,

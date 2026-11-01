@@ -43,8 +43,8 @@ modules/
   race/          race_sim.gd (state machine, laps, positions, contacts, snapshots),
                  race_settings.gd, race_entry.gd (competitor, crew, timing),
                  race_factory.gd (plan() on the host + build_sim() everywhere)
-  ai/            ai_driver.gd (placeholder AI producing CarInput; for_car/for_all_ai),
-                 driver_catalog.gd, data/drivers.json
+  ai/            ai_driver.gd (AI producing CarInput; for_car/for_all_ai), driver_traits.gd,
+                 driver_catalog.gd, data/drivers.json (see docs/AI.md)
   input/         local_input.gd (keyboard + gamepad -> CarInput), input_setup.gd
   graphics/      track_view.gd, car_view.gd
   multiplayer/   net.gd (autoload Net: ENet lobby + RPC transport), net_timeline.gd,
@@ -100,6 +100,23 @@ A 2D "bicycle" model with per-tyre temperatures:
   lost to the air (more at speed, relative to `ambient_c`) and to the track
   surface (relative to `track_c`). Tyres start between air and track
   temperature. Grip falls off on both sides of `optimal_temp_c`.
+- **Weather and time of day (wave 2):** `SimEnvironment` (physics). The
+  host picks a start time, a clock speed (real time up to 60x, so a short
+  race can run from afternoon into night), a weather (dry, overcast, light
+  rain, heavy rain or random) and whether it can change. `create()` builds
+  everything from the track's `default_environment` / `climate`, those
+  options and the race seed, so every machine has the same weather
+  timeline. Each tick `update()` moves the clock; air temperature follows
+  the day/night curve, cloud and rain; track temperature follows the sun
+  (less under cloud, much less when wet). Rain fills the track with water
+  (`wetness`); sun and warmth dry it; cars clear a dry line along the
+  racing line (`dry_line`) and lay rubber in the dry (`rubber`).
+  `grip_factor(compound, offset_from_raceline, speed)` turns that into
+  grip: each compound keeps `wet_grip_factor` of its grip on a fully wet
+  track and loses `aquaplaning` at speed on standing water. Compounds:
+  slicks / semi-slicks (dry), `intermediate`, `full_wet`. Water also cools
+  the tyres. Only the changing state (`to_dict()`) travels in the host's
+  race state; clients rebuild the timeline themselves.
 - **Damage hooks:** `damage_engine`, `damage_aero` and `damage_suspension`
   (0..1) are already read by the physics (power, downforce/drag, rear grip).
   Wave 3 only has to write them.
@@ -253,7 +270,7 @@ created by `RaceSession` and fed after each `sim.step()`.
   forecast are worked out on each client from data it already receives.
 - **Saved:** at the end of every race the scene writes the whole log to
   `user://race_data/<date>_<track>.json`.
-- **Pit wall screen (`StrategistScreen`, ui):** Tab or D-pad up during a
+- **Pit wall screen (`StrategistScreen`, ui):** P or D-pad right during a
   race. Timing tower, radar and forecast, selected car with pit window and
   lap history, and the feed with filters. D-pad picks cars and filters, B
   closes. The race keeps running.
@@ -277,6 +294,7 @@ every option adjustable with left/right.
 - Network test: `GODOT=godot tests/net_loopback.sh`
 - Dedicated server: `godot --headless --path . -- --server --port 24690 --laps 5 --ai 6 --min-players 2`
 - Quick race: `godot --path . -- --single --laps 2 --ai 5`
+- Race options (single, host or server): `--weather heavy_rain` (`dry`, `overcast`, `light_rain`, `heavy_rain`, `random`), `--weather-changes`, `--time 20`, `--clock-speed 60`, `--grid reversed` (`standard`, `random`), `--tyres wet` (`auto`, `dry`, `intermediate`)
 - Bots: add `--autodrive` (the AI drives your car), `--ready`, `--quit-after-race`
 - Screenshot: `--screenshot out.png --screenshot-at 20`
 - Export: the export filter includes `modules/*.json`, since the JSON files aren't resources.
@@ -294,7 +312,7 @@ attribution is in `modules/tracks/data/ATTRIBUTION.md`.
 
 | Feature | Where it plugs in |
 |---|---|
-| Weather / time of day | `SimEnvironment.update(dt)` (deterministic timeline from seed), `wetness` already scales grip via `TyreCompound.wet_grip_factor`; settings carry `time_of_day_h`; view tints by time of day |
+| Weather / time of day | Done in wave 2: `SimEnvironment` (physics), settings in `RaceSettings.environment`, `WeatherView` (graphics). Pit stops for tyre changes plug into `RaceEntry.setup["tyre_compound"]` |
 | Damage + repairs | write `CarState.damage_*` from `collision`/`barrier_impact` events (impulse); repairs reset them during a pit stop |
 | Safety car | consume `collision` events → `RaceSim` phase `SAFETY_CAR`; a scripted SC car follows `AIDriver`-style line; overtaking rule via positions |
 | Fuel + pit stops | `RaceSettings.fuel_enabled/fuel_rate/mandatory_pit_stops`; `track.pit_lane` geometry; `CarInput.pit_request`; RaceEntry gains `pit_stops_done`; AI strategy picks a lap within the pit window |

@@ -50,9 +50,12 @@ func _init(p_settings: RaceSettings, p_track: TrackData, p_entries: Array[RaceEn
 		car_defs: Dictionary, tyre_defs: Dictionary) -> void:
 	settings = p_settings
 	track = p_track
-	var env_dict := track.default_environment.duplicate()
-	env_dict.merge(settings.environment, true)
-	env = SimEnvironment.from_dict(env_dict)
+	var track_env := track.default_environment.duplicate()
+	var climate = track.get("climate")  # tracks 1.1+ keep it beside default_environment
+	if climate is Dictionary and not climate.is_empty():
+		track_env["climate"] = climate
+	env = SimEnvironment.create(track_env, settings.environment, settings.seed)
+	env.bind_track(track)
 	entries = p_entries
 	for i in entries.size():
 		var e := entries[i]
@@ -104,6 +107,11 @@ func step(inputs: Array) -> void:
 		_posted.clear()
 	tick += 1
 	phase_time += TICK_DT
+	var moving := 0
+	for c in cars:
+		if c.vel.length_squared() > 100.0:
+			moving += 1
+	env.traffic = moving
 	env.update(TICK_DT)
 
 	if phase == Phase.COUNTDOWN and follower:
@@ -392,7 +400,7 @@ func apply_snapshot(snap: Dictionary) -> void:
 	race_time = snap["race_time"]
 	leader_finish_time = snap["leader_finish_time"]
 	finish_order.assign(snap["finish_order"])
-	env = SimEnvironment.from_dict(snap["env"])
+	env.apply_dict(snap["env"])
 	for i in cars.size():
 		cars[i].deserialize(snap["cars"][i])
 		entries[i].from_dict(snap["entries"][i])
@@ -416,7 +424,7 @@ func apply_race_state(st: Dictionary) -> void:
 	race_time = st["race_time"]
 	leader_finish_time = st["leader_finish_time"]
 	finish_order.assign(st["finish_order"])
-	env = SimEnvironment.from_dict(st["env"])
+	env.apply_dict(st["env"])
 	for i in mini(entries.size(), st["entries"].size()):
 		entries[i].from_dict(st["entries"][i])
 	_update_positions()

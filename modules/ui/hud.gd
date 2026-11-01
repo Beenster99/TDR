@@ -87,7 +87,7 @@ func _draw() -> void:
 	# --- Minimap
 	_draw_minimap(Vector2(vp.x - 230, 50 + rows * 22 + 10))
 
-	_text(Vector2(0, vp.y - 14), "Tab / D-pad ↑  Pit wall", 13, Color(1, 1, 1, 0.45), HORIZONTAL_ALIGNMENT_CENTER, vp.x)
+	_text(Vector2(0, vp.y - 14), "P / D-pad →  Pit wall", 13, Color(1, 1, 1, 0.45), HORIZONTAL_ALIGNMENT_CENTER, vp.x)
 	if me < 0:
 		_text(Vector2(20, 40), "SPECTATING", 22)
 		return
@@ -118,10 +118,10 @@ func _draw() -> void:
 		_text(br + Vector2(120, 110), "OFF TRACK", 14, Color(1, 0.5, 0.3))
 
 	# --- Tyres + conditions (bottom left)
-	var bl := Vector2(10, vp.y - 170)
-	_panel(Rect2(bl, Vector2(260, 160)))
-	_text(bl + Vector2(14, 24), "TYRES", 14, Color(1, 1, 1, 0.7))
+	var bl := Vector2(10, vp.y - 196)
+	_panel(Rect2(bl, Vector2(300, 186)))
 	var tc := sim.compounds[me]
+	_text(bl + Vector2(14, 24), "TYRES  " + tc.display_name.to_upper(), 14, Color(1, 1, 1, 0.7))
 	var pos := [Vector2(20, 36), Vector2(80, 36), Vector2(20, 92), Vector2(80, 92)]
 	for k in 4:
 		var t := c.tyre_temp[k]
@@ -129,15 +129,40 @@ func _draw() -> void:
 		draw_rect(r, _temp_colour(t, tc))
 		_text(r.position + Vector2(0, 30), "%d°" % int(t), 16, Color.BLACK, HORIZONTAL_ALIGNMENT_CENTER, 48)
 	var env := sim.env
-	_text(bl + Vector2(146, 50), "Air %d°C" % int(env.ambient_c), 15)
-	_text(bl + Vector2(146, 72), "Track %d°C" % int(env.track_c), 15)
-	_text(bl + Vector2(146, 94), "%02d:00 %s" % [int(env.time_of_day_h), env.weather], 15)
-	if sim.settings.fuel_enabled:
-		_text(bl + Vector2(146, 116), "Fuel %.1f L" % c.fuel_l, 15)
+	var h := env.time_of_day_h
+	_text(bl + Vector2(146, 50), "%02d:%02d  %s" % [int(h), int(fmod(h, 1.0) * 60.0), SimEnvironment.weather_name(env.weather)], 15)
+	_text(bl + Vector2(146, 72), "Air %d°  Track %d°" % [roundi(env.ambient_c), roundi(env.track_c)], 15)
+	_text(bl + Vector2(146, 94), _surface_text(env), 15, Color(0.6, 0.85, 1) if env.wetness > 0.05 else Color.WHITE)
+	var forecast := _forecast_text(env)
+	if forecast != "":
+		_text(bl + Vector2(146, 116), forecast, 14, Color(1, 0.85, 0.5))
 	var avg := 0.0
 	for k in 4:
 		avg += tc.temp_grip_factor(c.tyre_temp[k])
-	_text(bl + Vector2(146, 138), "Grip %d%%" % int(avg / 4.0 * 100.0), 15, Color(0.6, 1, 0.6))
+	var off_line := c.lateral_offset - env.raceline_offset(c.track_idx)
+	var grip := avg / 4.0 * env.grip_factor(tc, off_line, c.speed())
+	_text(bl + Vector2(146, 138), "Grip %d%%" % int(grip * 100.0), 15, Color(0.6, 1, 0.6) if grip > 0.85 else Color(1, 0.7, 0.4))
+	if sim.settings.fuel_enabled:
+		_text(bl + Vector2(146, 160), "Fuel %.1f L" % c.fuel_l, 15)
+
+
+static func _surface_text(env: SimEnvironment) -> String:
+	if env.wetness < 0.05:
+		return "Track dry"
+	var s := "Track %s %d%%" % ["soaked" if env.wetness > 0.75 else ("wet" if env.wetness > 0.3 else "damp"), int(env.wetness * 100.0)]
+	if env.dry_line > 0.35 and env.rain < 0.1:
+		s += ", dry line"
+	return s
+
+
+static func _forecast_text(env: SimEnvironment) -> String:
+	var t := env.next_change_in()
+	if t < 0.0 or t > 300.0:
+		return ""
+	var nxt := env.next_weather()
+	if nxt == env.weather:
+		return ""
+	return "%s in %d:%02d" % [SimEnvironment.weather_name(nxt), int(t) / 60, int(t) % 60]
 
 
 func _temp_colour(t: float, tc: TyreCompound) -> Color:

@@ -16,23 +16,24 @@ to bottom (top layer).
 
 | Module | Version | Owns | Public API | Uses |
 |---|---|---|---|---|
-| **core** | 1.0.0 | Shared basics: the driver-intent contract, JSON reading, the module registry, shared game state | `CarInput`, `JsonData`, `ModuleRegistry`, autoload `GameData` | nothing |
+| **core** | 1.1.0 | Shared basics: the driver-intent contract, JSON reading, the module registry, shared game state | `CarInput`, `JsonData`, `ModuleRegistry`, autoload `GameData` | nothing |
 | **cars** | 1.1.0 | What each car is (engine, gears, mass, aero, brakes, aids, tyres) and its class (GT3, Road); car JSON in `data/` | `CarDefinition`, `CarCatalog` | core |
 | **tracks** | 1.1.0 | Circuit layouts, surfaces, sectors, grid slots, pit lanes; track JSON in `data/`; track builder in `tools/` | `TrackData` (incl. `TrackData.Surface`), `TrackCatalog` | core |
-| **input** | 1.1.0 | Keyboard and controller bindings (incl. the pit wall button), turning them into `CarInput` | `LocalInput`, `InputSetup` | core |
-| **physics** | 1.0.0 | How cars move: vehicle model, tyre grip and temperatures, air and track temperature, weather hooks; tyre JSON in `data/` | `CarState`, `CarPhysics`, `TyreCompound`, `TyreCatalog`, `SimEnvironment` | core, cars, tracks |
-| **race** | 1.2.0 | Race rules: countdown, laps, sectors, positions, finish, contacts, snapshots, settings, entries and crews, building a race from start data; `post_event` for AI radio/strategy calls | `RaceSim`, `RaceSettings`, `RaceEntry`, `RaceFactory` | core, cars, tracks, physics |
-| **ai** | 1.0.0 | Computer drivers; AI names and traits in `data/` | `AIDriver`, `DriverCatalog` | core, cars, tracks, physics, race |
-| **graphics** | 1.0.1 | Drawing the track and the cars | `TrackView`, `CarView` | core, cars, tracks, physics |
-| **telemetry** | 1.0.0 | Race data for the pit wall: lap and sector log, last-5-lap averages, gaps and intervals from timing loops, tyre state, pit-window analysis (pit lane loss per track), weather radar and forecast, feed of radio/strategy/timing calls; host syncs gaps and feed to clients; full race log export | `RaceTelemetry`, `CarTelemetry`, `PitWindow`, `WeatherForecast`, `RaceFeed` | core, tracks, physics, race |
-| **multiplayer** | 1.1.0 | Online play the Torque Shed way (lobby, ENet, UPnP, streaming cars) and running a race offline / as host / as client | `RaceSession`, `NetTimeline`, autoload `Net` | core, physics, race, ai, telemetry |
-| **ui** | 1.1.0 | Main menu, lobby, race settings, in-race HUD, the pit wall (strategist screen), controller-friendly widgets | `RaceHud`, `Stepper`, `StrategistScreen`; scene `main_menu.tscn` | core, cars, tracks, physics, race, telemetry, multiplayer |
+| **input** | 1.2.0 | Keyboard and controller bindings (incl. zoom and the pit wall button), turning them into `CarInput` | `LocalInput`, `InputSetup` | core |
+| **physics** | 1.2.0 | How cars move: vehicle model, tyre grip and temperatures (dry, intermediate and wet compounds); weather and time of day (clock, air and track temperature, rain, standing water, drying line, rubber); tyre JSON in `data/` | `CarState`, `CarPhysics`, `TyreCompound`, `TyreCatalog`, `SimEnvironment` | core, cars, tracks |
+| **race** | 1.4.0 | Race rules: countdown, laps, sectors, positions, finish, contacts, snapshots, settings, entries and crews, building a race from start data; `post_event` for AI radio/strategy calls | `RaceSim`, `RaceSettings`, `RaceEntry`, `RaceFactory` | core, cars, tracks, physics |
+| **ai** | 1.1.0 | Computer drivers with personalities (see docs/AI.md); 50 named drivers with teams and traits in `data/` | `AIDriver`, `DriverCatalog`, `DriverTraits` | core, cars, tracks, physics, race |
+| **graphics** | 1.1.1 | Drawing the track and the cars, daylight, rain, spray and headlights | `TrackView`, `CarView`, `WeatherView` | core, cars, tracks, physics |
+| **audio** | 1.0.0 | Every sound, made in code: engines following revs and throttle, tyre squeal, grass rumble, crashes, start lights, menu clicks | `RaceAudio`, `SoundBank`, autoload `Sound` | core, cars, physics |
+| **telemetry** | 1.0.0 | Race data for the pit wall: lap and sector log, last-5-lap averages, gaps and intervals from timing loops, tyre state, pit-window analysis (pit lane loss per track), weather radar and forecast, feed of radio/strategy/race control/timing calls; host syncs gaps and feed to clients; full race log export | `RaceTelemetry`, `CarTelemetry`, `PitWindow`, `WeatherForecast`, `RaceFeed` | core, tracks, physics, race |
+| **multiplayer** | 1.2.0 | Online play the Torque Shed way (lobby, ENet, UPnP, streaming cars) and running a race offline / as host / as client | `RaceSession`, `NetTimeline`, autoload `Net` | core, physics, race, ai, telemetry |
+| **ui** | 1.3.0 | Main menu, lobby, race settings, in-race HUD, the pit wall (strategist screen), controller-friendly widgets | `RaceHud`, `Stepper`, `StrategistScreen`; scene `main_menu.tscn` | core, cars, tracks, physics, race, telemetry, multiplayer, audio |
 | **business** | 0.1.0 (planned) | Wave 4: championships, seasons, prize money, buying and upgrading cars | none yet | core, cars, race |
-| **game** | 1.1.0 | Puts it all together: start-up (loads content, registers controls) and the race scene | autoload `Game`; scene `race.tscn` | everything except business |
+| **game** | 1.2.0 | Puts it all together: start-up (loads content, registers controls) and the race scene | autoload `Game`; scene `race.tscn` | everything except business |
 
 Start-up order: `GameData` (core) parses the command line, `Game` (game)
 registers controls and loads all content into `GameData`, `Net`
-(multiplayer) gets ready, then the main menu (ui) opens.
+(multiplayer) gets ready, `Sound` (audio) sets up the audio buses, then the main menu (ui) opens.
 
 ## The rules
 
@@ -66,9 +67,10 @@ registers controls and loads all content into `GameData`, `Net`
 
 ## Adding things
 
-- **A car, track, tyre or AI driver:** add a JSON file to that module's
+- **A car, track or tyre:** add a JSON file to that module's
   `data/` folder. No code, no version bump needed beyond a patch. Tracks
   are built rather than hand-written: see `docs/ADDING_CONTENT.md`.
+- **An AI driver:** add an entry to `modules/ai/data/drivers.json` (see `docs/AI.md`).
 - **A new class:** put it in the right module, give it a `class_name`, and
   add it to `api` or `internal` in `module.json`. Adding to `api` is a minor
   version bump.

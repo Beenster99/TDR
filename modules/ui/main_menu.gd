@@ -9,6 +9,7 @@ extends Control
 ##   --single [--laps 1] [--ai 3] [--car id]                         skip to a race
 ##   --track id  --class GT3|Road|multi|open                         pick track / car class
 ##   --autodrive --ready --quit-after-race --time-scale 3            test bots
+##   race options: --weather heavy_rain --weather-changes --time 20 --clock-speed 60 --grid reversed
 
 
 var pages := {}
@@ -21,15 +22,19 @@ var class_stepper: Stepper
 var track_stepper: Stepper
 var laps_stepper: Stepper
 var ai_stepper: Stepper
-var ambient_stepper: Stepper
-var track_temp_stepper: Stepper
+var tyre_stepper: Stepper
 var tod_stepper: Stepper
+var clock_stepper: Stepper
+var weather_stepper: Stepper
+var weather_change_stepper: Stepper
+var grid_stepper: Stepper
+var difficulty_stepper: Stepper
 var lobby_list: VBoxContainer
 var lobby_title: Label
 var join_info_label: Label
 var ready_button: Button
 var start_button: Button
-var lobby_settings_box: VBoxContainer
+var lobby_settings_box: GridContainer
 var _settings_steppers: Array[Stepper] = []
 
 
@@ -72,6 +77,17 @@ func _handle_cmdline() -> void:
 		var cls := str(GameData.arg("class"))
 		class_stepper.set_value("" if cls == "open" else cls)
 		_rebuild_car_options()
+	tod_stepper.set_value(int(GameData.arg("time", tod_stepper.value)))
+	if GameData.arg("clock-speed"):
+		clock_stepper.set_value(int(GameData.arg("clock-speed")))
+	if GameData.arg("weather"):
+		weather_stepper.set_value(str(GameData.arg("weather")))
+	if GameData.arg("weather-changes"):
+		weather_change_stepper.set_value(true)
+	if GameData.arg("grid"):
+		grid_stepper.set_value(str(GameData.arg("grid")))
+	if GameData.arg("tyres"):
+		tyre_stepper.set_value(str(GameData.arg("tyres")))
 	if GameData.arg("car") and GameData.cars.has(GameData.arg("car")):
 		if not GameData.arg("class"):
 			class_stepper.set_value(RaceSettings.CLASS_MULTI)
@@ -164,6 +180,10 @@ func _build_ui() -> void:
 	car_stepper.value_changed.connect(func(v): if Net.is_online(): Net.update_me({"car_id": v}))
 	root.add_child(car_stepper)
 	_rebuild_car_options()
+	var help_stepper := Stepper.choice("Driving help", [[2, "Full (stability, traction, ABS)"],
+		[1, "Some (traction, ABS)"], [0, "Off"]], GameData.prefs["driving_help"])
+	help_stepper.value_changed.connect(func(v): GameData.prefs["driving_help"] = v)
+	root.add_child(help_stepper)
 	var track_opts := []
 	for t in GameData.tracks:
 		track_opts.append([t["id"], "%s  (%.1f km, %s)" % [t["name"], t["length_m"] / 1000.0, t["location"]]])
@@ -171,6 +191,10 @@ func _build_ui() -> void:
 	track_stepper = Stepper.choice("Track", track_opts, default_track)
 	track_stepper.value_changed.connect(func(_v): _push_settings())
 	root.add_child(track_stepper)
+	tyre_stepper = Stepper.choice("Tyres", [["auto", "Auto (suit the weather)"], ["dry", "Dry"],
+		["intermediate", "Intermediate"], ["wet", "Full wet"]], "auto")
+	tyre_stepper.value_changed.connect(func(v): if Net.is_online(): Net.update_me({"tyre": v}))
+	root.add_child(tyre_stepper)
 
 	# Main page
 	var main := _page(root, "main")
@@ -181,14 +205,24 @@ func _build_ui() -> void:
 
 	# Race settings (single player page and host lobby share the values)
 	laps_stepper = Stepper.numeric("Laps", 1, 50, 1, 3)
-	ai_stepper = Stepper.numeric("AI drivers", 0, 15, 1, 5)
-	ambient_stepper = Stepper.numeric("Air temp", -5, 45, 1, 21, " °C")
-	track_temp_stepper = Stepper.numeric("Track temp", 0, 65, 1, 33, " °C")
-	tod_stepper = Stepper.numeric("Time of day", 6, 21, 1, 14, ":00")
-	_settings_steppers = [laps_stepper, ai_stepper, ambient_stepper, track_temp_stepper, tod_stepper]
+	ai_stepper = Stepper.numeric("AI drivers", 0, 24, 1, 5)
+	difficulty_stepper = Stepper.choice("AI difficulty", [[0.25, "Rookie"], [0.5, "Amateur"], [0.75, "Pro"],
+		[0.9, "Expert"], [1.0, "Alien"]], 0.75)
+	tod_stepper = Stepper.numeric("Start time", 0, 23, 1, 14, ":00")
+	clock_stepper = Stepper.choice("Clock speed", [[1, "Real time"], [2, "2x"], [5, "5x"], [10, "10x"],
+		[30, "30x"], [60, "60x (1 min = 1 h)"], [0, "Frozen"]], 1)
+	var weathers := []
+	for w in SimEnvironment.WEATHERS + ["random"]:
+		weathers.append([w, SimEnvironment.weather_name(w)])
+	weather_stepper = Stepper.choice("Weather", weathers, "dry")
+	weather_change_stepper = Stepper.choice("Weather changes", [[false, "No, stays the same"], [true, "Yes, can change"]], false)
+	grid_stepper = Stepper.choice("Grid order", [["standard", "AI ahead, players behind"], ["random", "Random"],
+		["reversed", "Reversed (fastest at back)"]], "standard")
+	_settings_steppers = [laps_stepper, ai_stepper, difficulty_stepper, tod_stepper, clock_stepper, weather_stepper,
+		weather_change_stepper, grid_stepper]
 
 	var single := _page(root, "single")
-	var single_settings := VBoxContainer.new()
+	var single_settings := _settings_grid()
 	single.add_child(single_settings)
 	_button(single, "Start race", _on_single)
 	_button(single, "Back", func(): _show("main"))
@@ -213,7 +247,7 @@ func _build_ui() -> void:
 	join_info_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	join_info_label.custom_minimum_size = Vector2(420, 0)
 	lobby.add_child(join_info_label)
-	lobby_settings_box = VBoxContainer.new()
+	lobby_settings_box = _settings_grid()
 	lobby.add_child(lobby_settings_box)
 	ready_button = _button(lobby, "Ready", func(): Net.update_me({"ready": not _my_ready()}))
 	start_button = _button(lobby, "Start race", _on_start_online)
@@ -227,10 +261,20 @@ func _build_ui() -> void:
 	status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	root.add_child(status_label)
 	var help := Label.new()
-	help.text = "Drive: W/S/A/D or arrows  ·  Pad: RT throttle, LT brake, left stick steer  ·  C/Y camera  ·  R/Back restart  ·  Esc/Start menu"
+	help.text = "Drive: W/S/A/D or arrows  ·  Pad: RT throttle, LT brake, left stick steer\nZoom (hold): Q/E or mouse wheel, Z whole track  ·  Pad: LB/RB or right stick, R3 whole track  ·  C/Y camera  ·  R/Back restart  ·  Esc/Start menu"
+	help.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	help.modulate = Color(1, 1, 1, 0.45)
 	help.add_theme_font_size_override("font_size", 13)
 	root.add_child(help)
+
+
+## Race settings sit in two columns so the page fits on screen; D-pad moves between them.
+func _settings_grid() -> GridContainer:
+	var g := GridContainer.new()
+	g.columns = 2
+	g.add_theme_constant_override("h_separation", 12)
+	g.add_theme_constant_override("v_separation", 4)
+	return g
 
 
 func _page(parent: Node, id: String) -> VBoxContainer:
@@ -251,6 +295,7 @@ func _button(parent: Node, text: String, cb: Callable) -> Button:
 
 
 func _show(id: String) -> void:
+	Sound.wire_buttons(self)
 	current_page = id
 	if id != "lobby":  # host-only settings are editable again off-line
 		class_stepper.disabled = false
@@ -315,8 +360,10 @@ func _settings_from_ui() -> RaceSettings:
 	s.car_class = class_stepper.value
 	s.laps = int(laps_stepper.value)
 	s.ai_count = int(ai_stepper.value)
-	s.environment = {"ambient_c": float(ambient_stepper.value), "track_c": float(track_temp_stepper.value),
-		"time_of_day_h": float(tod_stepper.value)}
+	s.ai_difficulty = float(difficulty_stepper.value)
+	s.environment = {"time_of_day_h": float(tod_stepper.value), "time_scale": float(clock_stepper.value),
+		"weather": str(weather_stepper.value), "weather_changes": bool(weather_change_stepper.value)}
+	s.grid_order = str(grid_stepper.value)
 	return s
 
 
@@ -325,7 +372,7 @@ func _settings_from_ui() -> RaceSettings:
 func _on_single() -> void:
 	var s := _settings_from_ui()
 	s.seed = randi()
-	var humans := [{"name": name_edit.text, "car_id": car_stepper.value,
+	var humans := [{"name": name_edit.text, "car_id": car_stepper.value, "tyre": tyre_stepper.value,
 		"crew": [{"peer_id": 0, "name": name_edit.text, "role": RaceEntry.ROLE_DRIVER}]}]
 	var start := RaceFactory.plan(s, humans, GameData.cars, GameData.drivers)
 	GameData.active_session = RaceSession.create(RaceSession.Mode.OFFLINE, start, 0)
@@ -338,7 +385,7 @@ func _on_host() -> void:
 	if err != OK:
 		_status("Could not host on port %d (error %d)." % [port, err])
 		return
-	Net.update_me({"car_id": car_stepper.value})
+	Net.update_me({"car_id": car_stepper.value, "tyre": tyre_stepper.value})
 	Net.set_settings(_settings_from_ui())
 	_show("lobby")
 
@@ -386,11 +433,19 @@ func _refresh_lobby() -> void:
 		var my_car: String = Net.players[me]["car_id"]
 		if my_car != car_stepper.value:
 			car_stepper.set_value(my_car)
+		var my_tyre: String = Net.players[me].get("tyre", "auto")
+		if my_tyre != tyre_stepper.value:
+			if my_tyre == "auto" and tyre_stepper.value != "auto":
+				Net.update_me({"tyre": tyre_stepper.value})  # just joined: send my choice
+			else:
+				tyre_stepper.set_value(my_tyre)
 	if GameData.arg("ready") and Net.players.has(me) and not _my_ready():
 		Net.update_me({"ready": true})
-	lobby_title.text = ("Hosting" if Net.is_server() else "Lobby") + "  ·  %d player(s)  ·  %s, %d laps, %d AI" % [
+	var env_s := Net.settings.environment
+	lobby_title.text = ("Hosting" if Net.is_server() else "Lobby") + "  ·  %d player(s)  ·  %s, %d laps, %d AI  ·  %s, %02d:00" % [
 		Net.players.size(), _track_info(Net.settings.track_id).get("short_name", Net.settings.track_id),
-		Net.settings.laps, Net.settings.ai_count]
+		Net.settings.laps, Net.settings.ai_count,
+		SimEnvironment.weather_name(env_s.get("weather", "dry")), int(env_s.get("time_of_day_h", 14))]
 	for c in lobby_list.get_children():
 		c.queue_free()
 	var ids := Net.players.keys()
@@ -399,7 +454,8 @@ func _refresh_lobby() -> void:
 		var p: Dictionary = Net.players[id]
 		var l := Label.new()
 		var car: CarDefinition = GameData.cars.get(p["car_id"])
-		l.text = "%s %s  ·  %s%s" % ["★" if id == 1 else "•", p["name"], car.display_name if car else p["car_id"],
+		var tyre_name: String = {"auto": "", "dry": "  ·  dry tyres", "intermediate": "  ·  inters", "wet": "  ·  wets"}.get(p.get("tyre", "auto"), "")
+		l.text = "%s %s  ·  %s%s%s" % ["★" if id == 1 else "•", p["name"], car.display_name if car else p["car_id"], tyre_name,
 			"" if id == 1 else ("  ·  READY" if p["ready"] else "  ·  not ready")]
 		lobby_list.add_child(l)
 	var host := Net.is_server()
@@ -415,10 +471,13 @@ func _refresh_lobby() -> void:
 			_rebuild_car_options()
 		laps_stepper.set_value(Net.settings.laps)
 		ai_stepper.set_value(Net.settings.ai_count)
+		difficulty_stepper.set_value(Net.settings.ai_difficulty)
 		var env := Net.settings.environment
-		ambient_stepper.set_value(int(env.get("ambient_c", 21)))
-		track_temp_stepper.set_value(int(env.get("track_c", 33)))
 		tod_stepper.set_value(int(env.get("time_of_day_h", 14)))
+		clock_stepper.set_value(int(env.get("time_scale", 1)))
+		weather_stepper.set_value(str(env.get("weather", "dry")))
+		weather_change_stepper.set_value(bool(env.get("weather_changes", false)))
+		grid_stepper.set_value(Net.settings.grid_order)
 	join_info_label.visible = host and not Net.dedicated
 	if join_info_label.visible:
 		join_info_label.text = Net.join_instructions()
