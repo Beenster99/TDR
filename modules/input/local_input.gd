@@ -8,10 +8,13 @@ extends RefCounted
 const KEY_STEER_RATE := 3.5     ## per second
 const KEY_CENTER_RATE := 6.0
 const KEY_PEDAL_RATE := 8.0
+const PAD_STEER_RATE := 7.0     ## per second: takes the twitch out of stick flicks
 
 var _steer := 0.0
 var _throttle := 0.0
 var _brake := 0.0
+## The throttle sent last tick (for engine sound).
+var last_throttle := 0.0
 
 
 func read(dt: float, speed_mps: float) -> CarInput:
@@ -22,7 +25,8 @@ func read(dt: float, speed_mps: float) -> CarInput:
 	var brk_target := Input.get_action_strength("brake")
 	if pad:
 		# Mild expo so small stick movements are precise at speed.
-		_steer = signf(steer_target) * pow(absf(steer_target), 1.4)
+		var curved := signf(steer_target) * pow(absf(steer_target), 1.6)
+		_steer = move_toward(_steer, curved, PAD_STEER_RATE * dt)
 		_throttle = thr_target
 		_brake = brk_target
 	else:
@@ -31,10 +35,11 @@ func read(dt: float, speed_mps: float) -> CarInput:
 		_throttle = move_toward(_throttle, thr_target, KEY_PEDAL_RATE * dt)
 		_brake = move_toward(_brake, brk_target, KEY_PEDAL_RATE * dt)
 	# Speed-sensitive steering: full lock at low speed, less at high speed.
-	var lock := clampf(1.0 / (1.0 + speed_mps / 28.0), 0.3, 1.0)
+	var lock := clampf(1.0 / (1.0 + speed_mps / 24.0), 0.25, 1.0)
 	inp.steer = _steer * lock
 	inp.throttle = _throttle
 	inp.brake = _brake
+	last_throttle = _throttle
 	return inp.quantized()
 
 

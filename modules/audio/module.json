@@ -1,0 +1,23 @@
+{
+  "id": "audio",
+  "name": "Audio",
+  "version": "1.0.0",
+  "status": "active",
+  "summary": "Every sound in the game, made in code (no sound files): engines that follow each car's revs and throttle, tyre squeal, grass rumble, crashes and contacts, start lights, and menu clicks.",
+  "depends": {
+    "core": "1",
+    "cars": "1",
+    "physics": "1"
+  },
+  "api": [
+    "RaceAudio",
+    "SoundBank"
+  ],
+  "internal": [
+    "CarAudio"
+  ],
+  "autoloads": [
+    "Sound"
+  ],
+  "notes": "Only listens: reads car state and race events, never changes the race. Sounds are synthesised once at start-up by SoundBank. Engine pitch = firing frequency (rpm / 60 * cylinders / 2). Better recorded samples can replace SoundBank's loops later without touching anything else."
+}

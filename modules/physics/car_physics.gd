@@ -14,6 +14,14 @@ const TC_LIMIT := 0.95        ## traction control: max share of grip used for dr
 const ABS_LIMIT := 0.97
 const REVERSE_FORCE := 3500.0
 const REVERSE_MAX_SPEED := 6.0
+## Stability assist (human drivers): how hard it fights a slide, the most
+## yaw torque it may use (as a share of braking one front wheel), and how
+## much automatic counter-steer it adds.
+const ESC_GAIN := 6.0
+const ESC_LIMIT := 1.6
+const ESC_BETA_GAIN := 3.0
+const COUNTER_STEER := 0.8
+const STEER_SLIP_MARGIN := 1.3
 
 const SURFACE_GRIP := {
 	TrackData.Surface.TRACK: 1.0,
@@ -42,6 +50,8 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 
 	# --- Steering (rate limited, damage adds pull later) ------------------
 	var steer_target := clampf(inp.steer, -1.0, 1.0) * d.max_steer
+	if s.assist_stability:
+		steer_target = _assisted_steer(s, steer_target, d, tc)
 	s.steer_angle = move_toward(s.steer_angle, steer_target, d.steer_rate * dt)
 	var delta := s.steer_angle
 	var cos_d := cos(delta)
@@ -178,14 +188,38 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 	s.fy_rear = fy_r
 	s.grip_usage_rear = sqrt(fx_r * fx_r + fy_r * fy_r) / maxf(cap_r, 1.0)
 
+	# --- Stability assist: brake one wheel to stop a slide ----------------
+	var esc_torque := 0.0
+	var esc_drag := 0.0
+	if s.assist_stability and vx > 5.0:
+		var r_ref := vx * tan(delta) / L
+		var r_max := (cap_f + cap_r) / m / vx
+		r_ref = clampf(r_ref, -r_max, r_max)
+		var beta := atan2(vy, vx)
+		# Positive yaw error = rotating clockwise more than the steering asks.
+		var err := s.yaw_rate - r_ref
+		var demand := 0.0
+		if (signf(err) == signf(s.yaw_rate) and absf(err) > 0.03) or absf(beta) > 0.07:
+			demand = -ESC_GAIN * err * d.inertia
+			# Sideslip: the car points further round than it travels.
+			var beta_x := beta - clampf(beta, -0.07, 0.07)
+			demand += ESC_BETA_GAIN * beta_x * d.inertia * vx / L
+		var lim := ESC_LIMIT * cap_f * 0.5 * d.track_width * 0.5
+		esc_torque = clampf(demand, -lim, lim)
+		esc_drag = absf(esc_torque) / (d.track_width * 0.5)
+		if fx_r > 0.0:
+			fx_r *= 1.0 - 0.7 * absf(esc_torque) / maxf(lim, 1.0)
+		if fx_f > 0.0:
+			fx_f *= 1.0 - 0.7 * absf(esc_torque) / maxf(lim, 1.0)
+
 	# --- Body forces ------------------------------------------------------
-	var fx_body := fx_f * cos_d - fy_f * sin_d + fx_r
+	var fx_body := fx_f * cos_d - fy_f * sin_d + fx_r - esc_drag
 	var fy_body := fx_f * sin_d + fy_f * cos_d + fy_r
 	fx_body -= 0.5 * rho * d.cda * (1.0 + 0.3 * s.damage_aero) * vx * absf(vx)
 	fy_body -= 0.5 * rho * d.cda * 2.5 * vy * absf(vy)
 	var roll := (ROLL_RESIST + surf_roll) * m * G * clampf(absf(vx) / 0.5, 0.0, 1.0)
 	fx_body -= dir_sign * roll
-	var yaw_torque := a * (fx_f * sin_d + fy_f * cos_d) - b * fy_r
+	var yaw_torque := a * (fx_f * sin_d + fy_f * cos_d) - b * fy_r + esc_torque
 
 	s.ax = fx_body / m
 	s.ay = fy_body / m
@@ -227,3 +261,17 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 		var heat := tc.heat_from_slip * p_kw + tc.heat_from_rolling * speed * (fz[i] / fz_nominal)
 		var cool := tc.cool_to_air * (1.0 + speed / 25.0) * (t - env.ambient_c) + tc.cool_to_track * (t - env.track_c)
 		s.tyre_temp[i] = t + (heat - cool) * dt
+
+
+## Steering help: adds counter-steer when the rear slides, and at speed keeps
+## the front tyres from being turned far past their best slip angle (where
+## they just scrub and then snap the car round when they grip again).
+static func _assisted_steer(s: CarState, target: float, d: CarDefinition, tc: TyreCompound) -> float:
+	var excess := s.slip_angle_rear - clampf(s.slip_angle_rear, -0.05, 0.05)
+	target += COUNTER_STEER * excess
+	var vx := s.vel.dot(s.forward())
+	if vx > 8.0:
+		var kin := d.wheelbase * 2.0 * G / (vx * vx)
+		var cap := kin + tc.peak_slip_angle * STEER_SLIP_MARGIN + absf(excess) * COUNTER_STEER
+		target = clampf(target, -cap, cap)
+	return clampf(target, -d.max_steer, d.max_steer)

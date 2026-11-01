@@ -146,6 +146,10 @@ func _build_ui() -> void:
 	car_stepper = Stepper.choice("Car", car_opts, ids[0])
 	car_stepper.value_changed.connect(func(v): if Net.is_online(): Net.update_me({"car_id": v}))
 	root.add_child(car_stepper)
+	var help_stepper := Stepper.choice("Driving help", [[2, "Full (stability, traction, ABS)"],
+		[1, "Some (traction, ABS)"], [0, "Off"]], GameData.prefs["driving_help"])
+	help_stepper.value_changed.connect(func(v): GameData.prefs["driving_help"] = v)
+	root.add_child(help_stepper)
 
 	# Main page
 	var main := _page(root, "main")
@@ -202,7 +206,8 @@ func _build_ui() -> void:
 	status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	root.add_child(status_label)
 	var help := Label.new()
-	help.text = "Drive: W/S/A/D or arrows  ·  Pad: RT throttle, LT brake, left stick steer  ·  C/Y camera  ·  R/Back restart  ·  Esc/Start menu"
+	help.text = "Drive: W/S/A/D or arrows  ·  Pad: RT throttle, LT brake, left stick steer\nZoom: Q/E or mouse wheel, Z whole track  ·  Pad: right stick, RB whole track  ·  C/Y camera  ·  R/Back restart  ·  Esc/Start menu"
+	help.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	help.modulate = Color(1, 1, 1, 0.45)
 	help.add_theme_font_size_override("font_size", 13)
 	root.add_child(help)
@@ -226,6 +231,7 @@ func _button(parent: Node, text: String, cb: Callable) -> Button:
 
 
 func _show(id: String) -> void:
+	Sound.wire_buttons(self)
 	current_page = id
 	for k in pages:
 		pages[k].visible = k == id
