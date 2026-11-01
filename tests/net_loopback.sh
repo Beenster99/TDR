@@ -29,4 +29,6 @@ done
 # Each client must have seen the other player's car (relayed through the host).
 grep -q "Bob=[1-9]" "$LOG/alice.log" || { echo "alice never saw Bob's car"; ok=1; }
 grep -q "Alice=[1-9]" "$LOG/bob.log" || { echo "bob never saw Alice's car"; ok=1; }
+# Each client built the pit wall's race data (gaps from the host, feed items as events).
+for f in alice bob; do grep -q "^\[race data\] saved" "$LOG/$f.log" || { echo "$f saved no race data"; ok=1; }; done
 [ $ok -eq 0 ] && echo "NET LOOPBACK PASS" || { echo "NET LOOPBACK FAIL (logs in $LOG)"; exit 1; }

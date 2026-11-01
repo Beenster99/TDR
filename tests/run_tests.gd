@@ -444,6 +444,9 @@ func test_telemetry(rep: Dictionary) -> void:
 	check(same, "gaps and pit analysis survive the trip to a client")
 	client.on_events([{"type": "feed", "kind": "pit", "car": 1, "text": "x", "t": 1.0, "lap": 1}])
 	check(client.feed.items.size() == 1 and not client.feed.items[0].has("type"), "clients take feed items from host events")
+	client.on_events([{"type": "safety_car", "state": "sc", "reason": "Car stopped at turn 3", "lap": 2},
+		{"type": "penalty", "car": 0, "seconds": 5.0, "reason": "track limits"}])
+	check(client.feed.count_kind("race_control") == 2, "race control calls reach the feed (%s)" % client.feed.items[-1]["text"])
 	var saved = JSON.parse_string(JSON.stringify(tel.to_dict(sim)))
 	check(saved is Dictionary and saved["cars"].size() == sim.car_count(), "the race log exports to JSON")
 

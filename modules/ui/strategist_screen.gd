@@ -11,15 +11,15 @@ extends Control
 ## the window's stretch, so it stays sharp at 4K.
 
 const FILTERS := [["All", []], ["Radio", ["radio"]], ["Strategy", ["strategy"]], ["Pit", ["pit"]],
-	["Timing", ["timing"]], ["Tyres", ["tyres"]], ["Weather", ["weather"]], ["Incidents", ["incident"]]]
+	["Timing", ["timing"]], ["Tyres", ["tyres"]], ["Weather", ["weather"]], ["Incidents", ["incident"]], ["Race control", ["race_control"]]]
 const KIND_COLOURS := {"radio": Color(0.45, 0.85, 1.0), "strategy": Color(1.0, 0.7, 0.3),
 	"pit": Color(0.5, 1.0, 0.55), "timing": Color(0.85, 0.85, 0.85), "tyres": Color(1.0, 0.5, 0.4),
-	"weather": Color(0.6, 0.75, 1.0), "incident": Color(1.0, 0.35, 0.35)}
+	"weather": Color(0.6, 0.75, 1.0), "incident": Color(1.0, 0.35, 0.35), "race_control": Color(1.0, 0.85, 0.2)}
 const PURPLE := Color(0.78, 0.45, 1.0)
 const GREEN := Color(0.4, 1.0, 0.5)
 const YELLOW := Color(1.0, 0.88, 0.35)
 const DIM := Color(1, 1, 1, 0.55)
-const BG := Color(0.03, 0.05, 0.08, 0.93)
+const BG := Color(0.03, 0.05, 0.08, 0.98)
 const PANEL := Color(1, 1, 1, 0.05)
 
 var session: RaceSession
@@ -371,7 +371,7 @@ func _draw_feed(r: Rect2, tel: RaceTelemetry) -> void:
 		var who := ""
 		if kind in ["radio", "strategy"]:
 			who = tel.driver_name(int(it.get("car", -1))) + ": "
-		var head := "L%d %s " % [int(it.get("lap", 0)), kind.to_upper()]
+		var head := "L%d %s " % [int(it.get("lap", 0)), "CONTROL" if kind == "race_control" else kind.to_upper()]
 		var lines := _wrap(who + str(it.get("text", "")), w - 90, fs)
 		if y + lines.size() * 17 > r.end.y - 4:
 			break

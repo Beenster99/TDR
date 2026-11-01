@@ -8,7 +8,7 @@ extends RefCounted
 ##        car2 (optional), topic (optional), text}
 
 const MAX_ITEMS := 300
-const KINDS := ["radio", "strategy", "timing", "pit", "tyres", "weather", "incident"]
+const KINDS := ["radio", "strategy", "timing", "pit", "tyres", "weather", "incident", "race_control"]
 
 var items: Array = []
 var version: int = 0   ## goes up on every add, so views know when to redraw

@@ -84,7 +84,7 @@ func update(env: SimEnvironment) -> void:
 		if w == prev_w:
 			continue
 		prev_w = w
-		var spread := eta * (0.08 + 0.12 * eta / 600.0)
+		var spread := eta * (0.05 + 0.08 * eta / 1200.0)
 		changes.append({"eta": eta, "eta_lo": maxf(eta - spread, 0.0), "eta_hi": eta + spread,
 			"weather": w, "rain": timeline[k][2], "cloud": timeline[k][1],
 			"confidence": clampf(0.97 - eta / 2400.0, 0.4, 0.97)})

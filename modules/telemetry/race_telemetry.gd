@@ -135,6 +135,23 @@ func on_events(evs: Array) -> void:
 				strategies[car] = {"text": str(ev.get("text", "")), "plan": ev.get("plan", {}), "t": _now()}
 				feed.add({"t": _now(), "lap": _leader_laps, "kind": "strategy", "car": car,
 					"text": str(ev.get("text", ""))})
+			"flag", "safety_car", "penalty", "warning":
+				# Race control (wave 3 safety car / stewards), shown as it comes.
+				var text := str(ev.get("text", ev.get("reason", "")))
+				match ev["type"]:
+					"flag":
+						text = "%s flag%s" % [str(ev.get("flag", "")).capitalize(), (": " + text) if text != "" else ""]
+					"safety_car":
+						text = "%s%s" % [{"vsc": "Virtual safety car", "sc": "Safety car deployed", "green": "Green flag, racing resumes",
+							"in_this_lap": "Safety car in this lap", "vsc_ending": "VSC ending",
+							"lapped_may_overtake": "Lapped cars may overtake"}.get(str(ev.get("state", "")), str(ev.get("state", ""))),
+							(": " + text) if text != "" else ""]
+					"penalty":
+						text = "%s: %.0f s penalty%s" % [driver_name(int(ev.get("car", -1))), float(ev.get("seconds", 0.0)),
+							(" (" + text + ")") if text != "" else ""]
+					"warning":
+						text = "%s: %s" % [driver_name(int(ev.get("car", -1))), text]
+				feed.add({"t": _now(), "lap": _leader_laps, "kind": "race_control", "car": int(ev.get("car", -1)), "text": text})
 			"feed":
 				if not authority:
 					var it: Dictionary = ev.duplicate()
@@ -332,7 +349,7 @@ func _derive_feed(sim: RaceSim, out: Array) -> void:
 			_prev_pos[i] = e.position
 			continue
 		# Overtakes in the top ten (not in the first-lap scramble).
-		if e.position < _prev_pos[i] and e.position <= 10 and sim.race_time > 20.0 and p + 1 < order.size():
+		if e.position < _prev_pos[i] and e.position <= 10 and _leader_laps >= 1 and p + 1 < order.size():
 			var j := order[p + 1]
 			if _prev_pos[j] == e.position:
 				_say(out, "timing", i, "%s passes %s for P%d" % [driver_name(i), driver_name(j), e.position],

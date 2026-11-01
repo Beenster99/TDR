@@ -185,7 +185,11 @@ func _save_race_data() -> void:
 		f.store_string(JSON.stringify(session.telemetry.to_dict(session.sim), "\t"))
 		f.close()
 		if DisplayServer.get_name() == "headless":
-			print("[race data] saved %s (%d feed items)" % [ProjectSettings.globalize_path(path), session.telemetry.feed.items.size()])
+			var gaps := []
+			for c in session.telemetry.cars:
+				gaps.append("%.1f" % c.gap_leader)
+			print("[race data] saved %s (%d feed items, gaps %s)" % [ProjectSettings.globalize_path(path),
+				session.telemetry.feed.items.size(), ", ".join(gaps)])
 
 
 func _build_results() -> PanelContainer:
