@@ -8,6 +8,7 @@ var state: CarState
 var label: String = ""
 var is_local := false
 var _init_done := false
+var env: SimEnvironment
 
 
 func setup(p_def: CarDefinition, p_state: CarState, p_label: String, p_local: bool) -> void:
@@ -16,6 +17,11 @@ func setup(p_def: CarDefinition, p_state: CarState, p_label: String, p_local: bo
 	label = p_label
 	is_local = p_local
 	z_index = 2 if p_local else 1
+
+
+## Optional: conditions for spray (headlights are drawn by WeatherView).
+func set_environment(p_env: SimEnvironment) -> void:
+	env = p_env
 
 
 func _process(delta: float) -> void:
@@ -37,6 +43,7 @@ func _draw() -> void:
 		return
 	var L := def.length
 	var W := def.width
+	_draw_spray(L, W)
 	var tyre := Color(0.08, 0.08, 0.08)
 	var a := def.cg_to_front
 	var b := def.wheelbase - a
@@ -67,3 +74,22 @@ func _draw() -> void:
 	if state and state.ax < -3.0:
 		draw_rect(Rect2(-L * 0.5, -W * 0.36, 0.15, 0.3), Color(1, 0.1, 0.1))
 		draw_rect(Rect2(-L * 0.5, W * 0.06, 0.15, 0.3), Color(1, 0.1, 0.1))
+
+
+## Spray thrown up behind the car on a wet track (hides the cars behind).
+func _draw_spray(L: float, W: float) -> void:
+	if env == null or state == null:
+		return
+	var w := env.wetness_at(state.lateral_offset - env.raceline_offset(state.track_idx))
+	var amount := clampf(w * 1.3, 0.0, 1.0) * clampf((state.speed() - 8.0) / 50.0, 0.0, 1.0)
+	if amount < 0.03:
+		return
+	var back := Vector2(-L * 0.5, 0.0)
+	var t := Time.get_ticks_msec() / 1000.0
+	for k in 7:
+		var f := float(k) / 6.0
+		var wob := sin(t * 17.0 + k * 2.3) * 0.25
+		var c := back + Vector2(-0.6 - f * 5.0 * amount * 1.5, wob * (1.0 + f))
+		var r := W * (0.35 + f * 0.6)
+		draw_circle(c, r, Color(0.85, 0.88, 0.92, 0.45 * amount * (1.0 - f * 0.8)))
+

@@ -19,7 +19,7 @@ signal internet_status_changed
 const DEFAULT_PORT := 24690
 const MAX_PEERS := 16
 ## Bump whenever a message changes shape; mismatched games are told at the lobby.
-const PROTOCOL_VERSION := 2
+const PROTOCOL_VERSION := 3
 const COMPRESSION := ENetConnection.COMPRESS_ZSTD
 ## How long a player's game may go silent before they're taken to have left (ms).
 const TIMEOUT_MS := 15000
@@ -262,7 +262,7 @@ func join_instructions() -> String:
 
 
 func _new_player(player_name: String, car_id: String) -> Dictionary:
-	return {"name": player_name, "car_id": car_id, "ready": false, "team": -1,
+	return {"name": player_name, "car_id": car_id, "tyre": "auto", "ready": false, "team": -1,
 		"role": RaceEntry.ROLE_DRIVER}
 
 
@@ -337,7 +337,10 @@ func _broadcast_lobby() -> void:
 	lobby_changed.emit()
 
 
-## Client (or host) changes its own lobby entry: car, ready flag.
+const TYRE_CHOICES := ["auto", "dry", "intermediate", "wet"]
+
+
+## Client (or host) changes its own lobby entry: car, tyres, ready flag.
 func update_me(fields: Dictionary) -> void:
 	if is_server():
 		_apply_update(1, fields)
@@ -359,6 +362,8 @@ func _apply_update(id: int, fields: Dictionary) -> void:
 		p["car_id"] = fields["car_id"]
 	if fields.has("ready"):
 		p["ready"] = bool(fields["ready"])
+	if fields.has("tyre") and fields["tyre"] in TYRE_CHOICES:
+		p["tyre"] = fields["tyre"]
 	_broadcast_lobby()
 
 
@@ -394,7 +399,7 @@ func start_race() -> void:
 		var team: int = p.get("team", -1)
 		var key = team if team >= 0 else "solo_%d" % id
 		if not teams.has(key):
-			teams[key] = {"name": p["name"], "car_id": p["car_id"], "crew": []}
+			teams[key] = {"name": p["name"], "car_id": p["car_id"], "tyre": p.get("tyre", "auto"), "crew": []}
 			humans.append(teams[key])
 		teams[key]["crew"].append({"peer_id": id, "name": p["name"], "role": p.get("role", RaceEntry.ROLE_DRIVER)})
 	settings.seed = randi()

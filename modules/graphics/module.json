@@ -1,7 +1,7 @@
 {
   "id": "graphics",
   "name": "Graphics",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "status": "active",
   "summary": "Drawing the world: the track (tarmac, kerbs, grass, barriers) and the cars.",
   "depends": {
@@ -12,8 +12,9 @@
   },
   "api": [
     "TrackView",
-    "CarView"
+    "CarView",
+    "WeatherView"
   ],
   "internal": [],
-  "notes": "Only reads state, never changes the race. Skid marks, smoke, lighting and better sprites go here."
+  "notes": "Only reads state, never changes the race. Daylight, rain, spray and headlights live in WeatherView / CarView. Skid marks, smoke and better sprites go here."
 }

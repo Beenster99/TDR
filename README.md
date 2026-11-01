@@ -53,6 +53,10 @@ to go back, left/right to change a value.
 godot --headless --path . -- --server --port 24690 --laps 5 --ai 6 --min-players 2
 ```
 
+Race options work here and with `--single` / `--host`: `--weather heavy_rain`
+(`dry`, `overcast`, `light_rain`, `heavy_rain`, `random`), `--weather-changes`,
+`--time 20` (start hour), `--clock-speed 60` (60x clock), `--grid reversed`.
+
 ## Tests
 
 ```

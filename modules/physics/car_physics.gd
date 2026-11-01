@@ -75,7 +75,8 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 	var fz_nominal := m * G * 0.25
 
 	# --- Per-tyre friction capacity -------------------------------------
-	var surface_grip := env.surface_grip(tc) * surf_mu
+	var off_line := s.lateral_offset - env.raceline_offset(s.track_idx)
+	var surface_grip := env.grip_factor(tc, off_line, speed) * surf_mu
 	var cap := PackedFloat64Array([0.0, 0.0, 0.0, 0.0])
 	for i in 4:
 		var mu := tc.peak_mu * tc.temp_grip_factor(s.tyre_temp[i]) * surface_grip
@@ -226,4 +227,5 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 		var t := s.tyre_temp[i]
 		var heat := tc.heat_from_slip * p_kw + tc.heat_from_rolling * speed * (fz[i] / fz_nominal)
 		var cool := tc.cool_to_air * (1.0 + speed / 25.0) * (t - env.ambient_c) + tc.cool_to_track * (t - env.track_c)
+		cool += tc.cool_to_water * env.wetness_at(off_line) * (1.0 + speed / 40.0) * (t - env.ambient_c)
 		s.tyre_temp[i] = t + (heat - cool) * dt

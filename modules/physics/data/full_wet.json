@@ -1,0 +1,22 @@
+{
+  "id": "full_wet",
+  "name": "Full wet",
+  "kind": "wet",
+  "peak_mu": 1.1,
+  "peak_slip_angle_deg": 8.5,
+  "shape_c": 1.35,
+  "load_sensitivity": 0.12,
+  "optimal_temp_c": 60.0,
+  "temp_window_c": 26.0,
+  "cold_falloff": 0.05,
+  "hot_falloff": 0.2,
+  "min_grip_factor": 0.55,
+  "heat_from_slip": 0.18,
+  "heat_from_rolling": 0.022,
+  "cool_to_air": 0.009,
+  "cool_to_track": 0.004,
+  "cool_to_water": 0.016,
+  "wet_grip_factor": 0.9,
+  "aquaplaning": 0.03,
+  "wear_rate": 0.0
+}

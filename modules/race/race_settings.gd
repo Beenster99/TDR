@@ -7,7 +7,13 @@ var track_id: String = "spielberg"
 var laps: int = 3
 var ai_count: int = 5
 var seed: int = 12345
-var environment: Dictionary = {}   ## empty = track default
+## Conditions (see SimEnvironment.create): time_of_day_h, time_scale,
+## weather ("dry" | "overcast" | "light_rain" | "heavy_rain" | "random"),
+## weather_changes (bool). Empty = the track's defaults.
+var environment: Dictionary = {}
+## Starting order: "standard" (AI ahead, humans behind), "random", or
+## "reversed" (fastest car + driver at the back).
+var grid_order: String = "standard"
 ## Wave 3 switches (already read by the sim where noted)
 var fuel_enabled: bool = false     ## sim burns fuel when true
 var fuel_rate: float = 1.0         ## consumption multiplier
@@ -23,7 +29,7 @@ var countdown_s: float = 4.0
 func to_dict() -> Dictionary:
 	return {
 		"track_id": track_id, "laps": laps, "ai_count": ai_count, "seed": seed,
-		"environment": environment, "fuel_enabled": fuel_enabled, "fuel_rate": fuel_rate,
+		"environment": environment, "grid_order": grid_order, "fuel_enabled": fuel_enabled, "fuel_rate": fuel_rate,
 		"start_fuel_l": start_fuel_l, "tyre_wear_enabled": tyre_wear_enabled,
 		"damage_enabled": damage_enabled, "safety_car_enabled": safety_car_enabled,
 		"mandatory_pit_stops": mandatory_pit_stops, "finish_timeout_s": finish_timeout_s,
