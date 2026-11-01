@@ -14,6 +14,9 @@ func _init() -> void:
 	test_tyre_temperature_matters()
 	test_car_classes()
 	test_every_track()
+	test_weather_and_time()
+	test_wet_grip()
+	test_race_settings_and_grid()
 	var replay := test_ai_race_completes()
 	test_deterministic_replay(replay)
 	test_snapshot_restore(replay)
@@ -348,3 +351,143 @@ func test_snapshot_restore(rep: Dictionary) -> void:
 	for k in range(rep["mid_tick"], inputs.size()):
 		sim.step(inputs[k])
 	check(sim.state_hash() == rep["end_hash"], "snapshot restore + replay matches the original race")
+
+
+## Wave 2: clock, temperatures and weather follow the settings, deterministically.
+func test_weather_and_time() -> void:
+	print("weather")
+	var d := _data()
+	var track: TrackData = d["track"]
+	var tenv := track.default_environment
+	var e := SimEnvironment.create(tenv, {"time_of_day_h": 14.0, "time_scale": 60.0}, 1)
+	check(absf(e.ambient_c - tenv["ambient_c"]) < 1.5 and absf(e.track_c - tenv["track_c"]) < 2.0,
+		"14:00 matches the track's reference temps (air %.1f, track %.1f)" % [e.ambient_c, e.track_c])
+	for k in 60 * 60:
+		e.update(1.0 / 60.0)
+	check(absf(e.time_of_day_h - 15.0) < 0.02, "clock at 60x: one minute later it's %.2f h" % e.time_of_day_h)
+	var night := SimEnvironment.create(tenv, {"time_of_day_h": 3.0}, 1)
+	check(night.ambient_c < e.ambient_c - 5.0, "nights are colder (%.1f vs %.1f)" % [night.ambient_c, e.ambient_c])
+	check(night.track_c - night.ambient_c < 1.0 and e.track_c - e.ambient_c > 8.0, "the sun heats the track by day only")
+	check(night.darkness() > 0.9 and e.darkness() < 0.05, "dark at night, light by day")
+	var cloudy := SimEnvironment.create(tenv, {"weather": "overcast"}, 1)
+	var sunny := SimEnvironment.create(tenv, {"weather": "dry"}, 1)
+	check(cloudy.track_c < sunny.track_c - 4.0, "cloud keeps the track cooler (%.1f vs %.1f)" % [cloudy.track_c, sunny.track_c])
+	var heavy := SimEnvironment.create(tenv, {"weather": "heavy_rain"}, 1)
+	var light := SimEnvironment.create(tenv, {"weather": "light_rain"}, 1)
+	check(heavy.wetness > 0.9 and light.wetness > 0.3 and light.wetness < heavy.wetness,
+		"rain starts on a wet track (light %.2f, heavy %.2f)" % [light.wetness, heavy.wetness])
+	check(heavy.track_c < sunny.track_c - 8.0, "rain cools the track (%.1f)" % heavy.track_c)
+	# Changing weather: same seed, same weather everywhere.
+	var a := SimEnvironment.create(tenv, {"weather": "overcast", "weather_changes": true}, 42)
+	var b := SimEnvironment.create(tenv, {"weather": "overcast", "weather_changes": true}, 42)
+	var c := SimEnvironment.create(tenv, {"weather": "overcast", "weather_changes": true}, 43)
+	check(a.timeline.size() > 5 and a.timeline == b.timeline and a.timeline != c.timeline, "weather timeline comes from the seed")
+	var saw := {}
+	for k in 60 * 60 * 40:  # 40 minutes
+		a.update(1.0 / 60.0)
+		saw[a.weather] = true
+	check(saw.size() >= 2, "weather changes during a long race (%s)" % ", ".join(saw.keys()))
+	# Drying: no rain, cars on track, warm day.
+	var dry := SimEnvironment.create(tenv, {"weather": "dry"}, 1)
+	dry.wetness = 1.0
+	dry.traffic = 10
+	for k in 60 * 240:
+		dry.update(1.0 / 60.0)
+	check(dry.wetness < 0.7, "a wet track dries in the sun (%.2f after 4 min)" % dry.wetness)
+	check(dry.dry_line > 0.5 and dry.wetness_at(0.0) < dry.wetness_at(6.0) * 0.6,
+		"traffic dries the racing line first (line %.2f, off line %.2f)" % [dry.wetness_at(0.0), dry.wetness_at(6.0)])
+	check(SimEnvironment.resolve_start_weather({"weather": "random"}, {}, 9) in SimEnvironment.WEATHERS, "random weather resolves")
+
+
+## Wave 2: water costs grip, wet tyres win in the wet and lose in the dry.
+func test_wet_grip() -> void:
+	print("wet grip")
+	var d := _data()
+	var tenv: Dictionary = d["track"].default_environment
+	var dry := SimEnvironment.create(tenv, {"weather": "dry"}, 1)
+	var wet := SimEnvironment.create(tenv, {"weather": "heavy_rain"}, 1)
+	var damp := SimEnvironment.create(tenv, {"weather": "light_rain"}, 1)
+	var names := ["race_slick", "intermediate", "full_wet"]
+	var mu := {}
+	for n in names:
+		var tc: TyreCompound = d["tyres"][n]
+		mu[n] = [tc.peak_mu * dry.grip_factor(tc, 5.0, 40.0), tc.peak_mu * damp.grip_factor(tc, 5.0, 40.0), tc.peak_mu * wet.grip_factor(tc, 5.0, 40.0)]
+		print("       %-14s dry %.2f  damp %.2f  wet %.2f" % [n, mu[n][0], mu[n][1], mu[n][2]])
+	check(mu["race_slick"][0] > mu["intermediate"][0] and mu["intermediate"][0] > mu["full_wet"][0], "slicks fastest in the dry")
+	check(mu["intermediate"][1] > mu["race_slick"][1] and mu["intermediate"][1] > mu["full_wet"][1], "intermediates best on a damp track")
+	check(mu["full_wet"][2] > mu["intermediate"][2] and mu["intermediate"][2] > mu["race_slick"][2], "full wets best in heavy rain")
+	var slick: TyreCompound = d["tyres"]["race_slick"]
+	check(wet.grip_factor(slick, 5.0, 70.0) < wet.grip_factor(slick, 5.0, 10.0), "slicks aquaplane at speed on standing water")
+	# Braking from 150 km/h on the main straight: longer in the wet.
+	var stops := []
+	for env in [dry, wet]:
+		stops.append(_stopping_distance(d, env))
+	check(stops[1] > stops[0] * 1.3, "wet braking distance longer (%.0f m vs %.0f m)" % [stops[1], stops[0]])
+
+
+func _stopping_distance(d: Dictionary, env: SimEnvironment) -> float:
+	var track: TrackData = d["track"]
+	env.bind_track(track)
+	var def: CarDefinition = d["cars"].values()[0]
+	var tc: TyreCompound = d["tyres"][def.tyre_compound_id]
+	var s := CarState.new()
+	var g := track.grid_slot(10)
+	s.pos = g["pos"]
+	s.heading = g["heading"]
+	s.vel = Vector2.from_angle(s.heading) * 41.7
+	s.gear = 4
+	s.tyre_temp = PackedFloat64Array([tc.optimal_temp_c, tc.optimal_temp_c, tc.optimal_temp_c, tc.optimal_temp_c])
+	var inp := CarInput.new()
+	inp.brake = 1.0
+	var start := s.pos
+	var events := []
+	for k in 60 * 4 * 20:
+		CarPhysics.step(s, inp, def, tc, env, track, 1.0 / 240.0, 0.0, events, 0)
+		if s.speed() < 1.0:
+			break
+	return start.distance_to(s.pos)
+
+
+## Wave 2: settings survive the lobby trip, AI picks tyres for the weather,
+## grid order works, and clients get the host's conditions.
+func test_race_settings_and_grid() -> void:
+	print("race settings")
+	var d := _data()
+	var s := RaceSettings.new()
+	s.laps = 7
+	s.ai_count = 6
+	s.seed = 99
+	s.grid_order = "reversed"
+	s.environment = {"time_of_day_h": 19.0, "time_scale": 30.0, "weather": "heavy_rain", "weather_changes": true}
+	var back := RaceSettings.from_dict(s.to_dict())
+	check(back.laps == 7 and back.grid_order == "reversed" and back.environment == s.environment, "settings round trip")
+	var humans := [{"name": "Me", "car_id": d["cars"].keys()[0], "tyre": "dry"}]
+	var start := RaceFactory.plan(s, humans, d["cars"], d["drivers"])
+	var ai_wets := 0
+	var me_dry := false
+	for e in start["entries"]:
+		if e["is_ai"] and e["setup"].get("tyre_compound", "") == "full_wet":
+			ai_wets += 1
+		if not e["is_ai"]:
+			me_dry = not e["setup"].has("tyre_compound")
+	check(ai_wets == 6, "AI start on full wets in heavy rain (%d/6)" % ai_wets)
+	check(me_dry, "a player can gamble on dry tyres")
+	var sim := RaceFactory.build_sim(start, d["cars"], d["tyres"], d["track"])
+	check(sim.compounds[0].id == "full_wet", "the sim fits the chosen compound")
+	var pace := []
+	for i in sim.car_count():
+		pace.append(sim.defs[i].peak_power_kw() / sim.defs[i].mass)
+	check(pace[0] <= pace[pace.size() - 1], "reversed grid puts quicker cars at the back")
+	var randomised := RaceSettings.from_dict(s.to_dict())
+	randomised.grid_order = "random"
+	var r1 := RaceFactory.plan(randomised, humans, d["cars"], d["drivers"])
+	var r2 := RaceFactory.plan(randomised, humans, d["cars"], d["drivers"])
+	check(r1 == r2, "random grid is the same on every machine for one seed")
+	# Client follows the host's conditions.
+	var client := RaceFactory.build_sim(start, d["cars"], d["tyres"], d["track"])
+	client.follower = true
+	for k in 600:
+		sim.step([])
+	client.apply_race_state(sim.race_state())
+	check(client.env.to_dict() == sim.env.to_dict(), "clients get the host's weather, clock and track state")
+	check(absf(sim.env.time_of_day_h - (19.0 + 10.0 * 30.0 / 3600.0)) < 0.01, "race clock runs at the host's speed")
