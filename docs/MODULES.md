@@ -16,22 +16,23 @@ to bottom (top layer).
 
 | Module | Version | Owns | Public API | Uses |
 |---|---|---|---|---|
-| **core** | 1.0.0 | Shared basics: the driver-intent contract, JSON reading, the module registry, shared game state | `CarInput`, `JsonData`, `ModuleRegistry`, autoload `GameData` | nothing |
+| **core** | 1.1.0 | Shared basics: the driver-intent contract, JSON reading, the module registry, shared game state | `CarInput`, `JsonData`, `ModuleRegistry`, autoload `GameData` | nothing |
 | **cars** | 1.1.0 | What each car is (engine, gears, mass, aero, brakes, aids, tyres) and its class (GT3, Road); car JSON in `data/` | `CarDefinition`, `CarCatalog` | core |
 | **tracks** | 1.1.0 | Circuit layouts, surfaces, sectors, grid slots, pit lanes; track JSON in `data/`; track builder in `tools/` | `TrackData` (incl. `TrackData.Surface`), `TrackCatalog` | core |
-| **input** | 1.0.0 | Keyboard and controller bindings, turning them into `CarInput` | `LocalInput`, `InputSetup` | core |
-| **physics** | 1.1.0 | How cars move: vehicle model, tyre grip and temperatures (dry, intermediate and wet compounds); weather and time of day (clock, air and track temperature, rain, standing water, drying line, rubber); tyre JSON in `data/` | `CarState`, `CarPhysics`, `TyreCompound`, `TyreCatalog`, `SimEnvironment` | core, cars, tracks |
+| **input** | 1.1.0 | Keyboard and controller bindings, turning them into `CarInput` | `LocalInput`, `InputSetup` | core |
+| **physics** | 1.2.0 | How cars move: vehicle model, tyre grip and temperatures (dry, intermediate and wet compounds); weather and time of day (clock, air and track temperature, rain, standing water, drying line, rubber); tyre JSON in `data/` | `CarState`, `CarPhysics`, `TyreCompound`, `TyreCatalog`, `SimEnvironment` | core, cars, tracks |
 | **race** | 1.2.0 | Race rules: countdown, laps, sectors, positions, finish, contacts, snapshots, settings, entries and crews, building a race from start data | `RaceSim`, `RaceSettings`, `RaceEntry`, `RaceFactory` | core, cars, tracks, physics |
 | **ai** | 1.0.0 | Computer drivers; AI names and traits in `data/` | `AIDriver`, `DriverCatalog` | core, cars, tracks, physics, race |
-| **graphics** | 1.1.0 | Drawing the track and the cars, daylight, rain, spray and headlights | `TrackView`, `CarView`, `WeatherView` | core, cars, tracks, physics |
+| **graphics** | 1.1.1 | Drawing the track and the cars, daylight, rain, spray and headlights | `TrackView`, `CarView`, `WeatherView` | core, cars, tracks, physics |
+| **audio** | 1.0.0 | Every sound, made in code: engines following revs and throttle, tyre squeal, grass rumble, crashes, start lights, menu clicks | `RaceAudio`, `SoundBank`, autoload `Sound` | core, cars, physics |
 | **multiplayer** | 1.1.0 | Online play the Torque Shed way (lobby, ENet, UPnP, streaming cars) and running a race offline / as host / as client | `RaceSession`, `NetTimeline`, autoload `Net` | core, physics, race, ai |
-| **ui** | 1.0.1 | Main menu, lobby, race settings, in-race HUD, controller-friendly widgets | `RaceHud`, `Stepper`; scene `main_menu.tscn` | core, cars, tracks, physics, race, multiplayer |
+| **ui** | 1.1.0 | Main menu, lobby, race settings, in-race HUD, controller-friendly widgets | `RaceHud`, `Stepper`; scene `main_menu.tscn` | core, cars, tracks, physics, race, multiplayer, audio |
 | **business** | 0.1.0 (planned) | Wave 4: championships, seasons, prize money, buying and upgrading cars | none yet | core, cars, race |
-| **game** | 1.0.1 | Puts it all together: start-up (loads content, registers controls) and the race scene | autoload `Game`; scene `race.tscn` | everything except business |
+| **game** | 1.1.0 | Puts it all together: start-up (loads content, registers controls) and the race scene | autoload `Game`; scene `race.tscn` | everything except business |
 
 Start-up order: `GameData` (core) parses the command line, `Game` (game)
 registers controls and loads all content into `GameData`, `Net`
-(multiplayer) gets ready, then the main menu (ui) opens.
+(multiplayer) gets ready, `Sound` (audio) sets up the audio buses, then the main menu (ui) opens.
 
 ## The rules
 

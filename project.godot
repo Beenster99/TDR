@@ -6,7 +6,7 @@ config_version=5
 [application]
 
 config/name="Top Down Racer"
-config/version="0.1.0"
+config/version="0.1.1"
 config/description="Multiplayer-ready top-down racing with physics-based cars."
 run/main_scene="res://modules/ui/main_menu.tscn"
 config/features=PackedStringArray("4.6", "GL Compatibility")
@@ -17,6 +17,7 @@ config/icon="res://icon.svg"
 GameData="*res://modules/core/game_data.gd"
 Game="*res://modules/game/game.gd"
 Net="*res://modules/multiplayer/net.gd"
+Sound="*res://modules/audio/sound.gd"
 
 [display]
 

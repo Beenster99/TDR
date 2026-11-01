@@ -38,6 +38,7 @@ func _process(delta: float) -> void:
 	queue_redraw()
 
 
+
 func _draw() -> void:
 	if def == null:
 		return

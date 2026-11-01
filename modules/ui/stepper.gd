@@ -69,6 +69,7 @@ func _nudge(dir: int, wrap: bool) -> void:  # wrap: numeric values loop when pre
 		i = posmod(i, options.size())
 		value = options[i][0]
 	_refresh()
+	Sound.ui("ui_tick")
 	value_changed.emit(value)
 
 
