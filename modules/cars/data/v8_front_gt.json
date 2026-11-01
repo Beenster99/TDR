@@ -1,8 +1,8 @@
 {
   "id": "v8_front_gt",
-  "name": "Grand Tourer V8",
-  "description": "Front-mid-engined V8 transaxle GT (AMG GT-style).",
-  "class_tag": "GT",
+  "name": "Mercedes-AMG GT R",
+  "description": "Front-mid-engined 4.0 twin-turbo V8 road car with a transaxle (2017-2021).",
+  "class_tag": "Road",
   "colour": "#3a7bd5",
   "mass_kg": 1615,
   "weight_front": 0.48,
@@ -43,7 +43,8 @@
         560
       ]
     ],
-    "engine_brake_nm": 80
+    "engine_brake_nm": 80,
+    "cylinders": 8
   },
   "gearbox": {
     "ratios": [

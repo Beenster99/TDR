@@ -7,6 +7,7 @@ extends Control
 ##   --server [--port 24690] [--laps 3] [--ai 4] [--min-players 1]   dedicated server
 ##   --host / --join 127.0.0.1 [--port 7777] [--name Bob]            skip the menu
 ##   --single [--laps 1] [--ai 3] [--car id]                         skip to a race
+##   --track id  --class GT3|Road|multi|open                         pick track / car class
 ##   --autodrive --ready --quit-after-race --time-scale 3            test bots
 
 
@@ -16,6 +17,8 @@ var name_edit: LineEdit
 var address_edit: LineEdit
 var status_label: Label
 var car_stepper: Stepper
+var class_stepper: Stepper
+var track_stepper: Stepper
 var laps_stepper: Stepper
 var ai_stepper: Stepper
 var ambient_stepper: Stepper
@@ -63,7 +66,16 @@ func _handle_cmdline() -> void:
 		return
 	laps_stepper.set_value(int(GameData.arg("laps", laps_stepper.value)))
 	ai_stepper.set_value(int(GameData.arg("ai", ai_stepper.value)))
+	if GameData.arg("track") and _track_info(str(GameData.arg("track"))):
+		track_stepper.set_value(str(GameData.arg("track")))
+	if GameData.arg("class"):
+		var cls := str(GameData.arg("class"))
+		class_stepper.set_value("" if cls == "open" else cls)
+		_rebuild_car_options()
 	if GameData.arg("car") and GameData.cars.has(GameData.arg("car")):
+		if not GameData.arg("class"):
+			class_stepper.set_value(RaceSettings.CLASS_MULTI)
+			_rebuild_car_options()
 		car_stepper.set_value(GameData.arg("car"))
 	if GameData.arg("single"):
 		_on_single.call_deferred()
@@ -126,7 +138,8 @@ func _build_ui() -> void:
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	root.add_child(title)
 	var sub := Label.new()
-	sub.text = "Spielberg GP Circuit  ·  version %s  ·  keyboard or controller" % ProjectSettings.get_setting("application/config/version", "dev")
+	sub.text = "%d cars  ·  %d circuits  ·  version %s  ·  keyboard or controller" % [GameData.cars.size(),
+		GameData.tracks.size(), ProjectSettings.get_setting("application/config/version", "dev")]
 	sub.modulate = Color(1, 1, 1, 0.6)
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	root.add_child(sub)
@@ -137,15 +150,27 @@ func _build_ui() -> void:
 	name_edit.placeholder_text = "Your name"
 	name_edit.custom_minimum_size = Vector2(420, 40)
 	root.add_child(name_edit)
-	var car_opts := []
-	var ids: Array = GameData.cars.keys()
-	ids.sort()
-	for id in ids:
-		var c: CarDefinition = GameData.cars[id]
-		car_opts.append([id, "%s  (%.0f kW, %.0f kg)" % [c.display_name, c.peak_power_kw(), c.mass]])
-	car_stepper = Stepper.choice("Car", car_opts, ids[0])
+	# Class (host setting), then car (yours), then track (host setting).
+	var class_opts := []
+	for c in CarCatalog.classes(GameData.cars):
+		class_opts.append([c, "%s  (%d cars)" % [c, CarCatalog.ids_in_class(GameData.cars, c).size()]])
+	class_opts.append([RaceSettings.CLASS_MULTI, "Multi-class (all cars)"])
+	class_opts.append(["", "Open (AI match the players)"])
+	var default_class: String = "GT3" if CarCatalog.ids_in_class(GameData.cars, "GT3").size() > 0 else class_opts[0][0]
+	class_stepper = Stepper.choice("Class", class_opts, default_class)
+	class_stepper.value_changed.connect(func(_v): _rebuild_car_options(); _push_settings())
+	root.add_child(class_stepper)
+	car_stepper = Stepper.choice("Car", [], "")
 	car_stepper.value_changed.connect(func(v): if Net.is_online(): Net.update_me({"car_id": v}))
 	root.add_child(car_stepper)
+	_rebuild_car_options()
+	var track_opts := []
+	for t in GameData.tracks:
+		track_opts.append([t["id"], "%s  (%.1f km, %s)" % [t["name"], t["length_m"] / 1000.0, t["location"]]])
+	var default_track: String = "mugello" if _track_info("mugello") else track_opts[0][0]
+	track_stepper = Stepper.choice("Track", track_opts, default_track)
+	track_stepper.value_changed.connect(func(_v): _push_settings())
+	root.add_child(track_stepper)
 
 	# Main page
 	var main := _page(root, "main")
@@ -227,6 +252,11 @@ func _button(parent: Node, text: String, cb: Callable) -> Button:
 
 func _show(id: String) -> void:
 	current_page = id
+	if id != "lobby":  # host-only settings are editable again off-line
+		class_stepper.disabled = false
+		track_stepper.disabled = false
+		for st in _settings_steppers:
+			st.disabled = false
 	for k in pages:
 		pages[k].visible = k == id
 	# Settings steppers live on whichever page needs them.
@@ -251,8 +281,38 @@ func _status(t: String) -> void:
 	status_label.text = t
 
 
+## Car list for the chosen class (all cars for multi-class / open). Keeps
+## the current car if it's still allowed.
+func _rebuild_car_options() -> void:
+	var cls: String = class_stepper.value
+	var fixed: bool = cls != "" and cls != RaceSettings.CLASS_MULTI
+	var opts := []
+	for id in CarCatalog.ids_in_class(GameData.cars, cls if fixed else ""):
+		var c: CarDefinition = GameData.cars[id]
+		opts.append([id, "%s  (%s, %.0f kW, %.0f kg)" % [c.display_name, c.class_tag, c.peak_power_kw(), c.mass]])
+	car_stepper.options = opts
+	var keep := false
+	for o in opts:
+		keep = keep or o[0] == car_stepper.value
+	if not keep and not opts.is_empty():
+		car_stepper.set_value(opts[0][0])
+		if Net.is_online():
+			Net.update_me({"car_id": car_stepper.value})
+	else:
+		car_stepper.set_value(car_stepper.value)
+
+
+func _track_info(id: String) -> Dictionary:
+	for t in GameData.tracks:
+		if t["id"] == id:
+			return t
+	return {}
+
+
 func _settings_from_ui() -> RaceSettings:
 	var s := RaceSettings.new()
+	s.track_id = track_stepper.value
+	s.car_class = class_stepper.value
 	s.laps = int(laps_stepper.value)
 	s.ai_count = int(ai_stepper.value)
 	s.environment = {"ambient_c": float(ambient_stepper.value), "track_c": float(track_temp_stepper.value),
@@ -328,8 +388,9 @@ func _refresh_lobby() -> void:
 			car_stepper.set_value(my_car)
 	if GameData.arg("ready") and Net.players.has(me) and not _my_ready():
 		Net.update_me({"ready": true})
-	lobby_title.text = ("Hosting" if Net.is_server() else "Lobby") + "  ·  %d player(s)  ·  %d laps, %d AI" % [
-		Net.players.size(), Net.settings.laps, Net.settings.ai_count]
+	lobby_title.text = ("Hosting" if Net.is_server() else "Lobby") + "  ·  %d player(s)  ·  %s, %d laps, %d AI" % [
+		Net.players.size(), _track_info(Net.settings.track_id).get("short_name", Net.settings.track_id),
+		Net.settings.laps, Net.settings.ai_count]
 	for c in lobby_list.get_children():
 		c.queue_free()
 	var ids := Net.players.keys()
@@ -344,7 +405,14 @@ func _refresh_lobby() -> void:
 	var host := Net.is_server()
 	for s in _settings_steppers:
 		s.disabled = not host
+	class_stepper.disabled = not host
+	track_stepper.disabled = not host
 	if not host:
+		if _track_info(Net.settings.track_id):
+			track_stepper.set_value(Net.settings.track_id)
+		if class_stepper.value != Net.settings.car_class:
+			class_stepper.set_value(Net.settings.car_class)
+			_rebuild_car_options()
 		laps_stepper.set_value(Net.settings.laps)
 		ai_stepper.set_value(Net.settings.ai_count)
 		var env := Net.settings.environment
