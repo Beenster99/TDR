@@ -1,0 +1,102 @@
+{
+  "id": "flat6_rear_gt",
+  "name": "Flat-Six RS",
+  "description": "Rear-engined flat-six track-focused coupe (992-era GT3-style).",
+  "class_tag": "GT",
+  "colour": "#e8c547",
+  "mass_kg": 1435,
+  "weight_front": 0.39,
+  "wheelbase_m": 2.457,
+  "cg_height_m": 0.46,
+  "track_width_m": 1.6,
+  "length_m": 4.57,
+  "width_m": 1.85,
+  "inertia_factor": 1.0,
+  "engine": {
+    "idle_rpm": 1000,
+    "redline_rpm": 9000,
+    "shift_up_rpm": 8800,
+    "shift_down_rpm": 4800,
+    "torque_curve": [
+      [
+        1000,
+        250
+      ],
+      [
+        3000,
+        380
+      ],
+      [
+        4500,
+        440
+      ],
+      [
+        6250,
+        470
+      ],
+      [
+        8000,
+        450
+      ],
+      [
+        9000,
+        400
+      ]
+    ],
+    "engine_brake_nm": 60
+  },
+  "gearbox": {
+    "ratios": [
+      3.75,
+      2.38,
+      1.72,
+      1.34,
+      1.11,
+      0.96,
+      0.84
+    ],
+    "final_drive": 4.12,
+    "efficiency": 0.88
+  },
+  "drivetrain": "RWD",
+  "awd_front_split": 0.0,
+  "wheel_radius_m": 0.345,
+  "brakes": {
+    "max_force_n": 19500,
+    "bias_front": 0.6
+  },
+  "steering": {
+    "max_angle_deg": 32,
+    "rate_deg_s": 260
+  },
+  "aero": {
+    "cda": 0.8,
+    "cla": 1.1,
+    "balance_front": 0.4
+  },
+  "tyre_compound": "road_semi_slick",
+  "fuel": {
+    "capacity_l": 64,
+    "bsfc_l_per_kwh": 0.3
+  },
+  "tuning_ranges": {
+    "brake_bias_front": [
+      0.5,
+      0.7
+    ],
+    "aero_cla": [
+      0.8,
+      1.4
+    ],
+    "final_drive": [
+      3.8,
+      4.5
+    ]
+  },
+  "format": 1,
+  "chassis": {
+    "front_grip": 1.0,
+    "rear_grip": 1.14,
+    "roll_stiffness_front": 0.62
+  }
+}
