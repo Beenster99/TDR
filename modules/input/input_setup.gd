@@ -12,6 +12,7 @@ const KEYS := {
 	"camera_toggle": [KEY_C],
 	"restart_race": [KEY_R],
 	"back_to_menu": [KEY_ESCAPE],
+	"strategy_screen": [KEY_TAB],
 }
 ## Gamepad: analog triggers + left stick. Buttons use the Xbox layout names
 ## (Godot maps PlayStation/Nintendo pads to the same positions).
@@ -27,6 +28,7 @@ const PAD_BUTTONS := {
 	"camera_toggle": [JOY_BUTTON_Y],
 	"restart_race": [JOY_BUTTON_BACK],
 	"back_to_menu": [JOY_BUTTON_START],
+	"strategy_screen": [JOY_BUTTON_DPAD_UP],  # pit wall (strategist screen); B or D-pad closes
 }
 const STICK_DEADZONE := 0.12
 const TRIGGER_DEADZONE := 0.05

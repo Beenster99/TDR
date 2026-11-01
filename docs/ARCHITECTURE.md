@@ -219,6 +219,45 @@ every player their own car as driver.
 car local, so the deterministic sim, replays and snapshots (`RaceSim.snapshot`)
 still hold. They're the base for replays, spectating and late join.
 
+## Race data and the pit wall (telemetry module)
+
+`RaceTelemetry` watches the race for the pit manager and strategist roles
+(wave 3 pits, wave 5 co-op) and never changes it. Every machine runs one,
+created by `RaceSession` and fed after each `sim.step()`.
+
+- **Lap log:** every completed lap per car with sector times, position, gap
+  to the leader, tyre temperatures, fuel and conditions. Last-5-lap average
+  (lap 1 excluded), trend, personal and overall best sectors, fastest lap.
+- **Gaps:** the lap is cut into timing loops (~80 m). Each car's crossing
+  time at every loop is interpolated from its race distance; a gap is the
+  difference between two cars' times at the same loop, so lapped cars and
+  battles both read correctly. Interval = gap to the car ahead.
+- **Pit window (`PitWindow`):** pit lane loss = speed-limited zone at the
+  limit + entry/exit roads + box in/out + stop time − the car's own time over
+  the stretch the lane bypasses (measured at the pit entry/exit loops). For
+  each car: where a stop now rejoins, gaps to the cars around it, clear air,
+  and "ideal" (no places lost, clear air). Stop time is a placeholder (8 s)
+  until wave 3 defines pit work.
+- **Weather (`WeatherForecast`):** reads the `SimEnvironment` timeline when it
+  has one (deterministic, so identical on every machine): upcoming changes
+  with an ETA range and confidence, and radar cells drifting in on a seeded
+  wind. Fixed weather shows current conditions.
+- **Feed (`RaceFeed`):** AI radio and strategy calls posted with
+  `RaceSim.post_event({"type": "radio"|"strategy", "car", "topic", "text", "plan"})`
+  plus calls the data writes itself: fastest laps, passes in the top ten,
+  cars closing within a second, tyres overheating, pit windows opening,
+  contacts, weather now and radar ETAs.
+- **Sync:** the host times gaps and analyses pit windows, and sends them
+  inside every 5th race state (2 Hz, `to_net`/`apply_net`). Its feed items go
+  out as reliable `{"type": "feed"}` race events. Lap logs, tyres and the
+  forecast are worked out on each client from data it already receives.
+- **Saved:** at the end of every race the scene writes the whole log to
+  `user://race_data/<date>_<track>.json`.
+- **Pit wall screen (`StrategistScreen`, ui):** Tab or D-pad up during a
+  race. Timing tower, radar and forecast, selected car with pit window and
+  lap history, and the feed with filters. D-pad picks cars and filters, B
+  closes. The race keeps running.
+
 ## Input and controllers
 
 `InputSetup` (input module) registers all actions in code at start-up. Keyboard: WASD or arrows.

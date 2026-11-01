@@ -87,6 +87,7 @@ func _draw() -> void:
 	# --- Minimap
 	_draw_minimap(Vector2(vp.x - 230, 50 + rows * 22 + 10))
 
+	_text(Vector2(0, vp.y - 14), "Tab / D-pad ↑  Pit wall", 13, Color(1, 1, 1, 0.45), HORIZONTAL_ALIGNMENT_CENTER, vp.x)
 	if me < 0:
 		_text(Vector2(20, 40), "SPECTATING", 22)
 		return

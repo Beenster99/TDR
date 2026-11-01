@@ -38,6 +38,10 @@ var follower := false
 ## Events raised during the most recent step (HUD, audio, replication, and
 ## later damage / safety car logic all consume these).
 var events: Array = []
+## Events posted from outside the sim between steps (AI radio calls and
+## strategy lines, later pit-wall commands). They join `events` at the start
+## of the next step, so they are replicated like every other event.
+var _posted: Array = []
 
 
 ## entries: RaceEntry per car, in grid order (index 0 = pole).
@@ -80,6 +84,14 @@ func _make_car_on_grid(slot: int, def: CarDefinition) -> CarState:
 	return c
 
 
+## Queue an event (a Dictionary with at least "type") for the next step.
+## Used by AI drivers for radio calls and strategy, e.g.
+## {"type": "radio", "car": 3, "topic": "tyres", "text": "Rears are overheating"}.
+func post_event(ev: Dictionary) -> void:
+	if _posted.size() < 64:
+		_posted.append(ev)
+
+
 func car_count() -> int:
 	return cars.size()
 
@@ -87,6 +99,9 @@ func car_count() -> int:
 ## Advance one tick. inputs[i] drives cars[i]; missing/null = neutral.
 func step(inputs: Array) -> void:
 	events.clear()
+	if not _posted.is_empty():
+		events.append_array(_posted)
+		_posted.clear()
 	tick += 1
 	phase_time += TICK_DT
 	env.update(TICK_DT)

@@ -19,15 +19,16 @@ to bottom (top layer).
 | **core** | 1.0.0 | Shared basics: the driver-intent contract, JSON reading, the module registry, shared game state | `CarInput`, `JsonData`, `ModuleRegistry`, autoload `GameData` | nothing |
 | **cars** | 1.1.0 | What each car is (engine, gears, mass, aero, brakes, aids, tyres) and its class (GT3, Road); car JSON in `data/` | `CarDefinition`, `CarCatalog` | core |
 | **tracks** | 1.1.0 | Circuit layouts, surfaces, sectors, grid slots, pit lanes; track JSON in `data/`; track builder in `tools/` | `TrackData` (incl. `TrackData.Surface`), `TrackCatalog` | core |
-| **input** | 1.0.0 | Keyboard and controller bindings, turning them into `CarInput` | `LocalInput`, `InputSetup` | core |
+| **input** | 1.1.0 | Keyboard and controller bindings (incl. the pit wall button), turning them into `CarInput` | `LocalInput`, `InputSetup` | core |
 | **physics** | 1.0.0 | How cars move: vehicle model, tyre grip and temperatures, air and track temperature, weather hooks; tyre JSON in `data/` | `CarState`, `CarPhysics`, `TyreCompound`, `TyreCatalog`, `SimEnvironment` | core, cars, tracks |
-| **race** | 1.1.0 | Race rules: countdown, laps, sectors, positions, finish, contacts, snapshots, settings, entries and crews, building a race from start data | `RaceSim`, `RaceSettings`, `RaceEntry`, `RaceFactory` | core, cars, tracks, physics |
+| **race** | 1.2.0 | Race rules: countdown, laps, sectors, positions, finish, contacts, snapshots, settings, entries and crews, building a race from start data; `post_event` for AI radio/strategy calls | `RaceSim`, `RaceSettings`, `RaceEntry`, `RaceFactory` | core, cars, tracks, physics |
 | **ai** | 1.0.0 | Computer drivers; AI names and traits in `data/` | `AIDriver`, `DriverCatalog` | core, cars, tracks, physics, race |
 | **graphics** | 1.0.1 | Drawing the track and the cars | `TrackView`, `CarView` | core, cars, tracks, physics |
-| **multiplayer** | 1.0.1 | Online play the Torque Shed way (lobby, ENet, UPnP, streaming cars) and running a race offline / as host / as client | `RaceSession`, `NetTimeline`, autoload `Net` | core, physics, race, ai |
-| **ui** | 1.0.1 | Main menu, lobby, race settings, in-race HUD, controller-friendly widgets | `RaceHud`, `Stepper`; scene `main_menu.tscn` | core, cars, tracks, physics, race, multiplayer |
+| **telemetry** | 1.0.0 | Race data for the pit wall: lap and sector log, last-5-lap averages, gaps and intervals from timing loops, tyre state, pit-window analysis (pit lane loss per track), weather radar and forecast, feed of radio/strategy/timing calls; host syncs gaps and feed to clients; full race log export | `RaceTelemetry`, `CarTelemetry`, `PitWindow`, `WeatherForecast`, `RaceFeed` | core, tracks, physics, race |
+| **multiplayer** | 1.1.0 | Online play the Torque Shed way (lobby, ENet, UPnP, streaming cars) and running a race offline / as host / as client | `RaceSession`, `NetTimeline`, autoload `Net` | core, physics, race, ai, telemetry |
+| **ui** | 1.1.0 | Main menu, lobby, race settings, in-race HUD, the pit wall (strategist screen), controller-friendly widgets | `RaceHud`, `Stepper`, `StrategistScreen`; scene `main_menu.tscn` | core, cars, tracks, physics, race, telemetry, multiplayer |
 | **business** | 0.1.0 (planned) | Wave 4: championships, seasons, prize money, buying and upgrading cars | none yet | core, cars, race |
-| **game** | 1.0.0 | Puts it all together: start-up (loads content, registers controls) and the race scene | autoload `Game`; scene `race.tscn` | everything except business |
+| **game** | 1.1.0 | Puts it all together: start-up (loads content, registers controls) and the race scene | autoload `Game`; scene `race.tscn` | everything except business |
 
 Start-up order: `GameData` (core) parses the command line, `Game` (game)
 registers controls and loads all content into `GameData`, `Net`
@@ -56,7 +57,7 @@ registers controls and loads all content into `GameData`, `Net`
    to a new major version, the tests fail for every module still pointing
    at the old one, until someone checks that module still works and updates
    its entry. That's the signal to the threads working on those modules.
-6. **The simulation stays pure.** core, cars, tracks, physics, race and ai
+6. **The simulation stays pure.** core, cars, tracks, physics, race, ai and telemetry
    have no nodes, no `Input`, no clock and no drawing, so races stay
    deterministic and run the same on a headless server and in tests.
 7. **Network messages:** bump `Net.PROTOCOL_VERSION` (multiplayer) whenever a
