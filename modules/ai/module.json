@@ -1,9 +1,9 @@
 {
   "id": "ai",
   "name": "AI drivers",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "status": "active",
-  "summary": "Computer drivers: follow the racing line, brake for corners, avoid cars. AI names and traits are JSON in data/.",
+  "summary": "Computer drivers with personalities: racing line, learned braking points, overtaking, defending, mistakes, tyre and weather awareness. Named drivers and traits are JSON in data/.",
   "depends": {
     "core": "1",
     "cars": "1",
@@ -13,7 +13,8 @@
   },
   "api": [
     "AIDriver",
-    "DriverCatalog"
+    "DriverCatalog",
+    "DriverTraits"
   ],
   "internal": [],
   "notes": "AI produces CarInput just like a human, so nothing else knows a car is AI-driven."

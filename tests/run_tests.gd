@@ -12,6 +12,7 @@ func _init() -> void:
 	test_data_loads()
 	test_input_wire_format()
 	test_tyre_temperature_matters()
+	test_ai_drivers()
 	test_car_classes()
 	test_every_track()
 	test_weather_and_time()
@@ -491,3 +492,40 @@ func test_race_settings_and_grid() -> void:
 	client.apply_race_state(sim.race_state())
 	check(client.env.to_dict() == sim.env.to_dict(), "clients get the host's weather, clock and track state")
 	check(absf(sim.env.time_of_day_h - (19.0 + 10.0 * 30.0 / 3600.0)) < 0.01, "race clock runs at the host's speed")
+
+
+## The driver roster is valid and the traits change how the AI drives.
+func test_ai_drivers() -> void:
+	print("ai drivers")
+	var drivers := DriverCatalog.load_all()
+	check(drivers.size() >= 24, "%d named drivers (enough for a 25-car grid)" % drivers.size())
+	var ids := {}
+	var bad := []
+	for d in drivers:
+		if ids.has(d.get("id", "")) or d.get("name", "") == "":
+			bad.append(d.get("id", "?"))
+		ids[d.get("id", "")] = true
+		for k in DriverTraits.NAMES:
+			var v = d.get("traits", {}).get(k)
+			if v == null or float(v) < 0.0 or float(v) > 1.0:
+				bad.append("%s.%s" % [d.get("id", "?"), k])
+	check(bad.is_empty(), "every driver has a unique id and all eight traits in 0..1 %s" % [bad])
+	var legacy := DriverTraits.from_dict({"skill": 0.8, "racecraft": 0.3})
+	check(legacy.pace == 0.8 and legacy.overtaking == 0.3, "old skill/racecraft trait names still load")
+	var t := DriverTraits.from_dict({"pace": 0.9, "aggression": 0.6})
+	var easy := t.with_difficulty(0.25)
+	var hard := t.with_difficulty(1.0)
+	check(easy.pace < t.pace and hard.pace > t.pace and hard.aggression == t.aggression, "difficulty scales skills (%.2f / %.2f / %.2f), not style" % [easy.pace, t.pace, hard.pace])
+	# A slow driver plans slower corners than a fast one in the same car.
+	var cars := CarCatalog.load_all()
+	var track := TrackCatalog.load_track("spielberg")
+	var car: CarDefinition = cars.values()[0]
+	var tyre: TyreCompound = TyreCatalog.load_all().values()[0]
+	var slow := AIDriver.new(track, car, tyre, {"pace": 0.6}, 1)
+	var fast := AIDriver.new(track, car, tyre, {"pace": 1.0}, 1)
+	var vs := 0.0
+	var vf := 0.0
+	for k in slow.target_speed.size():
+		vs += slow.target_speed[k]
+		vf += fast.target_speed[k]
+	check(vf > vs * 1.03, "pace trait: faster plan for the faster driver (%.1f vs %.1f m/s avg)" % [vf / slow.target_speed.size(), vs / slow.target_speed.size()])

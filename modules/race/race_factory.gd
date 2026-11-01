@@ -40,7 +40,7 @@ static func plan(settings: RaceSettings, humans: Array, cars: Dictionary, driver
 		e.is_ai = true
 		if pool.is_empty():
 			e.driver_name = "AI %d" % (k + 1)
-			e.traits = {"skill": 0.9, "consistency": 0.9}
+			e.traits = {"pace": 0.9, "consistency": 0.9}
 		else:
 			var d: Dictionary = pool.pop_at(rng.randi_range(0, pool.size() - 1))
 			e.driver_name = d.get("name", "AI")
