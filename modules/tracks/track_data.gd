@@ -44,6 +44,24 @@ var pit_limit_end: float = 0.0     ## and ends
 var pit_box_count: int = 30
 var _pit_bounds := Rect2()
 
+## Elevation (empty / zero when a track has none: everything below then
+## returns flat values, so callers can use it unconditionally).
+## Heights are metres above the lowest point of the map (base_alt_m above sea).
+var base_alt_m: float = 0.0
+var height: PackedFloat64Array = []     ## height at each centre-line point
+var bank: PackedFloat64Array = []       ## banking at each point, radians, + = right side lower
+var pit_height: PackedFloat64Array = [] ## height at each pit_path point
+var _grade: PackedFloat64Array = []     ## dh/ds at each point (smoothed)
+const CREST_SMOOTH_M := 35.0  ## box radius, applied 3x (~ +-100 m in all)
+var _vcurv: PackedFloat64Array = []     ## d2h/ds2 at each point (+ = dip, - = crest)
+## Terrain grid around the circuit, for drawing the ground and for cars off
+## the track. Point (i, j) is at terrain_origin + Vector2(i, j) * terrain_cell_m
+## and its height is terrain_heights[j * terrain_size.x + i] (metres).
+var terrain_origin := Vector2.ZERO
+var terrain_cell_m: float = 20.0
+var terrain_size := Vector2i.ZERO
+var terrain_heights: PackedFloat32Array = []
+
 
 static func from_dict(d: Dictionary) -> TrackData:
 	var t := TrackData.new()
@@ -69,6 +87,7 @@ static func from_dict(d: Dictionary) -> TrackData:
 	t.default_environment = d.get("default_environment", {})
 	t.pit_lane = d.get("pit_lane")
 	t._build()
+	t._load_elevation(d.get("elevation"), start)
 	if t.pit_lane is Dictionary and t.pit_lane.get("path", []).size() >= 2:
 		t._build_pit(t.pit_lane)
 	return t
@@ -114,6 +133,68 @@ func _build() -> void:
 		seg_dir[i] = (b - a) / maxf(seg_len[i], 0.0001)
 		s += seg_len[i]
 	length = s
+
+
+func _load_elevation(e, start: int) -> void:
+	if not (e is Dictionary) or e.get("height_m", []).size() != points.size():
+		return
+	var n := points.size()
+	var hs: Array = e["height_m"]
+	var bs: Array = e.get("bank_deg", [])
+	base_alt_m = e.get("base_alt_m", 0.0)
+	height.resize(n)
+	bank.resize(n)
+	for k in n:
+		height[k] = float(hs[(k + start) % n])
+		bank[k] = deg_to_rad(float(bs[(k + start) % n])) if bs.size() == n else 0.0
+	for v in e.get("pit_height_m", []):
+		pit_height.append(float(v))
+	# Slope from the heights as stored; vertical curvature from a version
+	# smoothed over ~200 m, because the source map (~30 m cells) has small
+	# bumps a real track doesn't, and at racing speed those would throw the
+	# car into the air.
+	_grade.resize(n)
+	_vcurv.resize(n)
+	var step := length / n
+	var smooth := _box_blur(_box_blur(_box_blur(height, int(CREST_SMOOTH_M / step)), int(CREST_SMOOTH_M / step)), int(CREST_SMOOTH_M / step))
+	var kc := maxi(1, int(25.0 / step))
+	for i in n:
+		var ip := (i - 1 + n) % n
+		var inx := (i + 1) % n
+		var lb := maxf(seg_len[ip], 0.01)
+		var lf := maxf(seg_len[i], 0.01)
+		var gb := (height[i] - height[ip]) / lb
+		var gf := (height[inx] - height[i]) / lf
+		_grade[i] = (gb * lf + gf * lb) / (lb + lf)
+		var d := kc * step
+		_vcurv[i] = (smooth[(i + kc) % n] - 2.0 * smooth[i] + smooth[(i - kc + n) % n]) / (d * d)
+	var tr = e.get("terrain")
+	if tr is Dictionary and tr.get("size", []).size() == 2:
+		terrain_origin = Vector2(tr["origin"][0], tr["origin"][1])
+		terrain_cell_m = tr.get("cell_m", 20.0)
+		terrain_size = Vector2i(int(tr["size"][0]), int(tr["size"][1]))
+		var hd: Array = tr.get("height_dm", [])
+		if hd.size() == terrain_size.x * terrain_size.y:
+			terrain_heights.resize(hd.size())
+			for k in hd.size():
+				terrain_heights[k] = float(hd[k]) * 0.1
+		else:
+			terrain_size = Vector2i.ZERO
+
+
+## Moving average over +-r points of a closed-loop signal.
+static func _box_blur(v: PackedFloat64Array, r: int) -> PackedFloat64Array:
+	var n := v.size()
+	r = clampi(r, 1, n / 2 - 1)
+	var out := PackedFloat64Array()
+	out.resize(n)
+	var acc := 0.0
+	for j in range(-r, r + 1):
+		acc += v[(j + n) % n]
+	for i in n:
+		out[i] = acc / (2 * r + 1)
+		acc += v[(i + r + 1) % n] - v[(i - r + n) % n]
+	return out
 
 
 func point_count() -> int:
@@ -294,3 +375,126 @@ func _pit_index(d: float) -> int:
 
 func _pit_dir(i: int) -> Vector2:
 	return (pit_path[i + 1] - pit_path[i]).normalized()
+
+
+# --- Elevation ----------------------------------------------------------------
+
+func has_elevation() -> bool:
+	return height.size() == points.size() and height.size() > 0
+
+
+## Fraction along segment index_at(s): [i, j, f].
+func _seg_at(s: float) -> Array:
+	var i := index_at(s)
+	var j := (i + 1) % points.size()
+	var f := clampf((fposmod(s, length) - cum_s[i]) / maxf(seg_len[i], 0.0001), 0.0, 1.0)
+	return [i, j, f]
+
+
+## Road height at distance s, offset metres to the right of the centre line
+## (banking tilts it across).
+func height_at(s: float, offset: float = 0.0) -> float:
+	if not has_elevation():
+		return 0.0
+	var a := _seg_at(s)
+	var h := lerpf(height[a[0]], height[a[1]], a[2])
+	return h - offset * tan(lerpf(bank[a[0]], bank[a[1]], a[2]))
+
+
+## Gradient along the race direction (rise over run, + = uphill).
+func grade_at(s: float) -> float:
+	if not has_elevation():
+		return 0.0
+	var a := _seg_at(s)
+	return lerpf(_grade[a[0]], _grade[a[1]], a[2])
+
+
+## Vertical curvature d2h/ds2 (1/m): + in a dip or compression, - over a crest.
+func vertical_curvature_at(s: float) -> float:
+	if not has_elevation():
+		return 0.0
+	var a := _seg_at(s)
+	return lerpf(_vcurv[a[0]], _vcurv[a[1]], a[2])
+
+
+## Banking in radians, + = right side (of the race direction) lower.
+func bank_at(s: float) -> float:
+	if not has_elevation():
+		return 0.0
+	var a := _seg_at(s)
+	return lerpf(bank[a[0]], bank[a[1]], a[2])
+
+
+## Uphill direction and steepness of the road surface at a projected point
+## (from project()): world 2D vector of dh/dx, dh/dy.
+func surface_gradient(q: Dictionary) -> Vector2:
+	if not has_elevation():
+		return Vector2.ZERO
+	var dir: Vector2 = q["dir"]
+	var s: float = q["s"]
+	return dir * grade_at(s) - Vector2(-dir.y, dir.x) * tan(bank_at(s))
+
+
+## Unit up-normal of the road at a world position, in 3D axes where
+## x = world x, y = up, z = world y (the 2D Y-down axis).
+func surface_normal_at(pos: Vector2, hint: int = -1) -> Vector3:
+	if not has_elevation():
+		return Vector3.UP
+	var g := surface_gradient(project(pos, hint))
+	return Vector3(-g.x, 1.0, -g.y).normalized()
+
+
+## Height of whatever is under a world position: the road (with banking) on
+## the track and kerbs, the pit lane in the pits, else the terrain grid.
+func surface_height_at(pos: Vector2, hint: int = -1) -> float:
+	if not has_elevation():
+		return 0.0
+	var q := project(pos, hint)
+	var off: float = q["offset"]
+	var edge: float = q["w_right"] if off >= 0.0 else q["w_left"]
+	if has_pit_lane() and pit_height.size() == pit_path.size() and in_pit_lane(pos):
+		return pit_height_at(project_pit(pos)["d"])
+	if absf(off) <= edge + kerb_width:
+		return height_at(q["s"], off)
+	var road := height_at(q["s"], signf(off) * (edge + kerb_width))
+	if terrain_size == Vector2i.ZERO:
+		return road
+	# Run-off follows the road's edge, then eases into the hillside.
+	var t := clampf((absf(off) - edge - kerb_width) / (runoff + 60.0), 0.0, 1.0)
+	return lerpf(road, ground_height_at(pos), t * t * (3.0 - 2.0 * t))
+
+
+## Terrain height (bilinear on the grid); 0 without terrain data.
+func ground_height_at(pos: Vector2) -> float:
+	if terrain_size == Vector2i.ZERO:
+		return 0.0
+	var g := (pos - terrain_origin) / terrain_cell_m
+	var i := clampi(int(floor(g.x)), 0, terrain_size.x - 2)
+	var j := clampi(int(floor(g.y)), 0, terrain_size.y - 2)
+	var fx := clampf(g.x - i, 0.0, 1.0)
+	var fy := clampf(g.y - j, 0.0, 1.0)
+	var w := terrain_size.x
+	var a := lerpf(terrain_heights[j * w + i], terrain_heights[j * w + i + 1], fx)
+	var b := lerpf(terrain_heights[(j + 1) * w + i], terrain_heights[(j + 1) * w + i + 1], fx)
+	return lerpf(a, b, fy)
+
+
+## Height d metres along the pit lane (0 without data).
+func pit_height_at(d: float) -> float:
+	if pit_height.size() != pit_path.size() or pit_height.is_empty():
+		return height_at(pit_entry_s)
+	var i := _pit_index(d)
+	var f := clampf((clampf(d, 0.0, pit_length) - pit_cum[i]) / maxf(pit_cum[i + 1] - pit_cum[i], 0.0001), 0.0, 1.0)
+	return lerpf(pit_height[i], pit_height[i + 1], f)
+
+
+## Lowest and highest road height on the lap: Vector2(min, max).
+func height_range() -> Vector2:
+	if not has_elevation():
+		return Vector2.ZERO
+	var lo := INF
+	var hi := -INF
+	for h in height:
+		lo = minf(lo, h)
+		hi = maxf(hi, h)
+	return Vector2(lo, hi)
