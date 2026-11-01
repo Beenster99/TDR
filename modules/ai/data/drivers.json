@@ -1,161 +1,1019 @@
 {
-  "format": 1,
-  "trait_notes": {
-    "skill": "0..1, scales cornering speed target and braking precision",
-    "aggression": "0..1, later braking + willingness to overtake/defend (wave 2)",
-    "consistency": "0..1, lower = more lap-to-lap variation and mistakes",
-    "tyre_management": "0..1, how much the AI backs off when tyres are out of window (wave 2)",
-    "racecraft": "0..1, awareness of other cars, avoidance and defending (wave 2)"
-  },
+  "format": 2,
+  "notes": "Named AI drivers. traits: 0..1 per DriverTraits (modules/ai/driver_traits.gd). team, age and potential are the start of lasting careers (wave 4: seasons, transfers, rookies). Add a driver by adding an entry; ids must be unique.",
+  "teams": [
+    "Apex Motorsport",
+    "Redline Racing",
+    "Northwind GT",
+    "Scuderia Vento",
+    "Kinetic Works",
+    "Blue Arrow",
+    "Ironbark Racing",
+    "Solstice Motorsport",
+    "Torque Shed Racing",
+    "Meridian GT",
+    "Halcyon Racing",
+    "Copperhead Motorsport"
+  ],
   "drivers": [
     {
+      "id": "ada_kessler",
       "name": "Ada Kessler",
+      "number": 30,
+      "nationality": "DE",
+      "age": 23,
+      "style": "charger",
+      "team": "Apex Motorsport",
+      "potential": 0.99,
       "traits": {
-        "skill": 0.97,
-        "aggression": 0.7,
-        "consistency": 0.92,
-        "tyre_management": 0.6,
-        "racecraft": 0.8
-      }
-    },
-    {
-      "name": "Rui Matsuda",
-      "traits": {
-        "skill": 0.95,
-        "aggression": 0.4,
-        "consistency": 0.97,
-        "tyre_management": 0.9,
-        "racecraft": 0.7
-      }
-    },
-    {
-      "name": "Leo Brandt",
-      "traits": {
-        "skill": 0.93,
-        "aggression": 0.9,
-        "consistency": 0.8,
-        "tyre_management": 0.4,
-        "racecraft": 0.6
-      }
-    },
-    {
-      "name": "Nina Okafor",
-      "traits": {
-        "skill": 0.96,
-        "aggression": 0.5,
-        "consistency": 0.9,
-        "tyre_management": 0.8,
-        "racecraft": 0.9
-      }
-    },
-    {
-      "name": "Mateo Ruiz",
-      "traits": {
-        "skill": 0.91,
-        "aggression": 0.6,
-        "consistency": 0.85,
-        "tyre_management": 0.5,
-        "racecraft": 0.5
-      }
-    },
-    {
-      "name": "Sven Halvorsen",
-      "traits": {
-        "skill": 0.92,
-        "aggression": 0.3,
-        "consistency": 0.95,
-        "tyre_management": 0.7,
-        "racecraft": 0.6
-      }
-    },
-    {
-      "name": "Priya Nair",
-      "traits": {
-        "skill": 0.94,
-        "aggression": 0.6,
-        "consistency": 0.88,
-        "tyre_management": 0.6,
-        "racecraft": 0.8
-      }
-    },
-    {
-      "name": "Tomas Vidal",
-      "traits": {
-        "skill": 0.9,
-        "aggression": 0.8,
-        "consistency": 0.82,
-        "tyre_management": 0.4,
-        "racecraft": 0.5
-      }
-    },
-    {
-      "name": "Yuki Arai",
-      "traits": {
-        "skill": 0.95,
-        "aggression": 0.5,
-        "consistency": 0.93,
-        "tyre_management": 0.8,
-        "racecraft": 0.7
-      }
-    },
-    {
-      "name": "Femi Adeyemi",
-      "traits": {
-        "skill": 0.92,
-        "aggression": 0.7,
-        "consistency": 0.86,
-        "tyre_management": 0.5,
-        "racecraft": 0.7
-      }
-    },
-    {
-      "name": "Clara Weiss",
-      "traits": {
-        "skill": 0.93,
-        "aggression": 0.4,
-        "consistency": 0.91,
-        "tyre_management": 0.9,
-        "racecraft": 0.6
-      }
-    },
-    {
-      "name": "Diego Santos",
-      "traits": {
-        "skill": 0.89,
-        "aggression": 0.9,
-        "consistency": 0.78,
-        "tyre_management": 0.3,
-        "racecraft": 0.4
-      }
-    },
-    {
-      "name": "Hana Lindqvist",
-      "traits": {
-        "skill": 0.94,
-        "aggression": 0.5,
-        "consistency": 0.9,
-        "tyre_management": 0.7,
-        "racecraft": 0.8
-      }
-    },
-    {
-      "name": "Omar Haddad",
-      "traits": {
-        "skill": 0.91,
-        "aggression": 0.6,
-        "consistency": 0.87,
-        "tyre_management": 0.6,
-        "racecraft": 0.6
-      }
-    },
-    {
-      "name": "Ivy Chen",
-      "traits": {
-        "skill": 0.96,
-        "aggression": 0.6,
+        "pace": 0.97,
         "consistency": 0.89,
+        "aggression": 0.82,
+        "overtaking": 0.88,
+        "defending": 0.8,
+        "tyre_management": 0.5,
+        "wet_skill": 0.54,
+        "composure": 0.83
+      }
+    },
+    {
+      "id": "rui_matsuda",
+      "name": "Rui Matsuda",
+      "number": 98,
+      "nationality": "JP",
+      "age": 25,
+      "style": "tyre whisperer",
+      "team": "Redline Racing",
+      "potential": 0.97,
+      "traits": {
+        "pace": 0.95,
+        "consistency": 0.94,
+        "aggression": 0.55,
+        "overtaking": 0.7,
+        "defending": 0.7,
+        "tyre_management": 0.9,
+        "wet_skill": 0.59,
+        "composure": 0.58
+      }
+    },
+    {
+      "id": "leo_brandt",
+      "name": "Leo Brandt",
+      "number": 38,
+      "nationality": "DE",
+      "age": 23,
+      "style": "charger",
+      "team": "Northwind GT",
+      "potential": 0.94,
+      "traits": {
+        "pace": 0.93,
+        "consistency": 0.82,
+        "aggression": 0.9,
+        "overtaking": 0.6,
+        "defending": 0.6,
+        "tyre_management": 0.55,
+        "wet_skill": 0.51,
+        "composure": 0.75
+      }
+    },
+    {
+      "id": "nina_okafor",
+      "name": "Nina Okafor",
+      "number": 88,
+      "nationality": "NG",
+      "age": 31,
+      "style": "tyre whisperer",
+      "team": "Scuderia Vento",
+      "potential": 0.97,
+      "traits": {
+        "pace": 0.96,
+        "consistency": 0.92,
+        "aggression": 0.5,
+        "overtaking": 0.9,
+        "defending": 0.9,
+        "tyre_management": 0.95,
+        "wet_skill": 0.41,
+        "composure": 0.86
+      }
+    },
+    {
+      "id": "mateo_ruiz",
+      "name": "Mateo Ruiz",
+      "number": 50,
+      "nationality": "ES",
+      "age": 32,
+      "style": "all-rounder",
+      "team": "Kinetic Works",
+      "potential": 0.91,
+      "traits": {
+        "pace": 0.9,
+        "consistency": 0.88,
+        "aggression": 0.6,
+        "overtaking": 0.5,
+        "defending": 0.57,
+        "tyre_management": 0.55,
+        "wet_skill": 0.51,
+        "composure": 0.99
+      }
+    },
+    {
+      "id": "sven_halvorsen",
+      "name": "Sven Halvorsen",
+      "number": 73,
+      "nationality": "NO",
+      "age": 31,
+      "style": "all-rounder",
+      "team": "Blue Arrow",
+      "potential": 0.93,
+      "traits": {
+        "pace": 0.92,
+        "consistency": 0.92,
+        "aggression": 0.45,
+        "overtaking": 0.6,
+        "defending": 0.6,
         "tyre_management": 0.7,
-        "racecraft": 0.9
+        "wet_skill": 0.69,
+        "composure": 0.64
+      }
+    },
+    {
+      "id": "priya_nair",
+      "name": "Priya Nair",
+      "number": 5,
+      "nationality": "IN",
+      "age": 29,
+      "style": "defender",
+      "team": "Ironbark Racing",
+      "potential": 0.95,
+      "traits": {
+        "pace": 0.94,
+        "consistency": 0.88,
+        "aggression": 0.65,
+        "overtaking": 0.8,
+        "defending": 0.93,
+        "tyre_management": 0.6,
+        "wet_skill": 0.61,
+        "composure": 0.85
+      }
+    },
+    {
+      "id": "tomas_vidal",
+      "name": "Tomas Vidal",
+      "number": 76,
+      "nationality": "PT",
+      "age": 29,
+      "style": "hothead",
+      "team": "Solstice Motorsport",
+      "potential": 0.89,
+      "traits": {
+        "pace": 0.88,
+        "consistency": 0.78,
+        "aggression": 0.8,
+        "overtaking": 0.45,
+        "defending": 0.5,
+        "tyre_management": 0.4,
+        "wet_skill": 0.56,
+        "composure": 0.57
+      }
+    },
+    {
+      "id": "yuki_arai",
+      "name": "Yuki Arai",
+      "number": 52,
+      "nationality": "JP",
+      "age": 24,
+      "style": "all-rounder",
+      "team": "Torque Shed Racing",
+      "potential": 0.97,
+      "traits": {
+        "pace": 0.95,
+        "consistency": 0.9,
+        "aggression": 0.62,
+        "overtaking": 0.77,
+        "defending": 0.7,
+        "tyre_management": 0.7,
+        "wet_skill": 0.59,
+        "composure": 0.77
+      }
+    },
+    {
+      "id": "femi_adeyemi",
+      "name": "Femi Adeyemi",
+      "number": 67,
+      "nationality": "NG",
+      "age": 23,
+      "style": "defender",
+      "team": "Meridian GT",
+      "potential": 0.95,
+      "traits": {
+        "pace": 0.92,
+        "consistency": 0.86,
+        "aggression": 0.75,
+        "overtaking": 0.7,
+        "defending": 0.82,
+        "tyre_management": 0.5,
+        "wet_skill": 0.78,
+        "composure": 0.73
+      }
+    },
+    {
+      "id": "clara_weiss",
+      "name": "Clara Weiss",
+      "number": 92,
+      "nationality": "AT",
+      "age": 24,
+      "style": "tyre whisperer",
+      "team": "Halcyon Racing",
+      "potential": 0.96,
+      "traits": {
+        "pace": 0.93,
+        "consistency": 0.91,
+        "aggression": 0.4,
+        "overtaking": 0.6,
+        "defending": 0.6,
+        "tyre_management": 0.9,
+        "wet_skill": 0.66,
+        "composure": 0.81
+      }
+    },
+    {
+      "id": "diego_santos",
+      "name": "Diego Santos",
+      "number": 63,
+      "nationality": "BR",
+      "age": 24,
+      "style": "hothead",
+      "team": "Copperhead Motorsport",
+      "potential": 0.91,
+      "traits": {
+        "pace": 0.89,
+        "consistency": 0.75,
+        "aggression": 0.99,
+        "overtaking": 0.48,
+        "defending": 0.4,
+        "tyre_management": 0.2,
+        "wet_skill": 0.72,
+        "composure": 0.62
+      }
+    },
+    {
+      "id": "hana_lindqvist",
+      "name": "Hana Lindqvist",
+      "number": 93,
+      "nationality": "SE",
+      "age": 32,
+      "style": "charger",
+      "team": "Apex Motorsport",
+      "potential": 0.97,
+      "traits": {
+        "pace": 0.94,
+        "consistency": 0.87,
+        "aggression": 0.62,
+        "overtaking": 0.88,
+        "defending": 0.8,
+        "tyre_management": 0.6,
+        "wet_skill": 0.68,
+        "composure": 0.63
+      }
+    },
+    {
+      "id": "omar_haddad",
+      "name": "Omar Haddad",
+      "number": 72,
+      "nationality": "LB",
+      "age": 29,
+      "style": "hothead",
+      "team": "Redline Racing",
+      "potential": 0.93,
+      "traits": {
+        "pace": 0.91,
+        "consistency": 0.84,
+        "aggression": 0.75,
+        "overtaking": 0.6,
+        "defending": 0.6,
+        "tyre_management": 0.6,
+        "wet_skill": 0.51,
+        "composure": 0.51
+      }
+    },
+    {
+      "id": "ivy_chen",
+      "name": "Ivy Chen",
+      "number": 57,
+      "nationality": "TW",
+      "age": 32,
+      "style": "defender",
+      "team": "Northwind GT",
+      "potential": 0.98,
+      "traits": {
+        "pace": 0.96,
+        "consistency": 0.86,
+        "aggression": 0.75,
+        "overtaking": 0.9,
+        "defending": 0.9,
+        "tyre_management": 0.7,
+        "wet_skill": 0.71,
+        "composure": 0.67
+      }
+    },
+    {
+      "id": "marco_bellini",
+      "name": "Marco Bellini",
+      "number": 61,
+      "nationality": "IT",
+      "age": 32,
+      "style": "metronome",
+      "team": "Scuderia Vento",
+      "potential": 0.89,
+      "traits": {
+        "pace": 0.87,
+        "consistency": 0.93,
+        "aggression": 0.39,
+        "overtaking": 0.46,
+        "defending": 0.45,
+        "tyre_management": 0.52,
+        "wet_skill": 0.72,
+        "composure": 0.57
+      }
+    },
+    {
+      "id": "aiko_tanaka",
+      "name": "Aiko Tanaka",
+      "number": 35,
+      "nationality": "JP",
+      "age": 30,
+      "style": "metronome",
+      "team": "Kinetic Works",
+      "potential": 0.89,
+      "traits": {
+        "pace": 0.87,
+        "consistency": 0.97,
+        "aggression": 0.33,
+        "overtaking": 0.65,
+        "defending": 0.6,
+        "tyre_management": 0.76,
+        "wet_skill": 0.7,
+        "composure": 0.79
+      }
+    },
+    {
+      "id": "jonas_weber",
+      "name": "Jonas Weber",
+      "number": 20,
+      "nationality": "CH",
+      "age": 24,
+      "style": "metronome",
+      "team": "Blue Arrow",
+      "potential": 0.89,
+      "traits": {
+        "pace": 0.88,
+        "consistency": 0.98,
+        "aggression": 0.09,
+        "overtaking": 0.52,
+        "defending": 0.6,
+        "tyre_management": 0.69,
+        "wet_skill": 0.55,
+        "composure": 0.84
+      }
+    },
+    {
+      "id": "sofia_moreau",
+      "name": "Sofia Moreau",
+      "number": 87,
+      "nationality": "FR",
+      "age": 28,
+      "style": "defender",
+      "team": "Ironbark Racing",
+      "potential": 0.96,
+      "traits": {
+        "pace": 0.94,
+        "consistency": 0.82,
+        "aggression": 0.59,
+        "overtaking": 0.42,
+        "defending": 0.92,
+        "tyre_management": 0.71,
+        "wet_skill": 0.61,
+        "composure": 0.85
+      }
+    },
+    {
+      "id": "lukas_novak",
+      "name": "Lukas Novak",
+      "number": 62,
+      "nationality": "CZ",
+      "age": 27,
+      "style": "all-rounder",
+      "team": "Solstice Motorsport",
+      "potential": 0.93,
+      "traits": {
+        "pace": 0.91,
+        "consistency": 0.92,
+        "aggression": 0.28,
+        "overtaking": 0.44,
+        "defending": 0.51,
+        "tyre_management": 0.68,
+        "wet_skill": 0.68,
+        "composure": 0.79
+      }
+    },
+    {
+      "id": "amara_diallo",
+      "name": "Amara Diallo",
+      "number": 68,
+      "nationality": "SN",
+      "age": 23,
+      "style": "all-rounder",
+      "team": "Torque Shed Racing",
+      "potential": 0.96,
+      "traits": {
+        "pace": 0.95,
+        "consistency": 0.84,
+        "aggression": 0.44,
+        "overtaking": 0.67,
+        "defending": 0.41,
+        "tyre_management": 0.58,
+        "wet_skill": 0.43,
+        "composure": 0.55
+      }
+    },
+    {
+      "id": "ethan_price",
+      "name": "Ethan Price",
+      "number": 43,
+      "nationality": "GB",
+      "age": 29,
+      "style": "all-rounder",
+      "team": "Meridian GT",
+      "potential": 0.97,
+      "traits": {
+        "pace": 0.94,
+        "consistency": 0.92,
+        "aggression": 0.51,
+        "overtaking": 0.6,
+        "defending": 0.47,
+        "tyre_management": 0.71,
+        "wet_skill": 0.48,
+        "composure": 0.65
+      }
+    },
+    {
+      "id": "mei_lin",
+      "name": "Mei Lin",
+      "number": 60,
+      "nationality": "CN",
+      "age": 30,
+      "style": "all-rounder",
+      "team": "Halcyon Racing",
+      "potential": 0.94,
+      "traits": {
+        "pace": 0.91,
+        "consistency": 0.91,
+        "aggression": 0.49,
+        "overtaking": 0.78,
+        "defending": 0.46,
+        "tyre_management": 0.62,
+        "wet_skill": 0.45,
+        "composure": 0.69
+      }
+    },
+    {
+      "id": "rafael_costa",
+      "name": "Rafael Costa",
+      "number": 4,
+      "nationality": "BR",
+      "age": 33,
+      "style": "all-rounder",
+      "team": "Copperhead Motorsport",
+      "potential": 0.91,
+      "traits": {
+        "pace": 0.89,
+        "consistency": 0.88,
+        "aggression": 0.32,
+        "overtaking": 0.64,
+        "defending": 0.53,
+        "tyre_management": 0.6,
+        "wet_skill": 0.74,
+        "composure": 0.98
+      }
+    },
+    {
+      "id": "ingrid_berg",
+      "name": "Ingrid Berg",
+      "number": 51,
+      "nationality": "NO",
+      "age": 23,
+      "style": "charger",
+      "team": "Apex Motorsport",
+      "potential": 0.97,
+      "traits": {
+        "pace": 0.96,
+        "consistency": 0.86,
+        "aggression": 0.94,
+        "overtaking": 0.87,
+        "defending": 0.56,
+        "tyre_management": 0.36,
+        "wet_skill": 0.4,
+        "composure": 0.65
+      }
+    },
+    {
+      "id": "kofi_mensah",
+      "name": "Kofi Mensah",
+      "number": 69,
+      "nationality": "GH",
+      "age": 24,
+      "style": "wet specialist",
+      "team": "Redline Racing",
+      "potential": 0.94,
+      "traits": {
+        "pace": 0.91,
+        "consistency": 0.82,
+        "aggression": 0.55,
+        "overtaking": 0.44,
+        "defending": 0.63,
+        "tyre_management": 0.61,
+        "wet_skill": 0.78,
+        "composure": 0.75
+      }
+    },
+    {
+      "id": "lena_fischer",
+      "name": "Lena Fischer",
+      "number": 47,
+      "nationality": "DE",
+      "age": 41,
+      "style": "veteran",
+      "team": "Northwind GT",
+      "potential": 0.86,
+      "traits": {
+        "pace": 0.86,
+        "consistency": 0.89,
+        "aggression": 0.42,
+        "overtaking": 0.55,
+        "defending": 0.6,
+        "tyre_management": 0.84,
+        "wet_skill": 0.8,
+        "composure": 0.89
+      }
+    },
+    {
+      "id": "arjun_mehta",
+      "name": "Arjun Mehta",
+      "number": 74,
+      "nationality": "IN",
+      "age": 31,
+      "style": "charger",
+      "team": "Scuderia Vento",
+      "potential": 0.97,
+      "traits": {
+        "pace": 0.94,
+        "consistency": 0.85,
+        "aggression": 0.74,
+        "overtaking": 0.83,
+        "defending": 0.61,
+        "tyre_management": 0.28,
+        "wet_skill": 0.78,
+        "composure": 0.54
+      }
+    },
+    {
+      "id": "chloe_laurent",
+      "name": "Chloe Laurent",
+      "number": 66,
+      "nationality": "BE",
+      "age": 31,
+      "style": "tyre whisperer",
+      "team": "Kinetic Works",
+      "potential": 0.92,
+      "traits": {
+        "pace": 0.89,
+        "consistency": 0.93,
+        "aggression": 0.3,
+        "overtaking": 0.74,
+        "defending": 0.61,
+        "tyre_management": 0.99,
+        "wet_skill": 0.51,
+        "composure": 0.59
+      }
+    },
+    {
+      "id": "mikael_virtanen",
+      "name": "Mikael Virtanen",
+      "number": 9,
+      "nationality": "FI",
+      "age": 31,
+      "style": "wet specialist",
+      "team": "Blue Arrow",
+      "potential": 0.9,
+      "traits": {
+        "pace": 0.88,
+        "consistency": 0.92,
+        "aggression": 0.74,
+        "overtaking": 0.74,
+        "defending": 0.72,
+        "tyre_management": 0.73,
+        "wet_skill": 0.98,
+        "composure": 0.59
+      }
+    },
+    {
+      "id": "zara_hussain",
+      "name": "Zara Hussain",
+      "number": 53,
+      "nationality": "GB",
+      "age": 28,
+      "style": "tyre whisperer",
+      "team": "Ironbark Racing",
+      "potential": 1.0,
+      "traits": {
+        "pace": 0.97,
+        "consistency": 0.95,
+        "aggression": 0.49,
+        "overtaking": 0.48,
+        "defending": 0.64,
+        "tyre_management": 0.84,
+        "wet_skill": 0.71,
+        "composure": 0.79
+      }
+    },
+    {
+      "id": "pablo_herrera",
+      "name": "Pablo Herrera",
+      "number": 96,
+      "nationality": "AR",
+      "age": 33,
+      "style": "wet specialist",
+      "team": "Solstice Motorsport",
+      "potential": 0.9,
+      "traits": {
+        "pace": 0.88,
+        "consistency": 0.83,
+        "aggression": 0.35,
+        "overtaking": 0.48,
+        "defending": 0.65,
+        "tyre_management": 0.76,
+        "wet_skill": 0.99,
+        "composure": 0.69
+      }
+    },
+    {
+      "id": "elif_demir",
+      "name": "Elif Demir",
+      "number": 71,
+      "nationality": "TR",
+      "age": 35,
+      "style": "veteran",
+      "team": "Torque Shed Racing",
+      "potential": 0.94,
+      "traits": {
+        "pace": 0.93,
+        "consistency": 0.87,
+        "aggression": 0.44,
+        "overtaking": 0.68,
+        "defending": 0.63,
+        "tyre_management": 0.86,
+        "wet_skill": 0.55,
+        "composure": 0.95
+      }
+    },
+    {
+      "id": "callum_reid",
+      "name": "Callum Reid",
+      "number": 56,
+      "nationality": "NZ",
+      "age": 33,
+      "style": "all-rounder",
+      "team": "Meridian GT",
+      "potential": 0.91,
+      "traits": {
+        "pace": 0.9,
+        "consistency": 0.86,
+        "aggression": 0.72,
+        "overtaking": 0.69,
+        "defending": 0.47,
+        "tyre_management": 0.45,
+        "wet_skill": 0.42,
+        "composure": 0.86
+      }
+    },
+    {
+      "id": "noa_peretz",
+      "name": "Noa Peretz",
+      "number": 89,
+      "nationality": "IL",
+      "age": 31,
+      "style": "wet specialist",
+      "team": "Halcyon Racing",
+      "potential": 0.99,
+      "traits": {
+        "pace": 0.97,
+        "consistency": 0.85,
+        "aggression": 0.73,
+        "overtaking": 0.62,
+        "defending": 0.45,
+        "tyre_management": 0.41,
+        "wet_skill": 0.79,
+        "composure": 0.46
+      }
+    },
+    {
+      "id": "viktor_petrov",
+      "name": "Viktor Petrov",
+      "number": 24,
+      "nationality": "BG",
+      "age": 31,
+      "style": "hothead",
+      "team": "Copperhead Motorsport",
+      "potential": 0.99,
+      "traits": {
+        "pace": 0.97,
+        "consistency": 0.77,
+        "aggression": 0.94,
+        "overtaking": 0.56,
+        "defending": 0.49,
+        "tyre_management": 0.4,
+        "wet_skill": 0.69,
+        "composure": 0.53
+      }
+    },
+    {
+      "id": "isabela_rocha",
+      "name": "Isabela Rocha",
+      "number": 21,
+      "nationality": "PT",
+      "age": 31,
+      "style": "charger",
+      "team": "Apex Motorsport",
+      "potential": 0.97,
+      "traits": {
+        "pace": 0.96,
+        "consistency": 0.79,
+        "aggression": 0.73,
+        "overtaking": 0.78,
+        "defending": 0.76,
+        "tyre_management": 0.37,
+        "wet_skill": 0.76,
+        "composure": 0.6
+      }
+    },
+    {
+      "id": "daniel_kowalski",
+      "name": "Daniel Kowalski",
+      "number": 41,
+      "nationality": "PL",
+      "age": 18,
+      "style": "rookie",
+      "team": "Redline Racing",
+      "potential": 0.98,
+      "traits": {
+        "pace": 0.93,
+        "consistency": 0.84,
+        "aggression": 0.55,
+        "overtaking": 0.61,
+        "defending": 0.46,
+        "tyre_management": 0.46,
+        "wet_skill": 0.63,
+        "composure": 0.35
+      }
+    },
+    {
+      "id": "sana_kapoor",
+      "name": "Sana Kapoor",
+      "number": 40,
+      "nationality": "CA",
+      "age": 22,
+      "style": "rookie",
+      "team": "Northwind GT",
+      "potential": 0.93,
+      "traits": {
+        "pace": 0.89,
+        "consistency": 0.84,
+        "aggression": 0.3,
+        "overtaking": 0.52,
+        "defending": 0.5,
+        "tyre_management": 0.51,
+        "wet_skill": 0.7,
+        "composure": 0.5
+      }
+    },
+    {
+      "id": "hugo_lambert",
+      "name": "Hugo Lambert",
+      "number": 70,
+      "nationality": "FR",
+      "age": 31,
+      "style": "all-rounder",
+      "team": "Scuderia Vento",
+      "potential": 0.9,
+      "traits": {
+        "pace": 0.87,
+        "consistency": 0.85,
+        "aggression": 0.74,
+        "overtaking": 0.64,
+        "defending": 0.48,
+        "tyre_management": 0.51,
+        "wet_skill": 0.58,
+        "composure": 0.82
+      }
+    },
+    {
+      "id": "freya_olsen",
+      "name": "Freya Olsen",
+      "number": 22,
+      "nationality": "DK",
+      "age": 41,
+      "style": "veteran",
+      "team": "Kinetic Works",
+      "potential": 0.94,
+      "traits": {
+        "pace": 0.94,
+        "consistency": 0.99,
+        "aggression": 0.38,
+        "overtaking": 0.62,
+        "defending": 0.93,
+        "tyre_management": 0.84,
+        "wet_skill": 0.41,
+        "composure": 0.75
+      }
+    },
+    {
+      "id": "kenji_mori",
+      "name": "Kenji Mori",
+      "number": 23,
+      "nationality": "JP",
+      "age": 38,
+      "style": "veteran",
+      "team": "Blue Arrow",
+      "potential": 0.9,
+      "traits": {
+        "pace": 0.89,
+        "consistency": 0.88,
+        "aggression": 0.4,
+        "overtaking": 0.45,
+        "defending": 0.86,
+        "tyre_management": 0.88,
+        "wet_skill": 0.64,
+        "composure": 0.85
+      }
+    },
+    {
+      "id": "lucia_ferrari",
+      "name": "Lucia Ferrari",
+      "number": 10,
+      "nationality": "IT",
+      "age": 31,
+      "style": "defender",
+      "team": "Ironbark Racing",
+      "potential": 0.9,
+      "traits": {
+        "pace": 0.88,
+        "consistency": 0.94,
+        "aggression": 0.45,
+        "overtaking": 0.59,
+        "defending": 0.8,
+        "tyre_management": 0.73,
+        "wet_skill": 0.42,
+        "composure": 0.67
+      }
+    },
+    {
+      "id": "tariq_aziz",
+      "name": "Tariq Aziz",
+      "number": 80,
+      "nationality": "MA",
+      "age": 27,
+      "style": "defender",
+      "team": "Solstice Motorsport",
+      "potential": 0.92,
+      "traits": {
+        "pace": 0.9,
+        "consistency": 0.81,
+        "aggression": 0.53,
+        "overtaking": 0.54,
+        "defending": 0.83,
+        "tyre_management": 0.68,
+        "wet_skill": 0.52,
+        "composure": 0.71
+      }
+    },
+    {
+      "id": "emma_schultz",
+      "name": "Emma Schultz",
+      "number": 13,
+      "nationality": "US",
+      "age": 25,
+      "style": "hothead",
+      "team": "Torque Shed Racing",
+      "potential": 1.0,
+      "traits": {
+        "pace": 0.97,
+        "consistency": 0.86,
+        "aggression": 0.99,
+        "overtaking": 0.59,
+        "defending": 0.51,
+        "tyre_management": 0.22,
+        "wet_skill": 0.7,
+        "composure": 0.51
+      }
+    },
+    {
+      "id": "felipe_duarte",
+      "name": "Felipe Duarte",
+      "number": 42,
+      "nationality": "MX",
+      "age": 25,
+      "style": "hothead",
+      "team": "Meridian GT",
+      "potential": 0.95,
+      "traits": {
+        "pace": 0.93,
+        "consistency": 0.89,
+        "aggression": 0.75,
+        "overtaking": 0.61,
+        "defending": 0.61,
+        "tyre_management": 0.6,
+        "wet_skill": 0.5,
+        "composure": 0.31
+      }
+    },
+    {
+      "id": "anya_volkova",
+      "name": "Anya Volkova",
+      "number": 36,
+      "nationality": "EE",
+      "age": 28,
+      "style": "hothead",
+      "team": "Halcyon Racing",
+      "potential": 0.99,
+      "traits": {
+        "pace": 0.96,
+        "consistency": 0.84,
+        "aggression": 0.9,
+        "overtaking": 0.58,
+        "defending": 0.74,
+        "tyre_management": 0.23,
+        "wet_skill": 0.74,
+        "composure": 0.58
+      }
+    },
+    {
+      "id": "owen_gallagher",
+      "name": "Owen Gallagher",
+      "number": 39,
+      "nationality": "IE",
+      "age": 27,
+      "style": "defender",
+      "team": "Copperhead Motorsport",
+      "potential": 0.98,
+      "traits": {
+        "pace": 0.96,
+        "consistency": 0.89,
+        "aggression": 0.37,
+        "overtaking": 0.68,
+        "defending": 0.99,
+        "tyre_management": 0.79,
+        "wet_skill": 0.47,
+        "composure": 0.57
+      }
+    },
+    {
+      "id": "jaewon_park",
+      "name": "Jae-won Park",
+      "number": 99,
+      "nationality": "KR",
+      "age": 22,
+      "style": "rookie",
+      "team": "Apex Motorsport",
+      "potential": 0.9,
+      "traits": {
+        "pace": 0.85,
+        "consistency": 0.79,
+        "aggression": 0.59,
+        "overtaking": 0.41,
+        "defending": 0.72,
+        "tyre_management": 0.8,
+        "wet_skill": 0.37,
+        "composure": 0.31
+      }
+    },
+    {
+      "id": "mila_horvat",
+      "name": "Mila Horvat",
+      "number": 45,
+      "nationality": "HR",
+      "age": 31,
+      "style": "metronome",
+      "team": "Redline Racing",
+      "potential": 0.93,
+      "traits": {
+        "pace": 0.91,
+        "consistency": 0.99,
+        "aggression": 0.1,
+        "overtaking": 0.73,
+        "defending": 0.57,
+        "tyre_management": 0.75,
+        "wet_skill": 0.73,
+        "composure": 0.76
       }
     }
   ]

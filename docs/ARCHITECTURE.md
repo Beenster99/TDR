@@ -43,8 +43,8 @@ modules/
   race/          race_sim.gd (state machine, laps, positions, contacts, snapshots),
                  race_settings.gd, race_entry.gd (competitor, crew, timing),
                  race_factory.gd (plan() on the host + build_sim() everywhere)
-  ai/            ai_driver.gd (placeholder AI producing CarInput; for_car/for_all_ai),
-                 driver_catalog.gd, data/drivers.json
+  ai/            ai_driver.gd (AI producing CarInput; for_car/for_all_ai), driver_traits.gd,
+                 driver_catalog.gd, data/drivers.json (see docs/AI.md)
   input/         local_input.gd (keyboard + gamepad -> CarInput), input_setup.gd
   graphics/      track_view.gd, car_view.gd
   multiplayer/   net.gd (autoload Net: ENet lobby + RPC transport), net_timeline.gd,

@@ -28,6 +28,7 @@ var clock_stepper: Stepper
 var weather_stepper: Stepper
 var weather_change_stepper: Stepper
 var grid_stepper: Stepper
+var difficulty_stepper: Stepper
 var lobby_list: VBoxContainer
 var lobby_title: Label
 var join_info_label: Label
@@ -204,7 +205,9 @@ func _build_ui() -> void:
 
 	# Race settings (single player page and host lobby share the values)
 	laps_stepper = Stepper.numeric("Laps", 1, 50, 1, 3)
-	ai_stepper = Stepper.numeric("AI drivers", 0, 15, 1, 5)
+	ai_stepper = Stepper.numeric("AI drivers", 0, 24, 1, 5)
+	difficulty_stepper = Stepper.choice("AI difficulty", [[0.25, "Rookie"], [0.5, "Amateur"], [0.75, "Pro"],
+		[0.9, "Expert"], [1.0, "Alien"]], 0.75)
 	tod_stepper = Stepper.numeric("Start time", 0, 23, 1, 14, ":00")
 	clock_stepper = Stepper.choice("Clock speed", [[1, "Real time"], [2, "2x"], [5, "5x"], [10, "10x"],
 		[30, "30x"], [60, "60x (1 min = 1 h)"], [0, "Frozen"]], 1)
@@ -215,7 +218,7 @@ func _build_ui() -> void:
 	weather_change_stepper = Stepper.choice("Weather changes", [[false, "No, stays the same"], [true, "Yes, can change"]], false)
 	grid_stepper = Stepper.choice("Grid order", [["standard", "AI ahead, players behind"], ["random", "Random"],
 		["reversed", "Reversed (fastest at back)"]], "standard")
-	_settings_steppers = [laps_stepper, ai_stepper, tod_stepper, clock_stepper, weather_stepper,
+	_settings_steppers = [laps_stepper, ai_stepper, difficulty_stepper, tod_stepper, clock_stepper, weather_stepper,
 		weather_change_stepper, grid_stepper]
 
 	var single := _page(root, "single")
@@ -357,6 +360,7 @@ func _settings_from_ui() -> RaceSettings:
 	s.car_class = class_stepper.value
 	s.laps = int(laps_stepper.value)
 	s.ai_count = int(ai_stepper.value)
+	s.ai_difficulty = float(difficulty_stepper.value)
 	s.environment = {"time_of_day_h": float(tod_stepper.value), "time_scale": float(clock_stepper.value),
 		"weather": str(weather_stepper.value), "weather_changes": bool(weather_change_stepper.value)}
 	s.grid_order = str(grid_stepper.value)
@@ -467,6 +471,7 @@ func _refresh_lobby() -> void:
 			_rebuild_car_options()
 		laps_stepper.set_value(Net.settings.laps)
 		ai_stepper.set_value(Net.settings.ai_count)
+		difficulty_stepper.set_value(Net.settings.ai_difficulty)
 		var env := Net.settings.environment
 		tod_stepper.set_value(int(env.get("time_of_day_h", 14)))
 		clock_stepper.set_value(int(env.get("time_scale", 1)))
