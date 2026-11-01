@@ -245,7 +245,7 @@ commercial circuit names. Track data attribution is in
 | Damage + repairs | write `CarState.damage_*` from `collision`/`barrier_impact` events (impulse); repairs reset them during a pit stop |
 | Safety car | consume `collision` events → `RaceSim` phase `SAFETY_CAR`; a scripted SC car follows `AIDriver`-style line; overtaking rule via positions |
 | Fuel + pit stops | `RaceSettings.fuel_enabled/fuel_rate/mandatory_pit_stops`; `track.pit_lane` geometry; `CarInput.pit_request`; RaceEntry gains `pit_stops_done`; AI strategy picks a lap within the pit window |
-| Co-op crews | `RaceEntry.crew` roles; new reliable RPCs for pit-crew/strategist commands (`pit_plan`, tyre choice, fuel amount); role swap during stops |
+| Co-op crews (wave 5) | `RaceEntry.crew` roles; new reliable RPCs for pit-crew/strategist commands (`pit_plan`, tyre choice, fuel amount); role swap during stops |
 | AI traits | `AIDriver` reads `traits`; `aggression`, `racecraft`, `tyre_management` reserved |
 | Upgrades + tuning | `CarDefinition.with_overrides()` + `RaceEntry.setup`; `tuning_ranges` in car JSON bound what a setup may change; server validates |
 | Seasons | a `Championship` resource above `RaceSession`: list of (track, settings), points table, standings; results come from `race_finished` |
@@ -297,6 +297,10 @@ Wave 3: damage and repairs, safety car, fuel and pit stops (mandatory stop
 count set by the host; AI must make the same number, choosing a lap within
 the pit window).
 
-Wave 4: seasons and championships, upgrades, per-track tuning, and co-op
-crews (2 or 3 players share a car as driver / pit crew / strategist; with 2
-players, pit crew and strategist are one joined role).
+Wave 4: seasons and championships, upgrades, per-track tuning.
+
+Wave 5: co-op crews (2 or 3 players share a car as driver / pit crew /
+strategist; with 2 players, pit crew and strategist are one joined role).
+
+The living plan document (scope and wave order) is the source of truth:
+https://claude.ai/artifact/4yY11Dm9qpB9XUBczLi2HP

@@ -5,7 +5,7 @@ extends RefCounted
 var driver_name: String = ""
 var is_ai: bool = false
 ## Players attached to this car, each with a role. Wave 1 uses one "driver"
-## per car; co-op (wave 4) adds "pit_crew" / "strategist" members. Only the
+## per car; co-op (wave 5) adds "pit_crew" / "strategist" members. Only the
 ## driver's inputs steer the car. [{ "peer_id": int, "name": String, "role": String }]
 var crew: Array = []
 var car_id: String = ""

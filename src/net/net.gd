@@ -37,7 +37,7 @@ var dedicated := false
 var local_name := "Player"
 var local_car_id := ""
 ## peer_id -> { name, car_id, ready, team, role }
-## team groups players onto one car (co-op, wave 4). -1 = own car.
+## team groups players onto one car (co-op, wave 5). -1 = own car.
 var players: Dictionary = {}
 var settings := RaceSettings.new()
 var session: RaceSession = null
