@@ -127,7 +127,7 @@ func _build_ui() -> void:
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	root.add_child(title)
 	var sub := Label.new()
-	sub.text = "Spielberg GP Circuit  ·  wave 1 build  ·  keyboard or controller"
+	sub.text = "Spielberg GP Circuit  ·  version %s  ·  keyboard or controller" % ProjectSettings.get_setting("application/config/version", "dev")
 	sub.modulate = Color(1, 1, 1, 0.6)
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	root.add_child(sub)

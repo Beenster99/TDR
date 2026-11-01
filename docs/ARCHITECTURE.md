@@ -305,3 +305,16 @@ strategist; with 2 players, pit crew and strategist are one joined role).
 
 The living plan document (scope and wave order) is the source of truth:
 https://claude.ai/artifact/4yY11Dm9qpB9XUBczLi2HP
+
+## Releases
+
+Every release goes out as a zip holding `TopDownRacer.exe` and a
+`README.txt` with what's new, written in plain English like Torque Shed's
+notes. Write `release_notes/<version>.txt`, then run:
+
+```
+GODOT=/path/to/godot-4.6.2 tools/make_release.sh <version>
+```
+
+This sets the version in the project and exe, exports the Windows build,
+and writes `build/TopDownRacer-<version>.zip`. The menu shows the version.
