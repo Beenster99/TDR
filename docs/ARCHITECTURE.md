@@ -1,6 +1,6 @@
 # Top Down Racer: architecture
 
-Godot 4.3+ (GDScript), top-down racing with physics-based cars and online
+Godot 4.6.2 (GDScript, same version as Torque Shed), top-down racing with physics-based cars and online
 multiplayer from day one, built the same way as Torque Shed's co-op. This document describes how
 wave 1 is put together and where each later feature plugs in.
 
@@ -219,7 +219,8 @@ every option adjustable with left/right.
 
 ## Running
 
-- Play: open the project in Godot 4.3+ and press F5.
+- Play: open the project in Godot 4.6.2 and press F5, or run the Windows exe.
+- Windows exe (as Torque Shed): `godot --headless --path . --export-release "Windows Desktop" build/windows/TopDownRacer.exe` (needs the 4.6.2 Windows export template). The game data is packed inside the exe.
 - Tests: `godot --headless --path . --script res://tests/run_tests.gd`
 - Network test: `GODOT=godot tests/net_loopback.sh`
 - Dedicated server: `godot --headless --path . -- --server --port 24690 --laps 5 --ai 6 --min-players 2`

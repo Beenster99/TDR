@@ -12,7 +12,9 @@ timing, standings, tyre temperatures and a minimap.
 
 ## Play
 
-1. Install [Godot 4.3+](https://godotengine.org/download) (standard build, not .NET).
+Just run `TopDownRacer.exe` (a single file, nothing to install). Or, from the source:
+
+1. Install [Godot 4.6.2](https://godotengine.org/download) (standard build, not .NET), the same version Torque Shed uses.
 2. Open `project.godot` and press **F5**.
 3. **Single race** to drive against AI, or **Host online race** /
    **Join online race**.
