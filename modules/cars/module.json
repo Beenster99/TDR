@@ -1,0 +1,16 @@
+{
+  "id": "cars",
+  "name": "Cars",
+  "version": "1.0.0",
+  "status": "active",
+  "summary": "What each car is: engine curve, gears, mass, aero, brakes, driver aids, tyre choice. Car specs are JSON in data/.",
+  "depends": {
+    "core": "1"
+  },
+  "api": [
+    "CarDefinition",
+    "CarCatalog"
+  ],
+  "internal": [],
+  "notes": "New cars are new JSON files. Upgrades and tuning use CarDefinition.with_overrides()."
+}

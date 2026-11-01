@@ -56,9 +56,13 @@ godot --headless --path . -- --server --port 24690 --laps 5 --ai 6 --min-players
 ## Tests
 
 ```
-godot --headless --path . --script res://tests/run_tests.gd   # sim, physics, AI race, determinism
+godot --headless --path . --script res://tests/run_tests.gd   # module boundaries, sim, physics, AI race, determinism
 GODOT=godot tests/net_loopback.sh                             # server + 2 clients over localhost
 ```
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how it fits together,
+The code is split into modules (core, cars, tracks, physics, race, ai, input,
+graphics, multiplayer, ui, game, and business later), each with its own
+version and public API, so each area can move at its own pace. See
+[docs/MODULES.md](docs/MODULES.md) for the module map and rules, and
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how it fits together,
 the extension points for the later waves, and the wave 2 plan.

@@ -8,14 +8,15 @@ config_version=5
 config/name="Top Down Racer"
 config/version="0.1.0"
 config/description="Multiplayer-ready top-down racing with physics-based cars."
-run/main_scene="res://scenes/main.tscn"
+run/main_scene="res://modules/ui/main_menu.tscn"
 config/features=PackedStringArray("4.6", "GL Compatibility")
 config/icon="res://icon.svg"
 
 [autoload]
 
-GameData="*res://src/core/game_data.gd"
-Net="*res://src/net/net.gd"
+GameData="*res://modules/core/game_data.gd"
+Game="*res://modules/game/game.gd"
+Net="*res://modules/multiplayer/net.gd"
 
 [display]
 
