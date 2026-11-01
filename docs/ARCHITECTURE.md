@@ -46,7 +46,7 @@ modules/
   ai/            ai_driver.gd (AI producing CarInput; for_car/for_all_ai), driver_traits.gd,
                  driver_catalog.gd, data/drivers.json (see docs/AI.md)
   input/         local_input.gd (keyboard + gamepad -> CarInput), input_setup.gd
-  graphics/      track_view.gd, car_view.gd
+  graphics/      world_view.gd (3D world + camera), track_view.gd, trackside.gd, car_view.gd, cars/*.glb (see docs/GRAPHICS.md)
   multiplayer/   net.gd (autoload Net: ENet lobby + RPC transport), net_timeline.gd,
                  race_session.gd (runs a race OFFLINE / SERVER / CLIENT)
   ui/            main_menu.gd + main_menu.tscn (menu, lobby), hud.gd, stepper.gd
