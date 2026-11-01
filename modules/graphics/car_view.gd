@@ -32,10 +32,6 @@ func _process(delta: float) -> void:
 	queue_redraw()
 
 
-## Screen pixels per metre right now (camera zoom times window scaling).
-func _px_per_m() -> float:
-	return get_viewport().get_canvas_transform().get_scale().x
-
 
 func _draw() -> void:
 	if def == null:
@@ -68,26 +64,8 @@ func _draw() -> void:
 	draw_colored_polygon(glass, Color(0.1, 0.13, 0.18))
 	if is_local:
 		draw_arc(Vector2.ZERO, L * 0.75, 0, TAU, 32, Color(1, 1, 1, 0.25), 0.15)
-	_draw_marker()
 	# brake lights
 	if state and state.ax < -3.0:
 		draw_rect(Rect2(-L * 0.5, -W * 0.36, 0.15, 0.3), Color(1, 0.1, 0.1))
 		draw_rect(Rect2(-L * 0.5, W * 0.06, 0.15, 0.3), Color(1, 0.1, 0.1))
 
-
-## Zoomed out, a car is only a few pixels long, so draw an arrow marker of a
-## fixed on-screen size over it (yours bigger, with a white ring).
-func _draw_marker() -> void:
-	var px := _px_per_m()
-	var fade := clampf((5.0 - px) / 2.5, 0.0, 1.0)
-	if fade <= 0.0:
-		return
-	var r := (11.0 if is_local else 8.0) / px
-	var col := def.colour
-	col.a = fade
-	var arrow := PackedVector2Array([Vector2(r * 1.3, 0), Vector2(-r * 0.8, r * 0.85), Vector2(-r * 0.4, 0), Vector2(-r * 0.8, -r * 0.85)])
-	draw_colored_polygon(arrow, col)
-	var edge := Color(1, 1, 1, fade) if is_local else Color(0, 0, 0, 0.7 * fade)
-	draw_polyline(arrow + PackedVector2Array([arrow[0]]), edge, 1.5 / px)
-	if is_local:
-		draw_arc(Vector2.ZERO, r * 1.9, 0, TAU, 40, Color(1, 1, 1, 0.85 * fade), 2.0 / px)

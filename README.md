@@ -43,8 +43,8 @@ address into the join box and pick **Connect**. The game uses UDP port
 | Camera rotate | C | Y |
 | Restart (single race) | R | Back |
 | Menu | Esc | Start |
-| Zoom in / out | E / Q, + / -, mouse wheel | Right stick up / down |
-| Whole track (cycles close / mid / whole) | Z or Tab | RB (or click the right stick) |
+| Zoom in / out (hold) | E / Q, + / -, mouse wheel | LB / RB, right stick up / down, D-pad up / down |
+| Whole track and back | Z or Tab | Click the right stick |
 
 **Driving help** (main menu): Full adds a stability assist that catches
 slides and counter-steers for you, on top of traction control and ABS. Some

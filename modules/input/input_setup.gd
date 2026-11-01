@@ -32,7 +32,9 @@ const PAD_BUTTONS := {
 	"camera_toggle": [JOY_BUTTON_Y],
 	"restart_race": [JOY_BUTTON_BACK],
 	"back_to_menu": [JOY_BUTTON_START],
-	"zoom_full": [JOY_BUTTON_RIGHT_SHOULDER, JOY_BUTTON_RIGHT_STICK],
+	"zoom_in": [JOY_BUTTON_LEFT_SHOULDER, JOY_BUTTON_DPAD_UP],      # hold
+	"zoom_out": [JOY_BUTTON_RIGHT_SHOULDER, JOY_BUTTON_DPAD_DOWN],  # hold
+	"zoom_full": [JOY_BUTTON_RIGHT_STICK],
 }
 const STICK_DEADZONE := 0.12
 const TRIGGER_DEADZONE := 0.05
@@ -55,6 +57,8 @@ static func register_actions() -> void:
 		m.axis_value = PAD_AXES[action][1]
 		InputMap.action_add_event(action, m)
 	for action in PAD_BUTTONS:
+		if not InputMap.has_action(action):
+			InputMap.add_action(action, STICK_DEADZONE)
 		for b in PAD_BUTTONS[action]:
 			var e := InputEventJoypadButton.new()
 			e.device = -1

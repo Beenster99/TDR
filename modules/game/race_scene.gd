@@ -92,15 +92,19 @@ func _physics_process(delta: float) -> void:
 	session.tick(inp)
 
 
-## Camera zoom: GameData.prefs["zoom"] runs from 0 (close, follows your car
-## and pulls back with speed) to 1 (the whole track fills the screen).
-const ZOOM_CLOSE := 9.0
-const ZOOM_RATE := 0.9          ## zoom range per second, keys / stick
-const ZOOM_WHEEL_STEP := 0.06
-const ZOOM_PRESETS := [0.15, 0.55, 1.0]
-var _zoom_target := 0.15
+## Camera zoom: GameData.prefs["zoom"] runs from 0 (close up) to 1 (the
+## whole track and every car on screen), freely in between. Hold a key,
+## a bumper or the right stick to zoom; the wheel steps. The further out you
+## zoom, the more of the lap ahead the camera shows, and right at the end it
+## settles on the middle of the track.
+const ZOOM_CLOSE := 10.0         ## pixels per metre fully zoomed in
+const ZOOM_RATE := 0.45          ## share of the range per second while held
+const ZOOM_WHEEL_STEP := 0.04
+const LOOK_AHEAD := 0.32         ## how far ahead to aim, as a share of the screen
+var _zoom_target := 0.2
+var _zoom_before_full := 0.2
 var _autodrive_throttle := 0.0
-var _zoom := 0.15
+var _zoom := 0.2
 var _track_rect := Rect2()
 
 
@@ -113,7 +117,7 @@ func _zoom_setup() -> void:
 		lo = lo.min(t.points[i] - Vector2(w, w))
 		hi = hi.max(t.points[i] + Vector2(w, w))
 	_track_rect = Rect2(lo, hi - lo)
-	_zoom_target = clampf(float(GameData.arg("zoom", GameData.prefs.get("zoom", 0.15))), 0.0, 1.0)
+	_zoom_target = clampf(float(GameData.arg("zoom", GameData.prefs.get("zoom", 0.2))), 0.0, 1.0)
 	_zoom = _zoom_target
 
 
@@ -123,32 +127,42 @@ func _fit_zoom() -> float:
 	return minf(vs.x / _track_rect.size.x, vs.y / _track_rect.size.y) * 0.94
 
 
+func _set_zoom(z: float) -> void:
+	_zoom_target = clampf(z, 0.0, 1.0)
+	GameData.prefs["zoom"] = _zoom_target
+
+
 func _process(delta: float) -> void:
-	var target: Vector2
-	var heading := 0.0
-	var speed := 0.0
-	if session.local_car >= 0:
-		var v := car_views[session.local_car]
-		target = v.position
-		heading = v.rotation
-		speed = session.sim.cars[session.local_car].speed()
-	else:
-		var lead := session.sim.running_order[0]
-		target = car_views[lead].position
-		speed = session.sim.cars[lead].speed()
-	# Zoom input: keys and the right stick move smoothly, the wheel steps.
+	var focus := session.local_car
+	if focus < 0:
+		focus = session.sim.running_order[0]
+	var car: CarState = session.sim.cars[focus]
+	var target := car_views[focus].position
+	var heading := car_views[focus].rotation
+	var speed := car.speed()
+	# Held zoom: keys, bumpers and the right stick all ramp smoothly.
 	var zin := Input.get_action_strength("zoom_out") - Input.get_action_strength("zoom_in")
 	if absf(zin) > 0.0:
-		_zoom_target = clampf(_zoom_target + zin * ZOOM_RATE * delta, 0.0, 1.0)
-		GameData.prefs["zoom"] = _zoom_target
-	_zoom = lerpf(_zoom, _zoom_target, 1.0 - exp(-6.0 * delta))
-	# Close in: look ahead and pull back with speed, like before.
-	var close := lerpf(ZOOM_CLOSE, 5.0, clampf(speed / 70.0, 0.0, 1.0))
+		_set_zoom(_zoom_target + zin * ZOOM_RATE * delta)
+	_zoom = lerpf(_zoom, _zoom_target, 1.0 - exp(-8.0 * delta))
+	# Zoom level: log scale from close up to the whole track, so every bit
+	# of the stick changes the view by the same feel. A little pull-back with
+	# speed only when you're right in close.
+	var close := ZOOM_CLOSE * lerpf(1.0, 0.75, clampf(speed / 70.0, 0.0, 1.0) * (1.0 - _zoom))
 	var fit := _fit_zoom()
 	var z := exp(lerpf(log(close), log(fit), _zoom))
-	# Far out: drift toward the middle of the track so it all stays in view.
-	var follow := target + Vector2.from_angle(heading) * speed * 0.35 * (1.0 - _zoom)
-	var centre_mix := smoothstep(0.45, 1.0, _zoom)
+	# Look ahead along the track (not just the nose), further when zoomed out,
+	# keeping your car on screen.
+	var vs := get_viewport_rect().size
+	var reach := LOOK_AHEAD * minf(vs.x, vs.y) / z
+	var ahead := session.sim.track.position_at(car.track_s + reach * 1.6)
+	var offset := ahead - target
+	if offset.length() > reach:
+		offset = offset.normalized() * reach
+	if speed < 3.0:
+		offset *= speed / 3.0
+	var follow := target + offset
+	var centre_mix := smoothstep(0.85, 1.0, _zoom)
 	camera.position = follow.lerp(_track_rect.get_center(), centre_mix)
 	camera.position_smoothing_enabled = centre_mix < 0.01
 	camera.zoom = Vector2(z, z)
@@ -160,14 +174,13 @@ func _process(delta: float) -> void:
 	_maybe_screenshot()
 
 
-func _cycle_zoom() -> void:
-	var next: float = ZOOM_PRESETS[0]
-	for p in ZOOM_PRESETS:
-		if p > _zoom_target + 0.02:
-			next = p
-			break
-	_zoom_target = next
-	GameData.prefs["zoom"] = _zoom_target
+## Z / R3: jump to the whole track, and back to where you were.
+func _toggle_full_track() -> void:
+	if _zoom_target > 0.97:
+		_set_zoom(_zoom_before_full)
+	else:
+		_zoom_before_full = _zoom_target
+		_set_zoom(1.0)
 
 
 var _shot_taken := false
@@ -188,12 +201,11 @@ func _maybe_screenshot() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
-			_zoom_target = clampf(_zoom_target - ZOOM_WHEEL_STEP, 0.0, 1.0)
+			_set_zoom(_zoom_target - ZOOM_WHEEL_STEP)
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			_zoom_target = clampf(_zoom_target + ZOOM_WHEEL_STEP, 0.0, 1.0)
-		GameData.prefs["zoom"] = _zoom_target
+			_set_zoom(_zoom_target + ZOOM_WHEEL_STEP)
 	elif event.is_action_pressed("zoom_full"):
-		_cycle_zoom()
+		_toggle_full_track()
 	elif event.is_action_pressed("camera_toggle"):
 		rotate_camera = not rotate_camera
 	elif event.is_action_pressed("restart_race") and session.mode == RaceSession.Mode.OFFLINE:
