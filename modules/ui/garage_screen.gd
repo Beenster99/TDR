@@ -1,6 +1,7 @@
 class_name GarageScreen
 extends Control
-## The garage: spend the team budget on R&D upgrades (engine, aero, brakes,
+## The garage: buy cars into your garage (saved for good in the team
+## profile), spend the team budget on R&D upgrades (engine, aero, brakes,
 ## suspension, weight, tyres) and paint each car's livery, with the car
 ## turning on a stand in 3D so visible parts (splitter, wings, canards,
 ## calipers, rims, ride height) show as you pick them.
@@ -32,6 +33,9 @@ var _view_state: CarState
 var _spin := 0.0
 var _rebuilding := false
 var _message := ""            ## last buy result, shown until the next pick
+var _own_label: Label
+var _own_button: Button
+var _leave_warned := false    ## pressed leave once with unpaid picks
 
 
 ## car: the car to open on (id). The profile is loaded from this machine.
@@ -117,13 +121,19 @@ func _build() -> void:
 	_money_label.add_theme_font_size_override("font_size", 28)
 	_money_label.add_theme_color_override("font_color", Color(0.55, 0.95, 0.6))
 	right.add_child(_money_label)
-	var car_opts := []
-	for id in _all_car_ids():
-		var c: CarDefinition = GameData.cars[id]
-		car_opts.append([id, "%s  (%s)" % [c.display_name, c.class_tag]])
-	_car_stepper = Stepper.choice("Car", car_opts, car_id)
+	_car_stepper = Stepper.choice("Car", _car_options(), car_id)
 	_car_stepper.value_changed.connect(func(v): _select_car(v))
 	right.add_child(_car_stepper)
+	var own_row := HBoxContainer.new()
+	own_row.add_theme_constant_override("separation", 8)
+	right.add_child(own_row)
+	_own_label = Label.new()
+	_own_label.size_flags_horizontal = SIZE_EXPAND_FILL
+	_own_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	own_row.add_child(_own_label)
+	_own_button = _button(own_row, "Buy car", _buy_or_sell_car)
+	_own_button.size_flags_horizontal = SIZE_SHRINK_END
+	_own_button.custom_minimum_size = Vector2(240, 44)
 	right.add_child(_heading("R&D upgrades"))
 	for cat in UpgradeCatalog.category_ids():
 		var info := UpgradeCatalog.category(cat)
@@ -172,11 +182,42 @@ func _build() -> void:
 		_select_car(car_id))
 	_button(row2, "Done", _close)
 	var help := Label.new()
-	help.text = "Up/down: choose  ·  Left/right: change  ·  A: buy  ·  B: leave\nPicked levels are a preview until you buy them. Selling refunds half."
+	help.text = "Up/down: choose  ·  Left/right: change  ·  A: buy  ·  B: leave\nBought cars, upgrades and liveries are saved straight away. Picked levels are a preview until you buy them. Selling refunds half."
 	help.modulate = Color(1, 1, 1, 0.45)
 	help.add_theme_font_size_override("font_size", 13)
 	right.add_child(help)
 	Sound.wire_buttons(self)
+
+
+func _car_options() -> Array:
+	var opts := []
+	for id in _all_car_ids():
+		var c: CarDefinition = GameData.cars[id]
+		opts.append([id, "%s%s  (%s)" % ["★ " if profile.owns(id) else "", c.display_name, c.class_tag]])
+	return opts
+
+
+func _buy_or_sell_car() -> void:
+	var def := _def()
+	if profile.owns(car_id):
+		if _own_button.text.begins_with("Sell") and not _own_button.text.ends_with("?"):
+			_own_button.text = "Sell car: sure?"
+			return
+		var got := profile.sell_car(def)
+		profile.save()
+		_message = "Sold the %s for %s." % [def.display_name, UpgradeCatalog.format_money(got)]
+	else:
+		var price := UpgradeCatalog.car_price(def)
+		if not profile.buy_car(def):
+			_message = "Not enough money: the %s costs %s, the team has %s." % [def.display_name,
+				UpgradeCatalog.format_money(price), UpgradeCatalog.format_money(profile.money)]
+		else:
+			profile.save()
+			_message = "The %s is in your garage." % def.display_name
+	_car_stepper.options = _car_options()
+	_car_stepper.set_value(car_id)
+	_pending.clear()
+	_refresh()
 
 
 func _heading(t: String) -> Label:
@@ -357,7 +398,22 @@ func _livery_changed() -> void:
 
 func _refresh() -> void:
 	var def := _def()
+	_leave_warned = false
 	_money_label.text = "Team budget  %s" % UpgradeCatalog.format_money(profile.money)
+	var is_owned := profile.owns(car_id)
+	if is_owned:
+		_own_label.text = "In your garage"
+		_own_label.add_theme_color_override("font_color", Color(0.55, 0.95, 0.6))
+		var back := int(float(profile.cars[car_id].get("bought_for", UpgradeCatalog.car_price(def))) * UpgradeCatalog.refund_share())
+		_own_button.text = "Sell car  +%s" % UpgradeCatalog.format_money(back)
+	else:
+		var price := UpgradeCatalog.car_price(def)
+		_own_label.text = "Not yours yet: you can race it stock. Buy it to upgrade and paint it."
+		_own_label.add_theme_color_override("font_color", Color(1, 0.85, 0.5))
+		_own_button.text = "Buy car  %s" % UpgradeCatalog.format_money(price)
+		_own_button.disabled = false
+	for k in _livery_steppers:
+		_livery_steppers[k].disabled = not is_owned
 	_rebuilding = true
 	for cat in _upgrade_steppers:
 		var st: Stepper = _upgrade_steppers[cat]
@@ -374,6 +430,7 @@ func _refresh() -> void:
 				tag = UpgradeCatalog.format_money(profile.cost_to(def, cat, l))
 			opts.append([l, "%s%s  ·  %s" % ["●".repeat(l) + "○".repeat(UpgradeCatalog.max_level(cat) - l) + "  ", info.get("name", ""), tag]])
 		st.options = opts
+		st.disabled = not profile.owns(car_id)
 		st.set_value(_pending.get(cat, owned))
 		st.modulate = Color(1, 0.9, 0.55) if _pending.has(cat) else Color.WHITE
 	_rebuilding = false
@@ -397,9 +454,9 @@ func _show_stats() -> void:
 	var stock := UpgradeCatalog.stats(_def(), {})
 	var now := UpgradeCatalog.stats(_def(), _levels_with_pending())
 	var rows := [
-		["Power", "power_kw", "%.0f kW", "kw_per_t"],
+		["Power", "power_kw", Units.power, "kw_per_t"],
 		["Weight", "mass_kg", "%.0f kg", ""],
-		["Power to weight", "kw_per_t", "%.0f kW/t", "kw_per_t"],
+		["Power to weight", "kw_per_t", Units.power_per_tonne, "kw_per_t"],
 		["Downforce", "cla", "%.2f", "cla"],
 		["Brakes", "brake_n", "%.0f N", "brake_n"],
 		["Grip", "grip", "%.2f", "grip"],
@@ -410,13 +467,13 @@ func _show_stats() -> void:
 		name.custom_minimum_size = Vector2(170, 0)
 		_stats_grid.add_child(name)
 		var a := Label.new()
-		a.text = r[2] % stock[r[1]]
+		a.text = _fmt(r[2], stock[r[1]])
 		a.modulate = Color(1, 1, 1, 0.6)
 		a.custom_minimum_size = Vector2(130, 0)
 		_stats_grid.add_child(a)
 		var b := Label.new()
 		var change: float = now[r[1]] / maxf(stock[r[1]], 1e-6) - 1.0
-		b.text = (r[2] % now[r[1]]) + ("" if absf(change) < 0.0005 else "  (%+.1f%%)" % (change * 100.0))
+		b.text = _fmt(r[2], now[r[1]]) + ("" if absf(change) < 0.0005 else "  (%+.1f%%)" % (change * 100.0))
 		var better: bool = change < 0.0 if r[1] == "mass_kg" else change > 0.0
 		b.add_theme_color_override("font_color", Color(0.55, 0.95, 0.6) if better and absf(change) >= 0.0005 else Color(0.9, 0.9, 0.9))
 		b.custom_minimum_size = Vector2(230, 0)
@@ -432,7 +489,17 @@ func _show_stats() -> void:
 		_stats_grid.add_child(bar)
 
 
+func _fmt(f, v: float) -> String:
+	return f.call(v) if f is Callable else f % v
+
+
 func _close() -> void:
+	# Leaving with picked but unpaid upgrades: say so once, so nothing is lost by accident.
+	if not _pending.is_empty() and not _leave_warned:
+		_status.text = "You picked upgrades but haven't bought them. Press Buy to keep them, or leave again to drop them."
+		_status.add_theme_color_override("font_color", Color(1, 0.8, 0.4))
+		_leave_warned = true
+		return
 	closed.emit(car_id)
 	queue_free()
 

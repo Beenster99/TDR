@@ -53,6 +53,22 @@ static func price(def: CarDefinition, cat_id: String, level: int) -> int:
 	return int(round(float(level_info(cat_id, level).get("price", 0)) * scale / 100.0)) * 100
 
 
+## What a car costs to buy into the garage: its class's price from
+## data/upgrades.json ("car_prices"), nudged by its power-to-weight so faster
+## cars in a class cost a little more. Rounded to 1,000.
+static func car_price(def: CarDefinition) -> int:
+	var prices: Dictionary = data().get("car_prices", {})
+	var base := float(prices.get(def.class_tag, prices.get("default", 120000)))
+	var ptw := def.peak_power_kw() / maxf(def.mass, 1.0)
+	var nudge := clampf(ptw / 0.35, 0.8, 1.25) if def.class_tag == "Road" else 1.0
+	return int(round(base * nudge / 1000.0)) * 1000
+
+
+## Share of the price paid back when selling a car or an upgrade.
+static func refund_share() -> float:
+	return float(data().get("refund_share", 0.5))
+
+
 ## What going from level `from` to `to` costs (negative = refund for selling).
 static func cost_of_change(def: CarDefinition, cat_id: String, from: int, to: int) -> int:
 	var total := 0

@@ -86,6 +86,12 @@ func _ready() -> void:
 	results = _build_results()
 	layer.add_child(results)
 	_make_autodrive()
+	# Filming (tools/record_highlights.sh): --no-hud shows just the race,
+	# --rotate-camera turns the view with the car.
+	if GameData.arg("no-hud"):
+		layer.visible = false
+	if GameData.arg("rotate-camera"):
+		rotate_camera = true
 	if DisplayServer.get_name() == "headless":
 		var env := session.sim.env
 		print("[race] %s, %d cars, %d laps, local car %d, %s %02d:00, air %d C, track %d C" % [RaceSession.Mode.keys()[session.mode],
@@ -259,7 +265,25 @@ func _set_zoom(z: float) -> void:
 	GameData.prefs["zoom"] = _zoom_target
 
 
+## Filming: --film-from 40 fast-forwards the race to 40 s, then plays it at
+## normal speed and prints the frame filming starts on.
+var _film_rolling := false
+
+
+func _film_fast_forward() -> void:
+	if _film_rolling or not GameData.arg("film-from"):
+		return
+	if session.sim.race_time < float(GameData.arg("film-from")):
+		Engine.time_scale = 8.0
+		Engine.max_physics_steps_per_frame = 40
+	else:
+		Engine.time_scale = 1.0
+		_film_rolling = true
+		print("[film] rolling at frame %d" % Engine.get_frames_drawn())
+
+
 func _process(delta: float) -> void:
+	_film_fast_forward()
 	var focus := session.local_car if session.local_car >= 0 else session.team_car
 	if focus < 0:
 		focus = session.team_car if session.team_car >= 0 else session.sim.running_order[0]

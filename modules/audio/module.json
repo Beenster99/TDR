@@ -1,9 +1,9 @@
 {
   "id": "audio",
   "name": "Audio",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "status": "active",
-  "summary": "Every sound in the game, made in code (no sound files): engines that follow each car's revs and throttle, tyre squeal, grass rumble, crashes and contacts, start lights, and menu clicks.",
+  "summary": "Every sound in the game, made in code (no sound files): engines that follow each car's revs and throttle, tyre squeal, grass rumble, crashes and contacts, start lights, menu clicks (short switch clicks, not beeps) and the intro screen's GT3 pass-by (Sound.passby()).",
   "depends": {
     "core": "1",
     "cars": "1",
@@ -14,10 +14,11 @@
     "SoundBank"
   ],
   "internal": [
-    "CarAudio"
+    "CarAudio",
+    "MenuSounds"
   ],
   "autoloads": [
     "Sound"
   ],
-  "notes": "Only listens: reads car state and race events, never changes the race. Sounds are synthesised once at start-up by SoundBank. Engine pitch = firing frequency (rpm / 60 * cylinders / 2). Better recorded samples can replace SoundBank's loops later without touching anything else."
+  "notes": "Only listens: reads car state and race events, never changes the race. Sounds are synthesised once at start-up by SoundBank. Engine pitch = firing frequency (rpm / 60 * cylinders / 2). Better recorded samples can replace SoundBank's loops later without touching anything else. Menu sounds live in menu_sounds.gd; a recorded file in samples/ (same name, .wav or .ogg) replaces the synthesised one."
 }

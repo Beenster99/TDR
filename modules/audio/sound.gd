@@ -35,10 +35,17 @@ func ui(name: String, volume_db := 0.0, pitch := 1.0) -> void:
 		return
 	var p := _players[_next]
 	_next = (_next + 1) % _players.size()
-	p.stream = SoundBank.get_sound(name)
+	var menu := MenuSounds.get_sound(name)
+	p.stream = menu if menu else SoundBank.get_sound(name)
 	p.volume_db = volume_db
 	p.pitch_scale = pitch
 	p.play()
+
+
+## The intro's GT3 pass-by (a recorded sample if one is in
+## modules/audio/samples/, else made in code). Plays on the UI bus.
+func passby(volume_db := 0.0) -> void:
+	ui("gt3_passby", volume_db)
 
 
 ## Gives every button under a node click and focus sounds (menus, results).
