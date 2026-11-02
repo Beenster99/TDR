@@ -177,7 +177,9 @@ func impact(pos: Vector2, vel: Vector2, strength: float, sparks := true) -> void
 
 ## A different colour scheme for the k-th car of the same model in a field,
 ## so identical cars can be told apart (k = 0 keeps the car's own livery).
-static func livery_variant(k: int) -> Dictionary:
+## car_id spreads the schemes so different models don't share the same
+## second, third... schemes.
+static func livery_variant(k: int, car_id := "") -> Dictionary:
 	if k <= 0:
 		return {}
 	var schemes := [
@@ -189,8 +191,17 @@ static func livery_variant(k: int) -> Dictionary:
 		{"pattern": "stripes", "primary": "#b00020", "secondary": "#ffffff", "accent": "#111111"},
 		{"pattern": "split", "primary": "#ffd100", "secondary": "#111111", "accent": "#ffffff"},
 		{"pattern": "sash", "primary": "#1e90ff", "secondary": "#f2f2f2", "accent": "#ff1493"},
+		{"pattern": "chevron", "primary": "#f2f2f2", "secondary": "#00a19b", "accent": "#111111"},
+		{"pattern": "halves", "primary": "#ff5a00", "secondary": "#1d1d1d", "accent": "#ffffff"},
+		{"pattern": "split", "primary": "#2b2b2b", "secondary": "#c6ff00", "accent": "#ffffff"},
+		{"pattern": "sash", "primary": "#c9a646", "secondary": "#111111", "accent": "#ffffff"},
+		{"pattern": "stripes", "primary": "#ec407a", "secondary": "#ffffff", "accent": "#1a237e"},
+		{"pattern": "bmw", "primary": "#f2f2f2", "secondary": "#14213d", "accent": "#fca311"},
+		{"pattern": "halves", "primary": "#00838f", "secondary": "#e3f2fd", "accent": "#111111"},
+		{"pattern": "chevron", "primary": "#7f0000", "secondary": "#ffd100", "accent": "#111111"},
 	]
-	return schemes[(k - 1) % schemes.size()]
+	var off := 0 if car_id == "" else absi(hash(car_id)) % schemes.size()
+	return schemes[(k - 1 + off) % schemes.size()]
 
 
 ## centre: point of the track in the middle of the screen (2D metres).

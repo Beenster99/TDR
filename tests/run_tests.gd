@@ -184,7 +184,35 @@ func test_car_classes() -> void:
 	print("car classes")
 	var d := _data()
 	var classes := CarCatalog.classes(d["cars"])
-	check(classes.size() >= 2 and classes[0] == "GT3", "classes, fastest first: %s" % [classes])
+	check(classes.size() >= 4 and classes[0] == "Hypercar" and classes[1] == "LMP2" and classes[2] == "GT3"
+		and classes[-1] == "Road", "classes, fastest first: %s" % [classes])
+	# Prototypes (wave 6): real dimensions and the order on track Hypercar > LMP2 > GT3.
+	var protos_ok := true
+	for id in CarCatalog.ids_in_class(d["cars"], "Hypercar") + CarCatalog.ids_in_class(d["cars"], "LMP2"):
+		var c: CarDefinition = d["cars"][id]
+		protos_ok = protos_ok and c.length <= 5.1 and c.width <= 2.0 and c.wheelbase >= 2.95 \
+			and ResourceLoader.exists("res://modules/graphics/cars/%s.glb" % id) and c.raw.get("engine", {}).has("sound")
+	check(protos_ok and CarCatalog.ids_in_class(d["cars"], "Hypercar").size() >= 5 and CarCatalog.ids_in_class(d["cars"], "LMP2").size() >= 2,
+		"%d Hypercars and %d LMP2 cars, real dimensions, each with a 3D model and an engine sound family"
+		% [CarCatalog.ids_in_class(d["cars"], "Hypercar").size(), CarCatalog.ids_in_class(d["cars"], "LMP2").size()])
+	var t3: Dictionary = CarSetup.TEMPLATES
+	check(t3.has("Hypercar") and t3.has("LMP2") and UpgradeCatalog.data().get("price_scale", {}).has("Hypercar"),
+		"setup templates and upgrade prices for the prototype classes")
+	# Liveries: every racing car has sticker slots, the sponsors are many and all different.
+	var liv = JSON.parse_string(FileAccess.get_file_as_string("res://modules/graphics/data/liveries.json"))
+	var spn = JSON.parse_string(FileAccess.get_file_as_string("res://modules/graphics/data/sponsors.json"))
+	var slots_ok := true
+	for id in d["cars"]:
+		if d["cars"][id].class_tag != "Road":
+			var roles := {}
+			for sl in liv.get(id, {}).get("decal_slots", []):
+				roles[sl["role"]] = true
+			slots_ok = slots_ok and roles.has("bonnet") and roles.has("wing") and roles.has("number") and roles.has("door")
+	var names := {}
+	for sp in spn["sponsors"]:
+		names[sp["name"]] = true
+	check(slots_ok and names.size() == spn["sponsors"].size() and names.size() >= 50,
+		"liveries: bonnet, wing, door and number stickers on every race car; %d different sponsors" % names.size())
 	var s := RaceSettings.new()
 	s.ai_count = 9
 	s.car_class = "GT3"
@@ -581,7 +609,9 @@ func test_ai_race_completes() -> Dictionary:
 			if e["type"] == "collision":
 				collisions += 1
 			elif e["type"] == "pit_stop":
-				stops.append(e)
+				var st: Dictionary = e.duplicate()
+				st["repairs"] = (sim.entries[e["car"]].pit.get("last_stop", {}) as Dictionary).get("repairs", []).size()
+				stops.append(st)
 			elif e["type"] == "penalty":
 				penalties.append(e)
 		# Take the mid-race snapshot while a car is stopped in its box.
@@ -616,9 +646,12 @@ func test_ai_race_completes() -> Dictionary:
 	var stop_penalties := penalties.filter(func(pe): return str(pe["reason"]).contains("pit") and not excused.has(int(pe["car"])))
 	check(stop_penalties.is_empty(), "no pit penalties for AI drivers (%s)" % str(stop_penalties))
 	var times := []
+	var service_ok := true
 	for st in stops:
 		times.append(snappedf(st["stationary_s"], 0.1))
-	check(not stops.is_empty() and times.min() >= PitRules.STOP_BASE_S and times.max() < 40.0, "pit stops take %s s" % str(times))
+		# Tyres and fuel take under 40 s; a stop that also repairs crash damage takes longer.
+		service_ok = service_ok and st["stationary_s"] < (120.0 if st["repairs"] > 0 else 40.0)
+	check(not stops.is_empty() and times.min() >= PitRules.STOP_BASE_S and service_ok, "pit stops take %s s" % str(times))
 	check(mid_pit_taken, "snapshot taken during a pit stop (tick %d)" % mid_tick)
 	var worn := 0
 	var measured := 0

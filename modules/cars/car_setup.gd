@@ -11,7 +11,7 @@ extends RefCounted
 ## on top of whatever the car (and its upgrades) already is. Keys left out
 ## keep the car's default, so an empty setup is the car as it comes.
 ##
-## Defaults come from the car's class (GT3 or Road) and its own JSON
+## Defaults come from the car's class (Hypercar, LMP2, GT3 or Road) and its own JSON
 ## ("brakes.bias_front", "gearbox.final_drive", "tuning_ranges", and an
 ## optional "setup" block that overrides any template value).
 
@@ -34,6 +34,34 @@ const TEMPLATES := {
 		# Physics constants
 		"plank_mm": 34.0, "roll_deg_per_g": 1.0, "camber_gain": 0.6,
 		"camber_opt_front": -2.5, "camber_opt_rear": -1.9,
+	},
+	"Hypercar": {
+		"wings": true,
+		"wing_front": [5, 0, 10, 1], "wing_rear": [5, 0, 10, 1],
+		"ride_front": [45, 36, 65, 1], "ride_rear": [58, 46, 80, 1],
+		"spring_front": [260, 180, 380, 10], "spring_rear": [240, 160, 360, 10],
+		"damper_front": [5, 1, 10, 1], "damper_rear": [5, 1, 10, 1],
+		"arb_front": [5, 1, 10, 1], "arb_rear": [5, 1, 10, 1],
+		"camber_front": [-3.2, -4.5, -2.0, 0.1], "camber_rear": [-2.2, -3.4, -1.2, 0.1],
+		"toe_front": [-0.06, -0.30, 0.10, 0.02], "toe_rear": [0.12, -0.10, 0.40, 0.02],
+		"diff_power": [0.4, 0.1, 0.9, 0.05], "diff_coast": [0.3, 0.1, 0.9, 0.05],
+		"pressure_front": [0.0, -4.0, 4.0, 0.5], "pressure_rear": [0.0, -4.0, 4.0, 0.5],
+		"plank_mm": 28.0, "roll_deg_per_g": 0.7, "camber_gain": 0.5,
+		"camber_opt_front": -2.4, "camber_opt_rear": -1.7,
+	},
+	"LMP2": {
+		"wings": true,
+		"wing_front": [5, 0, 10, 1], "wing_rear": [5, 0, 10, 1],
+		"ride_front": [42, 34, 62, 1], "ride_rear": [55, 44, 78, 1],
+		"spring_front": [250, 170, 360, 10], "spring_rear": [230, 150, 340, 10],
+		"damper_front": [5, 1, 10, 1], "damper_rear": [5, 1, 10, 1],
+		"arb_front": [5, 1, 10, 1], "arb_rear": [5, 1, 10, 1],
+		"camber_front": [-3.2, -4.5, -2.0, 0.1], "camber_rear": [-2.2, -3.4, -1.2, 0.1],
+		"toe_front": [-0.06, -0.30, 0.10, 0.02], "toe_rear": [0.12, -0.10, 0.40, 0.02],
+		"diff_power": [0.45, 0.1, 0.9, 0.05], "diff_coast": [0.3, 0.1, 0.9, 0.05],
+		"pressure_front": [0.0, -4.0, 4.0, 0.5], "pressure_rear": [0.0, -4.0, 4.0, 0.5],
+		"plank_mm": 28.0, "roll_deg_per_g": 0.75, "camber_gain": 0.5,
+		"camber_opt_front": -2.4, "camber_opt_rear": -1.7,
 	},
 	"Road": {
 		"wings": false,

@@ -165,6 +165,10 @@ func _build() -> void:
 	_livery_steppers["primary"] = Stepper.choice("Main colour", colour_opts, "")
 	_livery_steppers["secondary"] = Stepper.choice("Second colour", colour_opts, "")
 	_livery_steppers["accent"] = Stepper.choice("Accent colour", colour_opts, "")
+	var sponsor_opts := [[0, "New each race"], [-1, "None (clean car)"]]
+	for k in range(1, 25):
+		sponsor_opts.append([k, "%s package" % CarView.title_sponsor(k)])
+	_livery_steppers["sponsor_pack"] = Stepper.choice("Sponsors", sponsor_opts, 0)
 	for k in _livery_steppers:
 		var st: Stepper = _livery_steppers[k]
 		st.custom_minimum_size = Vector2(560, 40)
@@ -323,7 +327,9 @@ func _select_car(id: String) -> void:
 	for k in _livery_steppers:
 		var st: Stepper = _livery_steppers[k]
 		var want = liv.get(k, st.options[0][0] if not st.options.is_empty() else "")
-		if k != "pattern":
+		if k == "sponsor_pack":
+			want = int(want)
+		elif k != "pattern":
 			want = _nearest_palette(str(want), st.options)
 		st.set_value(want)
 	_rebuilding = false

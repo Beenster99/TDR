@@ -1,7 +1,7 @@
 {
   "id": "ui",
   "name": "UI",
-  "version": "1.13.1",
+  "version": "1.13.2",
   "status": "active",
   "summary": "Screens and overlays: main menu, lobby, race settings, the in-race HUD, and controller-friendly widgets (Stepper), and the pit wall (StrategistScreen: timing, gaps, pit windows, weather radar, team radio feed). Co-op pit wall roles (CrewConsole: pit crew and strategist panels around the zoomed-out 3D race, combined for 2 players) and quick team radio calls (TeamRadio). Intro screen (SplashScreen: key art and a GT3 pass-by), the main menu over a loop of race highlights (MenuBackground), the player's profile badge top right (ProfileBadge), and Settings (SettingsScreen: Gameplay, Graphics, Sound, Garage, Debug, built from GameData.settings_catalog; SettingsRuntime applies them).",
   "depends": {

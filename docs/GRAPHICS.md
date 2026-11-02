@@ -77,7 +77,11 @@ Every car model is built in Blender from the car's real dimensions:
 - Outputs: `modules/graphics/cars/<id>.glb` (what the game loads),
   `modules/graphics/cars_blend/<id>.blend` (open it in Blender) and
   `modules/graphics/data/liveries.json`.
-- Preview pictures: `blender -b --python modules/graphics/tools/preview_cars.py -- <out_dir> [car_id ...]`.
+- Preview pictures: `blender -b --python modules/graphics/tools/preview_cars.py -- <out_dir> [car_id ...]`,
+  or the cars in the game's own renderer with their stickers:
+  `godot --path . res://tests/car_gallery.tscn -- <out.png> [top|three] [class or car ids] [copies]`.
+- Only the sticker slots (after changing a shape's cabin, wing or regions):
+  `blender -b --python modules/graphics/tools/build_cars.py -- --liveries-only`.
 
 Each model is split into parts so upgrades and damage can swap or move them:
 `body`, `bumper_front`, `bumper_rear`, `cabin`, `splitter`, `diffuser`,
@@ -96,6 +100,35 @@ chevron, M stripes, two-tone) in three colours from the car's position, so it
 lines up across every part. Each model also has a livery UV unwrap (UV0: nose
 to tail, and round the body from sill to sill), ready for painted livery
 textures later.
+
+Sponsor stickers and numbers (race cars only: GT3, LMP2, Hypercar): every
+sponsor is invented for the game, no real brands. `tools/build_decals.py`
+(plain Python + Pillow) draws 60 sponsor logos and 4 strips of small
+"contingency" stickers into `textures/decals.png` (4 x 16 cells; red =
+lettering, green = sticker panel, blue = second colour) and lists them in
+`data/sponsors.json`; it also draws the race-number digits
+(`textures/digits.png`). The builder works out where stickers fit on each
+car (`decal_slots` in `data/liveries.json`: bonnet, windscreen banner, rear
+deck, rear wing top and end plates, doors, sills, behind the front wheels,
+rear haunches, and the door number), keeping clear of vents and lights. The
+paint shader projects them onto the body from car space, so they line up
+across parts; the rear wing gets the same shader on bare carbon. `CarView`
+picks a title sponsor and two more for each car from the livery's
+`sponsor_seed` (default: the car and its race number), so every car in a
+field has its own set; the title sponsor shows either as its own coloured
+sticker or as lettering in the team colours. `"sponsors": false` in a livery
+leaves a car clean. `CarView.sponsors` lists the names, title sponsor first.
+
+Prototypes (Hypercar and LMP2) use the same builder with `"prototype": true`
+in their shape file: the body sections dip in the middle (`zt` below `ze`)
+so the front and rear wings stand up as pods over the wheels; a narrow
+canopy; a `fin` (shark fin from the cockpit to the wing); two-element wings
+(`wing.flap`), one central swan neck (`wing.mount_count: 1`) or none
+(`wing.mount: "none"`), tall end plates (`endplate_h`, `endplate_back`,
+`endplate_top`); mirrors out on the front wings (`mirrors.y`); no roll cage
+(`"cage": false`); and a smaller roof number board (`number_board`). Any
+shape can use `"louvres": n` on a region to cut it into n slats (fender and
+bonnet louvres).
 
 The safety car (`modules/cars/special/safety_car_amg_gt_black_series.json`,
 a Mercedes-AMG GT Black Series) is built the same way; its shape adds a

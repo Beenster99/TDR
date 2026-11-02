@@ -187,12 +187,12 @@
  "wing": {
   "type": "gt3",
   "t": 1.0,
-  "z": 1.2,
+  "z": 1.24,
   "chord": 0.34,
   "span": 0.9,
   "angle": 10,
   "mount": "swan",
-  "mount_y": 0.28
+  "mount_y": 0.18
  },
  "mirrors": {
   "z": 0.12,
@@ -310,11 +310,39 @@
     0.2,
     0.62
    ]
+  },
+  {
+   "mat": "intake",
+   "t": [
+    0.62,
+    0.72
+   ],
+   "y": [
+    0.66,
+    0.84
+   ],
+   "facing": "top",
+   "shape": "ellipse"
+  },
+  {
+   "mat": "vent",
+   "t": [
+    0.27,
+    0.32
+   ],
+   "y": [
+    0.6,
+    0.86
+   ],
+   "facing": "top",
+   "louvres": 3,
+   "gap": 0.45
   }
  ],
  "livery": {
   "pattern": "split",
   "secondary": "#1d1d1d",
   "accent": "#ffffff"
- }
+ },
+ "rim_colour": "#3a3c40"
 }

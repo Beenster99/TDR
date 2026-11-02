@@ -46,7 +46,7 @@ func _ready() -> void:
 		# Same model more than once: give the others their own colours.
 		var k: int = seen.get(def.id, 0)
 		seen[def.id] = k + 1
-		var livery := {} if i == session.local_car else WorldView.livery_variant(k)
+		var livery := {} if i == session.local_car else WorldView.livery_variant(k, def.id)
 		if not session.sim.entries[i].livery.is_empty():   # the player's own paint scheme
 			livery = session.sim.entries[i].livery
 		car_views.append(world.add_car(def, session.sim.cars[i], session.sim.entries[i].driver_name,
