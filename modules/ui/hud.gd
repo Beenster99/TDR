@@ -9,6 +9,11 @@ var message_time := 0.0
 var font: Font
 var _minimap_pts := PackedVector2Array()
 var _mm_rect := Rect2()
+## Lap elevation profile (bottom centre), shown on tracks with elevation.
+var show_elevation_profile := true
+var _profile := PackedFloat64Array()   ## 0..1 height at evenly spaced points
+var _profile_range := Vector2.ZERO
+const PROFILE_STEPS := 240
 
 
 func setup(p_session: RaceSession) -> void:
@@ -17,6 +22,7 @@ func setup(p_session: RaceSession) -> void:
 	set_anchors_preset(PRESET_FULL_RECT)
 	mouse_filter = MOUSE_FILTER_IGNORE
 	_build_minimap()
+	_build_profile()
 
 
 func flash(text: String, secs := 2.0) -> void:
@@ -86,6 +92,8 @@ func _draw() -> void:
 
 	# --- Minimap
 	_draw_minimap(Vector2(vp.x - 230, 50 + rows * 22 + 10))
+	if show_elevation_profile and not _profile.is_empty():
+		_draw_profile(Rect2(vp.x * 0.5 - 230, vp.y - 92, 460, 70))
 
 	_text(Vector2(0, vp.y - 14), "P / D-pad →  Pit wall", 13, Color(1, 1, 1, 0.45), HORIZONTAL_ALIGNMENT_CENTER, vp.x)
 	if me < 0:
@@ -210,3 +218,57 @@ func _draw_minimap(origin: Vector2) -> void:
 		draw_circle(p, 5.0 if i == session.local_car else 3.5, sim.defs[i].colour)
 		if i == session.local_car:
 			draw_arc(p, 7.0, 0, TAU, 16, Color.WHITE, 1.5)
+
+
+func _build_profile() -> void:
+	var t := session.sim.track
+	if not t.has_elevation():
+		return
+	_profile_range = t.height_range()
+	var span := maxf(_profile_range.y - _profile_range.x, 1.0)
+	_profile.resize(PROFILE_STEPS + 1)
+	for k in PROFILE_STEPS + 1:
+		_profile[k] = (t.height_at(t.length * k / PROFILE_STEPS) - _profile_range.x) / span
+
+
+## Height of the whole lap with every car on it, plus the gradient under
+## the local car (uphill amber, downhill blue when steeper than 3%).
+func _draw_profile(r: Rect2) -> void:
+	var sim := session.sim
+	var t := sim.track
+	_panel(r.grow(8))
+	var pts := PackedVector2Array()
+	for k in _profile.size():
+		pts.append(Vector2(r.position.x + r.size.x * k / PROFILE_STEPS, r.end.y - _profile[k] * r.size.y))
+	var fill := pts.duplicate()
+	fill.append(r.end)
+	fill.append(Vector2(r.position.x, r.end.y))
+	draw_colored_polygon(fill, Color(0.45, 0.75, 0.45, 0.3))
+	draw_polyline(pts, Color(0.85, 1, 0.85, 0.9), 2.0)
+	var span := maxf(_profile_range.y - _profile_range.x, 1.0)
+	var me := session.local_car
+	for i in sim.car_count():
+		if i == me:
+			continue
+		_profile_dot(r, sim.cars[i].track_s, span, 3.0, sim.defs[i].colour)
+	_text(r.position + Vector2(0, -12), "%d m  ↕ %d m" % [int(t.base_alt_m + (_profile_range.x if me < 0 else t.height_at(sim.cars[me].track_s))), int(span)], 14, Color(1, 1, 1, 0.75))
+	if me < 0:
+		return
+	var s := sim.cars[me].track_s
+	var x := r.position.x + r.size.x * fposmod(s, t.length) / t.length
+	draw_line(Vector2(x, r.position.y), Vector2(x, r.end.y), Color(1, 1, 1, 0.35), 1.0)
+	_profile_dot(r, s, span, 6.0, Color(1, 0.9, 0.3))
+	var g := t.grade_at(s) * 100.0
+	var col := Color.WHITE
+	if g > 3.0:
+		col = Color(1, 0.75, 0.3)
+	elif g < -3.0:
+		col = Color(0.5, 0.8, 1)
+	_text(Vector2(r.end.x - 120, r.position.y - 12), "%s %d%%" % ["▲" if g >= 0.0 else "▼", int(round(absf(g)))], 18, col, HORIZONTAL_ALIGNMENT_RIGHT, 120)
+
+
+func _profile_dot(r: Rect2, s: float, span: float, rad: float, col: Color) -> void:
+	var t := session.sim.track
+	var f := fposmod(s, t.length) / t.length
+	var y := (t.height_at(s) - _profile_range.x) / span
+	draw_circle(Vector2(r.position.x + r.size.x * f, r.end.y - y * r.size.y), rad, col)
