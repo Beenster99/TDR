@@ -8,11 +8,18 @@ extends Node3D
 ##
 ## Everything is real 3D at every zoom (no icons). Small car parts hide when
 ## far away and trees use simpler meshes in the distance.
+##
+## Effects: tyre smoke and rubber marks (SkidMarks), bits flying off cars in
+## crashes and sparks (Debris, impact), and the pit crews who do each stop
+## (PitCrews, add_pit_crew / set_pit_stop).
 
 var track: TrackData
 var env: SimEnvironment
 var track_view: TrackView
 var trackside: Trackside
+var skid_marks: SkidMarks
+var debris: Debris
+var pit_crews: PitCrews          ## null on a dedicated server or a track without a pit lane
 var cars: Array[CarView] = []
 var safety_car: CarView           ## made on first use
 var driving_line: DrivingLineView ## the driving line aid (add_driving_aids)
@@ -37,6 +44,16 @@ func setup(p_track: TrackData, p_env: SimEnvironment = null) -> void:
 	add_child(trackside)
 	if DisplayServer.get_name() != "headless":   # a dedicated server draws nothing
 		trackside.setup(track_view)
+	skid_marks = SkidMarks.new()
+	add_child(skid_marks)
+	skid_marks.setup(track_view.bounds)
+	debris = Debris.new()
+	debris.ground = track_view.surface_height
+	add_child(debris)
+	if DisplayServer.get_name() != "headless" and track.has_pit_lane():
+		pit_crews = PitCrews.new()
+		add_child(pit_crews)
+		pit_crews.setup(track_view)
 	_build_environment()
 	camera = Camera3D.new()
 	camera.fov = GfxSettings.fov_deg
@@ -79,6 +96,9 @@ func add_car(def: CarDefinition, state: CarState, label: String, is_local: bool,
 	v.set_environment(env)
 	v.ground = track_view.surface_height
 	v.ground_normal = track_view.surface_normal
+	v.terrain = track_view.terrain_mesh_height
+	v.marks = skid_marks
+	v.debris = debris
 	add_child(v)
 	cars.append(v)
 	return v
@@ -111,6 +131,48 @@ func set_safety_car(p_visible: bool, pos: Vector2, p_heading: float, speed: floa
 	_sc_state.heading = p_heading
 	_sc_state.vel = Vector2.from_angle(p_heading) * speed
 	safety_car.set_light_bar(lights)
+
+
+## Car i's team crew at pit box `box` (the race's box for that car), in the
+## car's colours. Call once per car after add_car, then fill_pit_lane.
+func add_pit_crew(i: int, box: int) -> void:
+	if pit_crews and i < cars.size():
+		pit_crews.add_team(i, box, cars[i].paint_colour(), cars[i].def)
+
+
+## People in every other garage too, so the pit lane is busy.
+func fill_pit_lane() -> void:
+	if pit_crews:
+		pit_crews.fill_garages()
+
+
+## What car i's pit stop is doing (PitCrews.Stop: NONE, COMING = boxing this
+## lap and in the lane, SERVICE = stopped in the box, LEAVING), seconds since
+## it stopped, and the work {tyre_s, fuel_s, repair_s, total_s}.
+func set_pit_stop(i: int, state: int, elapsed := 0.0, work := {}) -> void:
+	if pit_crews:
+		pit_crews.set_stop(i, state, elapsed, work)
+
+
+var _impacts: Array = []   ## [pos, time] of recent impacts, to thin out repeats
+
+
+## A hit at pos (2D metres): sparks, and chips of carbon if hard enough.
+## vel = the cars' velocity (m/s, 2D), strength 0..1+ (about 1 = a big hit).
+func impact(pos: Vector2, vel: Vector2, strength: float, sparks := true) -> void:
+	var now := Time.get_ticks_msec() * 0.001
+	for k in range(_impacts.size() - 1, -1, -1):
+		if now - float(_impacts[k][1]) > 0.25:
+			_impacts.remove_at(k)
+		elif (_impacts[k][0] as Vector2).distance_to(pos) < 4.0:
+			return
+	_impacts.append([pos, now])
+	var p := Vector3(pos.x, track_view.surface_height(pos) + 0.3, pos.y)
+	var v := Vector3(vel.x, 0.0, vel.y)
+	if strength > 0.35:
+		debris.burst(p, v, clampi(int(strength * 6.0), 1, 8), Color(0.08, 0.08, 0.09), clampf(strength, 0.3, 1.2))
+	elif sparks:
+		debris.sparks(p, v, strength)
 
 
 ## A different colour scheme for the k-th car of the same model in a field,
@@ -152,10 +214,17 @@ func set_camera(centre: Vector2, zoom: float, rotation_rad := 0.0) -> void:
 	camera.far = _cam_dist * 3.0 + 4000.0
 	if sun:
 		sun.directional_shadow_max_distance = clampf(_cam_dist * 2.2, 150.0, 12000.0)
+	if pit_crews:
+		pit_crews.set_camera(centre, _cam_dist)
 
 
 func _process(_delta: float) -> void:
 	_apply_conditions()
+	if pit_crews:
+		for i in cars.size():
+			pit_crews.set_car_pose(i, cars[i].pos2, cars[i].heading)
+			cars[i].pit_lift = pit_crews.car_lift(i)
+			cars[i].wheels_hidden = pit_crews.wheels_off(i)
 
 
 # --- Sun, sky and post-processing -------------------------------------------------

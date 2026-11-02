@@ -145,6 +145,11 @@ func mandatory_left(i: int) -> int:
 	return maxi(sim.settings.mandatory_pit_stops - int(sim.entries[i].pit["window_stops"]), 0)
 
 
+## The pit box car i stops in (index for TrackData.pit_box).
+func box_index(i: int) -> int:
+	return _box[i] if i < _box.size() else 0
+
+
 func phase(i: int) -> String:
 	return sim.entries[i].pit["phase"]
 

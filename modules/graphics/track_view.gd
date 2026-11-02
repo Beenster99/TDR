@@ -36,6 +36,11 @@ var _field_size := Vector2i.ZERO
 var _field_idx := PackedInt32Array()
 var _field_td := PackedFloat32Array()   ## distance to the track only (for _field_idx)
 var _pit_rect := Rect2()
+## Terrain mesh heights as built (row by row), for terrain_mesh_height.
+var _terrain_h := PackedFloat32Array()
+var _terrain_grid := Rect2()
+var _terrain_cell := 10.0
+var _terrain_n := Vector2i.ZERO
 var _noise_tex: NoiseTexture2D
 
 
@@ -132,6 +137,25 @@ func terrain_height(p: Vector2) -> float:
 		return road
 	var t := clampf((absf(off) - edge) / (track.runoff + 60.0), 0.0, 1.0)
 	return lerpf(road, track.ground_height_at(p), t * t * (3.0 - 2.0 * t))
+
+
+## Height of the grass mesh as drawn (its triangles, not the smooth
+## hillside), so a car off the road can be kept on top of it.
+func terrain_mesh_height(p: Vector2, _hint := -1) -> float:
+	if _terrain_h.is_empty():
+		return -INF
+	var g := (p - _terrain_grid.position) / _terrain_cell
+	var x := clampi(int(floor(g.x)), 0, _terrain_n.x - 2)
+	var y := clampi(int(floor(g.y)), 0, _terrain_n.y - 2)
+	var fx := clampf(g.x - x, 0.0, 1.0)
+	var fy := clampf(g.y - y, 0.0, 1.0)
+	var a := _terrain_h[y * _terrain_n.x + x]
+	var b := _terrain_h[y * _terrain_n.x + x + 1]
+	var c := _terrain_h[(y + 1) * _terrain_n.x + x]
+	var d := _terrain_h[(y + 1) * _terrain_n.x + x + 1]
+	if fx + fy <= 1.0:   # triangle a-b-c (the cells are split from b to c)
+		return a + (b - a) * fx + (c - a) * fy
+	return d + (c - d) * (1.0 - fx) + (b - d) * (1.0 - fy)
 
 
 func pit_height(d: float) -> float:
@@ -257,6 +281,7 @@ func _build_terrain() -> void:
 	var ny := int(ceil(bounds.size.y / cell))
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	_terrain_h = PackedFloat32Array()
 	for y in ny + 1:
 		for x in nx + 1:
 			var p := bounds.position + Vector2(x, y) * cell
@@ -265,6 +290,7 @@ func _build_terrain() -> void:
 			# near the circuit the ground eases into the road's edges
 			# sink the grass a little under the run-off so tarmac never clips
 			var hy := terrain_height(p) - (0.3 if cl < track.runoff + 8.0 else 0.05)
+			_terrain_h.append(hy)
 			st.set_color(Color(mown, 0, 0))
 			st.set_uv(p)
 			st.add_vertex(Vector3(p.x, hy, p.y))
@@ -280,6 +306,9 @@ func _build_terrain() -> void:
 			st.add_index(b)
 			st.add_index(d)
 			st.add_index(c)
+	_terrain_grid = Rect2(bounds.position, Vector2(nx, ny) * cell)
+	_terrain_cell = cell
+	_terrain_n = Vector2i(nx + 1, ny + 1)
 	var mi := _mesh_node(st, terrain_material, "Terrain")
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if has_elevation() else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
@@ -306,7 +335,7 @@ func _ribbon(st: SurfaceTool, offs: Callable, kind: Callable, lift: float, lanes
 			st.set_color(c)
 			st.set_uv(Vector2(s, off))
 			st.set_uv2(Vector2(off - rl, edge))
-			st.add_vertex(Vector3(q.x, height(s, off) + lift, q.y))
+			st.add_vertex(Vector3(q.x, _surface_y(k, s, off, q) + lift, q.y))
 	for i in n:
 		for l in lanes:
 			var a := base + i * (lanes + 1) + l
@@ -317,6 +346,23 @@ func _ribbon(st: SurfaceTool, offs: Callable, kind: Callable, lift: float, lanes
 			st.add_index(a + 1)
 			st.add_index(b)
 			st.add_index(b + 1)
+
+
+## Height of the driving surface at a ribbon vertex. On the road and kerbs
+## it is the road's own cross-section; beyond the kerb it is exactly the
+## height a car there is drawn at (the same blend as
+## TrackData.surface_height_at: the run-off eases from the road's edge into
+## the hillside), so a car in a gravel trap or on a run-off never sinks under
+## the mesh it is driving on.
+func _surface_y(k: int, s: float, off: float, q: Vector2) -> float:
+	var edge: float = (track.width_right[k] if off >= 0.0 else track.width_left[k]) + track.kerb_width
+	if absf(off) <= edge + 0.01 or not has_elevation():
+		return height(s, off)
+	var road := height(s, signf(off) * edge)
+	if track.terrain_size == Vector2i.ZERO:
+		return road
+	var t := clampf((absf(off) - edge) / (track.runoff + 60.0), 0.0, 1.0)
+	return lerpf(road, track.ground_height_at(q), t * t * (3.0 - 2.0 * t))
 
 
 func _build_road() -> void:
@@ -366,11 +412,23 @@ func _is_gravel(i: int, side: float) -> bool:
 
 func _runoff_width(i: int, side: float) -> float:
 	var ro := track.runoff_right if side > 0 else track.runoff_left
+	var w := minf(4.0, track.runoff * 0.3)
 	if ro.size() == track.point_count() and ro[i] != TrackData.Surface.GRASS:
-		return track.runoff - track.kerb_width - 0.5   # gravel trap or paved run-off, as wide as it drives
-	if _is_gravel(i, side):
-		return track.runoff * 0.6
-	return minf(4.0, track.runoff * 0.3)
+		w = track.runoff - track.kerb_width - 0.5   # gravel trap or paved run-off, as wide as it drives
+	elif _is_gravel(i, side):
+		w = track.runoff * 0.6
+	# On the inside of a tight corner the run-off can't reach past the
+	# corner's centre, or the strip folds over itself in a big fan.
+	var n := track.point_count()
+	var c := 0.0
+	for k in range(-8, 9):
+		var ck := curvature[(i + k + n) % n]
+		if signf(ck) == side and absf(ck) > absf(c):
+			c = ck
+	if absf(c) > 1e-4:
+		var e := (track.width_right[i] if side > 0 else track.width_left[i]) + track.kerb_width
+		w = clampf(0.8 / absf(c) - e, 0.0, w)
+	return w
 
 
 # --- Walls and tyre barriers ------------------------------------------------------

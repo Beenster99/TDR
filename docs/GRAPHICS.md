@@ -19,10 +19,50 @@ occlusion and glow. The camera always shows this full 3D scene at every zoom
 - `Trackside` adds woods, grandstands with crowds, pit garages, the paddock
   and the start gantry. Placement comes from the track's shape and is the
   same every time for the same track.
-- `CarView` is one car: its model, livery, wheels, lights and spray.
+- `CarView` is one car: its model, livery, wheels, lights, spray, tyre smoke
+  and the bits that come off it in a crash.
 - `WeatherView` puts rain on the screen; light, wet roads and spray are 3D.
 - `GfxSettings` holds the switches: camera lens and tilt, shadows, elevation
   cues, tree density and so on.
+
+## Effects and the pit lane
+
+- **Tyre smoke and rubber.** `CarView` works out how hard each tyre slides
+  from the car's motion (slip angles from velocity, yaw rate and steering, the
+  wheelspin flag, lock-ups without ABS), so it works for cars driven on other
+  machines too. Sliding tyres smoke (pale on tarmac; brown dust on gravel and
+  grass, where any fast car churns some up) and leave marks: dark rubber on
+  the road, torn earth on the grass (`SkidMarks`, a ring buffer of 12,000
+  short strips). The wet washes both out.
+- **Crashes.** New dents throw shards of carbon and painted bodywork from that
+  side of the car; a part that breaks away (bumper, splitter, wing, diffuser,
+  mirror, at visual damage above 0.85) flies off as a copy, tumbles, bounces
+  and lies on the road for about 50 s (`Debris`). Car-to-car contacts and
+  barrier hits send sparks (not off tyre walls) via `WorldView.impact`, which
+  the race scene calls from the race's `collision` and `barrier_impact` events.
+  Debris is only drawn; the race never sees it.
+- **Staying visible off the road.** Run-off and gravel traps are drawn at the
+  same height a car there is drawn at (the road's edge easing into the
+  hillside, as `TrackData.surface_height_at`), and off the road a car is kept
+  on top of the grass mesh as drawn (`TrackView.terrain_mesh_height`). On the
+  inside of tight corners run-off stops short of the corner's centre, so it
+  can't fold over itself.
+- **Pit crews** (`PitCrews`). Every garage has people in it: the crew of each
+  car in the race in its livery colour, and other teams' mechanics in the
+  spare garages, with tyre stacks under blankets, a trolley and a fuel rig,
+  and a strategist on a stool at the pit wall. When a car is called in, its
+  crew jog to their marks; in the stop the lollipop man waits in front, the
+  jack men lift the car, four wheel gunners kneel at the wheels while the
+  wheels come off and go back on and two tyre men carry tyres, the fueller
+  leans in on the hose for as long as the fuel takes, mechanics work on the
+  nose and tail for repairs, and the lollipop turns green to send the car
+  away. The race scene passes each car's pit phase and work every frame
+  (`WorldView.add_pit_crew`, `fill_pit_lane`, `set_pit_stop`). People hide
+  beyond 450 m camera distance and crews off screen stand still.
+
+Screenshots of the effects in a real race: `tests/fx_race_shot.tscn`
+(scenarios `pit`, `crash`, `slide`); one car standing at a point of a track:
+`tests/fx_shot.tscn`.
 
 ## Car models
 
