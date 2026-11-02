@@ -251,6 +251,30 @@ func instruction_for(i: int) -> String:
 
 # --- Authority: decide ------------------------------------------------------
 
+## Race director override (host only): send out the safety car or the VSC
+## now, e.g. from a debug option or a future host command.
+## Called between steps, so its events go out with the next step.
+func deploy_safety_car(why := "Race director") -> void:
+	if not sim.follower and sim.phase == RaceSim.Phase.RACING and mode != Mode.SC:
+		var n := sim.events.size()
+		_deploy_sc(why)
+		_post_new_events(n)
+
+
+func deploy_vsc(why := "Race director") -> void:
+	if not sim.follower and sim.phase == RaceSim.Phase.RACING and mode == Mode.GREEN:
+		var n := sim.events.size()
+		_deploy_vsc(why)
+		_post_new_events(n)
+
+
+func _post_new_events(from: int) -> void:
+	var fresh := sim.events.slice(from)
+	sim.events.resize(from)
+	for e in fresh:
+		sim.post_event(e)
+
+
 ## Called by RaceSim.step on the authority after positions are updated.
 func step(dt: float, prev_s: PackedFloat64Array) -> void:
 	mode_time += dt

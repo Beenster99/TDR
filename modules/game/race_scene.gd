@@ -103,6 +103,15 @@ func _physics_process(delta: float) -> void:
 		else:
 			inp = local_input.read(delta, session.sim.cars[session.local_car].speed())
 	session.tick(inp)
+	# Testing: --force-sc 30 sends the safety car out after 30 s (--force-vsc too).
+	for opt in ["force-sc", "force-vsc"]:
+		if GameData.arg(opt) and not has_meta(opt) and session.is_authority() \
+				and session.sim.race_time >= float(GameData.arg(opt)):
+			set_meta(opt, true)
+			if opt == "force-sc":
+				session.sim.race_control.deploy_safety_car("Test")
+			else:
+				session.sim.race_control.deploy_vsc("Test")
 
 
 ## Camera zoom: GameData.prefs["zoom"] runs from 0 (close up) to 1 (the
