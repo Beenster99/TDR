@@ -19,11 +19,23 @@ var heat_from_slip: float = 0.2      ## degC/s per kW of slip power
 var heat_from_rolling: float = 0.012 ## degC/s per (m/s * load ratio)
 var cool_to_air: float = 0.006
 var cool_to_track: float = 0.004
+var cool_speed_ms: float = 25.0      ## air cooling doubles at this speed
 var cool_to_water: float = 0.03      ## extra cooling per unit of track wetness
 var wet_grip_factor: float = 0.55    ## share of grip left on a fully wet track
 var aquaplaning: float = 0.3         ## grip lost at speed on standing water
 var kind: String = "dry"             ## "dry" | "intermediate" | "wet"
 var wear_rate: float = 0.0           ## used by tyre wear (wave 3/4)
+## Tyre pressure (wave 4 setups): the hot pressure that grips best, how far
+## off it costs grip, and the cold pressure that reaches it at the optimal
+## temperature (pressure rises with temperature: p_hot = p_cold * T / T_cold).
+var optimal_hot_psi: float = 27.5
+var pressure_window_psi: float = 3.0
+var cold_psi: float = 21.9
+const COLD_REF_K := 293.15           ## pressures are set at 20 C
+const PRESSURE_GRIP := 0.05          ## grip lost one window over the best pressure
+const PRESSURE_GRIP_LOW := 0.015     ## and one window under it (a soft tyre still grips,
+                                     ## but runs hot and wears)
+const PRESSURE_MIN_GRIP := 0.86
 
 
 static func from_dict(d: Dictionary) -> TyreCompound:
@@ -43,11 +55,15 @@ static func from_dict(d: Dictionary) -> TyreCompound:
 	t.heat_from_rolling = d.get("heat_from_rolling", t.heat_from_rolling)
 	t.cool_to_air = d.get("cool_to_air", t.cool_to_air)
 	t.cool_to_track = d.get("cool_to_track", t.cool_to_track)
+	t.cool_speed_ms = d.get("cool_speed_ms", t.cool_speed_ms)
 	t.cool_to_water = d.get("cool_to_water", t.cool_to_water)
 	t.wet_grip_factor = d.get("wet_grip_factor", t.wet_grip_factor)
 	t.aquaplaning = d.get("aquaplaning", t.aquaplaning)
 	t.kind = d.get("kind", t.kind)
 	t.wear_rate = d.get("wear_rate", t.wear_rate)
+	t.optimal_hot_psi = d.get("optimal_hot_psi", t.optimal_hot_psi)
+	t.pressure_window_psi = d.get("pressure_window_psi", t.pressure_window_psi)
+	t.cold_psi = t.optimal_hot_psi * COLD_REF_K / (t.optimal_temp_c + 273.15)
 	# Simplified Pacejka: F = sin(C * atan(B * alpha)) peaks where C*atan(B*a) = PI/2
 	t.shape_b = tan(PI / (2.0 * t.shape_c)) / t.peak_slip_angle
 	return t
@@ -63,3 +79,19 @@ func temp_grip_factor(temp_c: float) -> float:
 ## Normalised lateral force curve for a slip angle (radians), range -1..1.
 func lateral_curve(alpha: float) -> float:
 	return sin(shape_c * atan(shape_b * alpha))
+
+
+## Hot pressure of a tyre set at (cold_psi + delta) cold, at this temperature.
+func hot_psi(delta: float, temp_c: float) -> float:
+	return (cold_psi + delta) * (temp_c + 273.15) / COLD_REF_K
+
+
+## Grip multiplier from the hot pressure (1.0 at the best pressure).
+func pressure_grip_factor(p_hot: float) -> float:
+	var x := (p_hot - optimal_hot_psi) / pressure_window_psi
+	return maxf(PRESSURE_MIN_GRIP, 1.0 - (PRESSURE_GRIP if x > 0.0 else PRESSURE_GRIP_LOW) * x * x)
+
+
+## Heat multiplier from the hot pressure: a softer tyre flexes more and heats up.
+func pressure_heat_factor(p_hot: float) -> float:
+	return clampf(pow(optimal_hot_psi / maxf(p_hot, 5.0), 1.5), 0.6, 1.8)

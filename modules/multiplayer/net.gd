@@ -19,7 +19,7 @@ signal internet_status_changed
 const DEFAULT_PORT := 24690
 const MAX_PEERS := 16
 ## Bump whenever a message changes shape; mismatched games are told at the lobby.
-const PROTOCOL_VERSION := 9  # 4: track elevation, 5: damage in car states, 6: barrier types and run-off surfaces, 7: race control in the race state, 8: pit stops, 9: car upgrades, liveries and upgrades_mode
+const PROTOCOL_VERSION := 10  # 4: track elevation, 5: damage in car states, 6: barrier types and run-off surfaces, 7: race control in the race state, 8: pit stops, 9: car upgrades, liveries and upgrades_mode, 10: car setups (tuning)
 const COMPRESSION := ENetConnection.COMPRESS_ZSTD
 ## How long a player's game may go silent before they're taken to have left (ms).
 const TIMEOUT_MS := 15000
@@ -366,7 +366,7 @@ func _apply_update(id: int, fields: Dictionary) -> void:
 		p["tyre"] = fields["tyre"]
 	# The car's setup (upgrade overrides + tuning) and livery, from the
 	# player's own profile. The host's upgrades_mode decides what counts.
-	if fields.get("setup") is Dictionary:
+	if fields.get("setup") is Dictionary and str(fields["setup"]).length() < 4000:
 		p["setup"] = fields["setup"]
 	if fields.get("livery") is Dictionary:
 		p["livery"] = fields["livery"]

@@ -79,7 +79,11 @@ func _init(p_settings: RaceSettings, p_track: TrackData, p_entries: Array[RaceEn
 	for i in entries.size():
 		var e := entries[i]
 		var base: CarDefinition = car_defs[e.car_id]
-		var def := base.with_overrides(e.setup) if not e.setup.is_empty() else base
+		var overrides := e.setup
+		if not settings.tuning_enabled and overrides.has("tuning"):
+			overrides = overrides.duplicate()
+			overrides.erase("tuning")
+		var def := base.with_overrides(overrides) if not overrides.is_empty() else base
 		defs.append(def)
 		dry_compound.append(base.tyre_compound_id)
 		var compound: TyreCompound = tyre_defs.get(def.tyre_compound_id, tyre_defs.values()[0])
@@ -105,6 +109,9 @@ func _make_car_on_grid(slot: int, def: CarDefinition) -> CarState:
 	c.rpm = def.idle_rpm
 	c.damage_level = damage_level
 	c.fuel_l = def.fuel_capacity_l if settings.start_fuel_l < 0.0 else minf(settings.start_fuel_l, def.fuel_capacity_l)
+	# The setup's fuel load counts when fuel is used (a light car is faster).
+	if settings.fuel_enabled and def.setup_fuel_l > 0.0:
+		c.fuel_l = minf(def.setup_fuel_l, def.fuel_capacity_l)
 	# Tyres start between air and track temperature (no blankets).
 	var t0 := lerpf(env.ambient_c, env.track_c, 0.4)
 	c.tyre_temp = PackedFloat64Array([t0, t0, t0, t0])

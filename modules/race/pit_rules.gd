@@ -608,8 +608,12 @@ func _guide(i: int) -> CarInput:
 	var alpha := atan2(ly, lx)
 	var steer := atan(2.0 * def.wheelbase * sin(alpha) / maxf(rel.length(), 1.0))
 	inp.steer = clampf(steer / def.max_steer, -1.0, 1.0)
-	# Catch a slide: counter-steer and come off the power.
-	var slide := c.slip_angle_rear - clampf(c.slip_angle_rear, -0.06, 0.06)
+	# Catch a slide: counter-steer and come off the power. The rear slip angle
+	# is worked out from the car's motion (not CarState.slip_angle_rear, which
+	# isn't in snapshots), so a restored race steers exactly the same.
+	var vx := c.vel.dot(c.forward())
+	var slip_r := atan2(c.vel.dot(c.right()) - c.yaw_rate * (def.wheelbase - def.cg_to_front), maxf(absf(vx), CarPhysics.LOW_SPEED))
+	var slide := slip_r - clampf(slip_r, -0.06, 0.06)
 	if slide != 0.0:
 		inp.steer = clampf(inp.steer + slide * 2.5, -1.0, 1.0)
 	# Gentle on the pedals: hard braking while turning would push it wide.
@@ -618,11 +622,11 @@ func _guide(i: int) -> CarInput:
 		inp.brake = 1.0 if speed < 3.0 else 0.6
 	elif dv > 0.0:
 		inp.throttle = clampf(dv * 0.3, 0.0, 1.0) * clampf(1.2 - absf(inp.steer), 0.3, 1.0)
-		if absf(c.slip_angle_rear) > 0.1:
+		if absf(slip_r) > 0.1:
 			inp.throttle *= 0.25
 	elif dv < -0.8:
 		inp.brake = clampf(-dv * 0.15, 0.0, 1.0) * clampf(1.0 - 1.5 * absf(inp.steer), 0.3, 1.0)
-		if absf(c.slip_angle_rear) > 0.1:
+		if absf(slip_r) > 0.1:
 			inp.brake *= 0.3
 	if p["limiter"] and speed > sim.track.pit_speed_limit - 0.3:
 		inp.throttle = 0.0
