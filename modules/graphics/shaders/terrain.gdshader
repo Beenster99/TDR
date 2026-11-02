@@ -11,6 +11,10 @@ uniform float hillshade = 0.0;
 uniform vec3 light_dir = vec3(0.5, 0.6, 0.6);
 uniform float wetness = 0.0;
 uniform float stripe_angle = 0.0;
+// Real ground from map data (Scenery): RGB colour, A how much it replaces the grass.
+uniform sampler2D ground_map : source_color, filter_linear_mipmap, repeat_disable;
+uniform vec4 ground_rect = vec4(0.0, 0.0, 1.0, 1.0);   // origin x, y and size in metres
+uniform float ground_on = 0.0;
 
 varying vec3 wn;
 varying vec3 wp;
@@ -32,6 +36,15 @@ void fragment() {
 	vec2 dir = vec2(cos(stripe_angle), sin(stripe_angle));
 	float st = step(0.5, fract(dot(p, dir) / 16.0));
 	c *= 1.0 + COLOR.r * (st * 0.09 - 0.03);
+	if (ground_on > 0.0) {
+		vec2 guv = (p - ground_rect.xy) / ground_rect.zw;
+		if (guv.x >= 0.0 && guv.y >= 0.0 && guv.x <= 1.0 && guv.y <= 1.0) {
+			vec4 g = texture(ground_map, guv);
+			// keep some texture from the noise so fields and car parks aren't flat paint
+			vec3 gc = g.rgb * (0.86 + 0.24 * n2) * (0.94 + 0.1 * n3);
+			c = mix(c, gc, g.a);
+		}
+	}
 	vec3 L = normalize(light_dir);
 	c *= clamp(1.0 + hillshade * (dot(normalize(wn), L) - L.y), 0.55, 1.5);
 	c *= 1.0 - 0.2 * wetness;

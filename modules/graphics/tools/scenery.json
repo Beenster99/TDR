@@ -1,0 +1,6 @@
+{
+  "_doc": "Tracks with real trackside scenery (build_scenery.py). lidar: ea_england = Environment Agency 1 m surface model (England only) for real heights and tree positions; leave it out elsewhere (OpenStreetMap only).",
+  "tracks": {
+    "silverstone": {"lidar": "ea_england"}
+  }
+}

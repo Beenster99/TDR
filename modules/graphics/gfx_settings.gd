@@ -21,6 +21,7 @@ static var hillshade := 2.0         ## extra shading by slope on grass; 0.6x on 
 static var trees := 1.0             ## tree density, 0 = none
 static var grandstands := true
 static var buildings := true
+static var real_scenery := true    ## real buildings, trees and ground from map data (Scenery), where a track has them
 
 ## Cars
 static var car_detail_distance := 700.0   ## camera distance (m) beyond which small parts hide
