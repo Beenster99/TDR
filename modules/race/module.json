@@ -1,7 +1,7 @@
 {
   "id": "race",
   "name": "Race rules",
-  "version": "1.18.0",
+  "version": "1.19.0",
   "status": "active",
   "summary": "The race itself: countdown, laps, sectors, positions, finish, car-to-car contacts, snapshots, race settings and entries (crews), and building a race from start data.",
   "depends": {
@@ -16,7 +16,8 @@
     "RaceEntry",
     "RaceFactory",
     "RaceControl",
-    "PitRules"
+    "PitRules",
+    "CarRecovery"
   ],
   "internal": [],
   "notes": "Pure data, no nodes, deterministic. Damage: settings.damage_level (off/visual/full); the sim damages cars from contacts and barrier hits and emits incident / retired events (is_retired()). RaceControl owns flags, the virtual safety car, the safety car and penalties (RaceSim.add_penalty, RaceEntry.penalty_s). Pit stops and fuel rules plug in here. Car setups: settings.tuning_enabled (false = everyone on the default setup); RaceFactory.plan gives every AI car a SetupAdvisor setup for the track and copies each human's \"setup\"; the setup's fuel load counts when fuel is on. Per-wheel tyres: RaceSim.wheel_compounds[i] ([4]), fit_tyres(i, wheels, compound), main_compound(), mixed_tyres(i); compounds[i] is the compound on most wheels. Pit plan keys wheel_tyres ([4] choice or compound id, mixing allowed) and psi ([4] cold delta per tyre), used once then cleared; pit state compounds and psi_trim; PitRules.choice_compound, wheel_psi."
