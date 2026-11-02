@@ -605,7 +605,9 @@ func test_ai_race_completes() -> Dictionary:
 			if e["type"] == "collision":
 				collisions += 1
 			elif e["type"] == "pit_stop":
-				stops.append(e)
+				var st: Dictionary = e.duplicate()
+				st["repairs"] = (sim.entries[e["car"]].pit.get("last_stop", {}) as Dictionary).get("repairs", []).size()
+				stops.append(st)
 			elif e["type"] == "penalty":
 				penalties.append(e)
 		# Take the mid-race snapshot while a car is stopped in its box.
@@ -640,9 +642,12 @@ func test_ai_race_completes() -> Dictionary:
 	var stop_penalties := penalties.filter(func(pe): return str(pe["reason"]).contains("pit") and not excused.has(int(pe["car"])))
 	check(stop_penalties.is_empty(), "no pit penalties for AI drivers (%s)" % str(stop_penalties))
 	var times := []
+	var service_ok := true
 	for st in stops:
 		times.append(snappedf(st["stationary_s"], 0.1))
-	check(not stops.is_empty() and times.min() >= PitRules.STOP_BASE_S and times.max() < 40.0, "pit stops take %s s" % str(times))
+		# Tyres and fuel take under 40 s; a stop that also repairs crash damage takes longer.
+		service_ok = service_ok and st["stationary_s"] < (120.0 if st["repairs"] > 0 else 40.0)
+	check(not stops.is_empty() and times.min() >= PitRules.STOP_BASE_S and service_ok, "pit stops take %s s" % str(times))
 	check(mid_pit_taken, "snapshot taken during a pit stop (tick %d)" % mid_tick)
 	var worn := 0
 	var measured := 0
