@@ -708,15 +708,25 @@ def build(tid, cfg, cache, use_lidar):
             if not in_area(p):
                 continue
             lo2, hi2 = p.min(0), p.max(0)
-            n = int(poly_area(p) / 45.0)
-            if n <= 0:
-                continue
-            cand = rng.uniform(lo2, hi2, size=(n * 2, 2))
-            cand = cand[inside(p, cand)][:n]
-            cand = cand[clear.at(cand) > keep_out]
+            # an even, jittered canopy: dense near the circuit, bigger trees
+            # further spaced out far away (keeps the tree count sane on
+            # tracks surrounded by forest, e.g. Spa or Hockenheim)
             kind = 1 if tags.get("leaf_type") == "needleleaved" else 0
-            for q in cand:
-                trees.append([round(float(q[0]), 1), round(float(q[1]), 1), round(float(rng.uniform(9, 16)), 1), kind])
+            for spacing, near in ((7.5, True), (12.0, False)):
+                gx, gy = np.meshgrid(np.arange(lo2[0], hi2[0], spacing), np.arange(lo2[1], hi2[1], spacing))
+                cand = np.stack([gx.ravel(), gy.ravel()], -1)
+                if len(cand) == 0:
+                    continue
+                cand = cand + rng.uniform(-spacing * 0.35, spacing * 0.35, cand.shape)
+                cl = clear.at(cand)
+                cand, cl = cand[cl > keep_out], cl[cl > keep_out]
+                cand = cand[(cl < 250.0) if near else (cl >= 250.0)]
+                if len(cand) == 0:
+                    continue
+                cand = cand[inside(p, cand)]
+                lo_h, hi_h = (9, 16) if near else (15, 22)
+                for q in cand:
+                    trees.append([round(float(q[0]), 1), round(float(q[1]), 1), round(float(rng.uniform(lo_h, hi_h)), 1), kind])
         for wid, (tags, refs) in ways.items():
             if tags.get("natural") == "tree_row" or tags.get("barrier") == "hedge":
                 p = way_xy(refs, xy)
