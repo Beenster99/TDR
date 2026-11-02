@@ -856,7 +856,9 @@ func _flag_lines(me: int) -> Array:
 		"vsc":
 			title = "VSC ENDING" if rc.stage == "ending" else "VIRTUAL SAFETY CAR"
 		"yellow":
-			if me >= 0 and rc.yellow_at(sim.cars[me].track_s):
+			if me >= 0 and rc.double_yellow_at(sim.cars[me].track_s):
+				title = "DOUBLE YELLOW"
+			elif me >= 0 and rc.yellow_at(sim.cars[me].track_s):
 				title = "YELLOW FLAG"
 	return [title, line, col]
 
@@ -930,6 +932,14 @@ func _draw_minimap(origin: Vector2) -> void:
 		for k in 9:
 			zone.append(origin + (t.position_at(from + span_m * k / 8.0) - _mm_rect.position) * scale_f)
 		draw_polyline(zone, Color(1, 0.85, 0.1), 5.0)
+	# Double yellows where marshals are out: a thicker band.
+	for job in rc.marshal_jobs:
+		var zone := PackedVector2Array()
+		var from := float(job["s"]) - TrackMarshals.DOUBLE_BEFORE_M
+		var span_m := TrackMarshals.DOUBLE_BEFORE_M + TrackMarshals.DOUBLE_AFTER_M
+		for k in 9:
+			zone.append(origin + (t.position_at(from + span_m * k / 8.0) - _mm_rect.position) * scale_f)
+		draw_polyline(zone, Color(1, 0.85, 0.1), 9.0)
 	if rc.sc_visible:
 		var sp := origin + (rc.sc_pos - _mm_rect.position) * scale_f
 		draw_rect(Rect2(sp - Vector2(5, 5), Vector2(10, 10)), Color(1, 0.6, 0.1))

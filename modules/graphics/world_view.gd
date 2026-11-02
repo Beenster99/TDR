@@ -27,6 +27,7 @@ var safety_car: CarView           ## made on first use
 var driving_line: DrivingLineView ## the driving line aid (add_driving_aids)
 var brake_boards: BrakeBoards
 var recovery: RecoveryVehicles   ## made on first use
+var marshals: MarshalsView        ## made on first use
 var pit_guide: PitGuideView      ## the pit guide for a driver driving in themselves (add_pit_guide)
 var _sc_state: CarState
 var camera: Camera3D
@@ -166,6 +167,23 @@ func set_recovery_vehicles(views: Array) -> void:
 		recovery.terrain = track_view.terrain_mesh_height
 		add_child(recovery)
 	recovery.set_vehicles(views)
+
+
+## Track marshals out clearing debris (orange overalls, brooms). views: every
+## marshal, from RaceControl.marshal_views(). Call every frame. Debris bits
+## where they sweep are cleared away.
+func set_marshals(views: Array) -> void:
+	if marshals == null:
+		if views.is_empty():
+			return
+		marshals = MarshalsView.new()
+		marshals.name = "Marshals"
+		marshals.ground = track_view.surface_height
+		marshals.terrain = track_view.terrain_mesh_height
+		add_child(marshals)
+	marshals.set_marshals(views)
+	for p in marshals.sweeping():
+		debris.clear_near(p, 7.0)
 
 
 ## Car i's team crew at pit box `box` (the race's box for that car), in the

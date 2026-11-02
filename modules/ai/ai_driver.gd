@@ -673,6 +673,10 @@ func _race_control_limit(sim: RaceSim, me: int, rc: RaceControl, unlapping: bool
 			if _queue_gap(sim, me) > 120.0 and not rc.yellow_at(car.track_s):
 				return INF
 			return rc.vsc_speed_at(car.track_s) * (1.3 if unlapping else 1.15)
+	if rc.double_yellow_at(car.track_s):
+		# Marshals on the track: well under the limit, ready to stop.
+		_block_clean = false
+		return minf(target_speed[idx] * 0.8, rc.double_yellow_limit(car.track_s) * 0.92)
 	if rc.yellow_at(car.track_s):
 		_block_clean = false
 		return target_speed[idx] * 0.9
