@@ -71,7 +71,7 @@ func _build_trees() -> void:
 				kind = 2
 			var s := rng.randf_range(0.75, 1.35) * (1.15 if f > 0.6 else 1.0)
 			var basis := Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(s, s * rng.randf_range(0.85, 1.2), s))
-			var t := Transform3D(basis, Vector3(p.x, tv.ground_height(p) - 0.1, p.y))
+			var t := Transform3D(basis, Vector3(p.x, tv.terrain_height(p) - 0.1, p.y))
 			var key := Vector2i((p / TILE).floor())
 			if not tiles.has(key):
 				tiles[key] = [[[], []], [[], []], [[], []]]
@@ -254,7 +254,7 @@ func _grandstand(s0: float, s1: float, side: float, depth: float, roof: bool) ->
 		var off: float = side * (e + setback)
 		var p := track.position_at(ss, off)
 		var nrm := track.vertex_normal(i) * side
-		pts.append([p, nrm, tv.ground_height(p)])
+		pts.append([p, nrm, tv.terrain_height(p)])
 		s += 6.0
 	if pts.size() < 3:
 		return
@@ -352,7 +352,7 @@ func _build_pit_buildings() -> void:
 		var a1: Vector2 = pts[j][1]
 		var b0: Vector2 = pts[j + 1][0]
 		var b1: Vector2 = pts[j + 1][1]
-		var ya: float = track.call("pit_height_at", pts[j][3]) if track.has_method("pit_height_at") else 0.0
+		var ya: float = track.pit_height_at(pts[j][3])
 		var yb: float = ya
 		var rc := roof if j % 8 != 0 else roof * 0.9
 		_q3(st, Vector3(a0.x, ya + h, a0.y), Vector3(b0.x, yb + h, b0.y), Vector3(b1.x, yb + h, b1.y), Vector3(a1.x, ya + h, a1.y), rc)
@@ -400,7 +400,7 @@ func _box(st: SurfaceTool, c: Vector2, sx: float, sz: float, y: float, h: float,
 ## An articulated truck seen from above: cab plus trailer in team colours.
 func _truck(st: SurfaceTool, c: Vector2, dir: Vector2, col: Color) -> void:
 	var nrm := Vector2(-dir.y, dir.x)
-	var y := tv.ground_height(c)
+	var y := tv.terrain_height(c)
 	for part in [[0.0, 13.6, 4.0, col], [8.0, 2.4, 3.6, Color(0.9, 0.9, 0.9)]]:
 		var mid: Vector2 = c + dir * (part[0] - 1.5)
 		var hl: float = part[1] * 0.5

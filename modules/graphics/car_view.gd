@@ -27,8 +27,9 @@ var env: SimEnvironment
 var pos2 := Vector2.ZERO
 var heading := 0.0
 ## Ground height and normal under a point (set by WorldView; flat by default).
-var ground: Callable = func(_p: Vector2) -> float: return 0.0
-var ground_normal: Callable = func(_p: Vector2) -> Vector3: return Vector3.UP
+## Both take (position, nearby centre-line index).
+var ground: Callable = func(_p: Vector2, _hint: int) -> float: return 0.0
+var ground_normal: Callable = func(_p: Vector2, _hint: int) -> Vector3: return Vector3.UP
 
 var _init_done := false
 var _sprung: Node3D
@@ -360,11 +361,11 @@ func _process(delta: float) -> void:
 		pos2 = pos2.lerp(state.pos, k)
 		heading = lerp_angle(heading, state.heading, k)
 	# Sit on the ground, following its slope.
-	var up: Vector3 = ground_normal.call(pos2)
+	var up: Vector3 = ground_normal.call(pos2, state.track_idx)
 	var fwd := Vector3(cos(heading), 0.0, sin(heading))
 	fwd = (fwd - up * fwd.dot(up)).normalized()
 	var right := fwd.cross(up).normalized()
-	transform = Transform3D(Basis(fwd, up, right), Vector3(pos2.x, ground.call(pos2), pos2.y))
+	transform = Transform3D(Basis(fwd, up, right), Vector3(pos2.x, ground.call(pos2, state.track_idx), pos2.y))
 	# Body pitch under braking/acceleration and roll in corners.
 	var k2 := 1.0 - exp(-8.0 * delta)
 	_pitch = lerpf(_pitch, clampf(state.ax * 0.0032, -0.035, 0.03), k2)
