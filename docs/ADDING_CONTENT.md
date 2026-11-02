@@ -55,6 +55,18 @@ data is too coarse to see goes in the track's `tracks.json` entry as
 start/finish line in race direction; positive degrees lower the right side
 of the track, which banks a right-hand corner).
 
+The racing line comes from `tools/raceline.py` (also run by `build_tracks.py`,
+about two minutes a track): the fastest line for a GT3 car on slicks, found by
+moving the line sideways until the lap time stops dropping. It uses the track
+up to 1 m from the edge, or 0.3 m where there are kerbs (corners), so the
+wheels ride the kerbs at apexes and exits. Late apexes before straights and
+compromises through corner sequences come out of the lap time, not by hand.
+To redo the lines of existing tracks without rebuilding them, run
+`python3 modules/tracks/tools/raceline.py [ids]` (needs numpy and a C
+compiler); `--check` prints the old and new model lap times without writing.
+`tests/line_shot.tscn` takes screenshots of the driving line through the
+slowest corners to check it by eye.
+
 Barriers and run-off come from `tools/barriers.py` (also run by
 `build_tracks.py`, or on its own from the cached OpenStreetMap downloads):
 for each point and side, the barrier at the edge of the run-off (concrete
