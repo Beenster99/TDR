@@ -34,6 +34,33 @@ const KERB_PUNCTURE := 0.03     ## chance per second of a flat, sliding fast ove
 ## and the wear from just rolling, as if this much slip power (kW) at 50 m/s.
 const WEAR_GRIP_LOSS := 0.32
 const WEAR_BASE_KW := 2.0
+## Setup (wave 4, see CarSetup in the cars module).
+## Ground effect: downforce gained per mm the floor runs below its default
+## height, and the floor touching the ground (bottoming) over this many mm
+## costs up to these shares of grip and downforce.
+const GROUND_EFFECT := 0.004
+const BOTTOM_RANGE_MM := 10.0
+const BOTTOM_GRIP := 0.45
+const BOTTOM_AERO := 0.4
+const BOTTOM_DRAG := 0.04
+## Stiffer suspension: grip lost per unit of stiffness everywhere, and over
+## bumps (dips, crests and kerbs). Softer gains it back.
+const STIFF_GRIP := 0.03
+const STIFF_BUMP_GRIP := 0.12
+const KERB_BUMP := 0.35
+## Camber: cornering grip lost one 1.5 deg off the best camber, braking and
+## traction grip lost per degree of camber beyond the default, heat per degree.
+const CAMBER_GRIP := 0.06
+const CAMBER_LONG := 0.012
+const CAMBER_HEAT := 0.08
+## Toe: rear toe-in grip per degree, rolling drag and tyre heat per degree.
+const TOE_REAR_GRIP := 0.08
+const TOE_DRAG := 0.012
+const TOE_HEAT := 1.2
+## Limited-slip diff: locking left when fully open, and how hard a locked
+## diff resists the car turning (understeer on power, stability off it).
+const DIFF_MIN_LOCK := 0.35
+const DIFF_YAW := 0.15
 
 const SURFACE_GRIP := {
 	TrackData.Surface.TRACK: 1.0,
@@ -99,16 +126,31 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 		front_share = s.body_damage[CarDamage.FRONT] / bent
 	var q_air := 0.5 * rho * d.cla * vx * vx
 	var lost := 0.6 * s.damage_aero * q_air
-	var df_front := maxf(q_air * d.aero_balance_front - lost * front_share, 0.0)
-	var df_rear := maxf(q_air * (1.0 - d.aero_balance_front) - lost * (1.0 - front_share), 0.0)
 	# Weight pressing the car into the road: less on a slope, more in a dip,
 	# less over a crest (enough speed over a sharp crest and the car goes light).
 	var v_along := s.vel.dot(q["dir"])
 	var load_g := clampf(slope_cos + v_along * v_along * track.vertical_curvature_at(s.track_s) / G, 0.2, 3.0)
 	s.load_factor = load_g
 	var mg := m * G * load_g
-	var fz_front := mg * b / L + df_front - m * s.ax * d.cg_height / L
-	var fz_rear := mg * a / L + df_rear + m * s.ax * d.cg_height / L
+	# Ride height: the springs squash under downforce, braking/accelerating and
+	# in dips (dampers slow the dips and crests down), and stretch over crests.
+	var lon_transfer := m * s.ax * d.cg_height / L
+	var heave := m * G * (load_g - 1.0)
+	var aero_f0 := q_air * d.aero_balance_front
+	var aero_r0 := q_air * (1.0 - d.aero_balance_front)
+	var sink_f := (heave * b / L / sqrt(d.damper_front) - lon_transfer + aero_f0) / (2.0 * d.spring_front)
+	var sink_r := (heave * a / L / sqrt(d.damper_rear) + lon_transfer + aero_r0) / (2.0 * d.spring_rear)
+	s.ride_front = d.ride_front_mm - sink_f
+	s.ride_rear = d.ride_rear_mm - sink_r
+	var bottom_f := clampf((d.plank_mm - s.ride_front) / BOTTOM_RANGE_MM, 0.0, 1.0)
+	var bottom_r := clampf((d.plank_mm - s.ride_rear) / BOTTOM_RANGE_MM, 0.0, 1.0)
+	s.bottoming = maxf(bottom_f, bottom_r)
+	# Lower floor, more downforce (until it hits the ground and stalls).
+	var ground := clampf(1.0 + GROUND_EFFECT * (d.ride_ref_mm - (s.ride_front + s.ride_rear) * 0.5), 0.85, 1.2)
+	var df_front := maxf(aero_f0 * ground * (1.0 - BOTTOM_AERO * bottom_f) - lost * front_share, 0.0)
+	var df_rear := maxf(aero_r0 * ground * (1.0 - BOTTOM_AERO * bottom_r) - lost * (1.0 - front_share), 0.0)
+	var fz_front := mg * b / L + df_front - lon_transfer
+	var fz_rear := mg * a / L + df_rear + lon_transfer
 	fz_front = maxf(fz_front, 0.15 * mg * b / L)
 	fz_rear = maxf(fz_rear, 0.15 * mg * a / L)
 	# Positive ay (turning right) moves load onto the left (outside) tyres.
@@ -123,19 +165,44 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 	# --- Per-tyre friction capacity -------------------------------------
 	var off_line := s.lateral_offset - env.raceline_offset(s.track_idx)
 	var surface_grip := env.grip_factor(tc, off_line, speed) * surf_mu
-	var cap := PackedFloat64Array([0.0, 0.0, 0.0, 0.0])
+	# Setup: stiff suspension loses grip over bumps and kerbs, camber trades
+	# cornering grip (best at the right camber once the body rolls) against
+	# braking and traction, rear toe-in steadies the rear.
+	var bump := absf(load_g - slope_cos) + (KERB_BUMP if s.surface == TrackData.Surface.KERB else 0.0)
+	var stiff_f := 0.6 * d.spring_front / d.spring_ref_front + 0.4 * d.damper_front
+	var stiff_r := 0.6 * d.spring_rear / d.spring_ref_rear + 0.4 * d.damper_rear
+	var mech_f := clampf(1.0 - (stiff_f - 1.0) * (STIFF_GRIP + STIFF_BUMP_GRIP * bump), 0.85, 1.08) * (1.0 - BOTTOM_GRIP * bottom_f)
+	var mech_r := clampf(1.0 - (stiff_r - 1.0) * (STIFF_GRIP + STIFF_BUMP_GRIP * bump), 0.85, 1.08) * (1.0 - BOTTOM_GRIP * bottom_r)
+	var roll_deg := absf(s.ay) / G * d.roll_deg_per_g / maxf(d.roll_stiffness, 0.3)
+	var cam_f := (d.camber_front + d.camber_gain * roll_deg - d.camber_opt_front) / 1.5
+	var cam_r := (d.camber_rear + d.camber_gain * roll_deg - d.camber_opt_rear) / 1.5
+	var lat_f := maxf(1.0 - CAMBER_GRIP * cam_f * cam_f, 0.88)
+	var lat_r := maxf(1.0 - CAMBER_GRIP * cam_r * cam_r, 0.88) * (1.0 + TOE_REAR_GRIP * d.toe_rear)
+	var lon_f := 1.0 - CAMBER_LONG * (absf(d.camber_front) - absf(d.camber_ref_front))
+	var lon_r := 1.0 - CAMBER_LONG * (absf(d.camber_rear) - absf(d.camber_ref_rear))
+	var cap := PackedFloat64Array([0.0, 0.0, 0.0, 0.0])     # braking / traction
+	var cap_y := PackedFloat64Array([0.0, 0.0, 0.0, 0.0])   # cornering
+	var p_heat := PackedFloat64Array([1.0, 1.0, 1.0, 1.0])
 	for i in 4:
 		var mu := tc.peak_mu * tc.temp_grip_factor(s.tyre_temp[i]) * surface_grip * wear_grip_factor(s.tyre_wear[i])
 		mu *= 1.0 - tc.load_sensitivity * (fz[i] / fz_nominal - 1.0)
+		var p_hot := tc.hot_psi(d.pressure_delta_front if i < 2 else d.pressure_delta_rear, s.tyre_temp[i])
+		s.tyre_psi[i] = p_hot
+		mu *= tc.pressure_grip_factor(p_hot)
+		p_heat[i] = tc.pressure_heat_factor(p_hot)
 		if i >= 2:
-			mu *= d.rear_grip * (1.0 - 0.3 * s.damage_suspension)
+			mu *= d.rear_grip * (1.0 - 0.3 * s.damage_suspension) * mech_r
 		else:
-			mu *= d.front_grip * (1.0 - 0.15 * s.damage_suspension)
+			mu *= d.front_grip * (1.0 - 0.15 * s.damage_suspension) * mech_f
 		if s.puncture[i] > 0.5:
 			mu *= PUNCTURE_GRIP
-		cap[i] = maxf(mu, 0.1) * fz[i]
+		mu = maxf(mu, 0.1)
+		cap[i] = mu * fz[i] * (lon_f if i < 2 else lon_r)
+		cap_y[i] = mu * fz[i] * (lat_f if i < 2 else lat_r)
 	var cap_f := cap[0] + cap[1]
 	var cap_r := cap[2] + cap[3]
+	var cap_yf := cap_y[0] + cap_y[1]
+	var cap_yr := cap_y[2] + cap_y[3]
 
 	# --- Engine & gearbox (automatic in wave 1) -----------------------------
 	var n_gears := d.gear_count()
@@ -202,23 +269,35 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 	var brake_scale := clampf(absf(vx) / 0.5, 0.0, 1.0)
 	var fx_f_demand := drive_force * d.front_drive_split - dir_sign * brake_total * d.brake_bias_front * brake_scale
 	var fx_r_demand := drive_force * (1.0 - d.front_drive_split) - dir_sign * brake_total * (1.0 - d.brake_bias_front) * brake_scale
+	# Under power the diff decides how much of the axle's grip can drive: an
+	# open diff only what the lighter (inside) wheel holds, a locked one both.
+	var drive_f := cap_f
+	var drive_r := cap_r
+	if fx_r_demand > 0.0:
+		drive_r = lerpf(2.0 * minf(cap[2], cap[3]), cap_r, DIFF_MIN_LOCK + (1.0 - DIFF_MIN_LOCK) * d.diff_power)
+	if fx_f_demand > 0.0:
+		drive_f = lerpf(2.0 * minf(cap[0], cap[1]), cap_f, DIFF_MIN_LOCK + (1.0 - DIFF_MIN_LOCK) * d.diff_power)
 	if s.assist_tc and drive_force > 0.0:
 		# Traction/stability control: only use the grip the cornering force
 		# (from last step) leaves spare, so full throttle mid-corner can't spin.
-		var spare_r := sqrt(maxf(cap_r * cap_r * TC_LIMIT * TC_LIMIT - s.fy_rear * s.fy_rear, 0.0))
-		var spare_f := sqrt(maxf(cap_f * cap_f * TC_LIMIT * TC_LIMIT - s.fy_front * s.fy_front, 0.0))
-		fx_r_demand = minf(fx_r_demand, maxf(spare_r, cap_r * 0.2))
-		fx_f_demand = minf(fx_f_demand, maxf(spare_f, cap_f * 0.2))
+		var use_r := s.fy_rear / maxf(cap_yr, 1.0)
+		var use_f := s.fy_front / maxf(cap_yf, 1.0)
+		var spare_r := drive_r * sqrt(maxf(TC_LIMIT * TC_LIMIT - use_r * use_r, 0.0))
+		var spare_f := drive_f * sqrt(maxf(TC_LIMIT * TC_LIMIT - use_f * use_f, 0.0))
+		fx_r_demand = minf(fx_r_demand, maxf(spare_r, drive_r * 0.2))
+		fx_f_demand = minf(fx_f_demand, maxf(spare_f, drive_f * 0.2))
 	if s.assist_abs and brake_total > 0.0:
 		# ABS keeps the wheels rolling and leaves room for cornering force.
-		var abs_f := maxf(sqrt(maxf(cap_f * cap_f * ABS_LIMIT * ABS_LIMIT - s.fy_front * s.fy_front, 0.0)), cap_f * 0.35)
-		var abs_r := maxf(sqrt(maxf(cap_r * cap_r * ABS_LIMIT * ABS_LIMIT - s.fy_rear * s.fy_rear, 0.0)), cap_r * 0.35)
+		var ab_f := s.fy_front / maxf(cap_yf, 1.0)
+		var ab_r := s.fy_rear / maxf(cap_yr, 1.0)
+		var abs_f := maxf(cap_f * sqrt(maxf(ABS_LIMIT * ABS_LIMIT - ab_f * ab_f, 0.0)), cap_f * 0.35)
+		var abs_r := maxf(cap_r * sqrt(maxf(ABS_LIMIT * ABS_LIMIT - ab_r * ab_r, 0.0)), cap_r * 0.35)
 		fx_f_demand = clampf(fx_f_demand, -abs_f, abs_f)
 		fx_r_demand = clampf(fx_r_demand, -abs_r, abs_r)
-	var excess_f := maxf(absf(fx_f_demand) - cap_f, 0.0)
-	var excess_r := maxf(absf(fx_r_demand) - cap_r, 0.0)
-	var fx_f := clampf(fx_f_demand, -cap_f, cap_f)
-	var fx_r := clampf(fx_r_demand, -cap_r, cap_r)
+	var excess_f := maxf(absf(fx_f_demand) - drive_f, 0.0)
+	var excess_r := maxf(absf(fx_r_demand) - drive_r, 0.0)
+	var fx_f := clampf(fx_f_demand, -drive_f, drive_f)
+	var fx_r := clampf(fx_r_demand, -drive_r, drive_r)
 	# Spinning / locked tyres slide: kinetic friction is a bit lower.
 	if excess_f > 0.0:
 		fx_f *= 0.9
@@ -235,20 +314,20 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 	var alpha_r := atan2(vy_rear, maxf(absf(vx), LOW_SPEED))
 	s.slip_angle_front = alpha_f
 	s.slip_angle_rear = alpha_r
-	var lat_cap_f := sqrt(maxf(cap_f * cap_f - fx_f * fx_f, 0.0))
-	var lat_cap_r := sqrt(maxf(cap_r * cap_r - fx_r * fx_r, 0.0))
+	var lat_cap_f := cap_yf * sqrt(maxf(1.0 - (fx_f / maxf(cap_f, 1.0)) ** 2, 0.0))
+	var lat_cap_r := cap_yr * sqrt(maxf(1.0 - (fx_r / maxf(cap_r, 1.0)) ** 2, 0.0))
 	var fy_f := -lat_cap_f * tc.lateral_curve(alpha_f)
 	var fy_r := -lat_cap_r * tc.lateral_curve(alpha_r)
 	s.fy_front = fy_f
 	s.fy_rear = fy_r
-	s.grip_usage_rear = sqrt(fx_r * fx_r + fy_r * fy_r) / maxf(cap_r, 1.0)
+	s.grip_usage_rear = sqrt((fx_r / maxf(cap_r, 1.0)) ** 2 + (fy_r / maxf(cap_yr, 1.0)) ** 2)
 
 	# --- Stability assist: brake one wheel to stop a slide ----------------
 	var esc_torque := 0.0
 	var esc_drag := 0.0
 	if s.assist_stability and vx > 5.0:
 		var r_ref := vx * tan(delta) / L
-		var r_max := (cap_f + cap_r) / m / vx
+		var r_max := (cap_yf + cap_yr) / m / vx
 		r_ref = clampf(r_ref, -r_max, r_max)
 		var beta := atan2(vy, vx)
 		# Positive yaw error = rotating clockwise more than the steering asks.
@@ -259,7 +338,7 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 			# Sideslip: the car points further round than it travels.
 			var beta_x := beta - clampf(beta, -0.07, 0.07)
 			demand += ESC_BETA_GAIN * beta_x * d.inertia * vx / L
-		var lim := ESC_LIMIT * cap_f * 0.5 * d.track_width * 0.5
+		var lim := ESC_LIMIT * cap_yf * 0.5 * d.track_width * 0.5
 		esc_torque = clampf(demand, -lim, lim)
 		esc_drag = absf(esc_torque) / (d.track_width * 0.5)
 		if fx_r > 0.0:
@@ -272,9 +351,17 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 	var fy_body := fx_f * sin_d + fy_f * cos_d + fy_r
 	fx_body -= 0.5 * rho * d.cda * (1.0 + 0.3 * s.damage_aero) * vx * absf(vx)
 	fy_body -= 0.5 * rho * d.cda * 2.5 * vy * absf(vy)
-	var roll := (ROLL_RESIST + surf_roll) * mg * clampf(absf(vx) / 0.5, 0.0, 1.0)
+	var scrub := TOE_DRAG * (absf(d.toe_front) + absf(d.toe_rear)) + BOTTOM_DRAG * s.bottoming
+	var roll := (ROLL_RESIST + surf_roll + scrub) * mg * clampf(absf(vx) / 0.5, 0.0, 1.0)
 	fx_body -= dir_sign * roll
 	var yaw_torque := a * (fx_f * sin_d + fy_f * cos_d) - b * fy_r + esc_torque
+	# A locked diff makes both driven wheels turn at the same speed, which
+	# resists the car turning: understeer on power, stability when lifting.
+	if s.gear >= 1 and absf(vx) > 3.0:
+		var through_diff := drive_force * (1.0 - d.front_drive_split)
+		var lock := d.diff_power if through_diff > 0.0 else d.diff_coast
+		var rel := s.yaw_rate * d.track_width / absf(vx)
+		yaw_torque -= DIFF_YAW * lock * minf(absf(through_diff), cap_r) * d.track_width * 0.5 * clampf(rel / 0.05, -1.0, 1.0)
 	# A flat tyre drags: slows the car and pulls it towards that side.
 	if full_damage and absf(vx) > 0.5:
 		for i in 4:
@@ -320,7 +407,7 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 	# --- Kerbs taken flat out wear the suspension, and can cut a tyre ------
 	if full_damage and s.surface == TrackData.Surface.KERB and speed > KERB_WEAR_SPEED:
 		var over := (speed - KERB_WEAR_SPEED) / 30.0
-		s.damage_suspension = minf(s.damage_suspension + KERB_WEAR * over * over * dt, 1.0)
+		s.damage_suspension = minf(s.damage_suspension + KERB_WEAR * over * over * maxf(stiff_f, 0.5) * dt, 1.0)
 		if absf(vy) > 3.0:
 			var salt := int(s.pos.x * 64.0) * 92821 + int(s.pos.y * 64.0)
 			if CarDamage.roll(salt) < KERB_PUNCTURE * dt:
@@ -343,15 +430,24 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 		var share := fz[i] / maxf(axle_fz, 1.0)
 		var p_kw: float = axle_power[0 if i < 2 else 1] * share
 		var t := s.tyre_temp[i]
-		var heat := tc.heat_from_slip * p_kw + tc.heat_from_rolling * speed * (fz[i] / fz_nominal)
-		var cool := tc.cool_to_air * (1.0 + speed / 25.0) * (t - env.ambient_c) + tc.cool_to_track * (t - env.track_c)
+		# Softer (lower pressure) tyres flex and heat more; camber works the
+		# inside edge harder; toe scrubs.
+		var camber := absf(d.camber_front if i < 2 else d.camber_rear)
+		var toe := absf(d.toe_front if i < 2 else d.toe_rear)
+		# Rolling heat follows the load against what that tyre carries at rest
+		# (the rear tyres are bigger for the bigger static load).
+		var fz_static := m * G * 0.5 * (b if i < 2 else a) / L
+		var heat := (tc.heat_from_slip * p_kw + tc.heat_from_rolling * speed * (fz[i] / fz_static)) \
+			* p_heat[i] * (1.0 + CAMBER_HEAT * (camber - 2.0)) + TOE_HEAT * toe * speed / 50.0
+		var cool := tc.cool_to_air * (1.0 + speed / tc.cool_speed_ms) * (t - env.ambient_c) + tc.cool_to_track * (t - env.track_c)
 		cool += tc.cool_to_water * env.wetness_at(off_line) * (1.0 + speed / 40.0) * (t - env.ambient_c)
 		s.tyre_temp[i] = t + (heat - cool) * dt
 		if wear_rate > 0.0:
 			# Wear follows the sliding work, and grows fast on a tyre run
 			# hotter than its window (e.g. wets on a drying track).
 			var over := maxf(t - tc.optimal_temp_c - tc.temp_window_c * 0.5, 0.0) / tc.temp_window_c
-			var w := tc.wear_rate * wear_rate * (p_kw + WEAR_BASE_KW * speed / 50.0) * (1.0 + 3.0 * over) * dt / 1000.0
+			var press := absf(s.tyre_psi[i] - tc.optimal_hot_psi) / tc.pressure_window_psi
+			var w := tc.wear_rate * wear_rate * (p_kw + WEAR_BASE_KW * speed / 50.0) * (1.0 + 3.0 * over) * (1.0 + 0.25 * press) * dt / 1000.0
 			s.tyre_wear[i] = minf(s.tyre_wear[i] + w, 1.0)
 
 

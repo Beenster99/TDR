@@ -6,9 +6,13 @@ extends RefCounted
 ##  2. build_sim() - everyone: turns start data into a RaceSim.
 ## The AI drivers live in the ai module, which builds on this one.
 
-## humans: [{ "name": String, "car_id": String, "tyre": String, "crew": [{peer_id, name, role}] }]
+## humans: [{ "name": String, "car_id": String, "tyre": String, "crew": [{peer_id, name, role}],
+##   "setup": {overrides, incl. "tuning": CarSetup values} }]
 ## tyre: "auto" (match the start weather), "dry", "intermediate" or "wet".
-static func plan(settings: RaceSettings, humans: Array, cars: Dictionary, drivers: Array) -> Dictionary:
+## track: the race's track (loaded from settings.track_id when not given),
+## used to pick the AI's setups.
+static func plan(settings: RaceSettings, humans: Array, cars: Dictionary, drivers: Array,
+		track: TrackData = null) -> Dictionary:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = settings.seed
 	var all_ids: Array = cars.keys()
@@ -49,16 +53,46 @@ static func plan(settings: RaceSettings, humans: Array, cars: Dictionary, driver
 		e.car_id = in_class[rng.randi_range(0, in_class.size() - 1)]
 		_fit_tyres(e, "auto", start_weather)
 		entries.append(e.describe())
+	if settings.tuning_enabled and settings.ai_count > 0:
+		_ai_setups(settings, entries, cars, track)
 	for k in humans.size():
 		var h: Dictionary = humans[k]
 		var e := RaceEntry.new()
 		e.driver_name = h.get("name", "Player")
 		e.car_id = human_cars[k]
 		e.crew = h.get("crew", [{"peer_id": 0, "name": e.driver_name, "role": RaceEntry.ROLE_DRIVER}])
+		var own = h.get("setup", {})
+		if own is Dictionary and not own.is_empty():
+			e.setup = own.duplicate(true)
 		_fit_tyres(e, h.get("tyre", "auto"), start_weather)
 		entries.append(e.describe())
 	_order_grid(entries, settings.grid_order, cars, rng)
 	return {"settings": settings.to_dict(), "entries": entries}
+
+
+## Every AI car gets a good setup for this track and the start conditions
+## (SetupAdvisor), so the AI is as quick as a well set-up player.
+static func _ai_setups(settings: RaceSettings, entries: Array, cars: Dictionary, track: TrackData) -> void:
+	if track == null:
+		track = TrackCatalog.load_track(settings.track_id)
+	if track == null:
+		return
+	var track_env := track.default_environment.duplicate()
+	if not track.climate.is_empty():
+		track_env["climate"] = track.climate
+	var env := SimEnvironment.create(track_env, settings.environment, settings.seed)
+	var tyres := TyreCatalog.load_all()
+	for d in entries:
+		var def: CarDefinition = cars.get(d["car_id"])
+		if def == null:
+			continue
+		var compound: String = d["setup"].get("tyre_compound", def.tyre_compound_id)
+		var cond := {"track_c": env.track_c, "ambient_c": env.ambient_c, "wetness": env.wetness,
+			"laps": settings.laps, "fuel_enabled": settings.fuel_enabled, "fuel_rate": settings.fuel_rate,
+			"compound": tyres.get(def.tyre_compound_id)}
+		if compound != def.tyre_compound_id:
+			cond["wetness"] = maxf(env.wetness, 0.5)
+		d["setup"]["tuning"] = SetupAdvisor.recommend(def, track, cond)
 
 
 const TYRE_FOR_WEATHER := {"light_rain": "intermediate", "heavy_rain": "full_wet"}

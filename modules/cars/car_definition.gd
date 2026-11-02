@@ -43,6 +43,35 @@ var aero_balance_front: float = 0.42
 var tyre_compound_id: String = ""
 var fuel_capacity_l: float = 60.0
 var bsfc_l_per_kwh: float = 0.3
+## Setup (per-track tuning, see CarSetup): what the setup values became.
+## Every car has them; with no "tuning" block they are the car's defaults.
+var tuning: Dictionary = {}         ## the sanitised setup values given (empty = defaults)
+var ride_front_mm: float = 58.0     ## static ride height
+var ride_rear_mm: float = 72.0
+var ride_ref_mm: float = 65.0       ## default average ride height (aero reference)
+var plank_mm: float = 34.0          ## ride height at which the floor touches the ground
+var spring_front: float = 200.0     ## wheel rate, N/mm
+var spring_rear: float = 180.0
+var spring_ref_front: float = 200.0
+var spring_ref_rear: float = 180.0
+var damper_front: float = 1.0       ## damper stiffness, 1 = default
+var damper_rear: float = 1.0
+var roll_stiffness: float = 1.0     ## total roll stiffness, 1 = default
+var roll_deg_per_g: float = 1.0     ## body roll at default stiffness
+var camber_front: float = -3.4      ## static camber, degrees
+var camber_rear: float = -2.6
+var camber_ref_front: float = -3.4
+var camber_ref_rear: float = -2.6
+var camber_gain: float = 0.6        ## camber lost on the outside tyre per degree of roll
+var camber_opt_front: float = -2.5  ## best camber while cornering
+var camber_opt_rear: float = -1.9
+var toe_front: float = -0.06        ## degrees, negative = toe-out
+var toe_rear: float = 0.14
+var diff_power: float = 0.45        ## limited-slip locking on power, 0..1
+var diff_coast: float = 0.3         ## and off power
+var pressure_delta_front: float = 0.0 ## cold pressure vs the compound's own, psi
+var pressure_delta_rear: float = 0.0
+var setup_fuel_l: float = -1.0      ## start fuel from the setup, -1 = race default
 
 
 static func from_dict(d: Dictionary) -> CarDefinition:
@@ -99,11 +128,14 @@ static func from_dict(d: Dictionary) -> CarDefinition:
 	var f: Dictionary = d.get("fuel", {})
 	c.fuel_capacity_l = f.get("capacity_l", c.fuel_capacity_l)
 	c.bsfc_l_per_kwh = f.get("bsfc_l_per_kwh", c.bsfc_l_per_kwh)
+	var tuning = d.get("tuning", {})
+	CarSetup.apply(c, tuning if tuning is Dictionary else {})
 	return c
 
 
 ## Deep-merge overrides (upgrades / tuning setups) over the base spec.
-## e.g. {"aero": {"cla": 1.3}, "brakes": {"bias_front": 0.58}}
+## e.g. {"aero": {"cla": 1.3}, "brakes": {"bias_front": 0.58}}. A setup goes
+## in as {"tuning": {...CarSetup values...}} and is applied after the rest.
 func with_overrides(overrides: Dictionary) -> CarDefinition:
 	var merged := raw.duplicate(true)
 	_merge(merged, overrides)

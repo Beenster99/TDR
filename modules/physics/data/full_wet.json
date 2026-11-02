@@ -18,5 +18,7 @@
   "cool_to_water": 0.016,
   "wet_grip_factor": 0.9,
   "aquaplaning": 0.03,
-  "wear_rate": 0.1
+  "wear_rate": 0.1,
+  "optimal_hot_psi": 25.0,
+  "pressure_window_psi": 3.0
 }

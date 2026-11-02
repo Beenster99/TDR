@@ -10,12 +10,15 @@
   "cold_falloff": 0.09,
   "hot_falloff": 0.12,
   "min_grip_factor": 0.55,
-  "heat_from_slip": 0.14,
-  "heat_from_rolling": 0.017,
+  "heat_from_slip": 0.085,
+  "heat_from_rolling": 0.021,
   "cool_to_air": 0.009,
   "cool_to_track": 0.004,
   "wet_grip_factor": 0.35,
   "wear_rate": 0.07,
   "kind": "dry",
-  "aquaplaning": 0.35
+  "aquaplaning": 0.35,
+  "optimal_hot_psi": 27.5,
+  "pressure_window_psi": 3.0,
+  "cool_speed_ms": 40.0
 }
