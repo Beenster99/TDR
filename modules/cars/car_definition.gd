@@ -9,8 +9,7 @@ var id: String = ""
 var display_name: String = ""
 var description: String = ""
 var class_tag: String = ""
-## What kind of racing the car is for: "circuit" (default) or "derby"
-## (Demolition Derby cars only race in Demolition Derby events).
+## Kind of racing the car is built for: "circuit", "rallycross" or "derby".
 var discipline: String = "circuit"
 ## How much of a hit the car shrugs off: CarDamage divides damage by it
 ## (1 = a race car; old steel derby cars 1.2-3.2).

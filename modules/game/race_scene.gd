@@ -733,6 +733,8 @@ func _on_events(evs: Array) -> void:
 			"green":
 				if session.sim.settings.is_qualifying():
 					hud.flash("QUALIFYING: %d laps, your best lap sets your grid slot" % session.sim.settings.laps, 3.5)
+				elif session.sim.settings.is_rallycross() and session.sim.track.has_joker():
+					hud.flash("GO!  Take the joker lane once", 2.5)
 				else:
 					hud.flash("GO!", 1.5)
 			"lap":
@@ -760,6 +762,9 @@ func _on_events(evs: Array) -> void:
 			"penalty":
 				if e["car"] == session.local_car:
 					hud.flash("+%d s penalty: %s" % [int(e["seconds"]), e["reason"]], 4.0)
+			"joker":
+				if e["car"] == session.local_car:
+					hud.flash("JOKER LAP TAKEN", 2.0)
 
 
 func _on_race_finished() -> void:
@@ -777,6 +782,8 @@ func _on_race_finished() -> void:
 			extra += "  stops %d" % int(e.pit.get("stops", 0))
 		if e.penalty_s > 0.0:
 			extra += "  +%d s pen" % int(e.penalty_s)
+		if sim.settings.is_rallycross() and sim.track.has_joker():
+			extra += "  joker %s" % ("yes" if e.jokers >= sim.settings.joker_laps else "MISSED")
 		if quali:
 			lines.append("P%-2d %-18s %-16s best %s" % [p + 1, e.driver_name, sim.defs[i].display_name,
 				RaceHud.fmt_time(e.best_lap) if e.best_lap > 0.0 else "no time"])

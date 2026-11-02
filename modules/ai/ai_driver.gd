@@ -55,10 +55,20 @@ var grade: PackedFloat64Array = []       ## road gradient at each line point (+ 
 var vcurv: PackedFloat64Array = []       ## vertical curvature (+ = dip, - = crest)
 var target_speed: PackedFloat64Array = []
 var learn: PackedFloat64Array = []       ## per-section pace scale (learned)
+var loose: PackedFloat64Array = []       ## rallycross: how loose the surface is at each line point (0..1)
 var _learn_hit: PackedByteArray = []     ## section has found its limit once
 var idx: int = -1
 
 var _mu := 1.0
+var _dirt_grip := 0.6
+## Rallycross joker: the line through the joker lane is a second set of line
+## arrays (_lines[1]); the driver swaps sets before the joker on the lap it
+## has chosen, and back once it has rejoined the lap.
+var _lines: Array = []
+var _on_joker_line := false
+var joker_lap := 0     ## lap (1 = first) on which this driver takes the joker
+const LINE_FIELDS := ["line", "line_right", "room_left", "room_right", "curv", "grade", "vcurv", "loose",
+	"target_speed", "learn", "_learn_hit"]
 var _mass := 1400.0
 var _aero := 0.0
 var _drag := 0.0
@@ -133,6 +143,13 @@ func _init(track: TrackData, def: CarDefinition, compound: TyreCompound, p_trait
 	_build_line(track)
 	_setup_car(def, compound)
 	_build_speed_profile()
+	if track.has_joker():
+		_lines.append(_line_set())
+		_build_joker_line(track)
+		_build_speed_profile()
+		_lines.append(_line_set())
+		_on_joker_line = true  # the joker set is in place now
+		_use_line_set(0)
 
 
 ## A driver change at a stop: the new driver's traits (pace, racecraft, pit
@@ -187,6 +204,14 @@ func _build_line(track: TrackData) -> void:
 		room_left[k] = maxf(float(q["w_left"]) + clamped - ROOM_MARGIN, 0.0)
 		grade.append(track.grade_at(q["s"]))
 		vcurv.append(track.vertical_curvature_at(q["s"]))
+		loose.append(track.dirt_at(q["s"]))
+	_finish_line()
+
+
+## Directions, curvature and learning sections for the line points.
+func _finish_line() -> void:
+	var count := line.size()
+	line_right = PackedVector2Array()
 	for k in count:
 		var d := (line[(k + 1) % count] - line[(k - 1 + count) % count]).normalized()
 		line_right.append(Vector2(-d.y, d.x))
@@ -205,8 +230,109 @@ func _build_line(track: TrackData) -> void:
 	_learn_hit.fill(0)
 
 
+## The racing line with the joker lane spliced in: the lap's line up to where
+## the joker leaves, the joker's centre line, then the lap's line again from
+## where it rejoins. Called with the lap's line in place; replaces it.
+func _build_joker_line(track: TrackData) -> void:
+	var n := line.size()
+	var keep := PackedByteArray()
+	keep.resize(n)
+	var hint := -1
+	var first_skip := -1
+	for k in n:
+		var q := track.project(line[k], hint)
+		hint = q["idx"]
+		var skip := track.joker_spans(q["s"])
+		keep[k] = 0 if skip else 1
+		if skip and first_skip < 0 and k > 0 and keep[k - 1] == 1:
+			first_skip = k
+	if first_skip < 0:
+		first_skip = 0
+		while first_skip < n and keep[first_skip] == 1:
+			first_skip += 1
+	var nl := PackedVector2Array()
+	var nrl := PackedFloat64Array()
+	var nrr := PackedFloat64Array()
+	var ng := PackedFloat64Array()
+	var nv := PackedFloat64Array()
+	var nlo := PackedFloat64Array()
+	var room := maxf(track.joker_width * 0.5 - ROOM_MARGIN, 0.5)
+	var spliced := false
+	for j in n:
+		var k := (first_skip + j) % n
+		if keep[k] == 1:
+			nl.append(line[k]); nrl.append(room_left[k]); nrr.append(room_right[k])
+			ng.append(grade[k]); nv.append(vcurv[k]); nlo.append(loose[k])
+		elif not spliced:
+			spliced = true
+			var steps := maxi(2, int(track.joker_length / SPACING))
+			for m in steps + 1:
+				var d := track.joker_length * float(m) / steps
+				nl.append(track.joker_position_at(d)); nrl.append(room); nrr.append(room)
+				var ls := track.joker_lap_s(d)
+				ng.append(track.grade_at(ls)); nv.append(0.0); nlo.append(track.joker_dirt_at(d))
+	line = nl
+	room_left = nrl
+	room_right = nrr
+	grade = ng
+	vcurv = nv
+	loose = nlo
+	_finish_line()
+	target_speed = PackedFloat64Array()
+
+
+func _line_set() -> Dictionary:
+	var d := {}
+	for f in LINE_FIELDS:
+		d[f] = get(f).duplicate()  # its own copy: the other set must not share arrays
+	return d
+
+
+func _use_line_set(k: int) -> void:
+	if k >= _lines.size():
+		return
+	if not _lines.is_empty() and _lines.size() > 1:
+		# keep what the current set has learned
+		var cur := 1 if _on_joker_line else 0
+		_lines[cur] = _line_set()
+	for f in LINE_FIELDS:
+		set(f, _lines[k][f].duplicate())
+	_on_joker_line = k == 1
+	idx = -1
+	_block = -1
+	stuck_idx = -1
+
+
+## Rallycross: swap to the joker line ahead of the joker on the chosen lap,
+## and back to the lap's line once past it.
+func _joker_plan(sim: RaceSim, me: int) -> void:
+	if _lines.size() < 2:
+		return
+	var t := sim.track
+	var e := sim.entries[me]
+	var need: int = int(sim.settings.get("joker_laps")) if "joker_laps" in sim.settings else 1
+	# A joker that runs over the finish line can't be taken on the last lap
+	# (the race ends half way along it).
+	var last := int(sim.settings.laps)
+	if t.joker_entry_s > t.joker_exit_s and last > 1:
+		last -= 1
+	if joker_lap <= 0:
+		joker_lap = rng.randi_range(1, maxi(1, last))
+	var c := sim.cars[me]
+	if c.in_joker:
+		return
+	var to_entry := fposmod(t.joker_entry_s - c.track_s, t.length)
+	var from_exit := fposmod(c.track_s - t.joker_exit_s, t.length)
+	var want := e.jokers < need and e.started_lap and (e.laps_done + 1 >= joker_lap or e.laps_done + 1 >= last)
+	if want and not _on_joker_line and to_entry > 25.0 and to_entry < 160.0:
+		_use_line_set(1)
+	elif _on_joker_line and not want and from_exit > 25.0 and from_exit < 200.0:
+		_use_line_set(0)
+
+
 func _setup_car(def: CarDefinition, compound: TyreCompound) -> void:
 	_mu = compound.peak_mu * minf(def.front_grip, def.rear_grip)
+	_dirt_grip = compound.dirt_grip
 	_mass = def.mass + 40.0
 	_aero = 0.5 * 1.2 * def.cla
 	_drag = 0.5 * 1.2 * def.cda
@@ -220,8 +346,11 @@ func _setup_car(def: CarDefinition, compound: TyreCompound) -> void:
 func _build_speed_profile() -> void:
 	var n := line.size()
 	target_speed.resize(n)
+	var has_loose := loose.size() == n
 	for k in n:
 		var mu := _mu * _corner_frac * learn[k / BLOCK]
+		if has_loose:
+			mu *= lerpf(1.0, _dirt_grip, loose[k])
 		var kk := maxf(absf(curv[k]), 1e-5)
 		# Over a crest the car is lighter (less grip), in a dip heavier.
 		var den := _mass * kk - mu * _aero * AERO_TRUST - mu * _mass * vcurv[k]
@@ -232,6 +361,8 @@ func _build_speed_profile() -> void:
 			var k := n - 1 - j
 			var nxt := target_speed[(k + 1) % n]
 			var mu := _mu * _brake_frac * learn[k / BLOCK]
+			if has_loose:
+				mu *= lerpf(1.0, _dirt_grip, loose[k])
 			# Braking downhill or over a crest takes longer; uphill helps.
 			var weight_g := maxf(CarPhysics.G + nxt * nxt * vcurv[k], CarPhysics.G * 0.25)
 			var grip_acc := weight_g + _aero * AERO_TRUST * nxt * nxt / _mass
@@ -327,6 +458,7 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 		stuck_time = 0.0
 		stuck_idx = -1
 		return inp
+	_joker_plan(sim, me)
 	idx = _nearest(car.pos)
 	var speed := car.speed()
 	var fwd := car.forward()

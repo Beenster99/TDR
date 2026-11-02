@@ -1,0 +1,131 @@
+{
+ "tracks": [
+  {
+   "id": "holjes",
+   "name": "Höljes Motorstadion",
+   "short_name": "Höljes",
+   "location": "Höljes, Sweden",
+   "country": "SE",
+   "description": "The 'Magic Weekend' in the Värmland forest. A fast tarmac start, a gravel climb over the famous jump and a joker cut through the trees, in front of the biggest crowd in rallycross.",
+   "osm_center": [
+    60.9176,
+    12.554
+   ],
+   "real_length_m": 1210,
+   "width_m": 12.0,
+   "environment": {
+    "ambient_c": 19,
+    "track_c": 26
+   },
+   "climate": {
+    "ambient_day_c": 20,
+    "ambient_night_c": 9,
+    "rain_chance": 0.3
+   },
+   "start_way": 599300791
+  },
+  {
+   "id": "montalegre",
+   "name": "Pista Automóvel de Montalegre",
+   "short_name": "Montalegre",
+   "location": "Montalegre, Portugal",
+   "country": "PT",
+   "description": "High in the hills of northern Portugal. A wide, fast gravel sweep, a tarmac hairpin and a joker that cuts across the infield.",
+   "osm_center": [
+    41.846,
+    -7.7574
+   ],
+   "real_length_m": 1350,
+   "width_m": 13.0,
+   "environment": {
+    "ambient_c": 23,
+    "track_c": 33
+   },
+   "climate": {
+    "ambient_day_c": 25,
+    "ambient_night_c": 11,
+    "rain_chance": 0.15
+   },
+   "start_way": 532046956
+  },
+  {
+   "id": "hell",
+   "name": "Lånkebanen (Hell RX)",
+   "short_name": "Hell",
+   "location": "Stjørdal, Norway",
+   "country": "NO",
+   "description": "Norway's rallycross home near Trondheim airport. Long tarmac blasts, a gravel hairpin and a gravel joker on the outside.",
+   "osm_center": [
+    63.406,
+    10.919
+   ],
+   "real_length_m": 1300,
+   "width_m": 12.0,
+   "environment": {
+    "ambient_c": 16,
+    "track_c": 22
+   },
+   "climate": {
+    "ambient_day_c": 18,
+    "ambient_night_c": 8,
+    "rain_chance": 0.4
+   }
+  },
+  {
+   "id": "loheac",
+   "name": "Circuit de Lohéac",
+   "short_name": "Lohéac",
+   "location": "Lohéac, Brittany, France",
+   "country": "FR",
+   "description": "France's rallycross cathedral, with huge banks of fans. Mixed tarmac and dirt, a long joker loop and tight, bumpy hairpins.",
+   "osm_center": [
+    47.8645,
+    -1.8937
+   ],
+   "real_length_m": 1375,
+   "width_m": 12.0,
+   "environment": {
+    "ambient_c": 22,
+    "track_c": 30
+   },
+   "climate": {
+    "ambient_day_c": 24,
+    "ambient_night_c": 12,
+    "rain_chance": 0.25
+   }
+  },
+  {
+   "id": "estering",
+   "name": "Estering",
+   "short_name": "Estering",
+   "location": "Buxtehude, Germany",
+   "country": "DE",
+   "description": "A compact, fast German rallycross track. A long tarmac straight, gravel corners at either end and a short joker.",
+   "osm_center": [
+    53.4482,
+    9.6928
+   ],
+   "real_length_m": 950,
+   "width_m": 12.0,
+   "dirt_override": [
+    [
+     0.42,
+     0.62
+    ],
+    [
+     0.8,
+     0.92
+    ]
+   ],
+   "environment": {
+    "ambient_c": 19,
+    "track_c": 26
+   },
+   "climate": {
+    "ambient_day_c": 21,
+    "ambient_night_c": 10,
+    "rain_chance": 0.35
+   }
+  }
+ ]
+}

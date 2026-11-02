@@ -137,7 +137,8 @@ func add_car(def: CarDefinition, state: CarState, label: String, is_local: bool,
 	v.terrain = track_view.terrain_mesh_height
 	v.marks = skid_marks
 	v.debris = debris
-	v.dirt_at = track.dirt_at
+	if track.has_dirt():
+		v.dirt_at = func(p: Vector2) -> float: return track.dirt_at_pos(p)
 	add_child(v)
 	cars.append(v)
 	return v

@@ -2,6 +2,7 @@ shader_type spatial;
 // Track surfaces: asphalt (with a rubbered racing line and painted edge
 // lines), tarmac/gravel run-off and kerbs, chosen per vertex:
 //   COLOR.a  : 1 = asphalt, 0.75 = kerb, 0.5 = tarmac run-off, 0.25 = gravel, 0 = pit lane
+//   COLOR.r  : 1 - loose surface (rallycross dirt: 0 = all dirt), on asphalt
 //   UV.x     : distance along the track (m), UV.y : lateral offset (m)
 //   UV2.x    : offset from the racing line (m), UV2.y : distance to the track edge (m)
 //   (pit lane: UV.y = offset, + towards the garages; UV2.x = 1 where hatched;
@@ -82,16 +83,19 @@ void fragment() {
 		c = mix(c, vec3(0.8, 0.8, 0.78) * (0.92 + 0.08 * n3), max(pline, hatch * 0.9));
 		rough = 0.75 - 0.05 * pline;
 	}
-	// Loose dirt (Demolition Derby arenas): COLOR.r = 1 - dirt. Packed earth
-	// with tyre ruts along the track and loose stones, over any surface.
-	float dirt = (1.0 - COLOR.r) * step(0.125, kind);
+	// Rallycross dirt: packed brown earth with a darker, polished groove
+	// along the racing line, loose stones and ruts either side of it.
+	float dirt = (kind > 0.875) ? clamp(1.0 - COLOR.r, 0.0, 1.0) : 0.0;
 	if (dirt > 0.001) {
-		float rut = 0.5 + 0.5 * sin(UV.y * 2.6 + n2 * 2.0);
-		vec3 earth = mix(vec3(0.36, 0.27, 0.17), vec3(0.47, 0.37, 0.24), n1) * (0.82 + 0.3 * n3);
-		earth *= 0.88 + 0.12 * rut;
-		earth = mix(earth, vec3(0.55, 0.5, 0.42), smoothstep(0.78, 0.95, n3) * 0.5);
+		vec3 earth = vec3(0.47, 0.35, 0.23) * (0.8 + 0.32 * n1) * (0.86 + 0.26 * n3);
+		float groove = exp(-pow(abs(UV2.x) / 2.4, 2.0));
+		earth = mix(earth, vec3(0.33, 0.25, 0.17) * (0.9 + 0.2 * n2), groove * 0.55);
+		float rut = exp(-pow((abs(UV2.x) - 0.85) / 0.25, 2.0)) * (0.6 + 0.4 * n2);
+		earth *= 1.0 - 0.25 * rut;
+		float stones = smoothstep(0.62, 0.78, n3) * (1.0 - groove);
+		earth = mix(earth, vec3(0.55, 0.5, 0.44), stones * 0.45);
 		c = mix(c, earth, dirt);
-		rough = mix(rough, 0.97, dirt);
+		rough = mix(rough, 0.98, dirt);
 	}
 	vec3 L = normalize(light_dir);
 	c *= clamp(1.0 + hillshade * 0.6 * (dot(normalize(wn), L) - L.y), 0.5, 1.5);
@@ -103,7 +107,7 @@ void fragment() {
 	// wet: darker and shinier, puddles in the low noise spots
 	float wet = wetness * (1.0 - dry_line * exp(-pow(UV2.x / dry_line_width, 2.0)) * step(0.875, kind));
 	if (kind > 0.125 && kind < 0.375) { wet *= 0.4; }
-	wet *= 1.0 - 0.45 * dirt;  // mud: darker but not glassy
+	wet *= 1.0 - 0.45 * dirt;  // mud darkens but stays dull
 	float puddle = wet * smoothstep(0.55, 0.75, n1 * 0.7 + n2 * 0.3);
 	c *= 1.0 - 0.35 * wet;
 	ALBEDO = c;

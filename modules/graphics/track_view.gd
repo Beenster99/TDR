@@ -36,6 +36,7 @@ var _field_size := Vector2i.ZERO
 var _field_idx := PackedInt32Array()
 var _field_td := PackedFloat32Array()   ## distance to the track only (for _field_idx)
 var _pit_rect := Rect2()
+var _joker_rect := Rect2()   ## around the rallycross joker lane and its verge
 ## Terrain mesh heights as built (row by row), for terrain_mesh_height.
 var _terrain_h := PackedFloat32Array()
 var _terrain_grid := Rect2()
@@ -70,6 +71,56 @@ func setup(p_track: TrackData, p_env: SimEnvironment = null) -> void:
 	_build_markings()
 	if track.has_pit_lane():
 		_build_pit_lane()
+	if track.has_joker():
+		_build_joker()
+
+
+## The rallycross joker lane: a road the joker's width along its path (dirt
+## or tarmac as the track data says), with a narrow verge each side, drawn a
+## touch above the lap where the two share the ground at each end.
+const JOKER_LIFT := 0.045
+func _build_joker() -> void:
+	var path := track.joker_path
+	var h := track.joker_width * 0.5
+	var m := path.size()
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	# Separate strips for the road and each verge, so the surface kind
+	# doesn't blend across their edge (a blend through the kerb band would
+	# draw a red and white stripe there).
+	var strips := [[-h - 1.2, -h], [-h, -h * 0.5, 0.0, h * 0.5, h], [h, h + 1.2]]
+	var base := 0
+	for across in strips:
+		var cols: int = across.size()
+		var hint := -1
+		for i in m:
+			var d := track.joker_cum[i]
+			var dir := (path[mini(i + 1, m - 1)] - path[maxi(i - 1, 0)]).normalized()
+			var nrm := Vector2(-dir.y, dir.x)
+			var dirt := track.joker_dirt_at(d)
+			var shoulder: bool = cols == 2
+			var kind := (K_GRAVEL if dirt > 0.5 else K_TARMAC) if shoulder else K_ASPHALT
+			for c in cols:
+				var off: float = across[c]
+				var q := path[i] + nrm * off
+				var qt := track.project(q, hint)
+				hint = qt["idx"]
+				st.set_color(Color(1.0 - dirt, 1, 1, kind))
+				st.set_uv(Vector2(d, off))
+				st.set_uv2(Vector2(off, h - absf(off)))
+				st.add_vertex(Vector3(q.x, track.surface_height_at(q, qt["idx"]) + JOKER_LIFT, q.y))
+		for i in m - 1:
+			for l in cols - 1:
+				var a := base + i * cols + l
+				var b := a + cols
+				st.add_index(a)
+				st.add_index(b)
+				st.add_index(a + 1)
+				st.add_index(a + 1)
+				st.add_index(b)
+				st.add_index(b + 1)
+		base += m * cols
+	_mesh_node(st, road_material, "Joker")
 
 
 ## Sun direction for the hillshade cue (WorldView keeps it in step with the sun).
@@ -124,7 +175,7 @@ func terrain_height(p: Vector2) -> float:
 		return 0.0
 	if clearance(p) >= track.runoff + 70.0:
 		return track.ground_height_at(p)
-	if _pit_rect.has_point(p):
+	if _pit_rect.has_point(p) or _joker_rect.has_point(p):
 		return track.surface_height_at(p, nearest_index(p))
 	var i := nearest_index(p)
 	var d := track.seg_dir[i]
@@ -197,6 +248,13 @@ func _build_field() -> void:
 		_pit_rect = _pit_rect.grow(track.pit_width + 40.0)
 	for i in range(0, n, 2):
 		_stamp(track.points[i], maxf(track.width_left[i], track.width_right[i]), i)
+	if track.has_joker():
+		_joker_rect = Rect2(track.joker_path[0], Vector2.ZERO)
+		for p in track.joker_path:
+			_joker_rect = _joker_rect.expand(p)
+		_joker_rect = _joker_rect.grow(track.joker_width + 40.0)
+	for p in track.joker_path:
+		_stamp(p, track.joker_width * 0.5, -1)
 
 
 ## idx = centre-line point (-1 for the pit lane: it only blocks, the nearest
@@ -226,6 +284,9 @@ func _bounds() -> void:
 		lo = lo.min(p)
 		hi = hi.max(p)
 	for p in track.pit_path:
+		lo = lo.min(p)
+		hi = hi.max(p)
+	for p in track.joker_path:
 		lo = lo.min(p)
 		hi = hi.max(p)
 	var m := track.runoff + 420.0
@@ -331,8 +392,9 @@ func _ribbon(st: SurfaceTool, offs: Callable, kind: Callable, lift: float, lanes
 			var off: float = lerpf(o[0], o[1], float(l) / lanes)
 			var q := p + nrm * off
 			var edge := minf(off + track.width_left[k], track.width_right[k] - off)
-			# Loose dirt (derby arenas) is painted in from red = 1 - dirt.
-			var c := Color(1.0 - track.dirt_at(s), 1, 1, kind.call(k))
+			var kd: float = kind.call(k)
+			var dirt := track.dirt_at(s) if kd > 0.875 and track.has_dirt() else 0.0
+			var c := Color(1.0 - dirt, 1, 1, kd)
 			st.set_color(c)
 			st.set_uv(Vector2(s, off))
 			st.set_uv2(Vector2(off - rl, edge))
@@ -367,7 +429,7 @@ func _surface_y(k: int, s: float, off: float, q: Vector2) -> float:
 	var edge: float = (track.width_right[k] if off >= 0.0 else track.width_left[k]) + track.kerb_width
 	if absf(off) <= edge + 0.01 or not has_elevation():
 		return height(s, off)
-	if _pit_rect.has_point(q):   # the ground eases into the pit lane here
+	if _pit_rect.has_point(q) or _joker_rect.has_point(q):   # the ground eases into the pit lane / joker here
 		return track.surface_height_at(q, k)
 	var road := height(s, signf(off) * edge)
 	if track.terrain_size == Vector2i.ZERO:
@@ -377,7 +439,6 @@ func _surface_y(k: int, s: float, off: float, q: Vector2) -> float:
 
 
 func _build_road() -> void:
-	var kw := track.kerb_width
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	# asphalt
@@ -390,7 +451,7 @@ func _build_road() -> void:
 		var sd: float = side
 		_ribbon(ks, func(i):
 			var e := track.width_right[i] if sd > 0 else track.width_left[i]
-			var w := kw if absf(curvature[i]) > 0.006 else 0.0
+			var w := _kerb_w(i, sd)
 			return [sd * e, sd * (e + w)] if sd > 0 else [sd * (e + w), sd * e],
 			func(_i): return K_KERB, 0.06, 2)
 		_mesh_node(ks, road_material, "Kerbs")
@@ -399,11 +460,24 @@ func _build_road() -> void:
 		var rs := SurfaceTool.new()
 		rs.begin(Mesh.PRIMITIVE_TRIANGLES)
 		_ribbon(rs, func(i):
-			var e := (track.width_right[i] if sd > 0 else track.width_left[i]) + (kw if absf(curvature[i]) > 0.006 else 0.0)
+			var e := (track.width_right[i] if sd > 0 else track.width_left[i]) + _kerb_w(i, sd)
 			var w := _runoff_width(i, sd)
 			return [sd * e, sd * (e + w)] if sd > 0 else [sd * (e + w), sd * e],
 			func(i): return K_GRAVEL if _is_gravel(i, sd) else K_TARMAC, 0.02, 2)
 		_mesh_node(rs, road_material, "Runoff")
+
+
+## Kerb width at point i on side sd: kerbs on corners, but none on dirt
+## (rallycross) or where the joker lane runs alongside.
+func _kerb_w(i: int, sd: float) -> float:
+	if absf(curvature[i]) <= 0.006 or track.dirt_at(track.cum_s[i]) >= 0.3:
+		return 0.0
+	if track.has_joker():
+		var e := track.width_right[i] if sd > 0 else track.width_left[i]
+		var q := track.points[i] + track.right_normal(i) * sd * (e + track.kerb_width * 0.5)
+		if track.project_joker(q)["dist"] < track.joker_width * 0.5 + 1.5:
+			return 0.0
+	return track.kerb_width
 
 
 ## Gravel trap here? From the track data where it has run-off surfaces,
@@ -464,7 +538,7 @@ func _build_walls() -> void:
 			var e: float = track.width_right[k] if side > 0 else track.width_left[k]
 			var off: float = side * (e + track.runoff)
 			var q := track.points[k] + track.vertex_normal(k) * off
-			var ok := clearance(q) > track.runoff - 2.5 and not _in_pit_area(q)
+			var ok := clearance(q) > track.runoff - 2.5 and not _in_pit_area(q) and not _in_joker_area(q)
 			var kind := _barrier_kind(k, side)
 			# A change of barrier type starts a new run (sharing the joint).
 			if ok and run.size() >= 1 and run[-1][4] != kind:
@@ -492,6 +566,13 @@ func _build_walls() -> void:
 func _barrier_kind(k: int, side: float) -> int:
 	var arr := track.barrier_right if side > 0 else track.barrier_left
 	return arr[k] if arr.size() == track.point_count() else TrackData.Barrier.WALL
+
+
+## Beside the rallycross joker lane: no barrier across it.
+func _in_joker_area(q: Vector2) -> bool:
+	if not track.has_joker():
+		return false
+	return track.project_joker(q)["dist"] < track.joker_width * 0.5 + 6.0
 
 
 func _in_pit_area(q: Vector2) -> bool:

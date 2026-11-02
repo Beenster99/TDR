@@ -45,6 +45,10 @@ var track_idx: int = 0
 var track_s: float = 0.0
 var lateral_offset: float = 0.0
 var surface: int = TrackData.Surface.TRACK
+## Rallycross: how loose the surface under the car is (0 tarmac .. 1 dirt),
+## and whether the car is on the joker lane.
+var dirt: float = 0.0
+var in_joker: bool = false
 ## Driver aids (per player choice, replicated so server applies them)
 var assist_tc: bool = true
 var assist_abs: bool = true
@@ -104,6 +108,7 @@ func serialize() -> PackedFloat64Array:
 	a.append_array(puncture)
 	a.append_array(body_damage)
 	a.append_array(PackedFloat64Array([assist_track, int(manual_gears), int(shift_held)]))
+	a.append_array(PackedFloat64Array([int(in_joker), dirt]))
 	a.append_array(PackedFloat64Array([air_h, vz]))
 	return a
 
@@ -156,4 +161,6 @@ func deserialize(a: PackedFloat64Array) -> void:
 	if a.size() >= 47:
 		assist_track = int(a[44]); manual_gears = a[45] != 0.0; shift_held = a[46] != 0.0
 	if a.size() >= 49:
-		air_h = a[47]; vz = a[48]
+		in_joker = a[47] != 0.0; dirt = a[48]
+	if a.size() >= 51:
+		air_h = a[49]; vz = a[50]

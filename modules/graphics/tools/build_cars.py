@@ -1133,6 +1133,42 @@ class Car:
         shade_smooth(ob, 30)
         return ob
 
+    def build_mudflaps(self):
+        """Rallycross / rally mud flaps: a thin rubber flap hanging behind each
+        wheel. "mudflaps": {"axles": [0, 1], "drop": 0.05, "height": 0.42,
+        "gap": 0.06, "colour": "#111111"}; the colour defaults to carbon black,
+        "paint" uses the livery."""
+        mf = self.s.get("mudflaps")
+        if not mf:
+            return None
+        mat = "paint" if mf.get("colour") == "paint" else "carbon"
+        objs = []
+        for axle in mf.get("axles", [0, 1]):
+            w = self.tyre_width(axle) + 0.07
+            x = self.axles[axle] - self.R - mf.get("gap", 0.06)
+            zb = mf.get("drop", 0.05)
+            zt = zb + mf.get("height", 0.42)
+            for side in (1, -1):
+                y = side * self.track * 0.5
+                bm = bmesh.new()
+                bmesh.ops.create_cube(bm, size=1.0)
+                bmesh.ops.scale(bm, vec=(0.012, w, zt - zb), verts=bm.verts)
+                # hangs back a little at the bottom
+                for v in bm.verts:
+                    k = (0.5 - v.co.z)
+                    v.co.x -= 0.035 * k
+                bmesh.ops.translate(bm, vec=(x, y, (zb + zt) * 0.5), verts=bm.verts)
+                me = bpy.data.meshes.new("mudflap")
+                bm.to_mesh(me)
+                bm.free()
+                me.materials.append(MATS[mat])
+                objs.append(new_object("mudflap", me))
+        ob = objs[0]
+        ob.name = "mudflaps"
+        for o in objs[1:]:
+            join_into(ob, o)
+        return ob
+
     # ---------------------------------------------------- safety car light bar
 
     def build_light_bar(self):
@@ -1304,6 +1340,7 @@ class Car:
         for axle in (0, 1):
             for side in (1, -1):
                 self.build_wheel(axle, side)
+        self.build_mudflaps()
         self.markers()
 
 

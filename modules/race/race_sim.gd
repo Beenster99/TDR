@@ -74,6 +74,12 @@ func _init(p_settings: RaceSettings, p_track: TrackData, p_entries: Array[RaceEn
 		car_defs: Dictionary, tyre_defs: Dictionary) -> void:
 	settings = p_settings
 	track = p_track
+	if settings.is_rallycross():
+		# Rallycross: short sprints with no safety car, pit stops or shared cars.
+		settings.safety_car_enabled = false
+		settings.mandatory_pit_stops = 0
+		settings.drivers_per_car = 1
+		settings.fuel_enabled = false
 	var track_env := track.default_environment.duplicate()
 	var climate = track.get("climate")  # tracks 1.1+ keep it beside default_environment
 	if climate is Dictionary and not climate.is_empty():
@@ -248,6 +254,8 @@ func step(inputs: Array) -> void:
 		return
 	for i in cars.size():
 		_update_progress(i, prev_s[i])
+		if track.has_joker():
+			_update_joker(i)
 	pits.host_update(events)
 	_update_positions()
 	race_control.step(TICK_DT, prev_s)
@@ -277,6 +285,9 @@ func _refresh_track_position(c: CarState) -> void:
 	c.track_s = q["s"]
 	c.lateral_offset = q["offset"]
 	c.surface = track.surface_for(q)
+	c.in_joker = track.has_joker() and track.on_joker_route(c.pos, q, c.in_joker)
+	if c.in_joker:
+		c.track_s = track.joker_lap_s(track.project_joker(c.pos)["d"])
 
 
 func _hold_cars_on_grid(inputs: Array) -> void:
@@ -341,6 +352,8 @@ func _update_progress(i: int, prev_s: float) -> void:
 	e.lap_start_time = t_cross
 	events.append({"type": "lap", "car": i, "lap": e.laps_done, "time": lap_time})
 	if e.laps_done >= settings.laps or phase == Phase.CHEQUERED:
+		if settings.is_rallycross() and track.has_joker() and e.jokers < settings.joker_laps and not settings.is_qualifying():
+			add_penalty(i, RaceSettings.JOKER_MISSED_PENALTY_S * (settings.joker_laps - e.jokers), "Missed joker lap")
 		e.finished = true
 		e.finish_time = t_cross
 		pits.on_finished(i)
@@ -350,6 +363,28 @@ func _update_progress(i: int, prev_s: float) -> void:
 			phase = Phase.CHEQUERED
 			leader_finish_time = t_cross
 			events.append({"type": "chequered", "car": i})
+
+
+## Rallycross joker: a run counts when the car got on to the joker near its
+## start and stays on it to near its end (cutting across doesn't count).
+const JOKER_START_SHARE := 0.35
+const JOKER_END_SHARE := 0.8
+
+
+func _update_joker(i: int) -> void:
+	var c := cars[i]
+	var e := entries[i]
+	if not c.in_joker:
+		e.joker_from = -1.0
+		return
+	var d: float = track.project_joker(c.pos)["d"]
+	if e.joker_from < 0.0:
+		e.joker_from = d
+	if e.joker_from <= track.joker_length * JOKER_START_SHARE and d >= track.joker_length * JOKER_END_SHARE:
+		e.joker_from = 1e9  # counted: no second count on this run
+		if e.started_lap and not e.finished:
+			e.jokers += 1
+			events.append({"type": "joker", "car": i, "count": e.jokers})
 
 
 func _update_positions() -> void:

@@ -17,6 +17,10 @@ var show_profile := true:
 
 
 ## info: a GameData.tracks entry (TrackCatalog.list_all).
+const DIRT_COLOUR := Color(0.72, 0.52, 0.3)
+const JOKER_COLOUR := Color(1.0, 0.62, 0.15)
+
+
 func show_track(info: Dictionary) -> void:
 	_info = info
 	queue_redraw()
@@ -35,6 +39,9 @@ func _draw() -> void:
 	for p in pts:
 		bounds = bounds.expand(p)
 	for p in pit:
+		bounds = bounds.expand(p)
+	var joker: PackedVector2Array = _info.get("joker_outline", PackedVector2Array())
+	for p in joker:
 		bounds = bounds.expand(p)
 	var k := minf(area.size.x / maxf(bounds.size.x, 1.0), area.size.y / maxf(bounds.size.y, 1.0))
 	var off := area.position + (area.size - bounds.size * k) * 0.5 - bounds.position * k
@@ -55,6 +62,30 @@ func _draw() -> void:
 	draw_polyline(closed, Color(0.86, 0.88, 0.9), 6.0, true)
 	var sectors: Array = _info.get("sectors", [0.0, 0.333, 0.667])
 	var n := screen.size()
+	var dirt: Array = _info.get("dirt", [])
+	if str(_info.get("discipline", "circuit")) == "rallycross":
+		# Rallycross: the lap by surface (tarmac grey, dirt brown) and the
+		# joker lane in orange, instead of sector colours.
+		sectors = []
+		var L := maxf(float(_info.get("length_m", 1.0)), 1.0)
+		for r in dirt:
+			var a := int(float(r[0]) / L * n)
+			var b := int(float(r[1]) / L * n)
+			if b < a:
+				b += n
+			var seg := PackedVector2Array()
+			for i in range(a, b + 1):
+				seg.append(screen[i % n])
+			if seg.size() >= 2:
+				draw_polyline(seg, DIRT_COLOUR, 4.2, true)
+		if joker.size() >= 2:
+			var js := PackedVector2Array()
+			for p in joker:
+				js.append(map.call(p))
+			draw_polyline(js, Color(0, 0, 0, 0.75), 7.0, true)
+			draw_polyline(js, JOKER_COLOUR, 3.6, true)
+			var mid := js[js.size() / 2]
+			draw_string(ThemeDB.fallback_font, mid + Vector2(8, -6), "JOKER", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, JOKER_COLOUR)
 	for si in sectors.size():
 		var a := int(float(sectors[si]) * n)
 		var b := int(float(sectors[si + 1]) * n) if si + 1 < sectors.size() else n

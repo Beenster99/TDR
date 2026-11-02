@@ -26,10 +26,9 @@ static func load_safety_car() -> CarDefinition:
 
 
 ## The car classes present (e.g. ["GT3", "Road"]), fastest class first
-## (by the best power-to-weight in each class). Only the classes of one
-## discipline: "circuit" (default) leaves the Demolition Derby cars out,
-## "derby" lists only them.
-static func classes(cars: Dictionary, discipline := "circuit") -> Array[String]:
+## (by the best power-to-weight in each class). Only the classes built for
+## one kind of racing: "circuit" (default), "rallycross" or "derby".
+static func classes(cars: Dictionary, discipline: String = "circuit") -> Array[String]:
 	var best := {}
 	for id in cars:
 		var c: CarDefinition = cars[id]
@@ -41,6 +40,19 @@ static func classes(cars: Dictionary, discipline := "circuit") -> Array[String]:
 	for k in best:
 		out.append(k)
 	out.sort_custom(func(a, b): return best[a] > best[b])
+	return out
+
+
+## Every class of every kind of racing (circuit classes first).
+static func all_classes(cars: Dictionary) -> Array[String]:
+	var out: Array[String] = []
+	var kinds := ["circuit", "rallycross", "derby"]
+	for id in cars:
+		var k: String = cars[id].discipline
+		if not k in kinds:
+			kinds.append(k)
+	for k in kinds:
+		out.append_array(classes(cars, k))
 	return out
 
 
