@@ -39,6 +39,7 @@ func _ready() -> void:
 	world.name = "World"
 	add_child(world)
 	world.setup(session.sim.track, session.sim.env)
+	_add_driving_aids()
 	var seen := {}
 	for i in session.sim.car_count():
 		var def: CarDefinition = session.sim.defs[i]
@@ -106,6 +107,20 @@ func _set_driving_aids() -> void:
 		me.assist_stability = help >= 2
 		me.assist_tc = help >= 1
 		me.assist_abs = help >= 1
+		# Settings > Gameplay (the settings screen registers these keys).
+		me.assist_track = clampi(int(GameData.prefs.get("aid_track_assist", 1)), 0, 2)
+		me.manual_gears = bool(GameData.prefs.get("manual_gears", false))
+		local_input.manual_gears = me.manual_gears
+
+
+## The driving line and brake boards, for this player's car (or the team's
+## car on the pit wall). Settings > Gameplay turns the line and its braking
+## colours on and off; the boards are always there.
+func _add_driving_aids() -> void:
+	var i := session.local_car if session.local_car >= 0 else maxi(session.team_car, 0)
+	var line := DrivingLine.build(session.sim.track, session.sim.defs[i], session.sim.compounds[i])
+	world.add_driving_aids(line, bool(GameData.prefs.get("aid_racing_line", true)),
+		bool(GameData.prefs.get("aid_braking_zones", true)))
 
 
 ## Testing: --autodrive lets the AI drive this player's car.
@@ -146,11 +161,11 @@ func _apply_role() -> void:
 
 ## Co-op: this player's role changed, e.g. took over the wheel at a pit stop.
 func _on_role_changed(role: String) -> void:
+	local_input = LocalInput.new()
 	_set_driving_aids()
 	_make_autodrive()
 	if DisplayServer.get_name() == "headless":
 		print("[coop] %s is now %s of car %d (driving car %d)" % [Net.local_name, role, session.team_car, session.local_car])
-	local_input = LocalInput.new()
 	if race_audio:
 		race_audio.queue_free()
 	race_audio = RaceAudio.new()
@@ -323,6 +338,9 @@ func _process(delta: float) -> void:
 		car_views[i].visible = not session.sim.race_control.recovered[i]
 	var rc := session.sim.race_control
 	world.set_safety_car(rc.sc_visible, rc.sc_pos, rc.sc_heading, rc.sc_speed, rc.sc_lights)
+	world.update_driving_line(car.pos, speed)
+	if world.driving_line:
+		world.driving_line.visible = world.driving_line.enabled and session.local_car >= 0
 	race_audio.update(delta, camera.position, local_input.last_throttle if autodrive == null else _autodrive_throttle, _zoom)
 	var rot := rotate_camera and _zoom < 0.5
 	camera.ignore_rotation = not rot

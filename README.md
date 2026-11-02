@@ -48,6 +48,15 @@ address into the join box and pick **Connect**. The game uses UDP port
 | Menu | Esc | Start |
 | Zoom in / out (hold) | E / Q, + / -, mouse wheel | LB / RB, right stick up / down, D-pad up / down |
 | Whole track and back | Z or Tab | Click the right stick |
+| Timing tower on / off | H | Settings > Gameplay |
+
+**Race HUD:** bottom centre shows your sector times for this lap (purple is
+the fastest anyone has gone, green your personal best, yellow slower; white
+is the sector you're in) with the gap to the car ahead on the left and the
+car behind on the right (green when you're gaining, red when you're losing).
+The timing tower on the left lists every car: position, manufacturer badge,
+driver, last lap and gap to the car ahead. On big grids it shows the top
+three and the cars around you.
 
 **Co-op pit wall (wave 5):** players who share a car but aren't driving run
 the pit wall: the pit crew calls the stops (tyres, fuel, repairs, wing and

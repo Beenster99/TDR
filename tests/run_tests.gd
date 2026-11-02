@@ -48,6 +48,9 @@ func _init() -> void:
 	test_points_systems()
 	test_seasons()
 	test_coop_roles()
+	test_race_start()
+	test_driving_aids()
+	test_hud_timing()
 	test_settings_and_units()
 	test_grid_limits()
 	test_garage_saves()
@@ -1922,3 +1925,132 @@ func test_garage_saves() -> void:
 	check(not r.owns(bmw.id) and back > 0 and r.money == money_before + back, "selling a car refunds part of it")
 	for g in [path, path + ".bak", path + ".tmp"]:
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(g))
+
+
+## Every AI car gets away from the grid and keeps going (they used to all
+## reverse 3 s after the green: the stuck check started from line point 0,
+## so a car still behind the start line looked like it had gone backwards).
+func test_race_start() -> void:
+	print("race start")
+	var d := _data()
+	var settings := RaceSettings.new()
+	settings.ai_count = 15
+	settings.laps = 1
+	settings.seed = 7
+	var r := _race(settings, d)
+	var sim: RaceSim = r["sim"]
+	var ai: Dictionary = r["ai"]
+	var n := sim.car_count()
+	var stopped := 0
+	var reversing := 0
+	var green_tick := -1
+	while sim.tick < 60 * 30:
+		var inputs := []
+		for i in n:
+			inputs.append(ai[i].get_input(sim, i))
+		sim.step(inputs)
+		if sim.phase == RaceSim.Phase.RACING and green_tick < 0:
+			green_tick = sim.tick
+		if green_tick >= 0 and sim.tick - green_tick > 60 and sim.tick - green_tick < 60 * 12:
+			for i in n:
+				if ai[i].recover_time > 0.0:
+					reversing = maxi(reversing, i + 1)
+		if green_tick >= 0 and sim.tick - green_tick == 60 * 12:
+			for i in n:
+				if sim.cars[i].speed() < 5.0:
+					stopped += 1
+	check(reversing == 0, "no AI car reverses on the opening lap (first one reversing: %d)" % reversing)
+	check(stopped == 0, "every AI car is moving 12 s after the start (%d stopped)" % stopped)
+
+
+## Settings > Gameplay aids: the driving line and its braking zones, the
+## track assist, the manual gearbox.
+func test_driving_aids() -> void:
+	print("driving aids")
+	var d := _data()
+	var track: TrackData = d["track"]
+	var def: CarDefinition = d["cars"]["bmw_m4_gt3"]
+	var tc: TyreCompound = d["tyres"][def.tyre_compound_id]
+	var line := DrivingLine.build(track, def, tc)
+	check(line.zones.size() >= 6, "Red Bull Ring has its braking zones (%d)" % line.zones.size())
+	var ok := true
+	for z in line.zones:
+		ok = ok and float(z["entry_v"]) > float(z["apex_v"]) + DrivingLine.ZONE_MIN_DROP - 0.01
+	check(ok, "each braking zone slows the car down")
+	# Turn 3 (the hairpin up the hill): a GT3 arrives at well over 200 km/h, slows to under 120.
+	var slowest := 1e9
+	for z in line.zones:
+		slowest = minf(slowest, float(z["apex_v"]))
+	check(slowest * 3.6 < 110.0 and slowest * 3.6 > 50.0, "slowest corner is a hairpin speed (%d km/h)" % roundi(slowest * 3.6))
+	# The brake envelope is never above the corner and full-lap speeds.
+	var env_ok := true
+	for k in line.size():
+		env_ok = env_ok and line.lap_speed[k] <= line.speed[k] + 0.01
+	check(env_ok, "brake envelope and lap speeds agree")
+	# Track assist: a car drifting off the right edge at speed is steered back.
+	var env := SimEnvironment.new()
+	env.bind_track(track)
+	var s_far := 120.0
+	var i := track.index_at(s_far)
+	var pulls := []
+	for lvl in [0, 1, 2]:
+		var c := _car_at(track, s_far, 50.0)
+		c.pos = track.position_at(s_far, track.width_right[i] - 1.0)
+		c.heading += 0.03     # pointing a little off the track
+		c.vel = Vector2.from_angle(c.heading) * 50.0
+		c.gear = 5
+		c.assist_track = lvl
+		var inp := CarInput.new()
+		inp.throttle = 1.0
+		CarPhysics.step(c, inp, def, tc, env, track, 1.0 / 240.0, 0.0, [], 0)
+		pulls.append(c.steer_angle)
+	check(pulls[0] == 0.0 and pulls[1] < 0.0 and pulls[2] < pulls[1], "track assist steers back from the edge, more when strong (%.4f %.4f %.4f)" % pulls)
+	# Manual gearbox: one gear per press, and no downshift that over-revs.
+	var g := _car_at(track, s_far, 40.0)
+	g.manual_gears = true
+	g.gear = 3
+	var press := CarInput.new()
+	press.throttle = 1.0
+	press.shift_up = true
+	for _k in 8:
+		CarPhysics.step(g, press, def, tc, env, track, 1.0 / 240.0, 0.0, [], 0)
+	check(g.gear == 4, "holding shift up changes one gear (gear %d)" % g.gear)
+	var none := CarInput.new()
+	none.throttle = 1.0
+	for _k in 600:
+		CarPhysics.step(g, none, def, tc, env, track, 1.0 / 240.0, 0.0, [], 0)
+	check(g.gear == 4, "manual gearbox doesn't change gear by itself (gear %d)" % g.gear)
+	var down := CarInput.new()
+	down.shift_down = true
+	g.vel = Vector2.from_angle(g.heading) * 75.0
+	g.gear = 4
+	CarPhysics.step(g, down, def, tc, env, track, 1.0 / 240.0, 0.0, [], 0)
+	check(g.gear == 4, "a downshift that would over-rev is refused at 270 km/h")
+	var c2 := CarState.new()
+	g.assist_track = 2
+	c2.deserialize(g.serialize())
+	check(c2.manual_gears and c2.assist_track == 2, "manual gearbox and track assist survive a snapshot")
+## Race HUD: the timing tower fits big grids (top three plus a window round
+## the player), every car gets a manufacturer badge, names stay short.
+func test_hud_timing() -> void:
+	print("hud timing:")
+	var all := RaceHud.tower_rows(20, 5, 25)
+	check(all.size() == 20 and all[0] == 0 and all[19] == 19, "small grid: tower shows every car")
+	var big := RaceHud.tower_rows(45, 30, 25)
+	check(big.size() == 25 and big.slice(0, 3) == [0, 1, 2] and big.has(30), "45 cars: top three plus a window round P31")
+	var last := RaceHud.tower_rows(45, 44, 25)
+	check(last.size() == 25 and last[-1] == 44, "45 cars: last place still on the tower")
+	var cars := CarCatalog.load_all()
+	var ok := true
+	for id in cars:
+		var b := RaceHud.badge_for(cars[id])
+		if str(b[0]) == "" or str(b[0]).length() > 4:
+			ok = false
+			printerr("    bad badge for ", id, ": ", b)
+	check(ok, "every car has a manufacturer badge")
+	for id in cars:
+		if cars[id].display_name.begins_with("BMW"):
+			check(RaceHud.badge_for(cars[id])[0] == "BMW", "BMW badge reads BMW")
+			break
+	check(RaceHud.short_name("Driver 727") == "Driver 727" and RaceHud.short_name("Alessandro Bellini-Rossi") == "A. Bellini-Ross", "driver names fit the tower")
+	check(RaceHud.fmt_sector(32.4567) == "32.457" and RaceHud.fmt_sector(0.0) == "--.---", "sector times format")
