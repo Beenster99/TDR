@@ -735,8 +735,8 @@ func test_pit_rules() -> void:
 	c.damage_aero = 0.5
 	var w := pits.service_for(0, {"tyre": PitRules.TYRE_INTER, "fuel": 30.0, "repair": true})
 	check(w["tyre"] == "intermediate" and is_equal_approx(w["fuel_l"], 30.0), "plan: inters and 30 L")
-	check(is_equal_approx(w["total_s"], PitRules.STOP_BASE_S + 10.0 + float(w["repair_s"])) and float(w["repair_s"]) > 0.0,
-		"stop time = base + slower of tyres/fuel + repairs (%.1f s)" % w["total_s"])
+	check(is_equal_approx(w["total_s"], PitRules.STOP_BASE_S + float(w["tyre_s"]) + float(w["fuel_s"]) + PitRules.HOSE_S * 0.5 + float(w["repair_s"])) and float(w["repair_s"]) > 0.0,
+		"stop time = base + fuel, then tyres + repairs (%.1f s)" % w["total_s"])
 	var keep := pits.service_for(0, {"tyre": PitRules.TYRE_KEEP, "fuel": 0.0, "repair": false})
 	check(keep["tyre"] == "" and is_equal_approx(keep["total_s"], PitRules.STOP_BASE_S), "a stop with nothing to do is just the base time")
 	var auto_fuel := pits.service_for(0, {"tyre": PitRules.TYRE_AUTO, "fuel": PitRules.FUEL_AUTO, "repair": false})
@@ -898,6 +898,8 @@ func test_pit_crew_game() -> void:
 			"two gunners, one down each side, front first")
 		check(float(guns[0][0]["off"]) >= float(tl["up"][1]) - 1e-6 and float(tl["down"][0]) >= float(guns[1][-1]["on"]) - 1e-6
 			and float(tl["release"]) > float(tl["down"][1]), "car up, tyres, car down, release, in that order")
+		check(float(guns[0][0]["off"]) >= float(tl["fuel"][2]) - 1e-6 and float(guns[1][0]["off"]) >= float(tl["fuel"][2]) - 1e-6,
+			"the wheel guns wait until the fuel is in (%.2f s >= %.2f s)" % [guns[0][0]["off"], tl["fuel"][2]])
 		var spread := PitRules.CREW_TEAM_SPREAD + PitRules.CREW_JOB_SPREAD + 0.01
 		var slack: float = PitRules.CREW_FUMBLE_S if tl["fumble"] >= 0 else 0.0
 		fumbles += 1 if tl["fumble"] >= 0 else 0

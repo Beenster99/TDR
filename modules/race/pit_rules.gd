@@ -74,6 +74,9 @@ const LANCE_UP_S := 0.8
 const LANCE_DOWN_S := 0.8
 const RELEASE_S := 0.9
 const HOSE_S := 0.4              ## fuel hose on / off
+## Wheel guns start only once the fuel is in and the hose is off (the user's call,
+## 2026-11-02, as in the WEC rules): a stop's tyres and fuel add up.
+const TYRES_AFTER_FUEL := true
 
 const PHASE_NONE := ""
 const PHASE_APPROACH := "approach"  ## being driven to the pit entry (box requested)
@@ -352,9 +355,12 @@ func crew_timeline(i: int, work: Dictionary) -> Dictionary:
 	var fumble := -1
 	if not wheels.is_empty() and _crew_rand(i, "fumble") < CREW_FUMBLE_CHANCE:
 		fumble = int(wheels[int(_crew_rand(i, "which") * wheels.size()) % wheels.size()])
+	# Tyres wait until the fuel is in and the hose is off (TYRES_AFTER_FUEL).
+	var guns_from := block if not tl["fuel"].is_empty() else up
+	tl["guns_from"] = guns_from
 	var guns := []
 	for g in 2:
-		var t := up
+		var t := guns_from
 		var jobs := []
 		for w in sides[g]:
 			var d: float = tyre_s / maxf(per, 1) * _job_pace(i, team, "gun%d_%d" % [g, int(w)])
@@ -498,7 +504,8 @@ func service_for(i: int, plan: Dictionary) -> Dictionary:
 				setup_s += WING_CHANGE_S
 		if tyre == "" and (setup.has("pressure_front") or setup.has("pressure_rear")):
 			setup_s += PRESSURE_ONLY_S
-	var total := STOP_BASE_S + maxf(maxf(tyre_s, fuel_s), setup_s) + repair_s
+	# Tyres only once the fuel is in (TYRES_AFTER_FUEL): the two add up.
+	var total := STOP_BASE_S + maxf(tyre_s + fuel_s + (HOSE_S * 0.5 if tyre_s > 0.0 and fuel_s > 0.0 else 0.0), setup_s) + repair_s
 	# Driver change (cars with a driver line-up): at least DRIVER_CHANGE_S.
 	var driver := -1
 	if bool(plan.get("driver_change", false)):

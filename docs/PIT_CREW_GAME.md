@@ -10,8 +10,9 @@ extinguisher and cut-off valve attendants, a mechanic on the air lance (the
 car rises on its air jacks), two tyre changers working unaided, one down
 each side, front then rear (nut off, wheel swap, nut on), two technicians
 checking the old tyres, the cockpit helper for driver changes, mechanics
-for repairs, then the lance out, the car down and the release. Tyres and
-fuel still go on at the same time.
+for repairs, then the lance out, the car down and the release. The fuel goes
+in first: the wheel guns only start once the hose is off
+(`PitRules.TYRES_AFTER_FUEL`, the user's call, as in the WEC rules).
 
 Each team's crew is up to 5% quicker or slower than average (`crew_skill`;
 a player's team is average), every job varies 4% from stop to stop, and 6%
@@ -76,7 +77,7 @@ drop; nobody presses: 0.9 s). Pressing on red is an **unsafe release**:
   and can't be quicker than 60% of the standard time. If no release ever
   comes (the leader left) the crew send the car at 1.6x standard.
 - Standard = the stop time in docs/PITS.md. A sharp stop is about 20-25%
-  quicker (a two-tyre + fuel stop: 5.1 s instead of 6.25 s in the test); an
+  quicker (see the test for a two-tyre + fuel stop); an
   untouched one about 30% slower.
 - `last_stop` and the `pit_stop` event carry `standard_s` and `played`.
 - Multiplayer: the calls go through `RaceSession.request_pit` like any pit

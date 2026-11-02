@@ -14,8 +14,9 @@ extends Control
 ##       goes on. Press THROTTLE in the green; the earlier in the green, the
 ##       quicker (the bright strip at its start is perfect). Too early and
 ##       the wheel isn't on: it goes again.
-##     - FUEL, at the same time: press BRAKE to cut the fuel at the line. Late
-##       wastes time, early puts in less.
+##     - FUEL first: press BRAKE to cut the fuel at the line. Late wastes
+##       time, early puts in less. The wheel guns only start once the fuel
+##       is in (PitRules.TYRES_AFTER_FUEL).
 ##     - wings and repairs take their time; then the jacks drop.
 ##  3. RELEASE: the light goes green when the lane behind is clear. Press
 ##     THROTTLE to send the car. Releasing on red into a car coming down the
@@ -321,12 +322,12 @@ func _start_box() -> void:
 	wheel_results = []
 	loose = 0
 	wheel_std = PitRules.tyre_time(wheels.size()) / maxf(wheels.size(), 1)
-	wheel_t0 = block_start()
 	tyres_done_at = block_start() if wheels.is_empty() else -1.0
 	fuel_target = float(work.get("fuel_l", 0.0))
 	if fuel_target < MIN_FUEL_L:
 		fuel_target = 0.0   # a splash: the crew just do it
 	fuel_done_at = block_start() if fuel_target <= 0.0 else -1.0
+	wheel_t0 = block_start() if fuel_target <= 0.0 else INF   # the guns wait for the fuel
 	fuel_in = 0.0
 	release_ready_at = -1.0
 	released_at = -1.0
@@ -356,7 +357,7 @@ func _step_box(gun: bool, fuel: bool) -> void:
 				_wheel_done(t, "perfect" if g <= GUN_PERFECT else ("good" if g <= GUN_GOOD else "slow"))
 		elif g >= GUN_AUTO:
 			_wheel_done(t, "slow")
-	# Fuel, alongside.
+	# Fuel, before the tyres.
 	if fuel_target > 0.0 and t >= b:
 		var flow := minf((t - b) * PitRules.FUEL_FLOW_LPS, fuel_target)
 		if fuel_done_at < 0.0:
@@ -364,12 +365,14 @@ func _step_box(gun: bool, fuel: bool) -> void:
 			var target_at := b + fuel_target / PitRules.FUEL_FLOW_LPS
 			if fuel:
 				fuel_done_at = t
+				_guns_after_fuel(t)
 				_sfx("ui_select", -5.0, 0.8)
 				if t < target_at - 0.15:
 					_flash_msg("Fuel cut early: %.0f of %.0f L" % [fuel_in, fuel_target], 1.6)
 			elif t >= target_at + FUEL_AUTO_LATE_S:
 				fuel_done_at = t
 				fuel_in = fuel_target
+				_guns_after_fuel(t)
 	# Then the wings, repairs, the jacks down and the release.
 	if release_ready_at < 0.0 and tyres_done_at >= 0.0 and fuel_done_at >= 0.0:
 		var block_end := maxf(maxf(tyres_done_at, fuel_done_at), b + float(work.get("setup_s", 0.0)))
@@ -382,6 +385,12 @@ func _step_box(gun: bool, fuel: bool) -> void:
 			_release(t, not clear)
 		elif clear and t >= release_ready_at + RELEASE_AUTO_S:
 			_release(t, false)
+
+
+## The fuel is in: the hose comes off and the wheel guns start.
+func _guns_after_fuel(t: float) -> void:
+	if tyres_done_at < 0.0:
+		wheel_t0 = t + PitRules.HOSE_S * 0.5
 
 
 func _wheel_done(t: float, r: String) -> void:
@@ -568,7 +577,7 @@ func _draw_box(r: Rect2) -> void:
 		if tyres_done_at < 0.0 and t >= wheel_t0:
 			var x := gx + gw * clampf(gauge() / full, 0.0, 1.0)
 			draw_rect(Rect2(x - 2, gy - 4, 4, 30), Color.WHITE)
-		_text(Vector2(gx, gy + 40), "THROTTLE in the green", 12, DIM)
+		_text(Vector2(gx, gy + 40), "Tyres after the fuel" if wheel_t0 == INF else "THROTTLE in the green", 12, DIM)
 	else:
 		_text(Vector2(gx, gy + 10), "No tyres this stop", 14, DIM)
 	# Fuel gauge (right).

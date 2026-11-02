@@ -43,8 +43,9 @@ Command line: `--fuel 2 --tyre-wear 2 --pit-stops 1 --drivers 2`.
    lane themselves: they must be down to the limit (60 km/h) at the limit
    line or get a 5 s penalty; the pit limiter button cuts the power above
    the limit. From the limit line the guide takes the car to its box.
-3. **The stop.** Stop time = 2.5 s (car up and down) + the slower of the tyre
-   change and refuelling (3 L/s) + repairs (`CarDamage.repair_time`, parts
+3. **The stop.** Stop time = 2.5 s (car up and down) + refuelling (3 L/s), then
+   the tyre change (tyres only once the fuel is in, as in the WEC rules,
+   `PitRules.TYRES_AFTER_FUEL`; +0.2 s to get the hose off) + repairs (`CarDamage.repair_time`, parts
    one after another). Tyres take 1.5 s + 1.125 s a tyre: all four 6 s, a
    pair 3.75 s, one 2.6 s. New tyres arrive warm and fix punctures. A change
    to a different compound always fits all four (compounds aren't mixed), and
