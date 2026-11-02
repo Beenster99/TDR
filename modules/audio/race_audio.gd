@@ -5,7 +5,7 @@ extends Node2D
 ## Add it to the race scene and call update() every frame and on_events()
 ## with the race events. Only listens; never changes the race.
 
-const RIVAL_VOICES := 3          ## rivals heard at once (the nearest ones)
+const RIVAL_VOICES := 4          ## rivals heard at once (the nearest ones)
 const RIVAL_RANGE := 250.0       ## metres
 
 var _cars: Array = []            ## CarState
@@ -18,6 +18,9 @@ var _beeper: AudioStreamPlayer
 var _listener: AudioListener2D
 var _last_bump := {}             ## car index -> time, so a scrape isn't a machine gun
 var _time := 0.0
+var _env: SimEnvironment
+var _listen_prev := Vector2.ZERO
+var _listen_vel := Vector2.ZERO
 
 
 func setup(cars: Array, defs: Array, local_car: int) -> void:
@@ -41,6 +44,11 @@ func setup(cars: Array, defs: Array, local_car: int) -> void:
 		_voices[_local] = _make_voice(_local)
 
 
+## Optional: the race's weather, so wet tracks hiss with spray instead of squealing.
+func set_environment(env: SimEnvironment) -> void:
+	_env = env
+
+
 func _make_voice(i: int) -> CarAudio:
 	var v := CarAudio.new()
 	add_child(v)
@@ -53,6 +61,14 @@ func _make_voice(i: int) -> CarAudio:
 func update(delta: float, listen_at: Vector2, local_throttle: float, zoom_out: float) -> void:
 	_time += delta
 	_listener.global_position = listen_at if _local < 0 else _cars[_local].pos
+	if delta > 0.0:
+		_listen_vel = _listen_vel.lerp((_listener.global_position - _listen_prev) / delta, 0.3)
+	if _listen_vel.length() > 150.0:  # camera jumped
+		_listen_vel = Vector2.ZERO
+	_listen_prev = _listener.global_position
+	var wet := 0.0
+	if _env:
+		wet = clampf(_env.wetness, 0.0, 1.0)
 	# Which rivals are close enough to hear?
 	var near := []
 	var ref: Vector2 = _listener.global_position
@@ -77,7 +93,10 @@ func update(delta: float, listen_at: Vector2, local_throttle: float, zoom_out: f
 		var c: CarState = _cars[i]
 		var thr := local_throttle if i == _local else _guess_throttle(c)
 		var vol := 1.0 if i == _local else 0.55 * (1.0 - 0.7 * zoom_out)
-		_voices[i].update(delta, thr, vol)
+		var v: CarAudio = _voices[i]
+		v.wetness = wet
+		v.set_listener(_listener.global_position, _listen_vel)
+		v.update(delta, thr, vol)
 
 
 ## Rivals: we don't get their pedals, so guess from how they accelerate.

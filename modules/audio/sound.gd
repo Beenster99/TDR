@@ -1,6 +1,7 @@
 extends Node
 ## Autoload "Sound" (audio module): menu sounds and one-off effects, plus the
-## two audio buses (Effects for the race, UI for menus). Any module above
+## audio buses (Effects for tyres, road and crashes; Engine for engines,
+## turbos and exhaust pops; UI for menus). Any module above
 ## audio may call Sound.ui("ui_select") and so on.
 
 const POOL := 6
@@ -10,7 +11,7 @@ var _next := 0
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
-	for bus in ["Effects", "UI"]:
+	for bus in ["Effects", "Engine", "UI"]:
 		if AudioServer.get_bus_index(bus) == -1:
 			AudioServer.add_bus()
 			var idx := AudioServer.bus_count - 1
