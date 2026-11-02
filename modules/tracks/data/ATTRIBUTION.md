@@ -8,7 +8,9 @@ from the list in `modules/tracks/tools/tracks.json`.
   [TUMFTM racetrack-database](https://github.com/TUMFTM/racetrack-database)
   (Technical University of Munich, LGPL-3.0). Its centre lines originate from
   OpenStreetMap and its widths from satellite imagery.
-- Pit lanes, and the centre lines of Mugello and Imola, come from
+- Pit lanes, and the centre lines of Mugello, Imola and the British club
+  circuits (Oulton Park, Snetterton, Donington Park, Cadwell Park, Thruxton,
+  Mallory Park, Knockhill), come from
   [OpenStreetMap](https://www.openstreetmap.org/copyright),
   © OpenStreetMap contributors, available under the Open Database Licence
   (ODbL).
