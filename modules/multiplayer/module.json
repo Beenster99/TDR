@@ -1,7 +1,7 @@
 {
   "id": "multiplayer",
   "name": "Multiplayer",
-  "version": "1.9.1",
+  "version": "1.10.0",
   "status": "active",
   "summary": "Online play the Torque Shed way: host/join lobby (ENet, UPnP, UDP 24690), streaming each player's own car, the host running AI and race rules, and running a race offline, as host or as client (RaceSession).",
   "depends": {
