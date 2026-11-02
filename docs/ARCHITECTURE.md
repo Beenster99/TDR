@@ -131,7 +131,11 @@ lines, widths and racing lines come from the TUMFTM racetrack-database
 (LGPL-3.0, OpenStreetMap-derived); tracks it doesn't have (Mugello, Imola) come
 straight from OpenStreetMap (ODbL) with a racing line worked out by the tool.
 The tool also lines OpenStreetMap up with each layout to find the real pit
-lane. The fields are a centre line with left/right widths, an optimised racing
+lane. The racing line is then optimised by `tools/raceline.py` (fastest lap for
+a GT3 point-mass car with downforce, friction circle, engine power and rear-wheel
+traction, so it apexes late where a straight follows and puts two wheels on the
+kerbs; run it alone to redo the lines of existing tracks). The fields are a centre
+line with left/right widths, an optimised racing
 line, sector split fractions, run-off width, default environment, optional
 `climate` hints, and `pit_lane` (path, side, entry/exit distance, width, speed
 limit, speed-limit zone, box count). Index 0 is the start/finish line and

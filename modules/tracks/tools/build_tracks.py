@@ -31,6 +31,7 @@ from elevation import add_elevation, add_flat_elevation
 from barriers import add_barriers
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pit_limit_zone import limit_zone  # noqa: E402
+import raceline as raceline_opt  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(os.path.dirname(HERE), "data")
@@ -483,6 +484,11 @@ def build(cfg, cache):
     flip = np.array([1.0, -1.0])
     centre_g = centre * flip
     raceline_g = raceline * flip
+    # The fastest line for a GT3 car (late apexes, kerbs), starting from the
+    # TUMFTM / elastic line. Godot widths: right = wl, left = wr (see below).
+    print("   optimising the racing line")
+    rl_prob = raceline_opt.Problem(centre * flip, wl, wr)
+    raceline_g = raceline_opt.line_points(rl_prob, raceline_opt.optimise(rl_prob, rl_prob.offsets_of(raceline_g)))
     pit_g = pit * flip
     n = len(centre_g)
     seg = np.linalg.norm(np.roll(centre_g, -1, 0) - centre_g, axis=1)
@@ -532,6 +538,7 @@ def build(cfg, cache):
         "centerline": [[round(p[0], 2), round(p[1], 2), round(float(a), 2), round(float(b), 2)]
                        for p, a, b in zip(centre_g, wl, wr)],
         "raceline": [[round(x, 2), round(y, 2)] for x, y in raceline_g],
+        "raceline_source": raceline_opt.SOURCE,
         "start_index": 0,
         "sectors": cfg.get("sectors", [0.0, 0.333, 0.667]),
         "runoff_m": cfg.get("runoff_m", 30.0),

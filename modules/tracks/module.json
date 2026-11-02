@@ -1,7 +1,7 @@
 {
   "id": "tracks",
   "name": "Tracks",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "status": "active",
   "summary": "Circuit layouts: centre line, widths, racing line, sectors, surfaces (track, kerb, grass, barrier), grid slots, and real elevation (heights, gradients, crests, banking, a terrain grid around the circuit). Track files are JSON in data/, made by tools/build_tracks.py (with tools/elevation.py) from tools/tracks.json.",
   "depends": {
