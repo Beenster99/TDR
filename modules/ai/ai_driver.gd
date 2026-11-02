@@ -67,7 +67,7 @@ var _block: int = -1
 var _block_trouble := false
 var _block_clean := true
 var stuck_time: float = 0.0
-var stuck_idx: int = 0
+var stuck_idx: int = -1   ## line point at the last stuck check (-1 = not checked yet)
 var recover_time: float = 0.0
 
 var _pass_side := 0
@@ -291,6 +291,7 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 		idx = -1
 		_block = -1
 		stuck_time = 0.0
+		stuck_idx = -1
 		return inp
 	idx = _nearest(car.pos)
 	var speed := car.speed()
@@ -298,6 +299,8 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 	var rgt := car.right()
 
 	if sim.phase == RaceSim.Phase.COUNTDOWN:
+		stuck_idx = idx
+		stuck_time = 0.0
 		return inp
 
 	# --- Stuck recovery: reverse out, then carry on. ---
@@ -308,10 +311,15 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 		var to_line := line[(idx + 3) % n] - car.pos
 		inp.steer = -signf(to_line.dot(rgt))
 		return inp
+	if stuck_idx < 0:
+		stuck_idx = idx
 	stuck_time += RaceSim.TICK_DT
 	if stuck_time >= 3.0:
+		# Stuck = hardly moved along the line in 3 s while crawling. (The
+		# check used to start from line point 0, so every car on the grid
+		# behind the start line "had gone backwards" and reversed at 3 s.)
 		var progressed := wrapi(idx - stuck_idx, -n / 2, n / 2)
-		if progressed < 2 and sim.phase != RaceSim.Phase.FINISHED:
+		if progressed < 2 and speed < 4.0 and sim.phase != RaceSim.Phase.FINISHED:
 			recover_time = 1.8
 		stuck_time = 0.0
 		stuck_idx = idx

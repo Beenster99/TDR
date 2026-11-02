@@ -22,6 +22,13 @@ const ESC_LIMIT := 1.6
 const ESC_BETA_GAIN := 3.0
 const COUNTER_STEER := 0.8
 const STEER_SLIP_MARGIN := 1.3
+## Track assist (light, strong): how hard it holds a straight line when the
+## driver isn't steering (share of the yaw it cancels), how far from the edge
+## it starts to steer the car back (m), and the most steering it ever adds
+## (rad). Small on purpose: it helps, it doesn't drive the car.
+const TRACK_HOLD := [0.0, 0.35, 0.6]
+const TRACK_EDGE_M := [0.0, 2.5, 3.5]
+const TRACK_PUSH := [0.0, 0.05, 0.09]
 ## Damage (see CarDamage): steering pull (rad) at full misalignment, grip
 ## left on a flat tyre, its extra rolling drag, and kerb wear on suspension.
 const ALIGN_PULL := 0.035
@@ -99,6 +106,8 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 
 	# --- Steering (rate limited, damage adds pull later) ------------------
 	var steer_target := clampf(inp.steer, -1.0, 1.0) * d.max_steer
+	if s.assist_track > 0:
+		steer_target = _track_assist(s, inp, steer_target, d, track, q)
 	if s.assist_stability:
 		steer_target = _assisted_steer(s, steer_target, d, tc)
 	s.steer_angle = move_toward(s.steer_angle, steer_target, d.steer_rate * dt)
@@ -222,7 +231,9 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 		s.rpm = maxf(d.idle_rpm, wheel_rpm * ratio)
 		var top := CarDamage.usable_gears(s, n_gears) if full_damage else n_gears
 		var gear_was := s.gear
-		if s.rpm > d.shift_up_rpm and s.gear < top:
+		if s.manual_gears:
+			_manual_shift(s, inp, d, wheel_rpm, top)
+		elif s.rpm > d.shift_up_rpm and s.gear < top:
 			s.gear += 1
 		elif s.gear > top:
 			s.gear = top
@@ -256,6 +267,9 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 			drive_force -= d.engine_brake_nm * (s.rpm / d.redline_rpm) * ratio / d.wheel_radius
 	else:
 		s.rpm = d.idle_rpm
+		if s.manual_gears and inp.shift_up and not s.shift_held and vx > -1.0:
+			s.gear = 1   # out of reverse
+		s.shift_held = inp.shift_up or inp.shift_down
 		if vx > -REVERSE_MAX_SPEED:
 			drive_force = -brake * REVERSE_FORCE
 		brake = throttle  # throttle acts as brake while reversing
@@ -454,6 +468,53 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 ## Grip left on a tyre with this much wear (0 = new .. 1 = worn out).
 static func wear_grip_factor(wear: float) -> float:
 	return 1.0 - WEAR_GRIP_LOSS * pow(clampf(wear, 0.0, 1.0), 1.6)
+
+
+## Manual gearbox: one gear per press. A downshift that would over-rev the
+## engine is refused (the gearbox protects itself), like most race cars.
+static func _manual_shift(s: CarState, inp: CarInput, d: CarDefinition, wheel_rpm: float, top: int) -> void:
+	var pressed := inp.shift_up or inp.shift_down
+	if pressed and not s.shift_held:
+		if inp.shift_up and s.gear < top:
+			s.gear += 1
+		elif inp.shift_down and s.gear > 1:
+			if wheel_rpm * d.gear_ratios[s.gear - 2] * d.final_drive < d.redline_rpm * 1.02:
+				s.gear -= 1
+	s.shift_held = pressed
+	if s.gear > top:
+		s.gear = top
+
+
+## Track assist: with no steering input it cancels part of any yaw so the
+## car runs straight, and near the edge it steers gently back towards the
+## track when the car is heading off. Only on the track and kerbs, only
+## forwards at speed.
+static func _track_assist(s: CarState, inp: CarInput, target: float, d: CarDefinition,
+		track: TrackData, q: Dictionary) -> float:
+	var vx := s.vel.dot(s.forward())
+	if vx < 8.0 or s.surface > TrackData.Surface.KERB:
+		return target
+	var lvl := clampi(s.assist_track, 0, 2)
+	var add := 0.0
+	# Straight line: the steering it takes to cancel the yaw, faded out as
+	# the driver steers.
+	var hands_off := 1.0 - clampf(absf(inp.steer) / 0.08, 0.0, 1.0)
+	add -= TRACK_HOLD[lvl] * hands_off * s.yaw_rate * d.wheelbase / vx
+	# Edge: closer to the edge and heading out faster = more push back.
+	var dirv: Vector2 = q["dir"]
+	var nrm := Vector2(-dirv.y, dirv.x)   # + = right of the track
+	var off: float = q["offset"]
+	var edge: float = (q["w_right"] if off >= 0.0 else q["w_left"])
+	var side := 1.0 if off >= 0.0 else -1.0
+	var room := edge - absf(off)
+	var reach: float = TRACK_EDGE_M[lvl]
+	var out_v := s.vel.dot(nrm) * side     # m/s towards that edge
+	if room < reach and out_v > 0.0:
+		var near := 1.0 - clampf(room / reach, 0.0, 1.0)
+		var heading_out := clampf(out_v / maxf(vx * 0.12, 1.0), 0.0, 1.0)
+		add -= side * TRACK_PUSH[lvl] * near * heading_out
+	add = clampf(add, -TRACK_PUSH[lvl], TRACK_PUSH[lvl])
+	return clampf(target + add, -d.max_steer, d.max_steer)
 
 
 ## Steering help: adds counter-steer when the rear slides, and at speed keeps
