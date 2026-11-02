@@ -85,6 +85,39 @@ var _part_alias := {}
 var _ride_drop := 0.0
 var _bar_t := 0.0
 
+## Demolition Derby cars (CarDefinition.discipline "derby"): bodywork that
+## crumples where it's hit (car_deform.gdshaderinc), a windscreen that
+## cracks then shatters, a bonnet and boot lid that spring open then tear
+## off and stay on the track, radiator steam, smoke and fire, and dust and
+## mud thrown up on dirt.
+const PART_SHADER := preload("res://modules/graphics/shaders/car_part.gdshader")
+const GLASS_SHADER := preload("res://modules/graphics/shaders/car_glass.gdshader")
+const DERBY_PARTS := ["body", "bumper_front", "bumper_rear", "cabin", "bonnet", "boot", "mirror_l", "mirror_r"]
+const LIDS := {"bonnet": "bonnet_lid", "boot": "boot_lid"}
+var derby := false
+## How much loose dirt is under a track distance (set by WorldView).
+var dirt_at: Callable = func(_s: float) -> float: return 0.0
+var _crumple_mats: Array[ShaderMaterial] = []
+var _glass_ws: ShaderMaterial
+var _tail_d: Array[ShaderMaterial] = []
+var _head_d: Array[ShaderMaterial] = []
+var _dent := Vector4.ZERO
+var _crush_shown := Vector4(-1, -1, -1, -1)
+var _roof_shown := -1.0
+var _lid_gone := {}
+var _ws_broken := false
+var _steam: GPUParticles3D
+var _fire: GPUParticles3D
+var _bay_smoke: GPUParticles3D
+var _fire_light: OmniLight3D
+var _fire_k := 0.0
+var _mud: GPUParticles3D
+var _mud_mat: ParticleProcessMaterial
+var _grime := 0.0
+var _was_air := false
+var _air_pitch := 0.0
+var _number_y := NAN
+
 ## CarDamage.visual_parts() name -> model part name.
 const DAMAGE_PARTS := {"splitter": "splitter", "front_bumper": "bumper_front", "rear_wing": "wing_rear",
 	"diffuser": "diffuser", "rear_bumper": "bumper_rear", "mirror_left": "mirror_l", "mirror_right": "mirror_r"}
@@ -182,6 +215,8 @@ func _build(livery: Dictionary) -> void:
 			_box = _box.merge((n as MeshInstance3D).get_aabb()) if _box.has_volume() else (n as MeshInstance3D).get_aabb()
 	if not _box.has_volume():
 		_box = AABB(Vector3(-def.length * 0.5, 0.1, -def.width * 0.5), Vector3(def.length, 1.1, def.width))
+	if def.discipline == "derby":
+		_setup_derby()
 
 
 func _instantiate_model() -> Node3D:
@@ -874,10 +909,26 @@ func _update_tyres(_delta: float) -> void:
 		var churn := smoothstep(4.0, 30.0, spd) * 0.7
 		rear = maxf(rear, churn)
 		front = maxf(front, churn * 0.6)
+	# Loose dirt (derby arenas): dust when dry, mud when wet, clods thrown back.
+	var on_dirt: float = dirt_at.call(state.track_s) if state.air_h <= 0.0 and state.surface <= TrackData.Surface.KERB else 0.0
+	var churn_dirt := smoothstep(3.0, 22.0, spd) * on_dirt
+	if on_dirt > 0.05:
+		rear = maxf(rear, churn_dirt * 0.9)
+		front = maxf(front, churn_dirt * 0.55)
 	tyre_slide = PackedFloat32Array([front, front, rear, rear])
 	var dry := 1.0 - clampf(wet * 1.4, 0.0, 1.0)
 	var smoke_k := [front, rear]
 	var col := Color(0.86, 0.86, 0.88) if not off_road else (Color(0.55, 0.45, 0.32) if state.surface == TrackData.Surface.GRAVEL else Color(0.42, 0.36, 0.24))
+	if on_dirt > 0.3:
+		col = Color(0.62, 0.5, 0.36).lerp(Color(0.3, 0.23, 0.15), clampf(wet * 1.5, 0.0, 1.0))
+		dry = maxf(dry, 0.45)
+		off_road = true
+	if _mud:
+		var clods := churn_dirt * (0.35 + 0.65 * clampf(wet * 2.0, 0.0, 1.0) + maxf(rear - 0.5, 0.0))
+		_mud.emitting = clods > 0.06
+		_mud.amount_ratio = clampf(clods, 0.0, 1.0)
+		_mud_mat.color = Color(0.27, 0.2, 0.13).lerp(Color(0.18, 0.13, 0.08), clampf(wet * 2.0, 0.0, 1.0))
+		_grime = minf(_grime + churn_dirt * _delta * (0.01 + 0.03 * wet), 0.8)
 	for axle in 2:
 		var k: float = smoke_k[axle] * (dry if not off_road else maxf(dry, 0.25))
 		_tyre_smoke[axle].emitting = k > 0.05
@@ -885,7 +936,7 @@ func _update_tyres(_delta: float) -> void:
 		_smoke_mat[axle].color = col
 	if marks == null:
 		return
-	var kind := SkidMarks.Kind.EARTH if state.surface == TrackData.Surface.GRASS else SkidMarks.Kind.RUBBER
+	var kind := SkidMarks.Kind.EARTH if state.surface == TrackData.Surface.GRASS or on_dirt > 0.5 else SkidMarks.Kind.RUBBER
 	var lays := state.surface != TrackData.Surface.GRAVEL and state.surface != TrackData.Surface.BARRIER
 	for w in _wheels:
 		var hub: Node3D = w[0]
@@ -897,6 +948,10 @@ func _update_tyres(_delta: float) -> void:
 			k *= 1.0 - clampf(wet * 1.6, 0.0, 0.85)
 			if off_road:
 				k = 0.0
+		elif on_dirt > 0.5:
+			k = maxf(k, churn_dirt * 0.6)
+		if state.air_h > 0.05:
+			k = 0.0
 		var at := global_transform * Vector3(hub.position.x, 0.0, hub.position.z)
 		marks.mark(_mark_key + idx, at, k, 0.34 * hub.scale.z, kind)
 
@@ -931,6 +986,8 @@ func _apply_damage() -> void:
 	var smoke: float = d.get("smoke", 0.0)
 	_smoke.emitting = smoke > 0.02
 	_smoke.amount_ratio = smoke
+	if derby:
+		_apply_derby(d)
 	_shed_bodywork()
 
 
@@ -1013,13 +1070,24 @@ func _process(delta: float) -> void:
 	if state.surface != TrackData.Surface.TRACK and state.surface != TrackData.Surface.KERB:
 		lift = maxf(float(terrain.call(pos2, state.track_idx)) + 0.05 - gy, 0.0)
 	_lift = lerpf(_lift, lift, 1.0 - exp(-12.0 * delta)) if lift < _lift else lift
-	transform = Transform3D(Basis(fwd, up, right), Vector3(pos2.x, gy + _lift + hoist, pos2.y))
+	# Off a jump: up in the air, nose following the flight path.
+	var air := state.air_h
+	if air > 0.0:
+		up = up.lerp(Vector3.UP, 0.7).normalized()
+		fwd = Vector3(cos(heading), 0.0, sin(heading))
+		fwd = (fwd - up * fwd.dot(up)).normalized()
+		right = fwd.cross(up).normalized()
+	_air_pitch = lerpf(_air_pitch, clampf(atan2(state.vz, maxf(state.speed(), 5.0)) * 0.7, -0.35, 0.35) if air > 0.0 else 0.0, 1.0 - exp(-6.0 * delta))
+	if _was_air and air <= 0.0 and debris and state.speed() > 8.0:
+		debris.sparks(global_position + Vector3(0, 0.2, 0), _vel3(), 0.5)
+	_was_air = air > 0.0
+	transform = Transform3D(Basis(fwd, up, right), Vector3(pos2.x, gy + _lift + hoist + air, pos2.y))
 	_sprung.position.y = pit_lift - _ride_drop
 	# Body pitch under braking/acceleration and roll in corners.
 	var k2 := 1.0 - exp(-8.0 * delta)
 	_pitch = lerpf(_pitch, clampf(state.ax * 0.0032, -0.035, 0.03), k2)
 	_roll = lerpf(_roll, clampf(-state.ay * 0.0028, -0.04, 0.04), k2)
-	_sprung.rotation = Vector3(_roll, 0.0, _pitch)
+	_sprung.rotation = Vector3(_roll, 0.0, _pitch + _air_pitch)
 	var v := state.vel.dot(state.forward())
 	for w in _wheels:
 		var hub: Node3D = w[0]
@@ -1037,6 +1105,14 @@ func _process(delta: float) -> void:
 		wet = env.wetness_at(state.lateral_offset - env.raceline_offset(state.track_idx))
 	_tail.emission_energy_multiplier = (4.0 if braking else 0.25) + dark * 1.5
 	_head.emission_energy_multiplier = dark * 6.0
+	if derby:
+		for m in _tail_d:
+			m.set_shader_parameter("emission_energy", _tail.emission_energy_multiplier)
+		for m in _head_d:
+			m.set_shader_parameter("emission_energy", _head.emission_energy_multiplier)
+		if _fire_light:
+			_fire_light.visible = _fire_k > 0.02
+			_fire_light.light_energy = _fire_k * (2.2 + 1.4 * sin(Time.get_ticks_msec() * 0.023) * sin(Time.get_ticks_msec() * 0.0071))
 	_head_light.visible = dark > 0.08
 	_head_light.light_energy = dark * 6.0
 	var spray := clampf(wet * 1.3, 0.0, 1.0) * clampf((state.speed() - 8.0) / 50.0, 0.0, 1.0)
@@ -1047,3 +1123,233 @@ func _process(delta: float) -> void:
 	if _damage_tick <= 0.0:
 		_damage_tick = 0.2
 		_apply_damage()
+
+
+# --- Demolition Derby ------------------------------------------------------------
+
+## Swaps every material on the body parts for one that crumples, adds the
+## steam, fire, smoke and mud emitters.
+func _setup_derby() -> void:
+	derby = true
+	_crumple_mats.append(_paint)
+	_crumple_mats.append(_carbon_decals)
+	for name_k in DERBY_PARTS:
+		var part: Array = _parts.get(name_k, [])
+		if part.is_empty() or not part[0] is MeshInstance3D:
+			continue
+		var mi := part[0] as MeshInstance3D
+		for sidx in mi.mesh.get_surface_count():
+			var cur := mi.get_surface_override_material(sidx)
+			if cur == null:
+				cur = mi.mesh.surface_get_material(sidx)
+			if cur == _paint:
+				continue
+			var src_name := mi.mesh.surface_get_material(sidx).resource_name if mi.mesh.surface_get_material(sidx) else ""
+			var sm := ShaderMaterial.new()
+			if src_name == "glass" or src_name == "windscreen":
+				sm.shader = GLASS_SHADER
+				sm.set_shader_parameter("seed", float(get_instance_id() % 997))
+				if src_name == "windscreen":
+					_glass_ws = sm
+			else:
+				sm.shader = PART_SHADER
+				if cur is StandardMaterial3D:
+					var std := cur as StandardMaterial3D
+					sm.set_shader_parameter("albedo", std.albedo_color)
+					sm.set_shader_parameter("roughness", std.roughness)
+					sm.set_shader_parameter("metallic", std.metallic)
+					if std.emission_enabled:
+						sm.set_shader_parameter("emission", std.emission)
+						sm.set_shader_parameter("emission_energy", std.emission_energy_multiplier)
+				if cur == _tail:
+					_tail_d.append(sm)
+				elif cur == _head:
+					_head_d.append(sm)
+			mi.set_surface_override_material(sidx, sm)
+			_crumple_mats.append(sm)
+	for m in _crumple_mats:
+		m.set_shader_parameter("car_ext", Vector3(_box.end.x, _box.position.x, maxf(-_box.position.z, _box.end.z)))
+		m.set_shader_parameter("roof_y", _box.end.y)
+		m.set_shader_parameter("crush_depth", clampf(def.length * 0.13, 0.4, 0.8))
+	if _glass_ws:
+		_glass_ws.set_shader_parameter("crack_at", Vector3(_box.end.x * 0.4, _box.end.y * 0.85, 0.2))
+	var nr := _find(self, "number_roof") as Node3D
+	if nr:
+		_number_y = nr.position.y
+	var bay := Vector3(maxf(def.cg_to_front * 0.75, _box.end.x - 1.0), _box.end.y * 0.62, 0.0)
+	_steam = _emitter(28, 1.6, Vector3(_box.end.x - 0.25, 0.75, 0.0), Vector3(0.3, 1.0, 0.0), 30.0, [1.5, 3.5], 1.2,
+		[0.8, 2.2], Color(0.96, 0.97, 1.0, 0.5), Color(0.96, 0.97, 1.0, 0.0))
+	_bay_smoke = _emitter(36, 2.6, bay + Vector3(0, 0.2, 0), Vector3(0, 1, 0), 20.0, [1.0, 2.5], 1.0,
+		[1.2, 3.4], Color(0.1, 0.1, 0.1, 0.6), Color(0.3, 0.3, 0.3, 0.0))
+	_fire = _emitter(60, 0.55, bay, Vector3(0, 1, 0), 18.0, [1.0, 2.6], 2.5,
+		[0.5, 1.3], Color(1.0, 0.85, 0.35, 0.95), Color(0.9, 0.2, 0.02, 0.0), true)
+	(_fire.process_material as ParticleProcessMaterial).emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	(_fire.process_material as ParticleProcessMaterial).emission_box_extents = Vector3(0.35, 0.05, def.width * 0.3)
+	_fire_light = OmniLight3D.new()
+	_fire_light.light_color = Color(1.0, 0.55, 0.18)
+	_fire_light.omni_range = 7.0
+	_fire_light.position = bay + Vector3(0, 0.6, 0)
+	_fire_light.visible = false
+	_fire_light.shadow_enabled = false
+	add_child(_fire_light)
+	# Clods of dirt and mud flung back off the rear tyres.
+	_mud = GPUParticles3D.new()
+	_mud.amount = 70
+	_mud.lifetime = 1.1
+	_mud.emitting = false
+	_mud.local_coords = false
+	_mud_mat = ParticleProcessMaterial.new()
+	_mud_mat.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	_mud_mat.emission_box_extents = Vector3(0.2, 0.05, def.track_width * 0.5)
+	_mud_mat.direction = Vector3(-1, 0.9, 0)
+	_mud_mat.spread = 28.0
+	_mud_mat.initial_velocity_min = 3.0
+	_mud_mat.initial_velocity_max = 8.0
+	_mud_mat.gravity = Vector3(0, -9.8, 0)
+	_mud_mat.scale_min = 0.5
+	_mud_mat.scale_max = 1.4
+	_mud_mat.angle_min = -180.0
+	_mud_mat.angle_max = 180.0
+	_mud.process_material = _mud_mat
+	var q := QuadMesh.new()
+	q.size = Vector2(0.16, 0.13)
+	var m := StandardMaterial3D.new()
+	m.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+	m.vertex_color_use_as_albedo = true
+	m.roughness = 1.0
+	q.material = m
+	_mud.draw_pass_1 = q
+	_mud.position = Vector3(-(def.wheelbase - def.cg_to_front) - 0.2, 0.25, 0)
+	_mud.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_mud.visibility_aabb = AABB(Vector3(-20, -4, -20), Vector3(40, 10, 40))
+	add_child(_mud)
+
+
+## A soft particle emitter (steam, smoke, flames) on the car.
+func _emitter(amount: int, life: float, at: Vector3, dir: Vector3, spread: float, speed: Array, rise: float,
+		scale: Array, c0: Color, c1: Color, glow := false) -> GPUParticles3D:
+	var p := GPUParticles3D.new()
+	p.amount = amount
+	p.lifetime = life
+	p.emitting = false
+	p.local_coords = false
+	var pm := ParticleProcessMaterial.new()
+	pm.direction = dir
+	pm.spread = spread
+	pm.initial_velocity_min = speed[0]
+	pm.initial_velocity_max = speed[1]
+	pm.gravity = Vector3(0, rise, 0)
+	pm.damping_min = 0.5
+	pm.damping_max = 1.5
+	pm.scale_min = scale[0]
+	pm.scale_max = scale[1]
+	pm.angle_min = -180.0
+	pm.angle_max = 180.0
+	var ga := Gradient.new()
+	ga.set_color(0, c0)
+	ga.set_color(1, c1)
+	var gt := GradientTexture1D.new()
+	gt.gradient = ga
+	pm.color_ramp = gt
+	p.process_material = pm
+	var q := QuadMesh.new()
+	q.size = Vector2(1.0, 1.0)
+	var m := StandardMaterial3D.new()
+	m.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+	m.billboard_keep_scale = true
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.vertex_color_use_as_albedo = true
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.albedo_texture = _puff_texture()
+	if glow:
+		m.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	q.material = m
+	p.draw_pass_1 = q
+	p.position = at
+	p.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	p.visibility_aabb = AABB(Vector3(-20, -2, -20), Vector3(40, 16, 40))
+	add_child(p)
+	return p
+
+
+## Where a hit landed (world 2D point): the crumple centres on it.
+func note_hit(at: Vector2) -> void:
+	if not derby:
+		return
+	var local := (at - state.pos).rotated(-state.heading)
+	match CarDamage.zone_of(local, def):
+		CarDamage.FRONT: _dent.x = lerpf(_dent.x, local.y, 0.6) if _crush_shown.x > 0.02 else local.y
+		CarDamage.REAR: _dent.y = lerpf(_dent.y, local.y, 0.6) if _crush_shown.y > 0.02 else local.y
+		CarDamage.LEFT: _dent.z = lerpf(_dent.z, local.x, 0.6) if _crush_shown.z > 0.02 else local.x
+		_: _dent.w = lerpf(_dent.w, local.x, 0.6) if _crush_shown.w > 0.02 else local.x
+	if _glass_ws and _crush_shown.x < 0.2 and CarDamage.zone_of(local, def) == CarDamage.FRONT:
+		_glass_ws.set_shader_parameter("crack_at", Vector3(_box.end.x * 0.4, _box.end.y * 0.85, clampf(local.y, -0.5, 0.5)))
+
+
+func _apply_derby(d: Dictionary) -> void:
+	var c: Array = d.get("crush", [0.0, 0.0, 0.0, 0.0])
+	var crush := Vector4(c[0], c[1], c[2], c[3])
+	var roof := clampf((CarDamage.body_total(state) - 1.6) * 0.1, 0.0, 0.24)
+	if (crush - _crush_shown).length() > 0.004 or absf(roof - _roof_shown) > 0.004:
+		_crush_shown = crush
+		_roof_shown = roof
+		for m in _crumple_mats:
+			m.set_shader_parameter("crush", crush)
+			m.set_shader_parameter("dent_at", _dent)
+			m.set_shader_parameter("roof_crush", roof)
+		if not is_nan(_number_y):
+			var nr := _find(self, "number_roof") as Node3D
+			if nr:
+				nr.position.y = _number_y - roof
+	_paint.set_shader_parameter("dirt", _grime)
+	# Windscreen: cracks spread, then it shatters (a shower of glass).
+	var ws: float = d.get("windscreen", 0.0)
+	if _glass_ws:
+		_glass_ws.set_shader_parameter("crack", ws)
+		if ws >= 0.85 and not _ws_broken and _init_done and debris:
+			_ws_broken = true
+			debris.burst(global_transform * Vector3(_box.end.x * 0.35, _box.end.y * 0.85, 0.0), _vel3(), 14,
+				Color(0.78, 0.86, 0.9), 0.7)
+	# Bonnet and boot lid: spring open on their hinges, then tear off.
+	for lid in LIDS:
+		var part: Array = _parts.get(lid, [])
+		if part.is_empty():
+			continue
+		var node: Node3D = part[0]
+		var rest: Transform3D = part[1]
+		var v: float = d.get(LIDS[lid], 0.0)
+		if _lid_gone.get(lid, false):
+			node.visible = v < 0.05   # repaired in the pits (never, in a derby)
+			if v < 0.05:
+				_lid_gone[lid] = false
+			continue
+		if v >= 0.9 and _init_done and debris and node is MeshInstance3D:
+			_lid_gone[lid] = true
+			_throw_part(node as MeshInstance3D)
+			node.visible = false
+			continue
+		var box := (node as MeshInstance3D).get_aabb() if node is MeshInstance3D else AABB()
+		var open := clampf((v - 0.4) / 0.5, 0.0, 1.0)
+		if open <= 0.0:
+			node.transform = rest
+			continue
+		# The bonnet hinges at the windscreen, the boot lid at the rear window.
+		var front: bool = lid == "bonnet"
+		var hinge := Vector3(box.position.x if front else box.end.x, box.end.y, 0.0)
+		var ang := open * (0.75 if front else 0.6) * (1.0 if front else -1.0)
+		var xf := Transform3D(Basis(), hinge) * Transform3D(Basis(Vector3(0, 0, 1), ang), Vector3.ZERO) * Transform3D(Basis(), -hinge)
+		node.transform = rest * xf
+	# Radiator steam, engine-bay smoke, then fire.
+	var steam: float = d.get("steam", 0.0)
+	_steam.emitting = steam > 0.04
+	_steam.amount_ratio = clampf(steam, 0.0, 1.0)
+	var fire: float = d.get("fire", 0.0)
+	_fire_k = fire
+	_fire.emitting = fire > 0.02
+	_fire.amount_ratio = clampf(0.3 + fire * 0.7, 0.0, 1.0)
+	var bay := maxf(clampf((state.damage_engine - 0.45) / 0.4, 0.0, 1.0), fire)
+	_bay_smoke.emitting = bay > 0.03
+	_bay_smoke.amount_ratio = clampf(bay, 0.0, 1.0)
+	for m in _crumple_mats:
+		if m.shader == PART_SHADER:
+			m.set_shader_parameter("soot", fire * 0.8)

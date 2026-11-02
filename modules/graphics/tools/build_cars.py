@@ -167,6 +167,7 @@ def setup_materials(shape):
     material("paint", paint, 0.35, 0.28, coat=1.0)
     material("carbon", (0.025, 0.025, 0.028), 0.2, 0.32)
     material("glass", (0.02, 0.03, 0.04), 0.0, 0.04, alpha=0.55)
+    material("windscreen", (0.02, 0.03, 0.04), 0.0, 0.04, alpha=0.55)
     material("grille", (0.015, 0.015, 0.015), 0.1, 0.55)
     material("vent", (0.01, 0.01, 0.01), 0.0, 0.7)
     material("intake", (0.008, 0.008, 0.008), 0.0, 0.8)
@@ -430,6 +431,8 @@ class Car:
                         (sw[0] <= tm <= sw[1] and seg in side_seg) or \
                         (rg is not None and rg[0] <= tm <= rg[1] and seg in rear_seg)
                 f.material_index = 1 if glass else 0
+                if glass and self.s.get("windscreen_part") and ws[0] <= tm <= ws[1] and seg in top_seg:
+                    f.material_index = 2
                 for loop, (ii, jj) in zip(f.loops, ((i, j), (i, j2), (i + 1, j2), (i + 1, j))):
                     v = 1.0 if (jj == 0 and j == m - 1) else jj / m
                     loop[uv].uv = (ts[ii], v)
@@ -441,6 +444,8 @@ class Car:
         bm.free()
         me.materials.append(MATS["paint"])
         me.materials.append(MATS["glass"])
+        if self.s.get("windscreen_part"):
+            me.materials.append(MATS["windscreen"])
         ob = new_object("cabin", me)
         mod = ob.modifiers.new("sub", "SUBSURF")
         mod.levels = 2
@@ -631,6 +636,49 @@ class Car:
         fb = new_object("bumper_front", out["bumper_front"])
         rb = new_object("bumper_rear", out["bumper_rear"])
         return fb, rb
+
+    # ---------------------------------------------------- lids (Demolition Derby)
+
+    def build_lids(self):
+        """Bonnet and boot lid as their own thin painted panels lying on the
+        body ("lids": {"bonnet": [t0, t1], "boot": [t0, t1]}), so the game
+        can spring them open and tear them off in a crash."""
+        lids = self.s.get("lids") or {}
+        out = []
+        for name in ("bonnet", "boot"):
+            rng = lids.get(name)
+            if not rng:
+                continue
+            t0, t1 = rng
+            nt, ny = 14, 10
+            bm = bmesh.new()
+            rows = []
+            for i in range(nt + 1):
+                t = lerp(t0, t1, i / nt)
+                wt = self.section_params(t)["wt"] * 0.94
+                row = []
+                for j in range(ny + 1):
+                    y = lerp(-wt, wt, j / ny)
+                    row.append(bm.verts.new((self.x_of(t), y, self.deck_height(t, y) + 0.008)))
+                rows.append(row)
+            for i in range(nt):
+                for j in range(ny):
+                    bm.faces.new((rows[i][j], rows[i][j + 1], rows[i + 1][j + 1], rows[i + 1][j]))
+            bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+            for f in bm.faces:
+                if f.normal.z < 0:
+                    f.normal_flip()
+            me = bpy.data.meshes.new(name)
+            bm.to_mesh(me)
+            bm.free()
+            me.materials.append(MATS["paint"])
+            ob = new_object(name, me)
+            mod = ob.modifiers.new("thick", "SOLIDIFY")
+            mod.thickness = 0.012
+            bake_modifiers(ob)
+            shade_smooth(ob, 50)
+            out.append(ob)
+        return out
 
     # ---------------------------------------------------- aero parts
 
@@ -1245,7 +1293,8 @@ class Car:
             shade_smooth(ob, 48)
         cab = self.build_cabin()
         shade_smooth(cab, 50)
-        for f in (self.build_splitter, self.build_diffuser, self.build_wing, self.build_interior, self.build_fin):
+        for f in (self.build_splitter, self.build_diffuser, self.build_wing, self.build_interior, self.build_fin,
+                  self.build_lids):
             f()
         self.build_mirrors()
         if self.s.get("upgrades", True) and not self.s.get("light_bar"):

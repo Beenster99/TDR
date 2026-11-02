@@ -331,11 +331,12 @@ func _ribbon(st: SurfaceTool, offs: Callable, kind: Callable, lift: float, lanes
 			var off: float = lerpf(o[0], o[1], float(l) / lanes)
 			var q := p + nrm * off
 			var edge := minf(off + track.width_left[k], track.width_right[k] - off)
-			var c := Color(1, 1, 1, kind.call(k))
+			# Loose dirt (derby arenas) is painted in from red = 1 - dirt.
+			var c := Color(1.0 - track.dirt_at(s), 1, 1, kind.call(k))
 			st.set_color(c)
 			st.set_uv(Vector2(s, off))
 			st.set_uv2(Vector2(off - rl, edge))
-			st.add_vertex(Vector3(q.x, _surface_y(k, s, off, q) + lift, q.y))
+			st.add_vertex(Vector3(q.x, _surface_y(k, s, off, q) + lift + _crossover_lift(s, lift), q.y))
 	for i in n:
 		for l in lanes:
 			var a := base + i * (lanes + 1) + l
@@ -346,6 +347,14 @@ func _ribbon(st: SurfaceTool, offs: Callable, kind: Callable, lift: float, lanes
 			st.add_index(a + 1)
 			st.add_index(b)
 			st.add_index(b + 1)
+
+
+## Where a derby arena's road crosses itself, the second pass is drawn a
+## touch above the first (they're at the same height, so they'd flicker).
+func _crossover_lift(s: float, lift: float) -> float:
+	if track.crossovers.is_empty() or lift < 0.025:
+		return 0.0
+	return 0.012 if track.crossover_upper(s, 30.0) else 0.0
 
 
 ## Height of the driving surface at a ribbon vertex. On the road and kerbs

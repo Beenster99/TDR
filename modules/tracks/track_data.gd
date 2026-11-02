@@ -83,6 +83,20 @@ var terrain_cell_m: float = 20.0
 var terrain_size := Vector2i.ZERO
 var terrain_heights: PackedFloat32Array = []
 
+## What kind of racing the track is for: "circuit" (default) or "derby"
+## (Demolition Derby arenas, see tools/build_derby_tracks.py).
+var discipline: String = "circuit"
+## Loose dirt stretches, Vector2(s_from, s_to) in metres along the lap.
+var dirt: PackedVector2Array = []
+## Table-top jumps baked into the heights: {s (the lip), up_m, top_m,
+## down_m, height_m}. Cars can leave the ground on tracks with jumps.
+var jumps: Array = []
+## Where the centre line crosses itself (flat crossovers):
+## Vector2(s of the first pass, s of the second pass).
+var crossovers: PackedVector2Array = []
+## Metres over which a dirt stretch fades in and out.
+const DIRT_EDGE_M := 4.0
+
 
 static func from_dict(d: Dictionary) -> TrackData:
 	var t := TrackData.new()
@@ -107,6 +121,12 @@ static func from_dict(d: Dictionary) -> TrackData:
 	t.kerb_width = d.get("kerb_width_m", t.kerb_width)
 	t.default_environment = d.get("default_environment", {})
 	t.pit_lane = d.get("pit_lane")
+	t.discipline = str(d.get("discipline", "circuit"))
+	for r in d.get("dirt", []):
+		t.dirt.append(Vector2(float(r[0]), float(r[1])))
+	t.jumps = d.get("jumps", []).duplicate(true)
+	for c in d.get("crossovers", []):
+		t.crossovers.append(Vector2(float(c[0]), float(c[1])))
 	t._build()
 	t._load_elevation(d.get("elevation"), start)
 	t._load_barriers(d.get("barriers"), start)
@@ -574,6 +594,63 @@ func height_range() -> Vector2:
 		lo = minf(lo, h)
 		hi = maxf(hi, h)
 	return Vector2(lo, hi)
+
+
+# --- Dirt, jumps and crossovers (Demolition Derby arenas) -------------------
+
+## How much loose dirt is under distance s: 0 = tarmac .. 1 = dirt.
+func dirt_at(s: float) -> float:
+	if dirt.is_empty():
+		return 0.0
+	s = fposmod(s, length)
+	var best := 0.0
+	for r in dirt:
+		var a := r.x
+		var b := r.y
+		var k := minf(smoothstep(a - DIRT_EDGE_M, a + DIRT_EDGE_M, s), 1.0 - smoothstep(b - DIRT_EDGE_M, b + DIRT_EDGE_M, s))
+		best = maxf(best, k)
+	return best
+
+
+## Cars can fly (jumps, Demolition Derby arenas).
+func allows_air() -> bool:
+	return not jumps.is_empty()
+
+
+## The jump whose lip a car going from s0 to s1 (metres along the lap,
+## forwards) has just passed, or {} for none.
+func jump_lip(s0: float, s1: float) -> Dictionary:
+	if s1 <= s0 or s1 - s0 > 20.0:
+		return {}
+	for j in jumps:
+		var lip := float(j.get("s", -1.0))
+		if s0 < lip and s1 >= lip:
+			return j
+	return {}
+
+
+## Ramp slope of a jump (rise over run of its up ramp).
+static func jump_slope(j: Dictionary) -> float:
+	return float(j.get("height_m", 0.0)) / maxf(float(j.get("up_m", 1.0)), 0.1)
+
+
+## Distance (m, along the lap) from s to the nearest crossover, INF if none.
+func crossover_distance(s: float) -> float:
+	var best := INF
+	for c in crossovers:
+		for cs in [c.x, c.y]:
+			var d := absf(fposmod(s - cs + length * 0.5, length) - length * 0.5)
+			best = minf(best, d)
+	return best
+
+
+## True for the second pass over a crossover (within reach metres): that
+## branch is drawn on top where the two roads meet.
+func crossover_upper(s: float, reach: float) -> bool:
+	for c in crossovers:
+		if absf(fposmod(s - c.y + length * 0.5, length) - length * 0.5) < reach:
+			return true
+	return false
 
 
 # --- Barriers and run-off ------------------------------------------------------

@@ -1,0 +1,100 @@
+{
+ "format": 1,
+ "id": "derby_pelham_marauder",
+ "name": "Pelham Marauder",
+ "description": "Big-block two-door muscle car. Plenty of shove, a long bonnet and not much to stop it.",
+ "class_tag": "Derby",
+ "discipline": "derby",
+ "body_style": "muscle",
+ "toughness": 1.65,
+ "colour": "#d8a21a",
+ "mass_kg": 1650,
+ "weight_front": 0.56,
+ "wheelbase_m": 2.85,
+ "cg_height_m": 0.56,
+ "track_width_m": 1.58,
+ "length_m": 5.2,
+ "width_m": 1.92,
+ "body_offset_m": 0.0,
+ "inertia_factor": 1.1,
+ "engine": {
+  "idle_rpm": 800,
+  "redline_rpm": 5200,
+  "shift_up_rpm": 4940,
+  "shift_down_rpm": 2340,
+  "torque_curve": [
+   [
+    800,
+    297
+   ],
+   [
+    1560,
+    459
+   ],
+   [
+    2860,
+    540
+   ],
+   [
+    4160,
+    502
+   ],
+   [
+    5200,
+    421
+   ]
+  ],
+  "engine_brake_nm": 65,
+  "cylinders": 8
+ },
+ "gearbox": {
+  "ratios": [
+   2.6,
+   1.6,
+   1.0,
+   0.75
+  ],
+  "final_drive": 3.55,
+  "efficiency": 0.84
+ },
+ "drivetrain": "RWD",
+ "awd_front_split": 0.0,
+ "wheel_radius_m": 0.33,
+ "brakes": {
+  "max_force_n": 14025,
+  "bias_front": 0.64
+ },
+ "steering": {
+  "max_angle_deg": 36,
+  "rate_deg_s": 230
+ },
+ "aero": {
+  "cda": 0.85,
+  "cla": 0.05,
+  "balance_front": 0.5
+ },
+ "tyre_compound": "road_semi_slick",
+ "fuel": {
+  "capacity_l": 60,
+  "bsfc_l_per_kwh": 0.36
+ },
+ "tuning_ranges": {
+  "brake_bias_front": [
+   0.55,
+   0.72
+  ],
+  "aero_cla": [
+   0.0,
+   0.1
+  ],
+  "final_drive": [
+   3.0,
+   4.6
+  ]
+ },
+ "chassis": {
+  "front_grip": 0.94,
+  "rear_grip": 1.0,
+  "roll_stiffness_front": 0.6
+ }
+}

@@ -8,7 +8,8 @@ const DIR := "res://modules/tracks/data"
 
 ## Light list for menus, sorted by name:
 ## [{id, name, short_name, location, country, description, length_m,
-##   has_pit_lane, outline, outline_height, pit_outline, sectors, climb_m}]
+##   has_pit_lane, outline, outline_height, pit_outline, sectors, climb_m,
+##   discipline ("circuit" / "derby"), crossovers, jumps, dirt_m}]
 ## outline: the centre line in race order (index 0 on the start line), cut to
 ## about OUTLINE_POINTS points, in metres (x right, y down, as seen from
 ## above in the game); outline_height: the height at each of those points
@@ -19,6 +20,9 @@ static func list_all() -> Array[Dictionary]:
 	for d in JsonData.dicts_in(DIR):
 		var o := _outline(d)
 		out.append({"id": d.get("id", ""), "name": d.get("name", ""),
+			"discipline": d.get("discipline", "circuit"),
+			"crossovers": d.get("crossovers", []).size(), "jumps": d.get("jumps", []).size(),
+			"dirt_m": _dirt_m(d),
 			"short_name": d.get("short_name", d.get("name", "")),
 			"location": d.get("location", ""), "country": d.get("country", ""),
 			"description": d.get("description", ""),
@@ -28,6 +32,22 @@ static func list_all() -> Array[Dictionary]:
 			"sectors": d.get("sectors", [0.0, 0.333, 0.667]), "climb_m": o["climb"]})
 	out.sort_custom(func(a, b): return a["name"] < b["name"])
 	return out
+
+
+## Ids of the tracks for one discipline ("circuit", "derby"), from list_all().
+static func ids_for(tracks: Array, discipline: String) -> Array[String]:
+	var out: Array[String] = []
+	for t in tracks:
+		if str(t.get("discipline", "circuit")) == discipline:
+			out.append(str(t["id"]))
+	return out
+
+
+static func _dirt_m(d: Dictionary) -> float:
+	var m := 0.0
+	for r in d.get("dirt", []):
+		m += float(r[1]) - float(r[0])
+	return m
 
 
 const OUTLINE_POINTS := 360

@@ -675,11 +675,14 @@ func _on_events(evs: Array) -> void:
 				var ca: CarState = session.sim.cars[e["a"]]
 				var cb: CarState = session.sim.cars[e["b"]]
 				world.impact(e["pos"], (ca.vel + cb.vel) * 0.5, float(e["impulse"]) / 9000.0)
+				world.car_hit(e["a"], e["pos"])
+				world.car_hit(e["b"], e["pos"])
 			"barrier_impact":
 				var c: CarState = session.sim.cars[e["car"]]
 				var nrm: Vector2 = e.get("normal", c.right())
 				var soft: bool = int(e.get("barrier", TrackData.Barrier.ARMCO)) == TrackData.Barrier.TYRES
 				world.impact(c.pos + nrm * session.sim.defs[e["car"]].width * 0.5, c.vel, float(e["speed"]) / 22.0, not soft)
+				world.car_hit(e["car"], c.pos + nrm * session.sim.defs[e["car"]].width * 0.5)
 			"countdown": pass
 			"green":
 				if session.sim.settings.is_qualifying():

@@ -307,6 +307,10 @@ func _post_new_events(from: int) -> void:
 func step(dt: float, prev_s: PackedFloat64Array) -> void:
 	mode_time += dt
 	stage_time += dt
+	# Demolition Derby: no flags, no penalties, and the wrecks stay where
+	# they stop (they're part of the arena now).
+	if sim.settings.is_derby():
+		return
 	var racing := sim.phase == RaceSim.Phase.RACING
 	if sim.phase == RaceSim.Phase.CHEQUERED or sim.phase == RaceSim.Phase.FINISHED:
 		if mode != Mode.GREEN or not yellows.is_empty() or sc_visible:

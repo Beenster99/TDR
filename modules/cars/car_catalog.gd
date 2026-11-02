@@ -26,11 +26,15 @@ static func load_safety_car() -> CarDefinition:
 
 
 ## The car classes present (e.g. ["GT3", "Road"]), fastest class first
-## (by the best power-to-weight in each class).
-static func classes(cars: Dictionary) -> Array[String]:
+## (by the best power-to-weight in each class). Only the classes of one
+## discipline: "circuit" (default) leaves the Demolition Derby cars out,
+## "derby" lists only them.
+static func classes(cars: Dictionary, discipline := "circuit") -> Array[String]:
 	var best := {}
 	for id in cars:
 		var c: CarDefinition = cars[id]
+		if c.discipline != discipline:
+			continue
 		var ptw := c.peak_power_kw() / c.mass + c.cla * 0.05
 		best[c.class_tag] = maxf(best.get(c.class_tag, 0.0), ptw)
 	var out: Array[String] = []

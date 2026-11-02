@@ -1,0 +1,100 @@
+{
+ "format": 1,
+ "id": "derby_tanaga_kei_box",
+ "name": "Tanaga Kei Box",
+ "description": "Tiny Japanese box van with a 660 cc three. Tips over if you look at it, but nips through gaps.",
+ "class_tag": "Derby",
+ "discipline": "derby",
+ "body_style": "kei_van",
+ "toughness": 1.2,
+ "colour": "#f1efe8",
+ "mass_kg": 820,
+ "weight_front": 0.45,
+ "wheelbase_m": 2.35,
+ "cg_height_m": 0.72,
+ "track_width_m": 1.3,
+ "length_m": 3.4,
+ "width_m": 1.48,
+ "body_offset_m": 0.0,
+ "inertia_factor": 1.1,
+ "engine": {
+  "idle_rpm": 800,
+  "redline_rpm": 7000,
+  "shift_up_rpm": 6650,
+  "shift_down_rpm": 3150,
+  "torque_curve": [
+   [
+    800,
+    52
+   ],
+   [
+    2100,
+    81
+   ],
+   [
+    3850,
+    95
+   ],
+   [
+    5600,
+    88
+   ],
+   [
+    7000,
+    74
+   ]
+  ],
+  "engine_brake_nm": 11,
+  "cylinders": 3
+ },
+ "gearbox": {
+  "ratios": [
+   3.3,
+   2.0,
+   1.35,
+   1.0
+  ],
+  "final_drive": 4.1,
+  "efficiency": 0.84
+ },
+ "drivetrain": "FWD",
+ "awd_front_split": 0.0,
+ "wheel_radius_m": 0.36,
+ "brakes": {
+  "max_force_n": 6970,
+  "bias_front": 0.64
+ },
+ "steering": {
+  "max_angle_deg": 36,
+  "rate_deg_s": 230
+ },
+ "aero": {
+  "cda": 1.05,
+  "cla": 0.05,
+  "balance_front": 0.5
+ },
+ "tyre_compound": "road_semi_slick",
+ "fuel": {
+  "capacity_l": 60,
+  "bsfc_l_per_kwh": 0.36
+ },
+ "tuning_ranges": {
+  "brake_bias_front": [
+   0.55,
+   0.72
+  ],
+  "aero_cla": [
+   0.0,
+   0.1
+  ],
+  "final_drive": [
+   3.0,
+   4.6
+  ]
+ },
+ "chassis": {
+  "front_grip": 0.94,
+  "rear_grip": 1.0,
+  "roll_stiffness_front": 0.6
+ }
+}

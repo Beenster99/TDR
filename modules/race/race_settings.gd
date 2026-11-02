@@ -4,6 +4,12 @@ extends RefCounted
 ## every client in the lobby (to_dict/from_dict) before the sim starts.
 
 var track_id: String = "spielberg"
+## Kind of racing: DISCIPLINE_CIRCUIT or DISCIPLINE_DERBY (Demolition Derby:
+## derby arenas and cars, damage always full and tougher-looking, no safety
+## car, no pit stops, no co-op car shares; see docs/DERBY.md).
+var discipline: String = "circuit"
+const DISCIPLINE_CIRCUIT := "circuit"
+const DISCIPLINE_DERBY := "derby"
 var laps: int = 3
 var ai_count: int = 5
 ## Most cars on the grid (players + AI): one class, or several classes mixed.
@@ -84,7 +90,7 @@ func to_dict() -> Dictionary:
 		"tyre_wear_rate": tyre_wear_rate, "pit_window_open_lap": pit_window_open_lap,
 		"pit_window_close_lap": pit_window_close_lap,
 		"countdown_s": countdown_s, "upgrades_mode": upgrades_mode, "tuning_enabled": tuning_enabled,
-		"session_type": session_type,
+		"session_type": session_type, "discipline": discipline,
 	}
 
 
@@ -100,6 +106,24 @@ func effective_damage_level() -> String:
 	if damage_level == "off" and damage_enabled:
 		return "full"
 	return damage_level
+
+
+func is_derby() -> bool:
+	return discipline == DISCIPLINE_DERBY
+
+
+## Makes the settings fit a Demolition Derby: full damage, no safety car,
+## no pit stops, fuel or tyre wear, one driver per car, the Derby class.
+func apply_derby_rules() -> void:
+	discipline = DISCIPLINE_DERBY
+	car_class = "Derby"
+	set_damage_level("full")
+	safety_car_enabled = false
+	mandatory_pit_stops = 0
+	drivers_per_car = 1
+	fuel_enabled = false
+	tyre_wear_enabled = false
+	session_type = SESSION_RACE
 
 
 func is_qualifying() -> bool:

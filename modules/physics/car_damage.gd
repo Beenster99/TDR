@@ -54,6 +54,12 @@ const SPREAD := [
 	[0.15, 0.45, 0.50, 0.00, 0.00],  # right side
 ]
 
+## An engine this damaged catches fire (visuals; 1 = ablaze when it fails).
+const FIRE_FROM := 0.72
+## Demolition Derby: a car whose bodywork adds up to this much (of 4, the
+## four zones) is a wreck and is out (RaceSim retires it).
+const WRECKED_BODY := 3.0
+
 ## Engine past this damage gets worse under load (oil / water leaking).
 const ENGINE_LEAK_FROM := 0.5
 const ENGINE_LEAK_RATE := 0.012   ## per second at full throttle, full rpm, damage 1
@@ -110,7 +116,7 @@ static func apply_impact(s: CarState, d: CarDefinition, dv: float, local_point: 
 		return out
 	# Damage grows faster than the speed of the hit (closer to its energy),
 	# so rubbing wheels or a tap do little and a big hit does a lot.
-	var amount := pow((dv - DV_MIN) / (DV_FULL - DV_MIN), 1.5)
+	var amount := pow((dv - DV_MIN) / (DV_FULL - DV_MIN), 1.5) / d.toughness
 	var zone := zone_of(local_point, d)
 	out["zone"] = zone
 	out["amount"] = amount
@@ -180,6 +186,11 @@ static func punctures(s: CarState) -> int:
 	return n
 
 
+## Demolition Derby: bent beyond driving (see WRECKED_BODY).
+static func is_wrecked(s: CarState) -> bool:
+	return body_total(s) >= WRECKED_BODY
+
+
 static func engine_failed(s: CarState) -> bool:
 	return s.damage_engine >= 1.0
 
@@ -232,6 +243,16 @@ static func visual_parts(s: CarState) -> Dictionary:
 		"wheel_fl": s.puncture[0], "wheel_fr": s.puncture[1],
 		"wheel_rl": s.puncture[2], "wheel_rr": s.puncture[3],
 		"smoke": clampf((s.damage_engine - 0.3) / 0.7, 0.0, 1.0),
+		# Demolition Derby extras (cars with lids and a separate windscreen):
+		# radiator steam from a smashed nose, flames from a dying engine, the
+		# windscreen cracking then shattering, the bonnet and boot lid
+		# springing open then tearing off (1 = gone).
+		"steam": clampf((f - 0.3) / 0.45, 0.0, 1.0) * (0.4 + 0.6 * clampf(s.damage_engine * 2.0, 0.0, 1.0)),
+		"fire": 1.0 if s.damage_engine >= 1.0 else clampf((s.damage_engine - FIRE_FROM) / (1.0 - FIRE_FROM), 0.0, 1.0),
+		"windscreen": clampf(maxf(f * 1.3, body_total(s) * 0.3), 0.0, 1.0),
+		"bonnet_lid": clampf(f * 1.15, 0.0, 1.0),
+		"boot_lid": clampf(r * 1.15, 0.0, 1.0),
+		"crush": [f, r, l, rt],
 	}
 
 

@@ -81,6 +81,8 @@ func _init(p_settings: RaceSettings, p_track: TrackData, p_entries: Array[RaceEn
 	env = SimEnvironment.create(track_env, settings.environment, settings.seed)
 	env.bind_track(track)
 	damage_level = CarDamage.level_from(settings.effective_damage_level())
+	if settings.is_derby():
+		damage_level = CarDamage.Level.FULL
 	entries = p_entries
 	self.tyre_defs = tyre_defs
 	for i in entries.size():
@@ -389,6 +391,26 @@ func _update_positions() -> void:
 
 
 func _check_race_end() -> void:
+	# Demolition Derby: the last car still running wins, whatever the laps.
+	if settings.is_derby() and phase == Phase.RACING and entries.size() > 1 and finish_order.is_empty():
+		var alive := -1
+		var n_alive := 0
+		for k in entries.size():
+			if not entries[k].dnf and not entries[k].finished:
+				n_alive += 1
+				alive = k
+		if n_alive == 1:
+			var w := entries[alive]
+			w.finished = true
+			w.finish_time = race_time
+			pits.on_finished(alive)
+			finish_order.append(alive)
+			events.append({"type": "finished", "car": alive, "position": 1, "time": race_time})
+			events.append({"type": "last_car_standing", "car": alive})
+			phase = Phase.FINISHED
+			_update_positions()
+			events.append({"type": "race_finished"})
+			return
 	if phase == Phase.RACING and not entries.is_empty():
 		var everyone_out := true
 		for e in entries:
@@ -650,6 +672,9 @@ func _apply_damage() -> void:
 		if eng and not e.dnf and not e.finished:
 			e.dnf = true
 			events.append({"type": "retired", "car": i, "reason": "engine"})
+		elif settings.is_derby() and CarDamage.is_wrecked(c) and not e.dnf and not e.finished:
+			e.dnf = true
+			events.append({"type": "retired", "car": i, "reason": "wrecked"})
 
 
 func _damage_hit(i: int, dv: float, local: Vector2, salt: int) -> void:
