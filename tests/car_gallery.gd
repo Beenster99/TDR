@@ -63,7 +63,7 @@ func _ready() -> void:
 			st.pos = Vector2(col * dx, row * dz)
 			st.heading = -PI * 0.5 if view == "top" else 0.0
 			var v := CarView.new()
-			v.setup(def, st, "%s %d" % [id, c], false, k + 1, {} if c == 0 else WorldView.livery_variant(c))
+			v.setup(def, st, "%s %d" % [id, c], false, k + 1, {} if c == 0 else WorldView.livery_variant(c, id))
 			world.add_child(v)
 			var l := Label3D.new()
 			l.text = def.display_name
