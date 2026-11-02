@@ -14,6 +14,7 @@ var track: TrackData
 var rng := RandomNumberGenerator.new()
 var _crowd_mat: ShaderMaterial
 var _build_mat: StandardMaterial3D
+var scenery: Scenery   ## real surroundings (null when the track has no scenery data)
 
 
 func setup(p_tv: TrackView) -> void:
@@ -25,13 +26,27 @@ func setup(p_tv: TrackView) -> void:
 	_build_mat.roughness = 0.8
 	_crowd_mat = ShaderMaterial.new()
 	_crowd_mat.shader = preload("res://modules/graphics/shaders/crowd.gdshader")
-	if GfxSettings.grandstands:
+	# Real surroundings from open map data, where the track has them
+	var real := Scenery.data_for(track.id)
+	if not real.is_empty():
+		scenery = Scenery.new()
+		scenery.name = "Scenery"
+		add_child(scenery)
+		# the game's own pit garages stay (they line up with the boxes and the
+		# crews); real buildings standing where they and the paddock go give way
+		if GfxSettings.buildings and track.has_pit_lane():
+			scenery.keep_clear(_pit_garage_points(), 20.0)
+		scenery.setup(tv, real, _crowd_mat)
+	if GfxSettings.grandstands and scenery == null:
 		_build_grandstands()
 	if GfxSettings.buildings and track.has_pit_lane():
 		_build_pit_buildings()
 	_build_gantry()
 	if GfxSettings.trees > 0.0:
-		_build_trees()
+		if scenery != null:
+			_plant_real_trees()
+		else:
+			_build_trees()
 
 
 # --- Trees ----------------------------------------------------------------------
@@ -79,6 +94,34 @@ func _build_trees() -> void:
 			tiles[key][kind][0].append(t)
 			tiles[key][kind][1].append(Color(hue, rng.randf(), 0, 0))
 		y += spacing
+	print_verbose("[trackside] %d trees" % _commit_trees(tiles, meshes))
+
+
+## Trees, hedges and bushes where they really stand (from Scenery).
+func _plant_real_trees() -> void:
+	var meshes := [_tree_mesh(false), _tree_mesh(true), _bush_mesh()]
+	var base_h := [9.6, 12.5, 2.6]
+	var tiles := {}
+	var keep_out := track.runoff + 3.0
+	for t in scenery.trees():
+		if GfxSettings.trees < 1.0 and rng.randf() > GfxSettings.trees:
+			continue
+		var p := Vector2(t[0], t[1])
+		if tv.clearance(p) < keep_out or _occupied(p):
+			continue
+		var kind := int(t[3])
+		var s := clampf(float(t[2]) / base_h[kind], 0.35, 2.6)
+		var w := s * rng.randf_range(0.85, 1.15)
+		var basis := Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(w, s, w))
+		var key := Vector2i((p / TILE).floor())
+		if not tiles.has(key):
+			tiles[key] = [[[], []], [[], []], [[], []]]
+		tiles[key][kind][0].append(Transform3D(basis, Vector3(p.x, tv.terrain_height(p) - 0.1, p.y)))
+		tiles[key][kind][1].append(Color(rng.randf(), rng.randf(), 0, 0))
+	print_verbose("[trackside] %d real trees" % _commit_trees(tiles, meshes))
+
+
+func _commit_trees(tiles: Dictionary, meshes: Array) -> int:
 	var mat := ShaderMaterial.new()
 	mat.shader = _tree_shader()
 	var count := 0
@@ -100,7 +143,18 @@ func _build_trees() -> void:
 			mmi.material_override = mat
 			add_child(mmi)
 			count += xs.size()
-	print_verbose("[trackside] %d trees" % count)
+	return count
+
+
+## Middle of the band the pit garages and paddock trucks take (every 5 m).
+func _pit_garage_points() -> PackedVector2Array:
+	var out := PackedVector2Array()
+	var front := track.pit_width * 0.5 + 3.0
+	var d := track.pit_limit_start - 10.0
+	while d <= track.pit_limit_end + 10.0:
+		out.append(track.pit_position_at(d, track.pit_side * (front + 15.0)))
+		d += 5.0
+	return out
 
 
 var _blocked: Array[Rect2] = []
@@ -372,7 +426,7 @@ func _build_pit_buildings() -> void:
 			var off := side * (front + depth + 8.0 + row * 9.0)
 			var c := track.pit_position_at(dd, off)
 			var dir := Vector2.from_angle(track.pit_heading_at(dd))
-			if tv.clearance(c) > 12.0:
+			if tv.clearance(c) > 12.0 and (scenery == null or not scenery.is_built_on(c)):
 				_truck(st, c, dir, team_cols[(k + row * 3) % team_cols.size()])
 		dd += 12.0
 		k += 1

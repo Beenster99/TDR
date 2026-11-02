@@ -19,6 +19,15 @@ occlusion and glow. The camera always shows this full 3D scene at every zoom
 - `Trackside` adds woods, grandstands with crowds, pit garages, the paddock
   and the start gantry. Placement comes from the track's shape and is the
   same every time for the same track.
+- `Scenery` replaces the made-up trackside with the real one on tracks that
+  have `data/scenery/<id>.json` (Silverstone so far): every building at its
+  real size and height, the named grandstands (seats facing the circuit,
+  roofs on the big ones), road and foot bridges, trees and hedges where they
+  really stand, and a painted ground map under it all (fields with
+  tramlines, woods, car parks with their bays, roads, paths, ponds, sand and
+  the circuit's other loops) that the terrain shader blends over the grass.
+  Settings > Graphics > Trackside switches it off (`GfxSettings.real_scenery`).
+  See "Real trackside scenery" below for how the data is made.
 - `CarView` is one car: its model, livery, wheels, lights, spray, tyre smoke
   and the bits that come off it in a crash.
 - `WeatherView` puts rain on the screen; light, wet roads and spray are 3D.
@@ -144,6 +153,35 @@ its shape file so the builder leaves it alone. To replace a car with a better
 model, export it with the same part and material names and the same car space:
 +X forward, +Y left, +Z up in Blender, with the origin on the ground at the
 car's centre of gravity.
+
+## Real trackside scenery
+
+`tools/build_scenery.py <track>` makes `data/scenery/<track>.json` from open
+data only, so it can ship in the game:
+
+- **OpenStreetMap** (ODbL, credited in the file's `sources`): building
+  footprints and names, grandstands, landuse (fields, woods, grass, car
+  parks, water, sand), roads, paths, hedges, bridges, single trees.
+- **Environment Agency LIDAR** (England, 1 m surface model, Open Government
+  Licence), for tracks with `"lidar": "ea_england"` in
+  `tools/scenery.json`: the real height of each building and bridge, and
+  each tree and hedge found where it stands (the surface minus an estimate of
+  the bare ground). Deep inside big woods the estimate fails, so those are
+  filled with trees. Without LIDAR, heights come from OpenStreetMap
+  (`height`, `building:levels`) or defaults and woods are filled evenly.
+- Satellite imagery (Google Maps and the like) is **not** used: its terms
+  forbid copying it. It's fine as a reference when checking a result.
+
+The tool reads the track's `geo` block (written by the tracks module's
+`build_tracks.py`) to line map data up with the circuit, covers the whole
+terrain square, and drops anything that would stand on the track or pit
+lane (where OpenStreetMap and the track disagree by a few metres). The
+ground map is a 1.5 m per pixel WebP picture inside the JSON. To add a
+track: build the track first, add it to `tools/scenery.json` (with
+`"lidar": "ea_england"` for English circuits), run the tool, check a
+screenshot (`-- --single --track <id> --zoom 1 --screenshot out.png`).
+Needs numpy and Pillow, plus scipy, pyproj and tifffile for LIDAR.
+Downloads are cached in `~/.cache/tdr-tracks`.
 
 ## Performance
 

@@ -208,6 +208,8 @@ func _register_defaults() -> void:
 	register_setting("graphics", "glow", "Glow and lights bloom", [[true, "On"], [false, "Off"]], true)
 	register_setting("graphics", "trees", "Trees", [[0.0, "None"], [0.5, "Few"], [1.0, "Normal"],
 		[1.5, "Dense"]], 1.0, "Takes effect at the next race.")
+	register_setting("graphics", "real_scenery", "Trackside", [[true, "Real (from map data)"], [false, "Simple"]], true,
+		"Real: the buildings, grandstands, trees and fields really around the circuit, where we have the map data (Silverstone so far). Takes effect at the next race.")
 	register_setting("graphics", "camera_tilt", "Camera tilt", [[0.0, "Straight down"], [6.0, "Slight"],
 		[12.0, "Normal"], [20.0, "Strong"], [28.0, "Very strong"]], 12.0, "How far the camera leans to show hills and the sides of cars.")
 	register_setting("graphics", "menu_video", "Menu background", [[true, "Race highlights"], [false, "Plain"]], true)

@@ -100,6 +100,8 @@ static func apply(tree: SceneTree, key: String) -> void:
 			GfxSettings.glow = bool(v)
 		"trees":
 			GfxSettings.trees = float(v)
+		"real_scenery":
+			GfxSettings.real_scenery = bool(v)
 		"camera_tilt":
 			GfxSettings.tilt_deg = float(v)
 		_:
