@@ -87,6 +87,10 @@ var yellows: Array = []
 ## Per car
 var stranded_t: PackedFloat64Array = []   ## seconds stopped on the circuit
 var recovered: PackedByteArray = []       ## marshals have dealt with it (ignored from now on)
+var carried: PackedByteArray = []         ## a recovery vehicle has it (lifted or on the strap)
+## Recovery vehicles at work (CarRecovery jobs, one per retired car out on the
+## circuit). Draw them from recovery_vehicles().
+var recoveries: Array = []
 var _cleared: PackedByteArray = []        ## a live stopped car the marshals have made safe (yellow only)
 var vsc_delta: PackedFloat64Array = []    ## seconds; below 0 = faster than allowed
 var vsc_warned: PackedByteArray = []
@@ -111,6 +115,7 @@ func _init(p_sim: RaceSim) -> void:
 	var n := sim.cars.size()
 	stranded_t.resize(n)
 	recovered.resize(n)
+	carried.resize(n)
 	_cleared.resize(n)
 	vsc_delta.resize(n)
 	vsc_warned.resize(n)
@@ -124,6 +129,29 @@ func _init(p_sim: RaceSim) -> void:
 
 
 # --- Queries (AI, HUD, other race rules) ------------------------------------
+
+## True once car i is no longer driven by the physics: craned / towed away,
+## or recovered and gone.
+func out_of_play(i: int) -> bool:
+	return recovered[i] == 1 or carried[i] == 1
+
+
+## What to draw for each recovery vehicle at work: see CarRecovery.view().
+func recovery_vehicles() -> Array:
+	var out := []
+	for job in recoveries:
+		if not job["done"]:
+			out.append(CarRecovery.view(job))
+	return out
+
+
+## The recovery job for car i, or {} when there is none.
+func recovery_for(i: int) -> Dictionary:
+	for job in recoveries:
+		if int(job["car"]) == i:
+			return job
+	return {}
+
 
 func mode_name() -> String:
 	return MODE_NAMES[mode]
@@ -284,11 +312,13 @@ func step(dt: float, prev_s: PackedFloat64Array) -> void:
 		if mode != Mode.GREEN or not yellows.is_empty() or sc_visible:
 			_end_all_on_chequered()
 		_update_safety_car(dt)
+		_update_recoveries(dt)
 		return
 	if not racing:
 		return
 	_read_incidents()
 	_track_stranded(dt)
+	_update_recoveries(dt)
 	_expire_yellows()
 	_escalate()
 	_update_mode()
@@ -335,16 +365,64 @@ func _track_stranded(dt: float) -> void:
 			_cleared[i] = 0
 		if stranded_t[i] >= STRANDED_YELLOW_S:
 			_add_yellow(c.track_s, i, "Car stopped")
+		if e.dnf:
+			# A retired car: send a crane or a tractor once it has come to rest.
+			if stranded_t[i] >= STRANDED_VSC_S and c.speed() < STOPPED_SPEED and recovery_for(i).is_empty():
+				_dispatch_recovery(i)
+			continue
 		var limit := RECOVERY_SC_S if mode == Mode.SC else RECOVERY_VSC_S
 		if stranded_t[i] > limit + STRANDED_VSC_S:
-			# Marshals have pushed it clear / craned it away.
-			if e.dnf:
-				recovered[i] = 1
-				sim.events.append({"type": "flag", "flag": "recovered", "car": i,
-					"reason": "%s's car has been recovered" % e.driver_name})
+			_cleared[i] = 1  # a live car the marshals have pushed clear: yellow flag only
+			stranded_t[i] = STRANDED_YELLOW_S
+
+
+# --- Recovery vehicles ---------------------------------------------------------
+
+func _dispatch_recovery(i: int) -> void:
+	var c := sim.cars[i]
+	var job := CarRecovery.plan(sim.track, i, c.pos, c.heading, c.track_s, c.lateral_offset, sim.defs[i].length)
+	recoveries.append(job)
+	var what := "Crane" if job["kind"] == CarRecovery.CRANE else "Tractor"
+	_event({"type": "flag", "flag": "recovery", "car": i, "kind": job["kind"],
+		"reason": "%s sent to recover %s's car" % [what, sim.entries[i].driver_name]})
+
+
+func _update_recoveries(dt: float) -> void:
+	var k := 0
+	while k < recoveries.size():
+		var job: Dictionary = recoveries[k]
+		var i: int = job["car"]
+		CarRecovery.step(job, dt)
+		if job["carrying"] and not recovered[i]:
+			if sim.external[i]:
+				recovered[i] = 1  # simulated on its owner's machine: just take it off
 			else:
-				_cleared[i] = 1  # still there, but safe: yellow flag only
-			stranded_t[i] = 0.0 if e.dnf else STRANDED_YELLOW_S
+				carried[i] = 1
+				_carry(i, job)
+		if job["done"]:
+			if not recovered[i]:
+				recovered[i] = 1
+				var how := "craned away" if job["kind"] == CarRecovery.CRANE else "towed away"
+				_event({"type": "flag", "flag": "recovered", "car": i,
+					"reason": "%s's car has been %s" % [sim.entries[i].driver_name, how]})
+			carried[i] = 0
+			stranded_t[i] = 0.0
+			recoveries.remove_at(k)
+			continue
+		k += 1
+
+
+## Puts the car where the recovery vehicle has it.
+func _carry(i: int, job: Dictionary) -> void:
+	var c := sim.cars[i]
+	c.pos = job["car_pos"]
+	c.heading = job["car_heading"]
+	c.vel = Vector2.from_angle(c.heading) * float(job["speed"]) if job["kind"] == CarRecovery.TRACTOR else Vector2.ZERO
+	c.yaw_rate = 0.0
+	var q := sim.track.project(c.pos, c.track_idx)
+	c.track_idx = q["idx"]
+	c.track_s = q["s"]
+	c.lateral_offset = q["offset"]
 
 
 func _on_racing_surface(i: int) -> bool:
@@ -355,6 +433,7 @@ func _on_racing_surface(i: int) -> bool:
 func _escalate() -> void:
 	var danger := 0.0
 	var stranded := 0
+	var recovering := 0
 	for i in sim.cars.size():
 		var t := stranded_t[i]
 		if t < STRANDED_YELLOW_S:
@@ -363,14 +442,20 @@ func _escalate() -> void:
 		if _cleared[i]:
 			continue
 		var on_track := _on_racing_surface(i)
-		var retired := sim.entries[i].dnf
-		if on_track and t >= STRANDED_SC_S:
+		if sim.entries[i].dnf:
+			# A retired car out on the circuit needs a recovery vehicle on
+			# track: safety car until the car is clear.
+			var job := recovery_for(i)
+			if t >= STRANDED_VSC_S and (job.is_empty() or not CarRecovery.car_clear(job)):
+				danger = maxf(danger, 2.0)
+				recovering += 1
+		elif on_track and t >= STRANDED_SC_S:
 			danger = maxf(danger, 2.0)
-		elif (on_track and t >= STRANDED_VSC_S) or (retired and t >= STRANDED_VSC_S):
+		elif on_track and t >= STRANDED_VSC_S:
 			danger = maxf(danger, 1.0)
 	var live := 0
 	for i in sim.cars.size():
-		if stranded_t[i] >= STRANDED_YELLOW_S and not _cleared[i]:
+		if stranded_t[i] >= STRANDED_YELLOW_S and not _cleared[i] and not _clear_retired(i):
 			live += 1
 	if live >= 3:
 		danger = 2.0
@@ -383,9 +468,17 @@ func _escalate() -> void:
 		return
 	var final_lap := _leader_laps() >= sim.settings.laps - 1
 	if danger >= 2.0 and mode != Mode.SC and not final_lap:
-		_deploy_sc("Car stopped on track" if stranded < 2 else "Multiple cars stopped")
+		_deploy_sc("Recovery vehicle on track" if recovering > 0 else ("Car stopped on track" if stranded < 2 else "Multiple cars stopped"))
 	elif danger >= 1.0 and mode == Mode.GREEN:
 		_deploy_vsc("Car stopped" if stranded == 1 else "Incident")
+
+
+## A retired car that a recovery vehicle has already got off the circuit.
+func _clear_retired(i: int) -> bool:
+	if not sim.entries[i].dnf:
+		return false
+	var job := recovery_for(i)
+	return recovered[i] == 1 or (not job.is_empty() and CarRecovery.car_clear(job))
 
 
 func _deploy_vsc(why: String) -> void:
@@ -562,6 +655,8 @@ func _place_sc() -> void:
 
 ## Client: carry the SC along between race-state updates.
 func follower_step(dt: float) -> void:
+	for job in recoveries:
+		CarRecovery.step(job, dt)
 	if not sc_visible:
 		return
 	if sc_in_pit:
@@ -879,6 +974,7 @@ func to_dict(full := false) -> Dictionary:
 		"yellows": yellows.duplicate(true), "vsc_delta": vsc_delta.duplicate(),
 		"unlapping": unlapping.duplicate(), "released": released.duplicate(), "recovered": recovered.duplicate(),
 		"give_back": give_back.duplicate(true), "restart_lap": _restart_lap,
+		"recoveries": recoveries.duplicate(true), "carried": carried.duplicate(),
 	}
 	if full:
 		d["full"] = {"stranded_t": stranded_t.duplicate(), "cleared": _cleared.duplicate(),
@@ -906,7 +1002,8 @@ func apply_dict(d: Dictionary) -> void:
 	yellows = d.get("yellows", []).duplicate(true)
 	_restart_lap = d.get("restart_lap", 0)
 	give_back = d.get("give_back", {}).duplicate(true)
-	for k in ["vsc_delta", "unlapping", "released", "recovered"]:
+	recoveries = d.get("recoveries", []).duplicate(true)
+	for k in ["vsc_delta", "unlapping", "released", "recovered", "carried"]:
 		if d.has(k) and d[k].size() == get(k).size():
 			set(k, d[k].duplicate())
 	if d.has("full"):

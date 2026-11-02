@@ -228,6 +228,9 @@ func _register_defaults() -> void:
 	register_number("sound", "vol_engine", "Engines", 0, 100, 5, 100, "%")
 	register_number("sound", "vol_effects", "Tyres, crashes and effects", 0, 100, 5, 100, "%")
 	register_number("sound", "vol_ui", "Menus", 0, 100, 5, 80, "%")
+	register_number("sound", "vol_radio", "Team radio", 0, 100, 5, 90, "%")
+	register_setting("sound", "radio_voice", "Radio read-out", [[true, "On"], [false, "Off"]], true,
+		"Reads pit wall messages to the driver out loud, with radio crackle (uses the computer's own voice).")
 	register_setting("sound", "splash_sound", "Intro sound", [[true, "On"], [false, "Off"]], true)
 	# Debug
 	register_setting("debug", "show_fps", "Frame rate counter", [[false, "Off"], [true, "On"]], false)
