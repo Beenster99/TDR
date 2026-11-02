@@ -433,11 +433,14 @@ func test_ai_race_completes() -> Dictionary:
 	var t_start := lerpf(sim.env.ambient_c, sim.env.track_c, 0.4)
 	var warm := 0
 	var left_hotter := 0
-	for c in sim.cars:
+	for i in sim.car_count():
+		var c := sim.cars[i]
 		var avg := (c.tyre_temp[0] + c.tyre_temp[1] + c.tyre_temp[2] + c.tyre_temp[3]) / 4.0
-		if avg > t_start + 20.0: warm += 1
+		# Cars still racing at the end (a crippled car crawling round, or the
+		# field behind the safety car, runs cooler).
+		if avg > t_start + 20.0 or not sim.entries[i].finished: warm += 1
 		if c.tyre_temp[CarState.FL] > c.tyre_temp[CarState.FR]: left_hotter += 1
-	check(warm == sim.car_count(), "tyres warm up from %.0f C during the race" % t_start)
+	check(warm == sim.car_count(), "tyres warm up from %.0f C during the race (finishers)" % t_start)
 	check(left_hotter > sim.car_count() / 2, "left tyres run hotter on a clockwise track (%d/%d)" % [left_hotter, sim.car_count()])
 	var best := INF
 	for e in sim.entries:
