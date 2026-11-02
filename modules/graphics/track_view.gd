@@ -28,11 +28,14 @@ var curvature := PackedFloat64Array()  ## signed, + = turning right
 ## Clearance field: for each cell, roughly how far the nearest bit of tarmac
 ## (track or pit lane) is. Used to keep walls from folding at hairpins and
 ## to place trees and buildings away from the circuit.
-const FIELD_CELL := 4.0
+const FIELD_CELL := 6.0
 const FIELD_REACH := 90.0
 var _field := PackedFloat32Array()
 var _field_origin := Vector2.ZERO
 var _field_size := Vector2i.ZERO
+var _field_idx := PackedInt32Array()
+var _field_td := PackedFloat32Array()   ## distance to the track only (for _field_idx)
+var _pit_rect := Rect2()
 var _noise_tex: NoiseTexture2D
 
 
@@ -76,40 +79,74 @@ func set_conditions(wetness: float, dry_line: float) -> void:
 	terrain_material.set_shader_parameter("wetness", wetness)
 
 
-# --- Heights (flat until TrackData has elevation) ----------------------------
+# --- Heights (all flat on a track without elevation data) -------------------
 
 func has_elevation() -> bool:
-	return track.has_method("has_elevation") and track.call("has_elevation")
+	return track.has_elevation()
 
 
 func height(s: float, off: float) -> float:
-	return track.call("height_at", s, off) if track.has_method("height_at") else 0.0
+	return track.height_at(s, off)
 
 
 func ground_height(p: Vector2) -> float:
-	if track.has_method("ground_height_at"):
-		return track.call("ground_height_at", p)
-	return 0.0
+	return track.ground_height_at(p)
 
 
-## Height of the driving surface (track, pit lane or ground) under a point.
-func surface_height(p: Vector2) -> float:
-	if track.has_method("surface_height_at"):
-		return track.call("surface_height_at", p)
-	return 0.0
+## Height of the driving surface (track, pit lane, run-off easing into the
+## hillside) under a point. hint = a nearby centre-line index (-1 = search all).
+func surface_height(p: Vector2, hint := -1) -> float:
+	if not track.has_elevation():
+		return 0.0
+	if hint < 0:
+		hint = nearest_index(p)
+	return track.surface_height_at(p, hint)
 
 
-func surface_normal(p: Vector2) -> Vector3:
-	if track.has_method("surface_normal_at"):
-		return track.call("surface_normal_at", p)
-	return Vector3.UP
+func surface_normal(p: Vector2, hint := -1) -> Vector3:
+	if not track.has_elevation():
+		return Vector3.UP
+	if hint < 0:
+		hint = nearest_index(p)
+	return track.surface_normal_at(p, hint)
+
+
+## Height of the terrain mesh at a point (what trees and buildings stand on):
+## the hillside, easing into the road's edges near the circuit (the same
+## blend as TrackData.surface_height_at, done locally so it's fast).
+func terrain_height(p: Vector2) -> float:
+	if not track.has_elevation():
+		return 0.0
+	if clearance(p) >= track.runoff + 70.0:
+		return track.ground_height_at(p)
+	if _pit_rect.has_point(p):
+		return track.surface_height_at(p, nearest_index(p))
+	var i := nearest_index(p)
+	var d := track.seg_dir[i]
+	var rel := p - track.points[i]
+	var s := track.cum_s[i] + rel.dot(d)
+	var off := rel.dot(Vector2(-d.y, d.x))
+	var edge: float = (track.width_right[i] if off >= 0.0 else track.width_left[i]) + track.kerb_width
+	var road := track.height_at(s, clampf(off, -edge, edge))
+	if absf(off) <= edge:
+		return road
+	var t := clampf((absf(off) - edge) / (track.runoff + 60.0), 0.0, 1.0)
+	return lerpf(road, track.ground_height_at(p), t * t * (3.0 - 2.0 * t))
 
 
 func pit_height(d: float) -> float:
-	return track.call("pit_height_at", d) if track.has_method("pit_height_at") else 0.0
+	return track.pit_height_at(d)
 
 
 # --- Clearance field ----------------------------------------------------------
+
+## Nearest centre-line point index (from the clearance field; cheap).
+func nearest_index(p: Vector2) -> int:
+	var c := Vector2i(((p - _field_origin) / FIELD_CELL).floor())
+	if c.x < 0 or c.y < 0 or c.x >= _field_size.x or c.y >= _field_size.y:
+		return 0
+	return maxi(_field_idx[c.y * _field_size.x + c.x], 0)
+
 
 func clearance(p: Vector2) -> float:
 	var c := Vector2i(((p - _field_origin) / FIELD_CELL).floor())
@@ -123,15 +160,24 @@ func _build_field() -> void:
 	_field_size = Vector2i((bounds.size / FIELD_CELL).ceil()) + Vector2i.ONE
 	_field.resize(_field_size.x * _field_size.y)
 	_field.fill(FIELD_REACH)
+	_field_idx.resize(_field.size())
+	_field_idx.fill(0)
+	_field_td.resize(_field.size())
+	_field_td.fill(INF)
 	var n := track.point_count()
-	for i in range(0, n, 2):
-		_stamp(track.points[i], maxf(track.width_left[i], track.width_right[i]))
 	if track.has_pit_lane():
+		_pit_rect = Rect2(track.pit_path[0], Vector2.ZERO)
 		for p in track.pit_path:
-			_stamp(p, track.pit_width * 0.5)
+			_stamp(p, track.pit_width * 0.5, -1)
+			_pit_rect = _pit_rect.expand(p)
+		_pit_rect = _pit_rect.grow(track.pit_width + 40.0)
+	for i in range(0, n, 2):
+		_stamp(track.points[i], maxf(track.width_left[i], track.width_right[i]), i)
 
 
-func _stamp(p: Vector2, half_w: float) -> void:
+## idx = centre-line point (-1 for the pit lane: it only blocks, the nearest
+## track point is still recorded from the track stamps).
+func _stamp(p: Vector2, half_w: float, idx: int) -> void:
 	var r := int(ceil((FIELD_REACH + half_w) / FIELD_CELL))
 	var c := Vector2i(((p - _field_origin) / FIELD_CELL).floor())
 	for y in range(maxi(c.y - r, 0), mini(c.y + r + 1, _field_size.y)):
@@ -142,6 +188,9 @@ func _stamp(p: Vector2, half_w: float) -> void:
 			var k := y * _field_size.x + x
 			if d < _field[k]:
 				_field[k] = d
+			if idx >= 0 and d < _field_td[k]:
+				_field_td[k] = d
+				_field_idx[k] = idx
 
 
 # --- Building blocks -----------------------------------------------------------
@@ -157,6 +206,10 @@ func _bounds() -> void:
 		hi = hi.max(p)
 	var m := track.runoff + 420.0
 	bounds = Rect2(lo - Vector2(m, m), hi - lo + Vector2(2 * m, 2 * m))
+	# Fill a widescreen (or tall) window at the whole-track zoom in any
+	# direction: the camera can turn with the car.
+	var side := maxf(bounds.size.x, bounds.size.y) * 1.5
+	bounds = Rect2(bounds.get_center() - Vector2(side, side) * 0.5, Vector2(side, side))
 
 
 func _make_noise() -> NoiseTexture2D:
@@ -198,19 +251,23 @@ func _mesh_node(st: SurfaceTool, mat: Material, node_name: String, shadows := fa
 # --- Terrain -------------------------------------------------------------------
 
 func _build_terrain() -> void:
-	var cell := 12.0
+	var cell := 16.0 if not has_elevation() else 10.0
+	var has_elev := has_elevation()
 	var nx := int(ceil(bounds.size.x / cell))
 	var ny := int(ceil(bounds.size.y / cell))
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var lift := -0.05
 	for y in ny + 1:
 		for x in nx + 1:
 			var p := bounds.position + Vector2(x, y) * cell
-			var mown := 1.0 - smoothstep(track.runoff + 20.0, track.runoff + 60.0, clearance(p))
+			var cl := clearance(p)
+			var mown := 1.0 - smoothstep(track.runoff + 20.0, track.runoff + 60.0, cl)
+			# near the circuit the ground eases into the road's edges
+			# sink the grass a little under the run-off so tarmac never clips
+			var hy := terrain_height(p) - (0.3 if cl < track.runoff + 8.0 else 0.05)
 			st.set_color(Color(mown, 0, 0))
 			st.set_uv(p)
-			st.add_vertex(Vector3(p.x, ground_height(p) + lift, p.y))
+			st.add_vertex(Vector3(p.x, hy, p.y))
 	for y in ny:
 		for x in nx:
 			var a := y * (nx + 1) + x
@@ -341,7 +398,7 @@ func _build_walls() -> void:
 
 
 func _in_pit_area(q: Vector2) -> bool:
-	if not track.has_pit_lane():
+	if not track.has_pit_lane() or not _pit_rect.has_point(q):
 		return false
 	var pr := track.project_pit(q)
 	return pr.get("dist", INF) < track.pit_width * 0.5 + 6.0 if pr.has("dist") else false
@@ -357,8 +414,8 @@ func _wall(st: SurfaceTool, run: Array) -> void:
 		if d.length() < 0.01 or d.length() > 30.0:
 			continue
 		var nn := Vector2(-d.y, d.x).normalized() * w * 0.5
-		var ha := height(run[j][1], run[j][2])
-		var hb := height(run[j + 1][1], run[j + 1][2])
+		var ha := terrain_height(a) + 0.3
+		var hb := terrain_height(b) + 0.3
 		var shade: float = 0.72 if (int(run[j][1] / 6.0) % 2 == 0) else 0.8
 		var top := Color(shade, shade, shade * 0.98)
 		var face := Color(shade * 0.85, shade * 0.85, shade * 0.84)
@@ -421,7 +478,7 @@ func _build_tyre_walls(spots: Array) -> void:
 		for row in 2:
 			for k in 8:
 				var q := p + d * (k * 0.66 - 2.6) + nrm * (row * 0.62 - 0.31)
-				xs.append(Transform3D(Basis(), Vector3(q.x, ground_height(q) + 0.4, q.y)))
+				xs.append(Transform3D(Basis(), Vector3(q.x, terrain_height(q) + 0.4, q.y)))
 				var band := (k + row) % 4 == 0
 				cs.append(Color(0.85, 0.85, 0.85) if band else Color(0.08, 0.08, 0.08))
 	mm.instance_count = xs.size()
@@ -512,7 +569,7 @@ func _build_pit_lane() -> void:
 	var dd := track.pit_limit_start
 	while dd <= track.pit_limit_end:
 		var off := -track.pit_side * (w * 0.5 + 0.6)
-		wall.append([track.pit_position_at(dd, off), 0.0, 0.0, 0])
+		wall.append([track.pit_position_at(dd, off), 0.0, 0.0, -1])
 		dd += 4.0
 	if wall.size() >= 2:
 		var ws := SurfaceTool.new()
