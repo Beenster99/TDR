@@ -1,7 +1,7 @@
 {
   "id": "graphics",
   "name": "Graphics",
-  "version": "2.7.0",
+  "version": "2.8.0",
   "status": "active",
   "summary": "Drawing the world in 3D: the track and terrain, trackside (trees, grandstands, pits), the Blender-built car models with liveries, sun, sky, weather and the camera.",
   "depends": {
@@ -18,7 +18,8 @@
     "GfxSettings",
     "DrivingLineView",
     "PitCrews",
-    "OnboardCamera"
+    "OnboardCamera",
+    "PitGuideView"
   ],
   "internal": [
     "Trackside",
