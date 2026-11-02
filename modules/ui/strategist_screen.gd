@@ -7,7 +7,9 @@ extends Control
 ## other teams' radio and strategy calls.
 ##
 ## Controller first: D-pad up/down picks a car, left/right filters the feed,
-## B (or P / Esc) closes. Drawn immediate-mode at 1600x900 and scaled by
+## B (or P / Esc) closes. Pit wall players (not driving) can watch the
+## selected car's onboard camera (OnboardCamera) above the feed: Y / C
+## switches front, rear, off. Drawn immediate-mode at 1600x900 and scaled by
 ## the window's stretch, so it stays sharp at 4K.
 
 const FILTERS := [["All", []], ["Radio", ["radio"]], ["Strategy", ["strategy"]], ["Pit", ["pit"]],
@@ -30,6 +32,9 @@ var _sweep := 0.0
 var _note := ""                 ## a short line after a pit call (driver change)
 var _note_time := 0.0
 var _track_pts := PackedVector2Array()
+## Onboard camera for the selected car (set by the race scene; null = none).
+var onboard: OnboardCamera
+var cam_mode := 0               ## 0 off, 1 front, 2 rear
 
 
 func setup(p_session: RaceSession) -> void:
@@ -90,6 +95,8 @@ func _input(event: InputEvent) -> void:
 		var now := ch.find(str(session.sim.entries[me].pit["plan"].get("wheels", PitRules.WHEELS_ALL)))
 		var step := 1 if event.button_index == JOY_BUTTON_RIGHT_SHOULDER else -1
 		session.request_pit(me, {"wheels": ch[posmod(now + step, ch.size())]})
+	elif event.is_action_pressed("camera_toggle") and _cam_allowed():
+		cam_mode = (cam_mode + 1) % 3
 	elif event is InputEventJoypadButton and event.button_index == JOY_BUTTON_Y and session.local_car >= 0:
 		_note = RaceHud.toggle_driver_change(session, session.local_car)
 		_note_time = 3.0
@@ -104,7 +111,25 @@ func _process(delta: float) -> void:
 	size = get_viewport_rect().size
 	_sweep = fmod(_sweep + delta * 1.6, TAU)
 	_note_time = maxf(_note_time - delta, 0.0)
+	if _pip_on():
+		OnboardPip.feed(self, onboard, _pip_rect(), selected, cam_mode == 2)
 	queue_redraw()
+
+
+## The onboard camera is for the pit wall (players not driving).
+func _cam_allowed() -> bool:
+	return onboard != null and session.local_car < 0
+
+
+func _pip_on() -> bool:
+	return _cam_allowed() and cam_mode > 0 and selected >= 0 and selected < session.sim.car_count()
+
+
+var _pip_at := Rect2()   ## where the right column leaves room for the picture
+
+
+func _pip_rect() -> Rect2:
+	return _pip_at
 
 
 # --- Drawing helpers ------------------------------------------------------------
@@ -182,8 +207,16 @@ func _draw() -> void:
 	var car_h := 236.0
 	_draw_car(Rect2(rx, 58 + radar_h + 10, rw, car_h), sim, tel)
 	var fy := 58 + radar_h + 10 + car_h + 10
+	# The picture takes the feed's place (the feed is back when it's off).
+	var ph := minf(rw * 9.0 / 16.0, vp.y - fy - 40)
+	_pip_at = Rect2(rx + (rw - ph * 16.0 / 9.0) * 0.5, fy + 3, ph * 16.0 / 9.0, ph)
+	if _pip_on():
+		OnboardPip.draw(self, font, onboard, _pip_at, session, selected, cam_mode == 2)
+		fy += _pip_at.size.y + 12
 	_draw_feed(Rect2(rx, fy, rw, vp.y - fy - 34), tel)
 	var keys := "D-pad ↑↓ choose car    ←→ filter feed    B / P close"
+	if _cam_allowed():
+		keys += "    Y / C onboard camera: " + ["off", "front", "rear"][cam_mode]
 	if session.local_car >= 0 and sim.pits.enabled:
 		keys += "    LB / RB (Y key) tyres to change    Y (N key) driver change"
 	_text(Vector2(16, vp.y - 12), keys + "    The race keeps running", 13, DIM)

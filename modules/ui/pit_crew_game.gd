@@ -7,8 +7,9 @@ extends Control
 ## lollipop, the fuel, the air lance, the release), and the car drops once
 ## both sides are done, so how well the gunners play decides the stop time.
 ##
-##  1. While the car comes down the lane, run your mechanic to your front
-##     wheel (stick / WASD).
+##  1. While the pit guide brings the car down the lane, run your mechanic
+##     to your front wheel (stick / WASD). A driver driving in themselves
+##     gets their mechanic once the car stops.
 ##  2. In the box, once the fuel is in (tyres wait for the fuel), at a
 ##     wheel: HOLD the gun (RT / A / Space) to undo the nut. The old wheel
 ##     comes off and the new one goes on by itself.
@@ -129,6 +130,20 @@ func is_active() -> bool:
 	return stage == Stage.READY or stage == Stage.BOX
 
 
+## The player's hands are on the mechanic: in the box, or in the lane while
+## the pit guide drives (a driver driving their own stop in, PitRules
+## self_drives, is still driving until the car stops).
+func hands_free() -> bool:
+	if stage == Stage.BOX:
+		return true
+	return stage == Stage.READY and not (session.local_car == car and _sim().pits.self_drives(car))
+
+
+## The race scene closes the camera in on the box while this is true.
+func wants_close_view() -> bool:
+	return hands_free()
+
+
 # --- Every frame -------------------------------------------------------------
 
 func _process(delta: float) -> void:
@@ -144,7 +159,7 @@ func _process(delta: float) -> void:
 ## Keeps the gunner's controls to the game while it's on (the crew console
 ## would take A / Enter as its own button).
 func _input(event: InputEvent) -> void:
-	if not is_active():
+	if not hands_free():
 		return
 	for a in ["crew_gun", "crew_up", "crew_down", "crew_left", "crew_right"]:
 		if event.is_action(a):
@@ -157,7 +172,7 @@ func _input(event: InputEvent) -> void:
 ## gun: the gun is held.
 func step(dt: float, move := Vector2.ZERO, gun := false) -> void:
 	_flash_t -= dt
-	if autoplay and is_active():
+	if autoplay and hands_free():
 		var a := _auto()
 		move = a[0]
 		gun = a[1]
@@ -181,7 +196,7 @@ func step(dt: float, move := Vector2.ZERO, gun := false) -> void:
 			elif not _coming_in(car):
 				session.request_pit(car, {"crew": {"side": side, "play": false}})
 				_stop(Stage.IDLE)
-			else:
+			elif hands_free():
 				_run(dt, move)
 		Stage.BOX:
 			clock += dt

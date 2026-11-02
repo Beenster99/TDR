@@ -37,12 +37,34 @@ Command line: `--fuel 2 --tyre-wear 2 --pit-stops 1 --drivers 2`.
    (co-op pit crew, when the host allows car setups) `setup`: new values for
    the front splitter, rear wing and tyre pressures, applied in the box (see
    docs/PIT_WALL_ROLES.md).
-2. **Driving in.** With a box call, the car is driven in automatically from
-   about 300 m before the pit entry (the pit guide follows a route along the
-   pit side of the track, then the lane). A player can also drive into the
-   lane themselves: they must be down to the limit (60 km/h) at the limit
-   line or get a 5 s penalty; the pit limiter button cuts the power above
-   the limit. From the limit line the guide takes the car to its box.
+2. **Driving in.** A player drives their own stop (Settings > Gameplay >
+   Pit stops: "Drive in yourself", the default; solo and co-op, whoever is
+   at the wheel): with a box call, a dashed pit guide line leads from the
+   track into the lane and onto their box (`PitRules.guide_line`, drawn by
+   graphics `PitGuideView`), blue where the speed is fine, yellow to get
+   ready, red where they must brake to make the limit by the limit line or
+   to stop on the box. Lines across the lane mark where the limit starts
+   and ends and the box is outlined; the HUD's pit lane guide shows the
+   metres to the limit line / box and BRAKE, STOP cues (`guide_info`). They
+   must be at the limit (60 km/h) at the limit line or get a 5 s penalty;
+   from there the limiter is held on to the end of the limit. In the box:
+   stopped within 3 m short / 2 m past the marks and 2.6 m sideways is spot
+   on; up to 12 m past costs 1 s + 0.35 s a metre (the crew move to the
+   car); further than that the box is missed and the call stays for the
+   next lap. After the stop they drive out themselves. With "Automatic",
+   and for AI cars, the car is driven in from about 300 m before the pit
+   entry (the guide follows a route along the pit side of the track, then
+   the lane), to its box and out to the end of the limit. A player can also
+   just drive into the lane without a box call: from the limit line the
+   guide takes the car to its box. A car handed to an AI co-driver mid-stop
+   goes back to the guide (`set_self_drive`).
+   **Single player pit call menu** (Settings > Gameplay > Pit call menu):
+   calling a stop opens a quick menu and the race waits while it's open:
+   tyres, which tyres, front splitter and rear wing (when the race allows
+   car setups and the car's wings adjust), fuel and repairs, with the stop
+   time worked out as you go (ui `PitCallMenu`). A / Enter or the box
+   button again: box this lap; B / Esc: no stop. Online the keys and the
+   pit wall do this, as the race can't wait.
 3. **The stop.** Stop time = 2.5 s (car up and down) + refuelling (3 L/s), then
    the tyre change (tyres only once the fuel is in, as in the WEC rules,
    `PitRules.TYRES_AFTER_FUEL`; +0.2 s to get the hose off) + repairs (`CarDamage.repair_time`, parts
@@ -120,7 +142,7 @@ Events: `pit_request`, `pit_entry`, `pit_box` (with the work), `pit_stop`
 
 | | Keyboard | Pad |
 |---|---|---|
-| Box this lap (toggle) | B | D-pad left |
+| Box this lap (toggle; single player opens the pit call menu) | B | D-pad left |
 | Pit limiter | L | L3 |
 | Next stop's tyres | T | B (when the pit wall is closed) |
 | Next stop's fuel | F | (auto: to the end) |

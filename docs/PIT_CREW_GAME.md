@@ -42,8 +42,12 @@ default, per player. A side nobody plays is the AI's.
 | Pit wall player, AI co-driver driving | the pit wall player | AI |
 | Strategist (3-player crew) | doesn't gun | |
 
-The pit guide drives the car down the lane and into the box, so the
-driver's hands are free.
+When the pit guide drives the car down the lane, the driver's hands are
+free there. A driver who drives their own stop in (Settings > Gameplay >
+Pit stops, the default) keeps driving until the car stops on its marks,
+then takes their mechanic (and the camera closes in then). Stopping past
+the marks costs the crew time (`work["overshoot_s"]`): the whole crew
+timeline starts that much later.
 
 ### Controls
 

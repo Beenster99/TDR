@@ -36,6 +36,7 @@ func _init() -> void:
 	test_pit_rules()
 	test_pit_setup_changes()
 	test_pit_crew_game()
+	test_pit_self_drive()
 	test_car_setups()
 	test_upgrades()
 	var replay := test_ai_race_completes()
@@ -805,6 +806,221 @@ func test_pit_rules() -> void:
 	var e := RaceEntry.new()
 	e.from_dict(host.entries[0].to_dict())
 	check(e.pit["compound"] == "intermediate" and e.pit["plan"] is Dictionary, "pit state survives the network round trip")
+
+
+## A driver driving their own pit stop (Settings > Gameplay > Pit stops):
+## the guide line, the limit line, stopping on the box, overshooting it,
+## missing it, and handing the stop back to the guide. Driven by a simple
+## "player" that follows the guide line and its speeds.
+func test_pit_self_drive() -> void:
+	print("pit stops driven by the driver")
+	var d := _data()
+	var st := RaceSettings.new()
+	st.laps = 10
+	st.ai_count = 2
+	st.car_class = "GT3"
+	var made: Dictionary = _race(st, d)
+	var sim: RaceSim = made["sim"]
+	var pits := sim.pits
+	var t := sim.track
+	var i := 0
+	var g := pits.guide_line(i)
+	check(not g.is_empty() and (g["points"] as PackedVector2Array).size() == (g["speed"] as PackedFloat64Array).size(),
+		"guide line built (%.0f m)" % float(g.get("length", 0.0)))
+	var sp: PackedFloat64Array = g["speed"]
+	var ds: PackedFloat64Array = g["dist"]
+	var zone_ok := true
+	var box_v := INF
+	var lead_v := 0.0
+	for k in sp.size():
+		if ds[k] >= float(g["limit_start"]) and ds[k] <= float(g["limit_end"]):
+			zone_ok = zone_ok and sp[k] <= t.pit_speed_limit
+		if absf(ds[k] - float(g["box_d"])) < 3.0:
+			box_v = minf(box_v, sp[k])
+		if k == 0:
+			lead_v = sp[k]
+	check(zone_ok, "guide speeds stay under the limit in the speed-limit zone")
+	check(box_v < 2.5, "guide speed comes down to a stop on the box (%.1f m/s)" % box_v)
+	check(lead_v > 2.0 * t.pit_speed_limit, "guide starts at racing speed on the track (%.0f m/s)" % lead_v)
+
+	# The "player": pure pursuit on the guide line, speeds from the guide.
+	var pts: PackedVector2Array = g["points"]
+	var drive := func(stop_on_box: bool, overshoot_m: float, ignore_limit: bool) -> CarInput:
+		var c := sim.cars[i]
+		var prog := pits.guide_progress(i)
+		var inp := CarInput.new()
+		var k := 0
+		var best := INF
+		for j in pts.size():
+			var dd := c.pos.distance_squared_to(pts[j])
+			if dd < best:
+				best = dd
+				k = j
+		var aim_d := ds[k] + clampf(c.speed() * 0.5, 6.0, 25.0)
+		var a := k
+		while a < pts.size() - 1 and ds[a] < aim_d:
+			a += 1
+		var aim := pts[a]
+		var ph := pits.phase(i)
+		if stop_on_box and ph == PitRules.PHASE_LIMIT:
+			var box: Dictionary = t.pit_box(pits.box_index(i))
+			var into := smoothstep(float(g["box_d"]) - 45.0, float(g["box_d"]) - 20.0, ds[k])
+			var bf := Vector2.from_angle(box["heading"])
+			var along := float(pits.box_marks(i, c.pos)["along"])
+			aim = aim.lerp(box["pos"] + bf * (minf(along, overshoot_m) + maxf(9.0, c.speed() * 1.3)), into)
+		var rel := aim - c.pos
+		var alpha := atan2(rel.dot(c.right()), rel.dot(c.forward()))
+		inp.steer = clampf(atan(2.0 * sim.defs[i].wheelbase * sin(alpha) / maxf(rel.length(), 1.0)) / sim.defs[i].max_steer, -1, 1)
+		var target := sp[k]
+		if ph == PitRules.PHASE_LIMIT and stop_on_box:
+			var m := pits.box_marks(i, c.pos)
+			target = minf(t.pit_speed_limit - 0.5, sqrt(2.0 * 3.0 * maxf(overshoot_m - float(m["along"]), 0.0)))
+		elif ph in [PitRules.PHASE_LIMIT, PitRules.PHASE_LEAVE, PitRules.PHASE_EXIT]:
+			target = t.pit_speed_limit - 0.5 if ph != PitRules.PHASE_EXIT else 30.0
+		if ignore_limit:
+			target = maxf(target, 30.0)
+		var dv := target - c.speed()
+		if dv > 0.0:
+			inp.throttle = clampf(dv * 0.3, 0.0, 1.0)
+		elif dv < -0.5:
+			inp.brake = clampf(-dv * 0.3, 0.0, 1.0)
+		if target < 0.3 and c.speed() < 2.0:
+			inp.brake = 1.0
+		return inp.quantized()
+	var place := func() -> void:
+		var c := sim.cars[i]
+		var s0 := pits.commit_s - 250.0
+		c.pos = t.position_at(fposmod(s0, t.length), 0.0)
+		c.heading = t.seg_dir[t.index_at(fposmod(s0, t.length))].angle()
+		c.vel = Vector2.from_angle(c.heading) * 45.0
+		c.yaw_rate = 0.0
+		var q := t.project(c.pos)
+		c.track_idx = q["idx"]
+		c.track_s = q["s"]
+		pits._prev_s[i] = c.track_s
+		var p: Dictionary = sim.entries[i].pit
+		p["phase"] = PitRules.PHASE_NONE
+		p["auto"] = false
+		p["limiter"] = false
+		p.erase("missed_box")
+	var run := func(stop_on_box: bool, overshoot_m: float, ignore_limit: bool, secs: float) -> Array:
+		var seen := []
+		var pens := []
+		for n in int(secs * 60):
+			var ins := []
+			for k in sim.car_count():
+				ins.append(CarInput.neutral())
+			ins[i] = drive.call(stop_on_box, overshoot_m, ignore_limit)
+			sim.step(ins)
+			var ph := pits.phase(i)
+			if seen.is_empty() or seen[-1] != ph:
+				seen.append(ph)
+			for ev in sim.events:
+				if ev["type"] == "penalty" and int(ev["car"]) == i:
+					pens.append(ev)
+			if ph == PitRules.PHASE_NONE and seen.size() > 2:
+				break
+
+		return [seen, pens]
+	sim.phase = RaceSim.Phase.RACING
+	pits.set_self_drive(i, true)
+
+	# 1. A clean stop: down to the limit at the line, stopped on the marks.
+	place.call()
+	pits.set_plan(i, {"box": true, "tyre": PitRules.TYRE_DRY, "fuel": 0.0})
+	var info := pits.guide_info(i)
+	check(str(info["stage"]) == "approach" and float(info["to_limit"]) > 200.0, "box call: the HUD counts down to the limit line (%.0f m)" % float(info.get("to_limit", -1)))
+	var out: Array = run.call(true, 0.0, false, 90.0)
+	var seen: Array = out[0]
+	check(not pits.controls(i) or pits.phase(i) == PitRules.PHASE_NONE, "the driver keeps the wheel on the way in")
+	check(seen.has(PitRules.PHASE_APPROACH) and seen.has(PitRules.PHASE_SERVICE) and seen.has(PitRules.PHASE_LEAVE),
+		"driven in by the driver, stopped in the box, drove out (%s)" % str(seen))
+	check((out[1] as Array).is_empty(), "no speeding penalty at the limit line (%s)" % str(out[1]))
+	var last: Dictionary = sim.entries[i].pit["last_stop"]
+	check(int(sim.entries[i].pit["stops"]) == 1 and not sim.entries[i].pit["box"], "the stop counts (%d)" % int(sim.entries[i].pit["stops"]))
+	# (the crew's own pace still varies a little, and now and then they fumble a wheel)
+	var crew_slack := (PitRules.CREW_FUMBLE_S if int(last.get("fumble", -1)) >= 0 else 0.0)
+	check(float(last.get("stationary_s", 99.0)) < (PitRules.STOP_BASE_S + PitRules.TYRE_CHANGE_S) * (1.0 + PitRules.CREW_JOB_SPREAD + 0.02) + crew_slack,
+		"on the marks: no time lost (%.1f s)" % float(last.get("stationary_s", -1)))
+
+	# 2. Too fast at the limit line: a speeding penalty.
+	place.call()
+	pits.set_plan(i, {"box": true, "tyre": PitRules.TYRE_KEEP})
+	out = run.call(true, 0.0, true, 90.0)
+	check((out[1] as Array).size() >= 1, "too fast at the limit line: a speeding penalty")
+
+	# 3. Overshooting the box a little costs time; a lot misses the box.
+	place.call()
+	pits.set_plan(i, {"box": true, "tyre": PitRules.TYRE_KEEP, "fuel": 0.0})
+	var stops := int(sim.entries[i].pit["stops"])
+	out = run.call(true, 6.0, false, 90.0)
+	last = sim.entries[i].pit["last_stop"]
+	check(int(sim.entries[i].pit["stops"]) == stops + 1 and float(last.get("stationary_s", 0.0)) > PitRules.STOP_BASE_S + PitRules.BOX_OVERSHOOT_S,
+		"overshooting the marks by a few metres costs time (%.1f s)" % float(last.get("stationary_s", -1)))
+	place.call()
+	pits.set_plan(i, {"box": true})
+	stops = int(sim.entries[i].pit["stops"])
+	out = run.call(false, 0.0, false, 90.0)
+	check(int(sim.entries[i].pit["stops"]) == stops and sim.entries[i].pit["box"] and (out[0] as Array).has(PitRules.PHASE_LIMIT),
+		"driving past the box: no stop, the call stays for next lap (%s)" % str(out[0]))
+
+	# 4. Handing the car to the guide mid-stop (an AI co-driver takes over).
+	place.call()
+	pits.set_plan(i, {"box": true})
+	for n in 60 * 30:
+		var ins := [CarInput.neutral(), CarInput.neutral(), CarInput.neutral()]
+		ins[i] = drive.call(true, 0.0, false)
+		sim.step(ins)
+		if pits.phase(i) == PitRules.PHASE_LIMIT:
+			break
+	pits.set_self_drive(i, false)
+	check(pits.phase(i) == PitRules.PHASE_LIMIT and pits.controls(i), "self drive off in the lane: the guide takes the car to its box")
+	# Automatic drivers are untouched: a box call is driven in from the commit point.
+	pits.set_self_drive(1, false)
+	check(not pits.self_drives(1), "AI cars are never self-driven")
+
+	# The driver's pit call menu: tyres and wings into the plan.
+	var st2 := RaceSettings.new()
+	st2.laps = 10
+	st2.ai_count = 2
+	st2.car_class = "GT3"
+	st2.tuning_enabled = true
+	st2.fuel_enabled = true
+	var sim2: RaceSim = _race(st2, d)["sim"]
+	var car := -1
+	for k in sim2.car_count():
+		if CarSetup.adjustable(sim2.defs[k], "wing_rear"):
+			car = k
+			break
+	var menu := PitCallMenu.new()
+	menu.setup(sim2)
+	menu.open(car)
+	var ids := menu.rows.map(func(r): return r["id"])
+	check(ids.has("tyre") and ids.has("wheels") and ids.has("wing_front") and ids.has("wing_rear") and ids.has("fuel") and ids[-2] == "box",
+		"pit menu: tyres, which tyres, splitter, rear wing, fuel (%s)" % str(ids))
+	check(menu.changes()["setup"].is_empty(), "pit menu: wings untouched = no wing change")
+	var rw_row := ids.find("wing_rear")
+	var now_rw := float(sim2.pits.current_setup(car)["wing_rear"])
+	menu.step(rw_row, -1 if now_rw > 0.0 else 1)
+	menu.step(ids.find("tyre"), 1)
+	var ch := menu.changes()
+	check((ch["setup"] as Dictionary).has("wing_rear") and str(ch["tyre"]) != "auto", "pit menu: a new rear wing and tyre choice go into the plan (%s)" % str(ch))
+	var w := menu.preview()
+	check(float(w["setup_s"]) >= PitRules.WING_CHANGE_S, "pit menu: the stop time counts the wing change (%.1f s)" % float(w["total_s"]))
+	var got := []
+	menu.confirmed.connect(func(c): got.append(c))
+	menu.confirm()
+	check(got.size() == 1 and not menu.visible, "pit menu: confirming closes it and hands back the plan")
+	var road := RaceSettings.new()
+	road.ai_count = 1
+	road.car_class = "Road"
+	road.tuning_enabled = true
+	var sim3: RaceSim = _race(road, d)["sim"]
+	menu.sim = sim3
+	menu.open(0)
+	check(not menu.rows.map(func(r): return r["id"]).has("wing_rear") or CarSetup.adjustable(sim3.defs[0], "wing_rear"),
+		"pit menu: no wing lines for a car with fixed wings")
+	menu.free()
 
 
 ## Co-op pit crew: wing and tyre pressure changes made during a stop.
