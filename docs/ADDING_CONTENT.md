@@ -55,6 +55,16 @@ data is too coarse to see goes in the track's `tracks.json` entry as
 start/finish line in race direction; positive degrees lower the right side
 of the track, which banks a right-hand corner).
 
+Barriers and run-off come from `tools/barriers.py` (also run by
+`build_tracks.py`, or on its own from the cached OpenStreetMap downloads):
+for each point and side, the barrier at the edge of the run-off (concrete
+wall, tyre wall, armco, catch fencing) and the run-off surface (grass,
+gravel trap, paved). OpenStreetMap barriers (`barrier=wall`, `guard_rail`,
+`tyres`, `fence`, `jersey_barrier`) and gravel or sand areas next to the
+track are used where mapped; defaults fill the rest. In `tracks.json`,
+`"runoff_style": "gravel" | "paved" | "grass"` sets the default run-off on
+the outside of corners, and `"street": true` puts walls all round.
+
 ## Tests
 
 ```

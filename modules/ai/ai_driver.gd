@@ -317,7 +317,7 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 	var block := idx / BLOCK
 	var signed_off := (car.pos - line[idx]).dot(line_right[idx]) - lateral_bias
 	var off_line := absf(signed_off)
-	if car.surface == TrackData.Surface.GRASS or absf(car.slip_angle_rear) > 0.16 or off_line > OFF_LINE_TROUBLE:
+	if car.surface >= TrackData.Surface.GRASS or absf(car.slip_angle_rear) > 0.16 or off_line > OFF_LINE_TROUBLE:
 		_block_trouble = true
 	if block != _block:
 		_end_block(block, sim, me, dark, wetness)
@@ -573,7 +573,7 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 	elif _mistake_until >= 0:
 		mood = Mood.MISTAKE
 		_block_clean = false
-	if car.surface == TrackData.Surface.GRASS:
+	if car.surface >= TrackData.Surface.GRASS:
 		v_target = minf(v_target, 30.0)
 		# Rejoin carefully: wait for a gap when a car is coming.
 		if behind >= 0 and behind_lx > -25.0:

@@ -349,8 +349,12 @@ func _build_road() -> void:
 		_mesh_node(rs, road_material, "Runoff")
 
 
-## Outside of a corner = the side the car is thrown towards.
+## Gravel trap here? From the track data where it has run-off surfaces,
+## else on the outside of a corner (the side the car is thrown towards).
 func _is_gravel(i: int, side: float) -> bool:
+	var ro := track.runoff_right if side > 0 else track.runoff_left
+	if ro.size() == track.point_count():
+		return ro[i] == TrackData.Surface.GRAVEL
 	var n := track.point_count()
 	var c := 0.0
 	for k in range(-6, 7):
@@ -361,6 +365,9 @@ func _is_gravel(i: int, side: float) -> bool:
 
 
 func _runoff_width(i: int, side: float) -> float:
+	var ro := track.runoff_right if side > 0 else track.runoff_left
+	if ro.size() == track.point_count() and ro[i] != TrackData.Surface.GRASS:
+		return track.runoff - track.kerb_width - 0.5   # gravel trap or paved run-off, as wide as it drives
 	if _is_gravel(i, side):
 		return track.runoff * 0.6
 	return minf(4.0, track.runoff * 0.3)
@@ -381,20 +388,33 @@ func _build_walls() -> void:
 			var off: float = side * (e + track.runoff)
 			var q := track.points[k] + track.vertex_normal(k) * off
 			var ok := clearance(q) > track.runoff - 2.5 and not _in_pit_area(q)
+			var kind := _barrier_kind(k, side)
+			# A change of barrier type starts a new run (sharing the joint).
+			if ok and run.size() >= 1 and run[-1][4] != kind:
+				run.append([q, track.cum_s[k], off, k, run[-1][4]])
+				_wall(st, run)
+				run = []
 			if ok:
-				run.append([q, track.cum_s[k], off, k])
+				run.append([q, track.cum_s[k], off, k, kind])
 			if (not ok or i == n) and run.size() >= 2:
 				_wall(st, run)
 				run = []
 			elif not ok:
 				run = []
-			if ok and _is_gravel(k, side) and k % 2 == 0:
+			var tyre_here := kind == TrackData.Barrier.TYRES if track.barrier_left.size() == n else _is_gravel(k, side)
+			if ok and tyre_here and k % 2 == 0:
 				tyres.append([q - track.vertex_normal(k) * side * 0.9, track.seg_dir[k]])
 	var mat := StandardMaterial3D.new()
 	mat.vertex_color_use_as_albedo = true
 	mat.roughness = 0.85
 	_mesh_node(st, mat, "Walls", true)
 	_build_tyre_walls(tyres)
+
+
+## Barrier type from the track data (concrete wall when it has none).
+func _barrier_kind(k: int, side: float) -> int:
+	var arr := track.barrier_right if side > 0 else track.barrier_left
+	return arr[k] if arr.size() == track.point_count() else TrackData.Barrier.WALL
 
 
 func _in_pit_area(q: Vector2) -> bool:
@@ -404,9 +424,14 @@ func _in_pit_area(q: Vector2) -> bool:
 	return pr.get("dist", INF) < track.pit_width * 0.5 + 6.0 if pr.has("dist") else false
 
 
+## One run of barrier of a single type: concrete wall (grey blocks), armco
+## (low steel rail), catch fencing (armco with a tall dark mesh above), tyre
+## wall (a concrete wall behind the tyre stacks).
 func _wall(st: SurfaceTool, run: Array) -> void:
-	var w := 0.4
-	var h := 0.9
+	var kind: int = run[0][4] if run[0].size() > 4 else TrackData.Barrier.WALL
+	var steel := kind == TrackData.Barrier.ARMCO or kind == TrackData.Barrier.FENCE
+	var w := 0.15 if steel else 0.4
+	var h := 0.75 if steel else 0.9
 	for j in run.size() - 1:
 		var a: Vector2 = run[j][0]
 		var b: Vector2 = run[j + 1][0]
@@ -419,6 +444,13 @@ func _wall(st: SurfaceTool, run: Array) -> void:
 		var shade: float = 0.72 if (int(run[j][1] / 6.0) % 2 == 0) else 0.8
 		var top := Color(shade, shade, shade * 0.98)
 		var face := Color(shade * 0.85, shade * 0.85, shade * 0.84)
+		if steel:
+			top = Color(0.62, 0.66, 0.72)
+			face = Color(0.5, 0.55, 0.6)
+		if kind == TrackData.Barrier.FENCE:
+			# mesh fence on posts above the rail
+			var fc := Color(0.16, 0.22, 0.18)
+			_quad(st, Vector3(a.x, ha + h, a.y), Vector3(b.x, hb + h, b.y), Vector3(b.x, hb + 3.2, b.y), Vector3(a.x, ha + 3.2, a.y), fc)
 		var quads := [
 			[a - nn, b - nn, ha, hb, 0.0, h, face],
 			[a + nn, b + nn, ha, hb, 0.0, h, face],
