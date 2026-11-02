@@ -11,7 +11,9 @@ extends Node3D
 ##
 ## Effects: tyre smoke and rubber marks (SkidMarks), bits flying off cars in
 ## crashes and sparks (Debris, impact), and the pit crews who do each stop
-## (PitCrews, add_pit_crew / set_pit_stop).
+## (PitCrews, add_pit_crew / set_pit_stop). The marshals' crane trucks and
+## tractors that take retired cars away (RecoveryVehicles,
+## set_recovery_vehicles).
 
 var track: TrackData
 var env: SimEnvironment
@@ -24,6 +26,7 @@ var cars: Array[CarView] = []
 var safety_car: CarView           ## made on first use
 var driving_line: DrivingLineView ## the driving line aid (add_driving_aids)
 var brake_boards: BrakeBoards
+var recovery: RecoveryVehicles   ## made on first use
 var _sc_state: CarState
 var camera: Camera3D
 var sun: DirectionalLight3D
@@ -131,6 +134,22 @@ func set_safety_car(p_visible: bool, pos: Vector2, p_heading: float, speed: floa
 	_sc_state.heading = p_heading
 	_sc_state.vel = Vector2.from_angle(p_heading) * speed
 	safety_car.set_light_bar(lights)
+
+
+## The marshals' recovery vehicles (crane trucks and tractors). views: one
+## Dictionary per vehicle, from RaceControl.recovery_vehicles(). Call every
+## frame; vehicles that are no longer listed go away.
+func set_recovery_vehicles(views: Array) -> void:
+	if recovery == null:
+		if views.is_empty():
+			return
+		recovery = RecoveryVehicles.new()
+		recovery.name = "RecoveryVehicles"
+		recovery.ground = track_view.surface_height
+		recovery.ground_normal = track_view.surface_normal
+		recovery.terrain = track_view.terrain_mesh_height
+		add_child(recovery)
+	recovery.set_vehicles(views)
 
 
 ## Car i's team crew at pit box `box` (the race's box for that car), in the

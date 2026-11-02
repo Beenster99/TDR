@@ -203,7 +203,7 @@ func step(inputs: Array) -> void:
 			_refresh_track_position(cars[i])
 	for _sub in SUBSTEPS:
 		for i in cars.size():
-			if external[i] or race_control.recovered[i]:
+			if external[i] or race_control.out_of_play(i):
 				continue
 			var inp: CarInput = inputs[i] if i < inputs.size() and inputs[i] != null else CarInput.neutral()
 			CarPhysics.step(cars[i], inp, defs[i], compounds[i], env, track, sub_dt, fuel_rate, events, i, wear_rate)
@@ -396,7 +396,7 @@ func _resolve_collisions() -> void:
 func _collide_pair(i: int, j: int) -> void:
 	if external[i] and external[j]:
 		return  # both simulated elsewhere: their owners resolve it
-	if race_control.recovered[i] or race_control.recovered[j]:
+	if race_control.out_of_play(i) or race_control.out_of_play(j):
 		return  # craned away by the marshals
 	var a := cars[i]
 	var b := cars[j]
