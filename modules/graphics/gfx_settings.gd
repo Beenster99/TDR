@@ -16,8 +16,6 @@ static var glow := true
 
 ## Elevation cues (they only show on tracks with height data)
 static var hillshade := 2.0         ## extra shading by slope on grass; 0.6x on the road
-static var contours := true         ## contour lines on the grass every 2 m (darker every 10 m)
-static var height_rungs := true     ## light lines across the tarmac every 1 m of height
 
 ## Trackside
 static var trees := 1.0             ## tree density, 0 = none

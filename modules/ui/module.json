@@ -16,7 +16,7 @@
     "telemetry": "1",
     "season": "1",
     "business": "1",
-    "graphics": "2"
+    "graphics": "3"
   },
   "api": [
     "RaceHud",
