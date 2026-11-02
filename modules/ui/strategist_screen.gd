@@ -36,7 +36,7 @@ func setup(p_session: RaceSession) -> void:
 	set_anchors_preset(PRESET_FULL_RECT)
 	mouse_filter = MOUSE_FILTER_STOP
 	visible = false
-	selected = session.local_car if session.local_car >= 0 else 0
+	selected = _our_car() if _our_car() >= 0 else 0
 	var t := session.sim.track
 	for i in range(0, t.point_count(), 3):
 		_track_pts.append(t.points[i])
@@ -45,8 +45,13 @@ func setup(p_session: RaceSession) -> void:
 
 func open() -> void:
 	visible = true
-	if session.local_car >= 0:
-		selected = session.local_car
+	if _our_car() >= 0:
+		selected = _our_car()
+
+
+## The car this player drives or is in the pit crew / strategist of.
+func _our_car() -> int:
+	return session.local_car if session.local_car >= 0 else session.team_car
 
 
 func close() -> void:
@@ -210,7 +215,7 @@ func _draw_timing(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 		elif p % 2 == 1:
 			draw_rect(row, Color(1, 1, 1, 0.025))
 		var ty := y + rh * 0.5 + fs * 0.35
-		var name_col := YELLOW if i == session.local_car else (Color(0.75, 0.85, 1) if not e.is_ai else Color.WHITE)
+		var name_col := YELLOW if i == _our_car() else (Color(0.75, 0.85, 1) if not e.is_ai else Color.WHITE)
 		_text(Vector2(cols["pos"], ty), str(e.position), fs, Color.WHITE, HORIZONTAL_ALIGNMENT_RIGHT, 26 * k)
 		draw_rect(Rect2(cols["drv"] - 12 * k, y + 4, 5, rh - 10), sim.defs[i].colour)
 		_text(Vector2(cols["drv"], ty), e.driver_name, fs, name_col, HORIZONTAL_ALIGNMENT_LEFT, 148 * k)
@@ -317,7 +322,7 @@ func _draw_car(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 	var x := r.position.x + 10
 	var w := r.size.x - 20
 	draw_rect(Rect2(x, r.position.y + 30, 6, 22), sim.defs[i].colour)
-	_text(Vector2(x + 14, r.position.y + 48), "P%d  %s" % [e.position, e.driver_name], 19, YELLOW if i == session.local_car else Color.WHITE, HORIZONTAL_ALIGNMENT_LEFT, w * 0.6)
+	_text(Vector2(x + 14, r.position.y + 48), "P%d  %s" % [e.position, e.driver_name], 19, YELLOW if i == _our_car() else Color.WHITE, HORIZONTAL_ALIGNMENT_LEFT, w * 0.6)
 	_text(Vector2(x + w * 0.6, r.position.y + 48), sim.defs[i].display_name, 14, DIM, HORIZONTAL_ALIGNMENT_LEFT, w * 0.4)
 	var trend := c.trend()
 	var trend_s := "steady" if absf(trend) < 0.05 else ("%+.2f s/lap" % trend)

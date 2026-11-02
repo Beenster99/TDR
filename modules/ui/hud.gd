@@ -29,6 +29,16 @@ func setup(p_session: RaceSession) -> void:
 	_build_profile()
 
 
+## Team radio from the pit wall (co-op): shown as a banner for a few seconds.
+var radio_msg: Dictionary = {}
+var radio_time := 0.0
+
+
+func show_radio(msg: Dictionary, secs := 5.0) -> void:
+	radio_msg = msg
+	radio_time = secs
+
+
 func flash(text: String, secs := 2.0) -> void:
 	message = text
 	message_time = secs
@@ -37,6 +47,7 @@ func flash(text: String, secs := 2.0) -> void:
 func _process(delta: float) -> void:
 	size = get_viewport_rect().size
 	message_time -= delta
+	radio_time -= delta
 	_watch_damage()
 	queue_redraw()
 
@@ -104,6 +115,8 @@ func _draw() -> void:
 	if message_time > 0.0:
 		_text(Vector2(0, 150), message, 40, Color(1, 0.9, 0.3), HORIZONTAL_ALIGNMENT_CENTER, vp.x)
 	_draw_race_control(vp, me)
+	if radio_time > 0.0 and not radio_msg.is_empty():
+		_draw_radio(vp)
 
 	# --- Standings (top right)
 	var x0 := vp.x - 330
@@ -257,6 +270,19 @@ func _draw_pit_panel(o: Vector2, me: int) -> void:
 		y += 22
 	if e.penalty_s > 0.0:
 		_text(Vector2(o.x + 14, y), "Penalties +%d s" % int(e.penalty_s), 14, Color(1, 0.5, 0.3))
+
+
+func _draw_radio(vp: Vector2) -> void:
+	var who := str(radio_msg.get("from", "Pit wall"))
+	var role := str(radio_msg.get("role", "")).replace("_", " ")
+	var line := "%s%s: %s" % [who, (" (%s)" % role) if role != "" else "", radio_msg.get("text", "")]
+	var w := minf(font.get_string_size(line, HORIZONTAL_ALIGNMENT_LEFT, -1, 22).x + 120, vp.x - 40)
+	var r := Rect2((vp.x - w) * 0.5, 196, w, 44)
+	var a := clampf(radio_time / 0.5, 0.0, 1.0)
+	draw_rect(r, Color(0.02, 0.04, 0.08, 0.8 * a))
+	draw_rect(r, Color(1, 0.88, 0.35, 0.8 * a), false, 2.0)
+	_text(r.position + Vector2(14, 30), "RADIO", 16, Color(1, 0.88, 0.35, a))
+	_text(r.position + Vector2(84, 30), line, 22, Color(1, 1, 1, a), HORIZONTAL_ALIGNMENT_LEFT, w - 96)
 
 
 static func tyre_plan_text(sim: RaceSim, car: int, choice: String) -> String:

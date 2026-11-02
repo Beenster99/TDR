@@ -12,6 +12,10 @@ var camera: Camera2D
 var hud: RaceHud
 var race_audio: RaceAudio
 var pit_wall: StrategistScreen
+## Co-op: the pit crew / strategist console (players in a car's crew who are
+## not driving it) and the driver's radio calls to them.
+var crew: CrewConsole
+var driver_radio: TeamRadio
 var results: PanelContainer
 var rotate_camera := false
 var _results_shown := false
@@ -23,13 +27,10 @@ func _ready() -> void:
 	if session == null:
 		session = _default_offline_session()
 	GameData.active_session = session
-	if session.local_car >= 0:
-		var me: CarState = session.sim.cars[session.local_car]
-		var help: int = GameData.prefs.get("driving_help", 2)
-		me.assist_stability = help >= 2
-		me.assist_tc = help >= 1
-		me.assist_abs = help >= 1
+	_set_assists()
 	session.events_emitted.connect(_on_events)
+	session.role_changed.connect(_on_role_changed)
+	session.team_radio.connect(_on_team_radio)
 	session.race_finished.connect(_on_race_finished)
 	Net.returned_to_lobby.connect(_on_returned_to_lobby)
 	Net.disconnected.connect(_on_disconnected)
@@ -67,6 +68,17 @@ func _ready() -> void:
 	pit_wall = StrategistScreen.new()
 	layer.add_child(pit_wall)
 	pit_wall.setup(session)
+	crew = CrewConsole.new()
+	layer.add_child(crew)
+	crew.setup(session)
+	crew.open_pit_wall.connect(pit_wall.open)
+	crew.cover = pit_wall
+	crew.car_screen_pos = func(i: int) -> Vector2:
+		return world.camera.unproject_position(car_views[i].global_position) if world.camera else Vector2(-1000, -1000)
+	driver_radio = TeamRadio.new()
+	layer.add_child(driver_radio)
+	driver_radio.setup(session, session.local_car, true)
+	_apply_role()
 	if GameData.arg("pit-wall"):
 		pit_wall.open()
 	results = _build_results()
@@ -79,6 +91,65 @@ func _ready() -> void:
 		print("[race] %s, %d cars, %d laps, local car %d, %s %02d:00, air %d C, track %d C" % [RaceSession.Mode.keys()[session.mode],
 			session.sim.car_count(), session.sim.settings.laps, session.local_car, env.weather,
 			int(env.time_of_day_h), roundi(env.ambient_c), roundi(env.track_c)])
+
+
+func _set_assists() -> void:
+	if session.local_car >= 0:
+		var me: CarState = session.sim.cars[session.local_car]
+		var help: int = GameData.prefs.get("driving_help", 2)
+		me.assist_stability = help >= 2
+		me.assist_tc = help >= 1
+		me.assist_abs = help >= 1
+
+
+## True when this player is in a car's crew but not driving it (co-op).
+func _is_crew() -> bool:
+	return session.local_car < 0 and session.team_car >= 0
+
+
+var _was_crew := false
+
+
+## Shows the driving HUD or the pit wall console for the local role, and
+## after a driver change hands the controls, sound and radio to the new driver.
+func _apply_role() -> void:
+	var is_crew := _is_crew()
+	hud.visible = not is_crew
+	crew.visible = is_crew
+	crew.refresh_role()
+	if not is_crew:
+		crew.radio.close()
+	driver_radio.car = session.local_car if session.local_car >= 0 else session.team_car
+	driver_radio.close()
+	if is_crew and not _was_crew:
+		_zoom_before_full = _zoom_target
+		_set_zoom(1.0)   # the pit wall starts on the whole track
+	elif not is_crew and _was_crew:
+		_set_zoom(_zoom_before_full)
+	_was_crew = is_crew
+
+
+func _on_role_changed(_role: String) -> void:
+	_set_assists()
+	local_input = LocalInput.new()
+	if race_audio:
+		race_audio.queue_free()
+	race_audio = RaceAudio.new()
+	add_child(race_audio)
+	race_audio.setup(session.sim.cars, session.sim.defs, session.local_car)
+	_apply_role()
+	hud.flash("You're driving!" if session.local_car >= 0 else "You're on the pit wall: " + CrewConsole.role_title(session.local_role).to_lower(), 3.0)
+
+
+func _on_team_radio(car: int, msg: Dictionary) -> void:
+	if car != session.team_car and car != session.local_car:
+		return
+	crew.add_radio(msg)
+	if session.local_car == car and str(msg.get("role", "")) != RaceEntry.ROLE_DRIVER:
+		hud.show_radio(msg)
+	var me := driver_radio.my_name() if session.local_car >= 0 else crew.radio.my_name()
+	if str(msg.get("from", "")) != me:
+		Sound.ui("chime", -6.0)
 
 
 func _on_returned_to_lobby() -> void:
@@ -149,8 +220,16 @@ func _zoom_setup() -> void:
 
 ## Pixels per metre that fit the whole track in the window (any resolution).
 func _fit_zoom() -> float:
-	var vs := get_viewport_rect().size
+	var vs := _view_rect().size
 	return minf(vs.x / _track_rect.size.x, vs.y / _track_rect.size.y) * 0.94
+
+
+## The part of the window the race is seen through (the pit wall console
+## covers the sides of the screen).
+func _view_rect() -> Rect2:
+	if crew and crew.visible:
+		return crew.view_rect()
+	return get_viewport_rect()
 
 
 func _set_zoom(z: float) -> void:
@@ -161,7 +240,7 @@ func _set_zoom(z: float) -> void:
 func _process(delta: float) -> void:
 	var focus := session.local_car
 	if focus < 0:
-		focus = session.sim.running_order[0]
+		focus = session.team_car if session.team_car >= 0 else session.sim.running_order[0]
 	var car: CarState = session.sim.cars[focus]
 	var target := car_views[focus].pos2
 	var heading := car_views[focus].heading
@@ -189,7 +268,9 @@ func _process(delta: float) -> void:
 		offset *= speed / 3.0
 	var follow := target + offset
 	var centre_mix := smoothstep(0.85, 1.0, _zoom)
-	camera.position = follow.lerp(_track_rect.get_center(), centre_mix)
+	# Put the view's centre (not the window's) on the target.
+	var shift := (_view_rect().get_center() - vs * 0.5) / z
+	camera.position = follow.lerp(_track_rect.get_center(), centre_mix) - shift
 	camera.position_smoothing_enabled = centre_mix < 0.01
 	camera.zoom = Vector2(z, z)
 	for i in car_views.size():
@@ -239,15 +320,22 @@ func _unhandled_input(event: InputEvent) -> void:
 			_set_zoom(_zoom_target + ZOOM_WHEEL_STEP)
 	elif event.is_action_pressed("zoom_full"):
 		_toggle_full_track()
+	elif event.is_action_pressed("team_radio") and session.local_car >= 0 and _has_crew_mates():
+		driver_radio.toggle()
 	elif session.local_car >= 0 and _pit_input(event):
 		pass
-	elif event.is_action_pressed("camera_toggle"):
+	elif event.is_action_pressed("camera_toggle") and not _is_crew():
 		rotate_camera = not rotate_camera
 	elif event.is_action_pressed("restart_race") and session.mode == RaceSession.Mode.OFFLINE \
 			and not session.start_data.has("season"):  # no do-overs in a championship
 		_restart()
-	elif event.is_action_pressed("back_to_menu") and not _results_shown and not pit_wall.visible:
+	elif event.is_action_pressed("back_to_menu") and not _results_shown and not pit_wall.visible \
+			and not driver_radio.visible and not crew.radio.visible:
 		_back_to_menu()
+
+
+func _has_crew_mates() -> bool:
+	return session.sim.entries[session.local_car].crew.size() > 1
 
 
 ## Pit calls for the car this player drives (see PitRules / RaceSession.request_pit).

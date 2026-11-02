@@ -17,6 +17,9 @@ var settings: RaceSettings
 var track: TrackData
 var env: SimEnvironment
 var defs: Array[CarDefinition] = []
+## Each car's definition before its setup (upgrades/balance overrides come from
+## entries[i].setup): pit-stop setup changes rebuild defs[i] from this.
+var base_defs: Array[CarDefinition] = []
 var compounds: Array[TyreCompound] = []
 var cars: Array[CarState] = []
 var entries: Array[RaceEntry] = []
@@ -79,11 +82,8 @@ func _init(p_settings: RaceSettings, p_track: TrackData, p_entries: Array[RaceEn
 	for i in entries.size():
 		var e := entries[i]
 		var base: CarDefinition = car_defs[e.car_id]
-		var overrides := e.setup
-		if not settings.tuning_enabled and overrides.has("tuning"):
-			overrides = overrides.duplicate()
-			overrides.erase("tuning")
-		var def := base.with_overrides(overrides) if not overrides.is_empty() else base
+		base_defs.append(base)
+		var def := _def_for(i)
 		defs.append(def)
 		dry_compound.append(base.tyre_compound_id)
 		var compound: TyreCompound = tyre_defs.get(def.tyre_compound_id, tyre_defs.values()[0])
@@ -98,6 +98,27 @@ func _init(p_settings: RaceSettings, p_track: TrackData, p_entries: Array[RaceEn
 	pits = PitRules.new(self)
 	race_control = RaceControl.new(self)
 	_update_positions()
+
+
+func _def_for(i: int) -> CarDefinition:
+	var overrides := entries[i].setup
+	if not settings.tuning_enabled and overrides.has("tuning"):
+		overrides = overrides.duplicate()
+		overrides.erase("tuning")
+	return base_defs[i].with_overrides(overrides) if not overrides.is_empty() else base_defs[i]
+
+
+## Changes some of car i's setup values mid-race (a pit stop: wings, tyre
+## pressures; see PitRules.PIT_SETUP_KEYS) and rebuilds its definition.
+func change_setup(i: int, values: Dictionary) -> void:
+	if values.is_empty():
+		return
+	var setup := entries[i].setup.duplicate(true)
+	var tuning: Dictionary = setup.get("tuning", {})
+	tuning.merge(values, true)
+	setup["tuning"] = tuning
+	entries[i].setup = setup
+	defs[i] = _def_for(i)
 
 
 func _make_car_on_grid(slot: int, def: CarDefinition) -> CarState:
