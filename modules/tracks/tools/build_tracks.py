@@ -27,6 +27,8 @@ import xml.etree.ElementTree as ET
 
 import numpy as np
 
+from elevation import add_elevation, add_flat_elevation
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(os.path.dirname(HERE), "data")
 TUM_URL = "https://raw.githubusercontent.com/TUMFTM/racetrack-database/master/{kind}/{name}.csv"
@@ -400,6 +402,7 @@ def build(cfg, cache):
         wr = np.full(len(centre), width)
         wl = np.full(len(centre), width)
         to_track = lambda xy: xy
+        geo_r, geo_t = np.eye(2), np.zeros(2)
         if pits:
             pit_xy = chain_ways(pits)
             mid = pit_xy[len(pit_xy) // 2:len(pit_xy) // 2 + 1]
@@ -435,7 +438,7 @@ def build(cfg, cache):
         if np.median(d) > 12.0:
             print("   WARNING: poor match, pit lane skipped")
             pits = []
-        inv = r.T  # osm -> tum: (p - t) @ r
+        geo_r, geo_t = r, t  # tum -> osm: p @ r.T + t
         to_track = lambda xy: (xy - t) @ r
         # Race direction check against one-way tags.
         dots = []
@@ -459,6 +462,7 @@ def build(cfg, cache):
                 print("   WARNING: TUMFTM order looks reversed against OpenStreetMap")
     else:
         to_track = None
+        geo_r = geo_t = None
 
     if not pits and to_track is not None and centre is not None and ways:
         pits = untagged_pit_ways(ways, centre, wr, wl, to_track)
@@ -533,6 +537,18 @@ def build(cfg, cache):
     }
     if "climate" in cfg:
         out["climate"] = cfg["climate"]
+    if geo_r is not None:
+        # Where the track is on Earth: game (x, y) -> east/north metres from
+        # (lat0, lon0) is ((x, -y) @ r.T + t). Used for elevation.
+        lat0, lon0 = osm_center(cfg, cache)
+        out["geo"] = {"lat0": lat0, "lon0": lon0, "r": np.round(geo_r, 8).tolist(),
+                      "t": np.round(geo_t, 3).tolist()}
+        try:
+            add_elevation(out, cfg, cache)
+        except Exception as e:
+            print("   elevation unavailable:", e)
+    elif cfg.get("flat_if_unplaced"):
+        add_flat_elevation(out)
     with open(os.path.join(DATA, tid + ".json"), "w") as f:
         json.dump(out, f, separators=(",", ":"))
 

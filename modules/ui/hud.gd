@@ -9,6 +9,15 @@ var message_time := 0.0
 var font: Font
 var _minimap_pts := PackedVector2Array()
 var _mm_rect := Rect2()
+## Damage last seen on the player's car, to flash a warning when it changes.
+var _seen_worst := 0.0
+var _seen_punctures := 0
+var _seen_engine_failed := false
+## Lap elevation profile (bottom centre), shown on tracks with elevation.
+var show_elevation_profile := true
+var _profile := PackedFloat64Array()   ## 0..1 height at evenly spaced points
+var _profile_range := Vector2.ZERO
+const PROFILE_STEPS := 240
 
 
 func setup(p_session: RaceSession) -> void:
@@ -17,6 +26,7 @@ func setup(p_session: RaceSession) -> void:
 	set_anchors_preset(PRESET_FULL_RECT)
 	mouse_filter = MOUSE_FILTER_IGNORE
 	_build_minimap()
+	_build_profile()
 
 
 func flash(text: String, secs := 2.0) -> void:
@@ -27,7 +37,39 @@ func flash(text: String, secs := 2.0) -> void:
 func _process(delta: float) -> void:
 	size = get_viewport_rect().size
 	message_time -= delta
+	_watch_damage()
 	queue_redraw()
+
+
+## Flashes a warning when the player's car gets hurt (works the same online,
+## where the player's own car is simulated on their machine).
+func _watch_damage() -> void:
+	if session == null or session.local_car < 0 or session.sim.damage_level == CarDamage.Level.OFF:
+		return
+	var c := session.sim.cars[session.local_car]
+	var p := CarDamage.punctures(c)
+	var failed := CarDamage.engine_failed(c)
+	if failed and not _seen_engine_failed:
+		flash("ENGINE FAILURE", 4.0)
+	elif p > _seen_punctures:
+		flash("PUNCTURE! Box for new tyres", 3.0)
+	elif CarDamage.worst(c) - _seen_worst > 0.15:
+		flash("DAMAGE: " + _worst_part(c), 2.5)
+	_seen_punctures = p
+	_seen_engine_failed = failed
+	_seen_worst = CarDamage.worst(c)
+
+
+static func _worst_part(c: CarState) -> String:
+	var parts := {"aero": c.damage_aero, "suspension": c.damage_suspension, "steering alignment": absf(c.alignment),
+		"engine": c.damage_engine, "gearbox": c.damage_gearbox}
+	var best := "bodywork"
+	var v := 0.05
+	for k in parts:
+		if parts[k] > v:
+			v = parts[k]
+			best = k
+	return best.to_upper()
 
 
 static func fmt_time(t: float) -> String:
@@ -89,7 +131,10 @@ func _draw() -> void:
 
 	# --- Minimap
 	_draw_minimap(Vector2(vp.x - 230, 50 + rows * 22 + 10))
+	if show_elevation_profile and not _profile.is_empty():
+		_draw_profile(Rect2(vp.x * 0.5 - 230, vp.y - 92, 460, 70))
 
+	_text(Vector2(0, vp.y - 14), "P / D-pad →  Pit wall", 13, Color(1, 1, 1, 0.45), HORIZONTAL_ALIGNMENT_CENTER, vp.x)
 	if me < 0:
 		_text(Vector2(20, 40), "SPECTATING", 22)
 		return
@@ -148,6 +193,54 @@ func _draw() -> void:
 	_text(bl + Vector2(146, 138), "Grip %d%%" % int(grip * 100.0), 15, Color(0.6, 1, 0.6) if grip > 0.85 else Color(1, 0.7, 0.4))
 	if sim.settings.fuel_enabled:
 		_text(bl + Vector2(146, 160), "Fuel %.1f L" % c.fuel_l, 15)
+	if sim.damage_level != CarDamage.Level.OFF:
+		_draw_damage(Vector2(10, vp.y - 196 - 126), c, sim.damage_level == CarDamage.Level.FULL)
+
+
+## Damage panel: a top view of the car with each zone coloured by how bent
+## it is, flat tyres in red, and (full damage) each system's state.
+func _draw_damage(o: Vector2, c: CarState, full: bool) -> void:
+	_panel(Rect2(o, Vector2(300, 116)))
+	_text(o + Vector2(14, 22), "DAMAGE", 14, Color(1, 1, 1, 0.7))
+	var car := Rect2(o + Vector2(36, 32), Vector2(40, 74))  # nose at the top
+	var b := c.body_damage
+	draw_rect(car, Color(0.25, 0.25, 0.28))
+	draw_rect(Rect2(car.position, Vector2(car.size.x, 16)), _damage_colour(b[CarDamage.FRONT]))
+	draw_rect(Rect2(car.position + Vector2(0, car.size.y - 16), Vector2(car.size.x, 16)), _damage_colour(b[CarDamage.REAR]))
+	draw_rect(Rect2(car.position + Vector2(0, 18), Vector2(9, car.size.y - 36)), _damage_colour(b[CarDamage.LEFT]))
+	draw_rect(Rect2(car.position + Vector2(car.size.x - 9, 18), Vector2(9, car.size.y - 36)), _damage_colour(b[CarDamage.RIGHT]))
+	var wheels := [Vector2(-10, 8), Vector2(car.size.x + 2, 8), Vector2(-10, car.size.y - 26), Vector2(car.size.x + 2, car.size.y - 26)]
+	for w in 4:
+		var flat := c.puncture[w] > 0.5
+		draw_rect(Rect2(car.position + wheels[w], Vector2(8, 18)), Color(1, 0.15, 0.1) if flat else Color(0.08, 0.08, 0.08))
+	if not full:
+		_text(o + Vector2(110, 60), "Visual only", 15, Color(1, 1, 1, 0.6))
+		return
+	var rows := [["Aero", c.damage_aero], ["Suspension", maxf(c.damage_suspension, absf(c.alignment))],
+		["Engine", c.damage_engine], ["Gearbox", c.damage_gearbox]]
+	for k in rows.size():
+		var y := o.y + 26 + k * 20
+		var v: float = rows[k][1]
+		_text(Vector2(o.x + 110, y + 12), rows[k][0], 14)
+		draw_rect(Rect2(o.x + 196, y + 1, 90, 12), Color(1, 1, 1, 0.12))
+		draw_rect(Rect2(o.x + 196, y + 1, 90 * v, 12), _damage_colour(v))
+	var note := ""
+	if CarDamage.engine_failed(c):
+		note = "ENGINE FAILED"
+	elif CarDamage.punctures(c) > 0:
+		note = "PUNCTURE"
+	elif absf(c.alignment) > 0.1:
+		note = "Pulls " + ("right" if c.alignment > 0.0 else "left")
+	if note != "":
+		_text(Vector2(o.x + 110, o.y + 110), note, 14, Color(1, 0.55, 0.35))
+
+
+static func _damage_colour(v: float) -> Color:
+	if v < 0.02:
+		return Color(0.3, 0.8, 0.4, 0.9)
+	if v < 0.5:
+		return Color(0.3, 0.8, 0.4).lerp(Color(1.0, 0.85, 0.2), v / 0.5)
+	return Color(1.0, 0.85, 0.2).lerp(Color(1.0, 0.2, 0.15), clampf((v - 0.5) / 0.5, 0.0, 1.0))
 
 
 static func _surface_text(env: SimEnvironment) -> String:
@@ -268,3 +361,57 @@ func _draw_minimap(origin: Vector2) -> void:
 		draw_circle(p, 5.0 if i == session.local_car else 3.5, sim.defs[i].colour)
 		if i == session.local_car:
 			draw_arc(p, 7.0, 0, TAU, 16, Color.WHITE, 1.5)
+
+
+func _build_profile() -> void:
+	var t := session.sim.track
+	if not t.has_elevation():
+		return
+	_profile_range = t.height_range()
+	var span := maxf(_profile_range.y - _profile_range.x, 1.0)
+	_profile.resize(PROFILE_STEPS + 1)
+	for k in PROFILE_STEPS + 1:
+		_profile[k] = (t.height_at(t.length * k / PROFILE_STEPS) - _profile_range.x) / span
+
+
+## Height of the whole lap with every car on it, plus the gradient under
+## the local car (uphill amber, downhill blue when steeper than 3%).
+func _draw_profile(r: Rect2) -> void:
+	var sim := session.sim
+	var t := sim.track
+	_panel(r.grow(8))
+	var pts := PackedVector2Array()
+	for k in _profile.size():
+		pts.append(Vector2(r.position.x + r.size.x * k / PROFILE_STEPS, r.end.y - _profile[k] * r.size.y))
+	var fill := pts.duplicate()
+	fill.append(r.end)
+	fill.append(Vector2(r.position.x, r.end.y))
+	draw_colored_polygon(fill, Color(0.45, 0.75, 0.45, 0.3))
+	draw_polyline(pts, Color(0.85, 1, 0.85, 0.9), 2.0)
+	var span := maxf(_profile_range.y - _profile_range.x, 1.0)
+	var me := session.local_car
+	for i in sim.car_count():
+		if i == me:
+			continue
+		_profile_dot(r, sim.cars[i].track_s, span, 3.0, sim.defs[i].colour)
+	_text(r.position + Vector2(0, -12), "%d m  ↕ %d m" % [int(t.base_alt_m + (_profile_range.x if me < 0 else t.height_at(sim.cars[me].track_s))), int(span)], 14, Color(1, 1, 1, 0.75))
+	if me < 0:
+		return
+	var s := sim.cars[me].track_s
+	var x := r.position.x + r.size.x * fposmod(s, t.length) / t.length
+	draw_line(Vector2(x, r.position.y), Vector2(x, r.end.y), Color(1, 1, 1, 0.35), 1.0)
+	_profile_dot(r, s, span, 6.0, Color(1, 0.9, 0.3))
+	var g := t.grade_at(s) * 100.0
+	var col := Color.WHITE
+	if g > 3.0:
+		col = Color(1, 0.75, 0.3)
+	elif g < -3.0:
+		col = Color(0.5, 0.8, 1)
+	_text(Vector2(r.end.x - 120, r.position.y - 12), "%s %d%%" % ["▲" if g >= 0.0 else "▼", int(round(absf(g)))], 18, col, HORIZONTAL_ALIGNMENT_RIGHT, 120)
+
+
+func _profile_dot(r: Rect2, s: float, span: float, rad: float, col: Color) -> void:
+	var t := session.sim.track
+	var f := fposmod(s, t.length) / t.length
+	var y := (t.height_at(s) - _profile_range.x) / span
+	draw_circle(Vector2(r.position.x + r.size.x * f, r.end.y - y * r.size.y), rad, col)

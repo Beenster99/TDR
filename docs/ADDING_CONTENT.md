@@ -44,6 +44,17 @@ Tracks are built, not hand-written, by `modules/tracks/tools/build_tracks.py`.
    that starts and ends on the track, and that an AI car laps it cleanly.
 4. Add the source to `modules/tracks/data/ATTRIBUTION.md` if it's a new one.
 
+Elevation is added by the same run: `tools/elevation.py` reads heights from
+the free Terrarium elevation tiles (AWS Open Data) for the centre line, the
+pit lane and a 20 m terrain grid around the circuit, and smooths them. To
+redo just the elevation without downloading OpenStreetMap again, run
+`python3 modules/tracks/tools/elevation.py <id>` (the track file needs the
+`geo` block that `build_tracks.py` writes). Real banking that the elevation
+data is too coarse to see goes in the track's `tracks.json` entry as
+`"banking": [{"from_m": 1200, "to_m": 1350, "deg": 18}]` (distance from the
+start/finish line in race direction; positive degrees lower the right side
+of the track, which banks a right-hand corner).
+
 ## Tests
 
 ```

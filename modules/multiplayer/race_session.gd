@@ -21,10 +21,13 @@ enum Mode { OFFLINE, SERVER, CLIENT }
 
 const SEND_EVERY := 2         ## car states: 30 Hz
 const RACE_STATE_EVERY := 6   ## timing/positions: 10 Hz
+const TELEMETRY_EVERY := 5    ## gaps / pit analysis ride on every 5th race state: 2 Hz
 const HOST_PEER := 1
 
 var mode: int = Mode.OFFLINE
 var sim: RaceSim
+## Race data for the pit wall (timing, gaps, pit windows, weather, feed).
+var telemetry: RaceTelemetry
 var ai: Dictionary = {}               ## car index -> AIDriver (cars this machine runs for the AI)
 var start_data: Dictionary = {}
 var local_peer: int = 0
@@ -47,6 +50,7 @@ static func create(p_mode: int, p_start_data: Dictionary, p_local_peer: int, p_n
 	if p_mode != Mode.CLIENT:
 		s.ai = AIDriver.for_all_ai(s.sim)
 	s.sim.follower = p_mode == Mode.CLIENT
+	s.telemetry = RaceTelemetry.create(s.sim, p_mode != Mode.CLIENT)
 	for i in s.sim.car_count():
 		s.inputs.append(CarInput.neutral())
 		var e := s.sim.entries[i]
@@ -93,9 +97,12 @@ func tick(local_input: CarInput) -> void:
 		if owns(i):
 			inputs[i] = ai[i].get_input(sim, i)
 	sim.step(inputs)
+	var feed_events := telemetry.observe(sim)
 	if mode == Mode.OFFLINE or mode == Mode.SERVER:
-		if not sim.events.is_empty():
+		telemetry.on_events(sim.events)
+		if not sim.events.is_empty() or not feed_events.is_empty():
 			var evs := sim.events.duplicate(true)
+			evs.append_array(feed_events)
 			events_emitted.emit(evs)
 			if net:
 				net.broadcast_events(evs)
@@ -125,6 +132,8 @@ func _check_finished() -> void:
 func _race_state() -> Dictionary:
 	var st := sim.race_state()
 	st["owners"] = owners
+	if (sim.tick / RACE_STATE_EVERY) % TELEMETRY_EVERY == 0:
+		st["telemetry"] = telemetry.to_net()
 	return st
 
 
@@ -152,6 +161,8 @@ func on_race_state(bytes: PackedByteArray) -> void:
 	_last_race_tick = int(st["tick"])
 	var was_countdown := sim.phase == RaceSim.Phase.COUNTDOWN
 	sim.apply_race_state(st)
+	if st.has("telemetry"):
+		telemetry.apply_net(st["telemetry"])
 	if st.has("owners") and PackedInt32Array(st["owners"]) != owners:
 		owners = PackedInt32Array(st["owners"])
 		_apply_ownership()
@@ -162,6 +173,7 @@ func on_race_state(bytes: PackedByteArray) -> void:
 
 func on_remote_events(evs: Array) -> void:
 	if mode == Mode.CLIENT:
+		telemetry.on_events(evs)
 		events_emitted.emit(evs)
 
 

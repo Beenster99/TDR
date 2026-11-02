@@ -22,6 +22,14 @@ const ESC_LIMIT := 1.6
 const ESC_BETA_GAIN := 3.0
 const COUNTER_STEER := 0.8
 const STEER_SLIP_MARGIN := 1.3
+## Damage (see CarDamage): steering pull (rad) at full misalignment, grip
+## left on a flat tyre, its extra rolling drag, and kerb wear on suspension.
+const ALIGN_PULL := 0.035
+const PUNCTURE_GRIP := 0.3
+const PUNCTURE_ROLL := 0.06
+const KERB_WEAR_SPEED := 30.0   ## m/s: kerbs below this do no harm
+const KERB_WEAR := 0.004        ## suspension damage per second at +30 m/s over
+const KERB_PUNCTURE := 0.03     ## chance per second of a flat, sliding fast over a kerb
 
 const SURFACE_GRIP := {
 	TrackData.Surface.TRACK: 1.0,
@@ -47,13 +55,18 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 	s.surface = track.surface_for(q)
 	var surf_mu: float = SURFACE_GRIP[s.surface]
 	var surf_roll: float = SURFACE_ROLL[s.surface]
+	# Slopes, banking and crests (all zero on a flat track).
+	var slope := track.surface_gradient(q)          # uphill vector, rise per metre
+	var slope_cos := 1.0 / sqrt(1.0 + slope.length_squared())
+	var g_plane := -slope * G * slope_cos           # gravity along the road surface
 
 	# --- Steering (rate limited, damage adds pull later) ------------------
 	var steer_target := clampf(inp.steer, -1.0, 1.0) * d.max_steer
 	if s.assist_stability:
 		steer_target = _assisted_steer(s, steer_target, d, tc)
 	s.steer_angle = move_toward(s.steer_angle, steer_target, d.steer_rate * dt)
-	var delta := s.steer_angle
+	var full_damage := s.damage_level == CarDamage.Level.FULL
+	var delta := s.steer_angle + (s.alignment * ALIGN_PULL if full_damage else 0.0)
 	var cos_d := cos(delta)
 	var sin_d := sin(delta)
 
@@ -69,12 +82,25 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 	var L := d.wheelbase
 
 	# --- Vertical loads (static + aero + longitudinal/lateral transfer) ----
-	var cla := d.cla * (1.0 - 0.6 * s.damage_aero)
-	var downforce := 0.5 * rho * cla * vx * vx
-	var fz_front := m * G * b / L + downforce * d.aero_balance_front - m * s.ax * d.cg_height / L
-	var fz_rear := m * G * a / L + downforce * (1.0 - d.aero_balance_front) + m * s.ax * d.cg_height / L
-	fz_front = maxf(fz_front, 0.15 * m * G * b / L)
-	fz_rear = maxf(fz_rear, 0.15 * m * G * a / L)
+	# Aero damage takes downforce away from the end that was hit.
+	var front_share := 0.5
+	var bent := s.body_damage[CarDamage.FRONT] + s.body_damage[CarDamage.REAR]
+	if bent > 0.001:
+		front_share = s.body_damage[CarDamage.FRONT] / bent
+	var q_air := 0.5 * rho * d.cla * vx * vx
+	var lost := 0.6 * s.damage_aero * q_air
+	var df_front := maxf(q_air * d.aero_balance_front - lost * front_share, 0.0)
+	var df_rear := maxf(q_air * (1.0 - d.aero_balance_front) - lost * (1.0 - front_share), 0.0)
+	# Weight pressing the car into the road: less on a slope, more in a dip,
+	# less over a crest (enough speed over a sharp crest and the car goes light).
+	var v_along := s.vel.dot(q["dir"])
+	var load_g := clampf(slope_cos + v_along * v_along * track.vertical_curvature_at(s.track_s) / G, 0.2, 3.0)
+	s.load_factor = load_g
+	var mg := m * G * load_g
+	var fz_front := mg * b / L + df_front - m * s.ax * d.cg_height / L
+	var fz_rear := mg * a / L + df_rear + m * s.ax * d.cg_height / L
+	fz_front = maxf(fz_front, 0.15 * mg * b / L)
+	fz_rear = maxf(fz_rear, 0.15 * mg * a / L)
 	# Positive ay (turning right) moves load onto the left (outside) tyres.
 	var lat_transfer := m * s.ay * d.cg_height / d.track_width
 	var tf := lat_transfer * d.roll_stiffness_front
@@ -94,7 +120,9 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 		if i >= 2:
 			mu *= d.rear_grip * (1.0 - 0.3 * s.damage_suspension)
 		else:
-			mu *= d.front_grip
+			mu *= d.front_grip * (1.0 - 0.15 * s.damage_suspension)
+		if s.puncture[i] > 0.5:
+			mu *= PUNCTURE_GRIP
 		cap[i] = maxf(mu, 0.1) * fz[i]
 	var cap_f := cap[0] + cap[1]
 	var cap_r := cap[2] + cap[3]
@@ -115,12 +143,18 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 		var ratio := d.gear_ratios[s.gear - 1] * d.final_drive
 		var wheel_rpm := vx / d.wheel_radius * 60.0 / TAU
 		s.rpm = maxf(d.idle_rpm, wheel_rpm * ratio)
-		if s.rpm > d.shift_up_rpm and s.gear < n_gears:
+		var top := CarDamage.usable_gears(s, n_gears) if full_damage else n_gears
+		var gear_was := s.gear
+		if s.rpm > d.shift_up_rpm and s.gear < top:
 			s.gear += 1
+		elif s.gear > top:
+			s.gear = top
 		elif s.rpm < d.shift_down_rpm and s.gear > 1:
 			var lower := d.gear_ratios[s.gear - 2] * d.final_drive
 			if wheel_rpm * lower < d.shift_up_rpm * 0.97:
 				s.gear -= 1
+		if s.gear != gear_was and full_damage and s.damage_gearbox > 0.05:
+			s.shift_cut = CarDamage.GEARBOX_SHIFT_CUT * s.damage_gearbox
 		ratio = d.gear_ratios[s.gear - 1] * d.final_drive
 		s.rpm = maxf(d.idle_rpm, wheel_rpm * ratio)
 		var eff_rpm := maxf(s.rpm, d.idle_rpm * 2.5)  # clutch slip off the line
@@ -129,6 +163,16 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 			torque = 0.0
 		if s.fuel_l <= 0.0 and fuel_rate > 0.0:
 			torque = 0.0
+		if full_damage:
+			if s.shift_cut > 0.0:
+				s.shift_cut = maxf(s.shift_cut - dt, 0.0)
+				torque = 0.0
+			if CarDamage.engine_failed(s):
+				torque = 0.0
+			elif s.damage_engine > CarDamage.ENGINE_LEAK_FROM:
+				# A damaged engine gets worse the harder it is worked.
+				var load := throttle * clampf(s.rpm / d.redline_rpm, 0.0, 1.0)
+				s.damage_engine = minf(s.damage_engine + CarDamage.ENGINE_LEAK_RATE * s.damage_engine * load * dt, 1.0)
 		drive_force = torque * ratio * d.drivetrain_efficiency / d.wheel_radius
 		power_kw = torque * s.rpm * TAU / 60.0 / 1000.0
 		if throttle < 0.05 and vx > 1.0:
@@ -218,18 +262,33 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 	var fy_body := fx_f * sin_d + fy_f * cos_d + fy_r
 	fx_body -= 0.5 * rho * d.cda * (1.0 + 0.3 * s.damage_aero) * vx * absf(vx)
 	fy_body -= 0.5 * rho * d.cda * 2.5 * vy * absf(vy)
-	var roll := (ROLL_RESIST + surf_roll) * m * G * clampf(absf(vx) / 0.5, 0.0, 1.0)
+	var roll := (ROLL_RESIST + surf_roll) * mg * clampf(absf(vx) / 0.5, 0.0, 1.0)
 	fx_body -= dir_sign * roll
 	var yaw_torque := a * (fx_f * sin_d + fy_f * cos_d) - b * fy_r + esc_torque
+	# A flat tyre drags: slows the car and pulls it towards that side.
+	if full_damage and absf(vx) > 0.5:
+		for i in 4:
+			if s.puncture[i] > 0.5:
+				var drag := PUNCTURE_ROLL * fz[i] * dir_sign
+				fx_body -= drag
+				yaw_torque += drag * d.track_width * 0.5 * (1.0 if i % 2 == 1 else -1.0)
 
+	# ax / ay are what the driver feels (tyres and air); they drive load
+	# transfer. Gravity along the slope adds to the motion on top: uphill
+	# slows the car, downhill makes it harder to stop, banking holds it in.
 	s.ax = fx_body / m
 	s.ay = fy_body / m
-	s.vel += (fwd * s.ax + rgt * s.ay) * dt
+	s.vel += (fwd * s.ax + rgt * s.ay + g_plane) * dt
 	s.yaw_rate += yaw_torque / d.inertia * dt
-	# Parking: kill creep when stationary with no drive.
+	# Parking: kill creep when stationary with no drive. On a hill only the
+	# brakes hold the car (if they're strong enough for the slope).
 	if speed < 0.3 and absf(drive_force) < 1.0:
-		s.vel *= 0.8
-		s.yaw_rate *= 0.8
+		if brake > 0.1 and brake * d.brake_force > g_plane.length() * m * 1.2:
+			s.vel = Vector2.ZERO
+			s.yaw_rate *= 0.5
+		elif g_plane.length() < 0.3:
+			s.vel *= 0.8
+			s.yaw_rate *= 0.8
 	s.pos += s.vel * dt
 	s.heading = wrapf(s.heading + s.yaw_rate * dt, -PI, PI)
 
@@ -243,8 +302,21 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 			s.vel -= normal * vn * 1.3
 			s.vel *= 0.85
 			s.yaw_rate *= 0.6
-			events.append({"type": "barrier_impact", "car": car_index, "speed": vn})
+			events.append({"type": "barrier_impact", "car": car_index, "speed": vn, "normal": normal})
 		s.pos -= normal * 0.2
+
+	# --- Kerbs taken flat out wear the suspension, and can cut a tyre ------
+	if full_damage and s.surface == TrackData.Surface.KERB and speed > KERB_WEAR_SPEED:
+		var over := (speed - KERB_WEAR_SPEED) / 30.0
+		s.damage_suspension = minf(s.damage_suspension + KERB_WEAR * over * over * dt, 1.0)
+		if absf(vy) > 3.0:
+			var salt := int(s.pos.x * 64.0) * 92821 + int(s.pos.y * 64.0)
+			if CarDamage.roll(salt) < KERB_PUNCTURE * dt:
+				# The wheels on the kerb are the ones on that edge of the track.
+				var wheel := CarState.FR if s.lateral_offset >= 0.0 else CarState.FL
+				if s.puncture[wheel] < 0.5:
+					s.puncture[wheel] = 1.0
+					events.append({"type": "puncture", "car": car_index, "wheel": wheel, "cause": "kerb"})
 
 	# --- Tyre temperatures ------------------------------------------------
 	var slip_v_f := absf(v_wheel_lat)

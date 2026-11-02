@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Top Down Racer Release Notes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<style>
+/* Same layout as the Torque Shed release notes, every release: masthead, at a glance,
+   one entry per feature (rail on the left: area, day, part of the game), then Try it / Known limits / Coming next. */
+:root {
+  --paper: #efede7; --sheet: #ffffff; --ink: #1b1d20; --muted: #5b6168; --rule: #d5d2c9;
+  --accent: #c0341d; --link: #1d6b8a;
+  --display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --body: "Literata", Georgia, "Times New Roman", serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #121417; --sheet: #1b1e22; --ink: #e5e6e8; --muted: #9ca3aa; --rule: #2d3238;
+    --accent: #ff7552; --link: #6cc3e0; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #121417; --sheet: #1b1e22; --ink: #e5e6e8; --muted: #9ca3aa; --rule: #2d3238;
+  --accent: #ff7552; --link: #6cc3e0; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--paper); color: var(--ink); font-family: var(--body); font-size: 17px; line-height: 1.6; margin: 0;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.wrap { max-width: 1060px; margin: 0 auto; padding-block: 40px 72px; }
+h1, h2, h3 { font-family: var(--display); font-weight: 700; line-height: 1.05; text-wrap: balance; margin: 0; letter-spacing: 0.01em; }
+a { color: var(--link); text-underline-offset: 3px; }
+header.top { display: grid; gap: 18px; padding-bottom: 28px; border-bottom: 2px solid var(--ink); }
+.kicker { font-family: var(--mono); font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px 18px; }
+h1 { font-size: clamp(46px, 8vw, 84px); text-transform: uppercase; }
+h1 span { color: var(--accent); }
+.lede { max-width: 64ch; font-size: 19px; margin: 0; }
+.cta { display: flex; flex-wrap: wrap; gap: 10px; }
+.play { font-family: var(--display); font-size: 19px; letter-spacing: 0.04em; text-transform: uppercase; padding: 8px 16px; border: 2px solid var(--ink); color: var(--ink); background: var(--sheet); overflow-wrap: anywhere; }
+.play.main { background: var(--accent); border-color: var(--accent); color: #fff; }
+.glance { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); margin-block: 28px 8px; }
+.glance div { background: var(--sheet); padding: 14px 16px; min-width: 0; }
+.glance b { display: block; font-family: var(--display); font-size: 21px; letter-spacing: 0.02em; text-transform: uppercase; }
+.glance p { margin: 4px 0 0; font-size: 15px; color: var(--muted); }
+.log { margin-top: 44px; display: grid; }
+.entry { display: grid; grid-template-columns: 118px minmax(0, 1fr); gap: 28px; padding-block: 34px; border-top: 1px solid var(--rule); }
+.rail .m { font-family: var(--display); font-size: 40px; color: var(--accent); line-height: 1; text-transform: uppercase; }
+.rail .d { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-top: 6px; letter-spacing: 0.04em; }
+.rail .area { font-family: var(--mono); font-size: 11px; color: var(--link); margin-top: 10px; letter-spacing: 0.06em; text-transform: uppercase; }
+.body { min-width: 0; }
+.body h2 { font-size: clamp(28px, 4vw, 38px); text-transform: uppercase; }
+.body .sum { margin: 8px 0 14px; max-width: 66ch; }
+.body ul { margin: 0 0 18px; padding-left: 1.2em; max-width: 68ch; }
+.body li { margin-block: 3px; }
+.body li::marker { color: var(--accent); }
+.after { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 28px; margin-top: 40px; padding-top: 30px; border-top: 2px solid var(--ink); }
+.after h3 { font-size: 26px; text-transform: uppercase; margin-bottom: 8px; }
+.after ul { margin: 0; padding-left: 1.1em; }
+.after li { margin-block: 4px; }
+.after li::marker { color: var(--link); }
+footer { margin-top: 44px; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+@media (max-width: 720px) {
+  .entry { grid-template-columns: 1fr; gap: 10px; }
+  .rail { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  .rail .d, .rail .area { margin-top: 0; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="kicker"><span>Release notes</span><span>2 Nov 2026</span><span>v0.2.2</span><span>Pit wall</span></div>
+    <h1>Top Down <span>Racer</span></h1>
+    <p class="lede">The first piece of the pit manager and strategist job. Every race now records proper race data for every car, and a new Pit wall screen shows it: sector and lap times, 5 lap averages, gaps, tyres, when a gap opens for a pit stop, a weather radar with a forecast, and the other teams' radio and strategy calls.</p>
+    <div class="cta">
+      <span class="play main">Download TopDownRacer-v0.2.2-windows.zip</span>
+    </div>
+    <section class="glance" aria-label="At a glance">
+      <div><b>Pit wall screen</b><p>Press P on the keyboard or D-pad right on the controller during a race.</p></div>
+      <div><b>Every car timed</b><p>Sectors, laps, last 5 lap average, gap to the leader and to the car ahead.</p></div>
+      <div><b>Pit windows</b><p>Where each car would rejoin if it stopped now, and when it's into clear air.</p></div>
+      <div><b>Radar and radio</b><p>Rain on the radar before it arrives, plus team radio and strategy calls.</p></div>
+    </section>
+  </header>
+
+  <main class="log">
+
+    <article class="entry" id="timing">
+      <div class="rail"><div class="m">Data</div><div class="d">2 Nov</div><div class="area">Race data</div></div>
+      <div class="body">
+        <h2>Timing like a real pit wall</h2>
+        <p class="sum">The lap is split into timing points about every 80 metres, and every car's time through each one is kept, so gaps are measured the way real timing does it.</p>
+        <ul>
+          <li>Sector times for every car's last lap: purple for the fastest of anyone, green for that driver's own best.</li>
+          <li>Last lap, best lap and the average of the last 5 laps (the standing-start lap doesn't count), plus whether a driver is getting faster or slower.</li>
+          <li>Gap to the leader, interval to the car ahead (yellow when it's under a second), and laps down for lapped cars.</li>
+          <li>Tyres for every car: four little squares coloured from cold blue to hot red, the average temperature, and the compound.</li>
+          <li>Everything is saved when a race ends, so later tools can look back at whole races.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="pits">
+      <div class="rail"><div class="m">Pits</div><div class="d">2 Nov</div><div class="area">Strategy</div></div>
+      <div class="body">
+        <h2>When a gap opens for a stop</h2>
+        <p class="sum">Each track's pit lane gives a time loss for a stop: the drive down the lane at the speed limit, plus the stop, minus the time the car would have spent on the track it skips (measured from its own laps).</p>
+        <ul>
+          <li>The STOP NOW column shows the position each car would rejoin in if it pitted this lap, and marks it "clear" when it would come out in clean air.</li>
+          <li>The selected car panel spells it out: time lost, where you rejoin, the gap behind you now and the gap you need for a stop that costs no places.</li>
+          <li>When that gap opens for any car, the feed calls it: "Pit window: X can stop now and rejoin P5 in clear air".</li>
+          <li>Pit stops themselves arrive in wave 3; this is the analysis they'll use.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="weather">
+      <div class="rail"><div class="m">Sky</div><div class="d">2 Nov</div><div class="area">Weather</div></div>
+      <div class="body">
+        <h2>Weather radar and forecast</h2>
+        <p class="sum">A radar view around the circuit shows cloud and rain drifting in on the wind, with the forecast next to it.</p>
+        <ul>
+          <li>Rain shows on the radar well before it reaches the track: the outer ring is roughly 24 minutes away.</li>
+          <li>The forecast lists what's coming, when (as a window, like "6-8 min") and how sure it is. The further away, the less certain.</li>
+          <li>The feed warns at about 10, 5 and 2 minutes before a change, and when it arrives.</li>
+          <li>Needs changing weather turned on in the race settings; with fixed weather it shows the current conditions.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="feed">
+      <div class="rail"><div class="m">Radio</div><div class="d">2 Nov</div><div class="area">Feed</div></div>
+      <div class="body">
+        <h2>Other teams' radio and strategy</h2>
+        <p class="sum">A running feed of what's happening, which you can filter with left and right on the D-pad.</p>
+        <ul>
+          <li>Team radio from the AI drivers ("Ran wide, lost a bit of time", tyres going off, held up in traffic) and their strategy calls (push, manage, defend).</li>
+          <li>Timing calls: fastest laps, passes in the top ten, a car closing to within a second.</li>
+          <li>Tyres overheating, contacts between cars, weather changes, and pit windows opening.</li>
+          <li>Ready for race control: yellow flags, safety cars and penalties will appear here when wave 3 adds them.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="screen">
+      <div class="rail"><div class="m">View</div><div class="d">2 Nov</div><div class="area">Pit wall</div></div>
+      <div class="body">
+        <h2>The Pit wall screen</h2>
+        <p class="sum">One full screen made for 4K and the controller: timing tower on the left, radar and forecast, the selected car and the feed on the right.</p>
+        <ul>
+          <li>Open it with P or D-pad right. D-pad up and down picks a car, left and right filters the feed, B closes it.</li>
+          <li>The race keeps running underneath, so you can check it on a straight.</li>
+          <li>Online, everyone sees the same gaps and pit windows: the host works them out and sends them to the other players.</li>
+          <li>In wave 5 co-op this becomes the strategist's main screen.</li>
+        </ul>
+      </div>
+    </article>
+
+  </main>
+
+  <section class="after">
+    <div>
+      <h3>Try it</h3>
+      <ul>
+        <li>Unzip the folder and double-click TopDownRacer.exe, as before.</li>
+        <li>Start a race with 15 AI cars and changing weather, then press P (or D-pad right) after a couple of laps.</li>
+        <li>Scroll to your car and watch the STOP NOW column as gaps open and close.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Known limits</h3>
+      <ul>
+        <li>Pit lane times come out long (35 to 55 seconds) because the tracks' speed-limit zones are still a rough default. They get fixed when pit lanes become drivable in wave 3.</li>
+        <li>The stop itself is a placeholder 8 seconds until pit work (tyres, fuel, repairs) exists.</li>
+        <li>On the first lap gaps are rough, as nobody has a lap time yet.</li>
+        <li>Players on 0.2.1 can still race with you, but they won't see the Pit wall.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Coming next</h3>
+      <ul>
+        <li>Wave 3: pit stops that use these pit windows, fuel, damage and the safety car.</li>
+        <li>Deeper strategy tools: lap time charts, stint planning and tyre wear.</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>Build of main with the race data module and Pit wall screen (PR #10).</footer>
+</div>
+</body>
+</html>
