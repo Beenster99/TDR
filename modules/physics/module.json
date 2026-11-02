@@ -1,7 +1,7 @@
 {
   "id": "physics",
   "name": "Physics",
-  "version": "1.8.1",
+  "version": "1.9.1",
   "status": "active",
   "summary": "How cars move: the vehicle model, tyre grip and temperatures, air and track temperature, weather: clock, temperatures, rain, standing water, drying line and rubber (SimEnvironment); slopes, crests and banking from the track elevation. Tyre compounds are JSON in data/.",
   "depends": {
@@ -20,5 +20,5 @@
     "DrivingLine"
   ],
   "internal": [],
-  "notes": "Pure data, no nodes, deterministic. CarDamage (wave 3): damage from hits and kerbs, its effect on the car, repair times for the pits, and visual_parts() for the 3D car. Setups (wave 4): ride height and bottoming, ground effect, springs/dampers/ARB, camber, toe, diff, tyre pressures (hot pressure from temperature). SetupAdvisor picks a good setup per car and track from a point-mass lap."
+  "notes": "Pure data, no nodes, deterministic. CarDamage (wave 3): damage from hits and kerbs, its effect on the car, repair times for the pits, and visual_parts() for the 3D car. Setups (wave 4): ride height and bottoming, ground effect, springs/dampers/ARB, camber, toe, diff, tyre pressures (hot pressure from temperature). SetupAdvisor picks a good setup per car and track from a point-mass lap. Mixed tyres: CarPhysics.step takes wheel_tc ([4] TyreCompound, FL FR RL RR; each wheel's grip, pressure, heat and wear from its own compound, each axle's slip curve the average of its two) and CarState.psi_trim (per-tyre cold pressure on top of the setup's front/rear, set from the pit state)."
 }

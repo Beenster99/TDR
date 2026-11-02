@@ -6,8 +6,8 @@ extends Control
 ## "Tyres are gone"). Messages go out with RaceSession.send_team_radio and
 ## arrive at every member of the car's crew as the session's team_radio signal.
 ##
-## D-pad / arrows choose, A / Enter sends, B / Esc / V closes. Number keys
-## 1-9 send a call straight away.
+## Click a call to send it (or number keys 1-9); ↑ ↓ and Enter work too,
+## Esc / V or a click outside closes. A controller: D-pad, A, B.
 
 signal sent(msg: Dictionary)
 
@@ -40,6 +40,8 @@ var car: int = -1
 var as_driver := false
 var selected := 0
 var font: Font
+var _rows: Array[Rect2] = []
+var _box := Rect2()
 
 
 func setup(p_session: RaceSession, p_car: int, p_as_driver: bool) -> void:
@@ -101,7 +103,26 @@ func my_name() -> String:
 
 
 func _input(event: InputEvent) -> void:
-	if not visible or not event.is_pressed():
+	if not visible:
+		return
+	if event is InputEventMouseMotion:
+		for k in _rows.size():
+			if _rows[k].has_point(event.position):
+				selected = k
+		return
+	if event is InputEventMouseButton:
+		if event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+			var hit := -1
+			for k in _rows.size():
+				if _rows[k].has_point(event.position):
+					hit = k
+			if hit >= 0:
+				send(hit)
+			elif not _box.has_point(event.position):
+				close()
+		get_viewport().set_input_as_handled()
+		return
+	if not event.is_pressed():
 		return
 	var n := calls().size()
 	if event.is_action_pressed("ui_cancel") or event.is_action_pressed("team_radio"):
@@ -131,6 +152,8 @@ func _draw() -> void:
 	var rh := 38.0
 	var h := 64.0 + list.size() * rh + 34.0
 	var r := Rect2((size.x - w) * 0.5, (size.y - h) * 0.5, w, h)
+	_box = r
+	_rows.clear()
 	draw_rect(r, Color(0.02, 0.04, 0.07, 0.94))
 	draw_rect(r, Color(1, 0.88, 0.35, 0.5), false, 2.0)
 	var title := "RADIO TO THE PIT WALL" if as_driver else "RADIO TO THE DRIVER"
@@ -138,9 +161,10 @@ func _draw() -> void:
 	for k in list.size():
 		var y := r.position.y + 58 + k * rh
 		var row := Rect2(r.position.x + 10, y, w - 20, rh - 4)
+		_rows.append(row)
 		if k == selected:
 			draw_rect(row, Color(1, 0.88, 0.35, 0.18))
 			draw_rect(row, Color(1, 0.88, 0.35, 0.7), false, 1.5)
 		draw_string(font, Vector2(row.position.x + 10, y + 24), str(k + 1), HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(1, 1, 1, 0.45))
 		draw_string(font, Vector2(row.position.x + 38, y + 24), list[k][1], HORIZONTAL_ALIGNMENT_LEFT, w - 70, 18, Color.WHITE)
-	draw_string(font, Vector2(r.position.x + 18, r.end.y - 12), "↑↓ choose   A send   B close", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(1, 1, 1, 0.5))
+	draw_string(font, Vector2(r.position.x + 18, r.end.y - 12), "Click a call or press its number   Esc close", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(1, 1, 1, 0.5))

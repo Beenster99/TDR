@@ -94,9 +94,13 @@ const GRAVEL_DIG_SPEED := 18.0
 
 
 ## wear_rate: tyre wear multiplier (0 = tyres never wear, 1 = normal).
+## wheel_tc: the compound on each wheel (FL, FR, RL, RR) when a car runs
+## mixed tyres after a pit stop; empty = tc on all four.
 static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 		env: SimEnvironment, track: TrackData, dt: float, fuel_rate: float, events: Array, car_index: int,
-		wear_rate: float = 0.0) -> void:
+		wear_rate: float = 0.0, wheel_tc: Array = []) -> void:
+	var wtc: Array = wheel_tc if wheel_tc.size() == 4 else [tc, tc, tc, tc]
+	var mixed: bool = wtc[0] != tc or wtc[1] != tc or wtc[2] != tc or wtc[3] != tc
 	# --- Where are we on track? ------------------------------------------
 	var q := track.project(s.pos, s.track_idx)
 	s.track_idx = q["idx"]
@@ -182,6 +186,10 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 	# --- Per-tyre friction capacity -------------------------------------
 	var off_line := s.lateral_offset - env.raceline_offset(s.track_idx)
 	var surface_grip := env.grip_factor(tc, off_line, speed) * surf_mu
+	var wheel_surface := PackedFloat64Array([surface_grip, surface_grip, surface_grip, surface_grip])
+	if mixed:
+		for i in 4:
+			wheel_surface[i] = env.grip_factor(wtc[i], off_line, speed) * surf_mu
 	# Setup: stiff suspension loses grip over bumps and kerbs, camber trades
 	# cornering grip (best at the right camber once the body rolls) against
 	# braking and traction, rear toe-in steadies the rear.
@@ -201,12 +209,14 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 	var cap_y := PackedFloat64Array([0.0, 0.0, 0.0, 0.0])   # cornering
 	var p_heat := PackedFloat64Array([1.0, 1.0, 1.0, 1.0])
 	for i in 4:
-		var mu := tc.peak_mu * tc.temp_grip_factor(s.tyre_temp[i]) * surface_grip * wear_grip_factor(s.tyre_wear[i])
-		mu *= 1.0 - tc.load_sensitivity * (fz[i] / fz_nominal - 1.0)
-		var p_hot := tc.hot_psi(d.pressure_delta_front if i < 2 else d.pressure_delta_rear, s.tyre_temp[i])
+		var t_c: TyreCompound = wtc[i]
+		var mu := t_c.peak_mu * t_c.temp_grip_factor(s.tyre_temp[i]) * wheel_surface[i] * wear_grip_factor(s.tyre_wear[i])
+		mu *= 1.0 - t_c.load_sensitivity * (fz[i] / fz_nominal - 1.0)
+		var cold_delta := (d.pressure_delta_front if i < 2 else d.pressure_delta_rear) + s.psi_trim[i]
+		var p_hot := t_c.hot_psi(cold_delta, s.tyre_temp[i])
 		s.tyre_psi[i] = p_hot
-		mu *= tc.pressure_grip_factor(p_hot)
-		p_heat[i] = tc.pressure_heat_factor(p_hot)
+		mu *= t_c.pressure_grip_factor(p_hot)
+		p_heat[i] = t_c.pressure_heat_factor(p_hot)
 		if i >= 2:
 			mu *= d.rear_grip * (1.0 - 0.3 * s.damage_suspension) * mech_r
 		else:
@@ -340,6 +350,10 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 	var lat_cap_r := cap_yr * sqrt(maxf(1.0 - (fx_r / maxf(cap_r, 1.0)) ** 2, 0.0))
 	var fy_f := -lat_cap_f * tc.lateral_curve(alpha_f)
 	var fy_r := -lat_cap_r * tc.lateral_curve(alpha_r)
+	if mixed:
+		# Each axle's slip curve is the average of its two tyres.
+		fy_f = -lat_cap_f * 0.5 * ((wtc[0] as TyreCompound).lateral_curve(alpha_f) + (wtc[1] as TyreCompound).lateral_curve(alpha_f))
+		fy_r = -lat_cap_r * 0.5 * ((wtc[2] as TyreCompound).lateral_curve(alpha_r) + (wtc[3] as TyreCompound).lateral_curve(alpha_r))
 	s.fy_front = fy_f
 	s.fy_rear = fy_r
 	s.grip_usage_rear = sqrt((fx_r / maxf(cap_r, 1.0)) ** 2 + (fy_r / maxf(cap_yr, 1.0)) ** 2)
@@ -452,6 +466,7 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 		var share := fz[i] / maxf(axle_fz, 1.0)
 		var p_kw: float = axle_power[0 if i < 2 else 1] * share
 		var t := s.tyre_temp[i]
+		var t_c: TyreCompound = wtc[i]
 		# Softer (lower pressure) tyres flex and heat more; camber works the
 		# inside edge harder; toe scrubs.
 		var camber := absf(d.camber_front if i < 2 else d.camber_rear)
@@ -459,17 +474,17 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 		# Rolling heat follows the load against what that tyre carries at rest
 		# (the rear tyres are bigger for the bigger static load).
 		var fz_static := m * G * 0.5 * (b if i < 2 else a) / L
-		var heat := (tc.heat_from_slip * p_kw + tc.heat_from_rolling * speed * (fz[i] / fz_static)) \
+		var heat := (t_c.heat_from_slip * p_kw + t_c.heat_from_rolling * speed * (fz[i] / fz_static)) \
 			* p_heat[i] * (1.0 + CAMBER_HEAT * (camber - 2.0)) + TOE_HEAT * toe * speed / 50.0
-		var cool := tc.cool_to_air * (1.0 + speed / tc.cool_speed_ms) * (t - env.ambient_c) + tc.cool_to_track * (t - env.track_c)
-		cool += tc.cool_to_water * env.wetness_at(off_line) * (1.0 + speed / 40.0) * (t - env.ambient_c)
+		var cool := t_c.cool_to_air * (1.0 + speed / t_c.cool_speed_ms) * (t - env.ambient_c) + t_c.cool_to_track * (t - env.track_c)
+		cool += t_c.cool_to_water * env.wetness_at(off_line) * (1.0 + speed / 40.0) * (t - env.ambient_c)
 		s.tyre_temp[i] = t + (heat - cool) * dt
 		if wear_rate > 0.0:
 			# Wear follows the sliding work, and grows fast on a tyre run
 			# hotter than its window (e.g. wets on a drying track).
-			var over := maxf(t - tc.optimal_temp_c - tc.temp_window_c * 0.5, 0.0) / tc.temp_window_c
-			var press := absf(s.tyre_psi[i] - tc.optimal_hot_psi) / tc.pressure_window_psi
-			var w := tc.wear_rate * wear_rate * (p_kw + WEAR_BASE_KW * speed / 50.0) * (1.0 + 3.0 * over) * (1.0 + 0.25 * press) * dt / 1000.0
+			var over := maxf(t - t_c.optimal_temp_c - t_c.temp_window_c * 0.5, 0.0) / t_c.temp_window_c
+			var press := absf(s.tyre_psi[i] - t_c.optimal_hot_psi) / t_c.pressure_window_psi
+			var w := t_c.wear_rate * wear_rate * (p_kw + WEAR_BASE_KW * speed / 50.0) * (1.0 + 3.0 * over) * (1.0 + 0.25 * press) * dt / 1000.0
 			s.tyre_wear[i] = minf(s.tyre_wear[i] + w, 1.0)
 
 

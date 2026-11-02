@@ -6,7 +6,7 @@ extends CanvasLayer
 ## Lives under the scene tree root for the whole session (ensure()), so it
 ## outlasts scene changes, and draws the debug frame rate counter.
 
-const BUS_FOR := {"vol_master": "Master", "vol_engine": "Engine", "vol_effects": "Effects", "vol_ui": "UI"}
+const BUS_FOR := {"vol_master": "Master", "vol_engine": "Engine", "vol_effects": "Effects", "vol_ui": "UI", "vol_radio": "Radio"}
 const SHADOW_ATLAS := [2048, 4096, 8192, 8192]
 const SHADOW_SOFT := [0, 1, 2, 3]
 
