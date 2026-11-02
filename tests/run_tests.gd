@@ -51,6 +51,10 @@ func _init() -> void:
 	test_race_start()
 	test_driving_aids()
 	test_hud_timing()
+	test_graphics_effects()
+	test_settings_and_units()
+	test_grid_limits()
+	test_garage_saves()
 	print("\n%s (%d failures, %.1fs)" % ["PASS" if failures == 0 else "FAIL", failures, (Time.get_ticks_msec() - t0) / 1000.0])
 	quit(1 if failures > 0 else 0)
 
@@ -1841,6 +1845,179 @@ func test_coop_roles() -> void:
 	sim.cars[0].tyre_wear[2] = 0.4
 	other.cars[0].deserialize(sim.cars[0].serialize())
 	check(is_equal_approx(other.cars[0].fuel_l, 12.5) and is_equal_approx(other.cars[0].tyre_wear[2], 0.4), "fuel and tyre wear move with the car")
+
+
+## Settings registry, saved prefs and units (core).
+func test_settings_and_units() -> void:
+	print("settings and units")
+	# The GameData autoload isn't loaded in a test run: make one.
+	var gd = load("res://modules/core/game_data.gd").new()
+	gd.persist_prefs = false
+	gd._register_defaults()
+	for key in ["driving_help", "aid_braking_zones", "aid_track_assist", "aid_racing_line", "manual_gears",
+			"hud_timing_tower", "units", "power_unit", "display_mode", "vol_master", "vol_engine", "show_fps"]:
+		check(not gd.setting_info(key).is_empty() and gd.prefs.has(key), "setting %s is registered with a value" % key)
+	for sec in gd.SECTIONS:
+		if sec != "garage":
+			check(gd.settings_in(sec).size() > 0, "Settings > %s has options" % sec)
+	check(gd.prefs["power_unit"] == "hp", "power shows in hp by default")
+	gd.register_setting("gameplay", "test_opt", "Test", [[1, "One"], [2, "Two"]], 2)
+	check(gd.prefs["test_opt"] == 2 and gd.settings_in("gameplay").back()["key"] == "test_opt", "a module can add its own option")
+	# Round trip through a settings file.
+	var was_persist: bool = gd.persist_prefs
+	var was_path: String = gd._settings_path
+	gd.persist_prefs = true
+	gd._settings_path = "user://test_settings.cfg"
+	gd.set_pref("test_opt", 1)
+	gd.prefs["test_opt"] = 2
+	gd.load_prefs()
+	check(gd.prefs["test_opt"] == 1, "a changed setting is saved and loads back")
+	var cfg := ConfigFile.new()
+	cfg.set_value("prefs", "test_opt", 7)   # no longer a valid choice
+	cfg.save("user://test_settings.cfg")
+	gd.load_prefs()
+	check(gd.prefs["test_opt"] == 1, "a saved value that is no longer a choice is ignored")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://test_settings.cfg"))
+	gd.persist_prefs = was_persist
+	gd._settings_path = was_path
+	# Units
+	Units.prefs = gd.prefs
+	gd.prefs["units"] = "metric"
+	gd.prefs["power_unit"] = "hp"
+	check(Units.speed(50.0) == "180 km/h", "50 m/s = 180 km/h (%s)" % Units.speed(50.0))
+	check(Units.power(441.0) == "591 hp", "441 kW = 591 hp (%s)" % Units.power(441.0))
+	check(Units.temp(85.0) == "85°C", "metric temperatures in °C")
+	gd.prefs["units"] = "uk"
+	check(Units.speed(50.0) == "112 mph" and Units.temp(20.0) == "20°C" and Units.distance(1609.344) == "1.00 mi",
+		"UK: mph and miles, but °C (%s, %s)" % [Units.speed(50.0), Units.distance(1609.344)])
+	gd.prefs["units"] = "imperial"
+	check(Units.temp(100.0) == "212°F" and Units.fuel(3.7854118) == "1.0 gal", "US: °F and gallons")
+	gd.prefs["power_unit"] = "kw"
+	check(Units.power(441.0) == "441 kW", "kW when chosen")
+	gd.prefs["power_unit"] = "ps"
+	check(Units.power(441.0) == "600 PS", "PS when chosen (%s)" % Units.power(441.0))
+	Units.prefs = {}
+	gd.free()
+
+
+## Up to 25 cars in one class, 45 in a multi-class race.
+func test_grid_limits() -> void:
+	print("grid limits")
+	var d := _data()
+	var s := RaceSettings.new()
+	s.track_id = "monza"
+	s.car_class = "GT3"
+	s.ai_count = 60
+	var drivers: Array = d["drivers"]
+	var cars: Dictionary = d["cars"]
+	var track: TrackData = d["track"]
+	var me := [{"name": "Me", "car_id": "bmw_m4_gt3"}]
+	var start := RaceFactory.plan(s, me, cars, drivers, track)
+	check(start["entries"].size() == 25, "single class: 25 cars at most (%d)" % start["entries"].size())
+	s.car_class = RaceSettings.CLASS_MULTI
+	start = RaceFactory.plan(s, me, cars, drivers, track)
+	check(start["entries"].size() == 45, "multi-class: 45 cars at most (%d)" % start["entries"].size())
+	s.ai_count = 10
+	start = RaceFactory.plan(s, me, cars, drivers, track)
+	check(start["entries"].size() == 11, "fewer AI asked for, fewer cars")
+
+
+## Bought cars, upgrades and liveries stay saved; a broken save falls back
+## to the backup copy.
+func test_garage_saves() -> void:
+	print("garage saves")
+	var cars: Dictionary = _data()["cars"]
+	var path := "user://test_profile.json"
+	for f in [path, path + ".bak", path + ".tmp"]:
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(f))
+	var p := TeamProfile.load_or_new(path)
+	p.money = 1000000
+	var bmw: CarDefinition = cars["bmw_m4_gt3"]
+	check(not p.owns(bmw.id), "a new team owns no cars")
+	check(p.buy_car(bmw) and p.owns(bmw.id), "buy a car")
+	check(p.money == 1000000 - UpgradeCatalog.car_price(bmw), "buying costs the car's price (%s)" % UpgradeCatalog.format_money(UpgradeCatalog.car_price(bmw)))
+	check(not p.buy_car(bmw), "can't buy the same car twice")
+	p.set_level(bmw, "engine", 2)
+	p.set_livery(bmw.id, {"pattern": "stripes", "primary": "#0b3d91"})
+	check(p.save() == OK, "saves")
+	p.set_level(bmw, "aero", 1)
+	check(p.save() == OK and FileAccess.file_exists(path + ".bak"), "a second save keeps the previous one as .bak")
+	var q := TeamProfile.load_or_new(path)
+	check(q.owns(bmw.id) and q.level(bmw.id, "engine") == 2 and q.level(bmw.id, "aero") == 1 and q.livery_for(bmw.id).get("pattern") == "stripes",
+		"car, upgrades and livery load back")
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	f.store_string("{ broken")
+	f.close()
+	var r := TeamProfile.load_or_new(path)
+	check(r.owns(bmw.id) and r.level(bmw.id, "engine") == 2, "a broken save loads from the backup")
+	# Saves from before cars were bought: upgraded cars count as owned.
+	var old := TeamProfile.new()
+	old.from_dict({"version": 1, "money": 5, "cars": {"bmw_m4_gt3": {"upgrades": {"engine": 1}, "livery": {}}, "flat6_rear_gt": {"upgrades": {}, "livery": {}}}})
+	check(old.owns("bmw_m4_gt3") and not old.owns("flat6_rear_gt"), "old saves: upgraded cars are in the garage")
+	var money_before := r.money
+	var back := r.sell_car(bmw)
+	check(not r.owns(bmw.id) and back > 0 and r.money == money_before + back, "selling a car refunds part of it")
+	for g in [path, path + ".bak", path + ".tmp"]:
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(g))
+
+
+## Graphics effects: run-off and gravel are drawn at the height cars are
+## drawn at (cars used to vanish under them on hilly tracks), and a pit
+## crew does a stop (jacks the car up, takes the wheels off, puts them back).
+func test_graphics_effects() -> void:
+	print("graphics effects")
+	for id in ["spa", "spielberg", "interlagos"]:
+		var t := TrackCatalog.load_track(id)
+		var tv := TrackView.new()
+		tv.setup(t, null)
+		var worst := 0.0
+		var n := 0
+		var bad := 0
+		for i in range(0, t.point_count(), 3):
+			var nrm := t.vertex_normal(i)
+			for side in [-1.0, 1.0]:
+				var e: float = (t.width_right[i] if side > 0 else t.width_left[i]) + t.kerb_width
+				for k in range(1, 6):
+					var off: float = side * (e + k * (t.runoff - t.kerb_width) / 6.0)
+					var q := t.points[i] + nrm * off
+					var proj := t.project(q)
+					if absf(float(proj["offset"]) - off) > 0.5 or t.in_pit_lane(q):
+						continue   # nearer another part of the track, or in the pit lane
+					var d: float = tv._surface_y(i, t.cum_s[i], off, q) - t.surface_height_at(q, proj["idx"])
+					worst = maxf(worst, d)
+					n += 1
+					if d > 0.3:
+						bad += 1
+		check(n > 100 and bad <= n / 100, "%s: run-off drawn where cars are (%d of %d samples > 0.3 m above, worst %.2f m)" % [id, bad, n, worst])
+		tv.free()
+	# pit crew
+	var t2 := TrackCatalog.load_track("monza")
+	var tv2 := TrackView.new()
+	tv2.setup(t2, null)
+	var crews := PitCrews.new()
+	tv2.add_child(crews)
+	crews.setup(tv2)
+	var def: CarDefinition = CarCatalog.load_all()["bmw_m4_gt3"]
+	crews.add_team(0, 4, Color.RED, def)
+	crews.fill_garages()
+	check(crews.crews.size() == t2.pit_box_count, "a crew in every garage (%d)" % crews.crews.size())
+	var work := {"tyre_s": 6.0, "fuel_s": 8.0, "repair_s": 0.0, "total_s": 10.0}
+	crews.set_stop(0, PitCrews.Stop.COMING, 0.0, work)
+	for f in 120:
+		crews._process(1.0 / 30.0)
+	var box: Vector2 = t2.pit_box(4)["pos"]
+	var near := 0
+	for p in crews.crews[4].people:
+		if p.pos.distance_to(box) < 5.0:
+			near += 1
+	check(near >= 9, "crew on their marks round the box when the car comes in (%d)" % near)
+	crews.set_stop(0, PitCrews.Stop.SERVICE, 3.0, work)
+	check(crews.car_lift(0) > 0.05 and crews.wheels_off(0), "mid-stop: car on the jacks, wheels off")
+	crews.set_stop(0, PitCrews.Stop.SERVICE, 9.8, work)
+	check(not crews.wheels_off(0), "end of the stop: wheels back on")
+	crews.set_stop(0, PitCrews.Stop.LEAVING, 10.0, work)
+	check(crews.car_lift(0) == 0.0, "car off the jacks when it leaves")
+	tv2.free()
 
 
 ## Every AI car gets away from the grid and keeps going (they used to all

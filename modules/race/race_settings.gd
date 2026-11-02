@@ -6,6 +6,9 @@ extends RefCounted
 var track_id: String = "spielberg"
 var laps: int = 3
 var ai_count: int = 5
+## Most cars on the grid (players + AI): one class, or several classes mixed.
+const MAX_CARS_SINGLE_CLASS := 25
+const MAX_CARS_MULTI_CLASS := 45
 var seed: int = 12345
 ## Which cars race: a class name (e.g. "GT3") = everyone in that class,
 ## CLASS_MULTI = classes mixed (AI spread over all classes), "" = open (AI
@@ -55,6 +58,15 @@ var countdown_s: float = 4.0
 var session_type: String = "race"
 const SESSION_RACE := "race"
 const SESSION_QUALIFYING := "qualifying"
+
+
+## Most cars this race may have (players and AI together).
+func max_cars() -> int:
+	return MAX_CARS_MULTI_CLASS if car_class == CLASS_MULTI else MAX_CARS_SINGLE_CLASS
+
+
+static func max_cars_for(p_class: String) -> int:
+	return MAX_CARS_MULTI_CLASS if p_class == CLASS_MULTI else MAX_CARS_SINGLE_CLASS
 
 
 func to_dict() -> Dictionary:

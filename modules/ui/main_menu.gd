@@ -16,6 +16,7 @@ extends Control
 ##   race options: --weather heavy_rain --weather-changes --time 20 --clock-speed 60 --grid reversed
 ##                 --damage off|visual|full  --upgrades on|bop|stock
 ##   --setup-screen [--menu-screenshot out.png]                     open the car setup screen
+##   --open-settings gameplay|graphics|sound|garage|debug  --open-garage  --splash-shot out.png
 
 
 var pages := {}
@@ -46,6 +47,12 @@ var upgrades_stepper: Stepper
 ## This player's team (business module): money, upgrades and liveries.
 var profile: TeamProfile
 var _garage: GarageScreen
+var _settings: SettingsScreen
+var badge: ProfileBadge
+var profile_info: Label
+## Class, car, track, tyres and setup: shown on the pages that start a race.
+var race_box: VBoxContainer
+var _title_label: Label
 var _menu_root: Control
 var lobby_list: VBoxContainer
 ## Co-op crews in the lobby: one row per player with a car share and a role.
@@ -171,6 +178,13 @@ func _handle_cmdline() -> void:
 				_resume_season(info["id"])
 	if GameData.arg("menu-page"):
 		_show(str(GameData.arg("menu-page")))
+	if GameData.arg("open-settings"):   # --open-settings graphics (screenshots)
+		_open_settings()
+		var sec := str(GameData.arg("open-settings"))
+		if sec in GameData.SECTIONS:
+			_settings._show_section(sec)
+	if GameData.arg("open-garage"):
+		_open_garage()
 	if GameData.arg("menu-shot"):
 		_menu_shot.call_deferred(str(GameData.arg("menu-shot")))
 	if GameData.arg("setup-screen"):
@@ -228,9 +242,9 @@ func _ready_all_check() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if has_node("SetupScreen"):
 		return  # the setup screen handles its own back button
-	if event.is_action_pressed("ui_cancel") and _garage == null:
+	if event.is_action_pressed("ui_cancel") and _garage == null and _settings == null:
 		match current_page:
-			"single", "join", "season_list": _show("main")
+			"single", "join", "season_list", "profile": _show("main")
 			"season_new": _show("season_list")
 			"season_hub": _leave_season()
 			"lobby": _on_leave()
@@ -240,10 +254,8 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _build_ui() -> void:
 	set_anchors_preset(PRESET_FULL_RECT)
-	var bg := ColorRect.new()
-	bg.color = Color(0.09, 0.11, 0.1)
-	bg.set_anchors_preset(PRESET_FULL_RECT)
-	add_child(bg)
+	# Race highlights loop behind everything (or the key art).
+	add_child(MenuBackground.new())
 	# Scrolls when a page is taller than the window (season set-up); the
 	# focused control is always kept in view, so a controller never gets lost.
 	var scroll := ScrollContainer.new()
@@ -251,36 +263,58 @@ func _build_ui() -> void:
 	scroll.follow_focus = true
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	add_child(scroll)
-	var center := CenterContainer.new()
-	center.size_flags_horizontal = SIZE_EXPAND_FILL
-	center.size_flags_vertical = SIZE_EXPAND_FILL
-	scroll.add_child(center)
+	# The menu sits on the left, over the dark side of the background, so the
+	# racing shows on the right.
+	var margin := MarginContainer.new()
+	margin.size_flags_horizontal = SIZE_EXPAND_FILL
+	margin.size_flags_vertical = SIZE_EXPAND_FILL
+	margin.add_theme_constant_override("margin_left", 80)
+	margin.add_theme_constant_override("margin_top", 56)
+	margin.add_theme_constant_override("margin_bottom", 40)
+	margin.add_theme_constant_override("margin_right", 40)
+	scroll.add_child(margin)
 	_menu_root = scroll
 	var root := VBoxContainer.new()
-	root.add_theme_constant_override("separation", 14)
-	center.add_child(root)
+	root.add_theme_constant_override("separation", 12)
+	root.size_flags_horizontal = SIZE_SHRINK_BEGIN
+	margin.add_child(root)
 	var title := Label.new()
 	title.text = "TOP DOWN RACER"
-	title.add_theme_font_size_override("font_size", 48)
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_override("font", SplashScreen.title_font())
+	title.add_theme_font_size_override("font_size", 54)
+	title.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.6))
+	title.add_theme_constant_override("outline_size", 8)
 	root.add_child(title)
+	var stripe := ColorRect.new()
+	stripe.color = Color(0.94, 0.26, 0.2)
+	stripe.custom_minimum_size = Vector2(300, 5)
+	stripe.size_flags_horizontal = SIZE_SHRINK_BEGIN
+	root.add_child(stripe)
 	var sub := Label.new()
-	sub.text = "%d cars  ·  %d circuits  ·  version %s  ·  keyboard or controller" % [GameData.cars.size(),
+	sub.text = "%d cars  ·  %d circuits  ·  version %s" % [GameData.cars.size(),
 		GameData.tracks.size(), ProjectSettings.get_setting("application/config/version", "dev")]
 	sub.modulate = Color(1, 1, 1, 0.6)
-	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	root.add_child(sub)
+	_title_label = title
 
-	# Shared: player name + car.
+	# The player's name lives on the profile page (top right badge).
 	name_edit = LineEdit.new()
 	# The name is who you are in a season, so it stays the same between races.
 	if not GameData.prefs.has("name"):
 		GameData.prefs["name"] = "Driver %d" % (randi() % 900 + 100)
 	name_edit.text = GameData.prefs["name"]
-	name_edit.text_changed.connect(func(t): GameData.prefs["name"] = t)
+	name_edit.text_changed.connect(func(t):
+		GameData.prefs["name"] = t
+		_refresh_badge())
 	name_edit.placeholder_text = "Your name"
 	name_edit.custom_minimum_size = Vector2(420, 40)
-	root.add_child(name_edit)
+	# Race picker: class, car, track, tyres, setup. Shown on the pages that
+	# start a race (not on the main page).
+	race_box = VBoxContainer.new()
+	race_box.add_theme_constant_override("separation", 8)
+	root.add_child(race_box)
+	var root_main := root
+	root = race_box
 	# Class (host setting), then car (yours), then track (host setting).
 	var class_opts := []
 	for c in CarCatalog.classes(GameData.cars):
@@ -289,7 +323,7 @@ func _build_ui() -> void:
 	class_opts.append(["", "Open (AI match the players)"])
 	var default_class: String = "GT3" if CarCatalog.ids_in_class(GameData.cars, "GT3").size() > 0 else class_opts[0][0]
 	class_stepper = Stepper.choice("Class", class_opts, default_class)
-	class_stepper.value_changed.connect(func(_v): _rebuild_car_options(); _push_settings())
+	class_stepper.value_changed.connect(func(_v): _rebuild_car_options(); _limit_grid(); _push_settings())
 	root.add_child(class_stepper)
 	car_stepper = Stepper.choice("Car", [], "")
 	car_stepper.value_changed.connect(func(v):
@@ -297,10 +331,7 @@ func _build_ui() -> void:
 		if Net.is_online(): Net.update_me(_my_lobby_fields(v)))
 	root.add_child(car_stepper)
 	_rebuild_car_options()
-	var help_stepper := Stepper.choice("Driving help", [[2, "Full (stability, traction, ABS)"],
-		[1, "Some (traction, ABS)"], [0, "Off"]], GameData.prefs["driving_help"])
-	help_stepper.value_changed.connect(func(v): GameData.prefs["driving_help"] = v)
-	root.add_child(help_stepper)
+	# Driving aids, gears and units are in Settings > Gameplay.
 	var track_opts := []
 	for t in GameData.tracks:
 		track_opts.append([t["id"], "%s  (%.1f km, %s)" % [t["name"], t["length_m"] / 1000.0, t["location"]]])
@@ -315,19 +346,40 @@ func _build_ui() -> void:
 	setup_button = _button(root, "Car setup", _open_setup)
 	car_stepper.value_changed.connect(func(_v): _setup_changed())
 	track_stepper.value_changed.connect(func(_v): _setup_changed())
+	root = root_main
 
 	# Main page
 	var main := _page(root, "main")
-	_button(main, "Single race", func(): _show("single"))
-	_button(main, "Season / championship", func(): _show("season_list"))
-	_button(main, "Garage (upgrades, livery)", _open_garage)
-	_button(main, "Host online race", _on_host)
-	_button(main, "Join online race", func(): _show("join"))
-	_button(main, "Quit", func(): get_tree().quit())
+	main.add_theme_constant_override("separation", 10)
+	for b in [["Single race", func(): _show("single")], ["Season / championship", func(): _show("season_list")],
+			["Garage", _open_garage], ["Host online race", _on_host], ["Join online race", func(): _show("join")],
+			["Settings", _open_settings], ["Quit", func(): get_tree().quit()]]:
+		var btn := _button(main, b[0], b[1])
+		btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		btn.custom_minimum_size = Vector2(440, 54)
+		btn.add_theme_font_size_override("font_size", 22)
+
+	# Profile page: your name and colour (the badge top right opens it).
+	var prof := _page(root, "profile")
+	var ph := Label.new()
+	ph.text = "PROFILE"
+	ph.add_theme_font_size_override("font_size", 26)
+	prof.add_child(ph)
+	prof.add_child(name_edit)
+	var colour_stepper := Stepper.choice("Colour", ProfileBadge.COLOURS, str(GameData.prefs.get("profile_colour", "#e8412f")))
+	colour_stepper.value_changed.connect(func(v): GameData.set_pref("profile_colour", v); _refresh_badge())
+	prof.add_child(colour_stepper)
+	profile_info = Label.new()
+	profile_info.modulate = Color(0.85, 0.92, 1)
+	profile_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	profile_info.custom_minimum_size = Vector2(420, 0)
+	prof.add_child(profile_info)
+	_button(prof, "Garage", _open_garage)
+	_button(prof, "Back", func(): GameData.save_prefs(); _show("main"))
 
 	# Race settings (single player page and host lobby share the values)
 	laps_stepper = Stepper.numeric("Laps", 1, 50, 1, 3)
-	ai_stepper = Stepper.numeric("AI drivers", 0, 24, 1, 5)
+	ai_stepper = Stepper.numeric("AI drivers", 0, RaceSettings.MAX_CARS_SINGLE_CLASS - 1, 1, 5)
 	difficulty_stepper = Stepper.choice("AI difficulty", [[0.25, "Rookie"], [0.5, "Amateur"], [0.75, "Pro"],
 		[0.9, "Expert"], [1.0, "Alien"]], 0.75)
 	tod_stepper = Stepper.numeric("Start time", 0, 23, 1, 14, ":00")
@@ -398,7 +450,7 @@ func _build_ui() -> void:
 	lobby_settings_box = _settings_grid()
 	lobby.add_child(lobby_settings_box)
 	ready_button = _button(lobby, "Ready", func(): Net.update_me({"ready": not _my_ready()}))
-	_button(lobby, "Garage (upgrades, livery)", _open_garage)
+	_button(lobby, "Garage", _open_garage)
 	start_button = _button(lobby, "Start race", _on_start_online)
 	_button(lobby, "Leave", _on_leave)
 
@@ -416,6 +468,12 @@ func _build_ui() -> void:
 	help.modulate = Color(1, 1, 1, 0.45)
 	help.add_theme_font_size_override("font_size", 13)
 	root.add_child(help)
+	# Profile, top right.
+	badge = ProfileBadge.new()
+	add_child(badge)
+	badge.pressed.connect(func(): _show("profile"))
+	_refresh_badge()
+	_limit_grid()
 
 
 ## Race settings sit in two columns so the page fits on screen; D-pad moves between them.
@@ -447,6 +505,9 @@ func _button(parent: Node, text: String, cb: Callable) -> Button:
 func _show(id: String) -> void:
 	Sound.wire_buttons(self)
 	current_page = id
+	race_box.visible = not id in ["main", "join", "profile", "season_list"]
+	if id == "profile":
+		_refresh_badge()
 	if id != "lobby":  # host-only settings are editable again off-line
 		class_stepper.disabled = false
 		track_stepper.disabled = false
@@ -457,7 +518,7 @@ func _show(id: String) -> void:
 	# In a season the season picks the class and each round's track.
 	class_stepper.visible = not id in SEASON_PAGES
 	track_stepper.visible = not id in SEASON_PAGES
-	help_label.visible = id != "season_new"
+	help_label.visible = id in ["single", "lobby", "season_hub"]
 	if id == "season_hub":
 		_refresh_hub()
 	elif id == "season_list":
@@ -498,8 +559,8 @@ func _rebuild_car_options() -> void:
 		var rd := 0
 		for l in profile.levels(id).values():
 			rd += int(l)
-		opts.append([id, "%s  (%s, %.0f kW, %.0f kg%s)" % [c.display_name, c.class_tag, st["power_kw"], st["mass_kg"],
-			", R&D %d" % rd if rd > 0 else ""]])
+		opts.append([id, "%s  (%s, %s, %.0f kg%s%s)" % [c.display_name, c.class_tag, Units.power(st["power_kw"]), st["mass_kg"],
+			", R&D %d" % rd if rd > 0 else "", ", yours" if profile.owns(id) else ""]])
 	car_stepper.options = opts
 	var keep := false
 	for o in opts:
@@ -1189,6 +1250,7 @@ func _open_garage() -> void:
 		return
 	_garage = GarageScreen.new()
 	_menu_root.visible = false
+	badge.visible = false
 	add_child(_garage)
 	_garage.open(car_stepper.value, profile)
 	_garage.closed.connect(_on_garage_closed)
@@ -1197,7 +1259,9 @@ func _open_garage() -> void:
 func _on_garage_closed(picked_car: String) -> void:
 	_garage = null
 	_menu_root.visible = true
+	badge.visible = true
 	profile = TeamProfile.load_or_new()
+	_refresh_badge()
 	# Race the car you were working on, if the class allows it.
 	_rebuild_car_options()
 	for o in car_stepper.options:
@@ -1206,3 +1270,52 @@ func _on_garage_closed(picked_car: String) -> void:
 	if Net.is_online():
 		Net.update_me(_my_lobby_fields(car_stepper.value))
 	_show(current_page)
+
+
+# --- Settings, profile, grid size ---------------------------------------------
+
+func _open_settings() -> void:
+	if _settings or _garage:
+		return
+	_settings = SettingsScreen.new()
+	_settings.open_garage = _open_garage
+	_menu_root.visible = false
+	badge.visible = false
+	add_child(_settings)
+	_settings.open(profile)
+	_settings.closed.connect(_on_settings_closed)
+
+
+func _on_settings_closed() -> void:
+	_settings = null
+	if _garage == null:
+		_menu_root.visible = true
+		badge.visible = true
+		_show(current_page)
+	_rebuild_car_options()   # power units may have changed
+	_refresh_badge()
+
+
+func _refresh_badge() -> void:
+	if badge == null:
+		return
+	badge.show_profile(name_edit.text, profile)
+	if profile_info:
+		var owned: Array = profile.owned_ids()
+		var names := []
+		for id in owned:
+			if GameData.cars.has(id):
+				names.append(GameData.cars[id].display_name)
+		profile_info.text = "Team budget %s\nGarage: %s\nSeasons played: %d" % [UpgradeCatalog.format_money(profile.money),
+			", ".join(names) if not names.is_empty() else "no cars bought yet", SeasonStore.list().size()]
+
+
+## The grid holds 25 cars of one class or 45 in a multi-class race; the AI
+## stepper stops at that (minus you).
+func _limit_grid() -> void:
+	var most := RaceSettings.max_cars_for(str(class_stepper.value)) - 1
+	ai_stepper.max_value = most
+	if int(ai_stepper.value) > most:
+		ai_stepper.set_value(most)
+		if not _building:
+			_push_settings()

@@ -1,7 +1,7 @@
 {
   "id": "graphics",
   "name": "Graphics",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "status": "active",
   "summary": "Drawing the world in 3D: the track and terrain, trackside (trees, grandstands, pits), the Blender-built car models with liveries, sun, sky, weather and the camera.",
   "depends": {
@@ -16,11 +16,14 @@
     "CarView",
     "WeatherView",
     "GfxSettings",
-    "DrivingLineView"
+    "DrivingLineView",
+    "PitCrews"
   ],
   "internal": [
     "Trackside",
-    "BrakeBoards"
+    "BrakeBoards",
+    "SkidMarks",
+    "Debris"
   ],
   "notes": "Only reads state, never changes the race. Cars: tools/build_cars.py (Blender) turns tools/car_shapes/<id>.json + the cars module dimensions into cars/<id>.glb (and cars_blend/<id>.blend to edit). See docs/GRAPHICS.md. Liveries carry sponsor stickers and door numbers (invented sponsors, textures/decals.png from tools/build_decals.py; slots per car in data/liveries.json; CarView.sponsors lists them). Prototype shapes: prototype, fin, flap wings, single-mount wings, louvres."
 }

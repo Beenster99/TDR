@@ -4,6 +4,9 @@ extends Node3D
 ## (modules/graphics/cars/<id>.glb, made by tools/build_cars.py), painted in
 ## its livery, with steering and spinning wheels, body roll and pitch, brake
 ## lights, headlights after dark, a roof number and spray on a wet track.
+## Sliding, spinning or locked tyres smoke and lay rubber on the road (dust
+## and torn grass off it); in a crash shards of bodywork fly off and parts
+## that break away tumble down the road (Debris, SkidMarks).
 ## It eases toward the simulated position, hiding small snapshot corrections.
 ##
 ## Car space: +X forward, +Y up, +Z right. The sim's 2D (x, y) maps to 3D
@@ -35,6 +38,25 @@ var heading := 0.0
 ## Both take (position, nearby centre-line index).
 var ground: Callable = func(_p: Vector2, _hint: int) -> float: return 0.0
 var ground_normal: Callable = func(_p: Vector2, _hint: int) -> Vector3: return Vector3.UP
+## Height of the grass mesh as drawn under a point (set by WorldView). Off the
+## road the car is kept on top of it, so it never vanishes into the ground.
+var terrain: Callable = func(_p: Vector2, _hint: int) -> float: return -INF
+var _lift := 0.0
+## Shared effects (set by WorldView; null = none).
+var marks: SkidMarks
+var debris: Debris
+## How hard each tyre is sliding this frame, 0..1 (fl, fr, rl, rr).
+var tyre_slide := PackedFloat32Array([0, 0, 0, 0])
+var _tyre_smoke: Array[GPUParticles3D] = []   ## front axle, rear axle
+var _smoke_mat: Array[ParticleProcessMaterial] = []
+var _box := AABB()               ## the whole car in car space
+var _body_seen := PackedFloat64Array()   ## body damage already shown as debris
+var _part_on := {}               ## part -> attached last time we looked
+var _flat := {}                  ## visual damage incl. flat tyres (wheel name -> 0..1)
+var _mark_key := 0
+## Jacked up in the pits (metres) and wheels off mid-stop (set by WorldView).
+var pit_lift := 0.0
+var wheels_hidden := false
 
 var _init_done := false
 var _sprung: Node3D
@@ -150,6 +172,14 @@ func _build(livery: Dictionary) -> void:
 	_add_headlight()
 	_add_spray()
 	_add_smoke()
+	_add_tyre_smoke()
+	_mark_key = get_instance_id() * 8
+	for k in _parts:
+		var n: Node3D = _parts[k][0]
+		if n is MeshInstance3D and k in ["body", "bumper_front", "bumper_rear", "cabin"]:
+			_box = _box.merge((n as MeshInstance3D).get_aabb()) if _box.has_volume() else (n as MeshInstance3D).get_aabb()
+	if not _box.has_volume():
+		_box = AABB(Vector3(-def.length * 0.5, 0.1, -def.width * 0.5), Vector3(def.length, 1.1, def.width))
 
 
 func _instantiate_model() -> Node3D:
@@ -671,6 +701,145 @@ func _add_smoke() -> void:
 	add_child(_smoke)
 
 
+## Tyre smoke: one emitter per axle, left in the world as the car moves on.
+## Pale grey on tarmac; brown dust on gravel and grass (colour set each frame).
+func _add_tyre_smoke() -> void:
+	var b := def.wheelbase - def.cg_to_front
+	for axle in 2:
+		var p := GPUParticles3D.new()
+		p.name = "TyreSmoke" + ("Front" if axle == 0 else "Rear")
+		p.amount = 150
+		p.lifetime = 2.4
+		p.emitting = false
+		p.local_coords = false
+		p.fixed_fps = 0
+		var pm := ParticleProcessMaterial.new()
+		pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+		pm.emission_box_extents = Vector3(0.25, 0.05, def.track_width * 0.5 + 0.1)
+		pm.direction = Vector3(0, 1, 0)
+		pm.spread = 70.0
+		pm.initial_velocity_min = 0.4
+		pm.initial_velocity_max = 1.8
+		pm.gravity = Vector3(0, 0.35, 0)
+		pm.damping_min = 0.6
+		pm.damping_max = 1.2
+		pm.scale_min = 1.6
+		pm.scale_max = 2.6
+		pm.angle_min = -180.0
+		pm.angle_max = 180.0
+		var curve := CurveTexture.new()
+		var cv := Curve.new()
+		cv.add_point(Vector2(0, 0.35))
+		cv.add_point(Vector2(0.4, 0.8))
+		cv.add_point(Vector2(1, 1.0))
+		curve.curve = cv
+		pm.scale_curve = curve
+		var ga := Gradient.new()
+		ga.set_color(0, Color(1, 1, 1, 0.0))
+		ga.add_point(0.08, Color(1, 1, 1, 0.55))
+		ga.set_color(ga.get_point_count() - 1, Color(1, 1, 1, 0.0))
+		var gt := GradientTexture1D.new()
+		gt.gradient = ga
+		pm.color_ramp = gt
+		pm.color = Color(0.86, 0.86, 0.88)
+		p.process_material = pm
+		var q := QuadMesh.new()
+		q.size = Vector2(1.3, 1.3)
+		var m := StandardMaterial3D.new()
+		m.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+		m.billboard_keep_scale = true
+		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		m.vertex_color_use_as_albedo = true
+		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		m.albedo_texture = _puff_texture()
+		q.material = m
+		p.draw_pass_1 = q
+		p.position = Vector3(def.cg_to_front if axle == 0 else -b, 0.25, 0)
+		p.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		p.visibility_aabb = AABB(Vector3(-40, -4, -40), Vector3(80, 16, 80))
+		add_child(p)
+		_tyre_smoke.append(p)
+		_smoke_mat.append(pm)
+
+
+static var _puff: Texture2D
+
+
+## A soft, lumpy puff (shared by every car).
+static func _puff_texture() -> Texture2D:
+	if _puff:
+		return _puff
+	var n := 64
+	var img := Image.create(n, n, false, Image.FORMAT_RGBA8)
+	var noise := FastNoiseLite.new()
+	noise.frequency = 0.09
+	noise.seed = 11
+	for y in n:
+		for x in n:
+			var d := Vector2(x - n * 0.5 + 0.5, y - n * 0.5 + 0.5).length() / (n * 0.5)
+			var a := clampf(1.0 - d, 0.0, 1.0)
+			a = a * a * (0.65 + 0.35 * noise.get_noise_2d(x, y))
+			img.set_pixel(x, y, Color(1, 1, 1, clampf(a * 1.4, 0.0, 1.0)))
+	_puff = ImageTexture.create_from_image(img)
+	return _puff
+
+
+## How hard each tyre slides (from the car's motion, so it works for cars
+## driven on other machines too), then smoke and marks to match.
+func _update_tyres(_delta: float) -> void:
+	var fwd2 := state.forward()
+	var vx := state.vel.dot(fwd2)
+	var vy := state.vel.dot(state.right())
+	var spd := state.vel.length()
+	var a := def.cg_to_front
+	var b := def.wheelbase - a
+	var alpha_r := atan2(vy - state.yaw_rate * b, maxf(absf(vx), 3.0))
+	var vyf := vy + state.yaw_rate * a
+	var cs := cos(state.steer_angle)
+	var sn := sin(state.steer_angle)
+	var alpha_f := atan2(-vx * sn + vyf * cs, maxf(absf(vx * cs + vyf * sn), 3.0))
+	var moving := smoothstep(1.5, 7.0, spd)
+	var rear := smoothstep(0.14, 0.34, absf(alpha_r)) * moving
+	var front := smoothstep(0.17, 0.36, absf(alpha_f)) * moving
+	if state.wheelspin:   # burnout or power oversteer
+		rear = maxf(rear, 1.0 if spd < 25.0 else 0.6)
+	if not state.assist_abs and state.ax < -12.0:   # locking up without ABS
+		front = maxf(front, smoothstep(12.0, 19.0, -state.ax) * moving)
+	var wet := 0.0
+	if env:
+		wet = env.wetness_at(state.lateral_offset - env.raceline_offset(state.track_idx))
+	var off_road := state.surface == TrackData.Surface.GRASS or state.surface == TrackData.Surface.GRAVEL
+	if off_road:   # anything moving on grass or gravel throws up dirt
+		var churn := smoothstep(4.0, 30.0, spd) * 0.7
+		rear = maxf(rear, churn)
+		front = maxf(front, churn * 0.6)
+	tyre_slide = PackedFloat32Array([front, front, rear, rear])
+	var dry := 1.0 - clampf(wet * 1.4, 0.0, 1.0)
+	var smoke_k := [front, rear]
+	var col := Color(0.86, 0.86, 0.88) if not off_road else (Color(0.55, 0.45, 0.32) if state.surface == TrackData.Surface.GRAVEL else Color(0.42, 0.36, 0.24))
+	for axle in 2:
+		var k: float = smoke_k[axle] * (dry if not off_road else maxf(dry, 0.25))
+		_tyre_smoke[axle].emitting = k > 0.05
+		_tyre_smoke[axle].amount_ratio = clampf(k, 0.0, 1.0)
+		_smoke_mat[axle].color = col
+	if marks == null:
+		return
+	var kind := SkidMarks.Kind.EARTH if state.surface == TrackData.Surface.GRASS else SkidMarks.Kind.RUBBER
+	var lays := state.surface != TrackData.Surface.GRAVEL and state.surface != TrackData.Surface.BARRIER
+	for w in _wheels:
+		var hub: Node3D = w[0]
+		var idx := ["wheel_fl", "wheel_fr", "wheel_rl", "wheel_rr"].find(str(hub.name))
+		if idx < 0:
+			continue
+		var k: float = tyre_slide[idx] if lays else 0.0
+		if kind == SkidMarks.Kind.RUBBER:
+			k *= 1.0 - clampf(wet * 1.6, 0.0, 0.85)
+			if off_road:
+				k = 0.0
+		var at := global_transform * Vector3(hub.position.x, 0.0, hub.position.z)
+		marks.mark(_mark_key + idx, at, k, 0.34 * hub.scale.z, kind)
+
+
 ## Damage from CarDamage.visual_parts(): scuffed, darkened paint where the
 ## car was hit; parts sag above 0.6 and fall off above 0.85; a punctured
 ## wheel rides on its rim; a damaged engine smokes.
@@ -685,20 +854,66 @@ func _apply_damage() -> void:
 		var node: Node3D = part[0]
 		var rest: Transform3D = part[1]
 		var v: float = d.get(key, 0.0)
-		node.visible = v < 0.85
+		var on := v < 0.85
+		var name_k: String = DAMAGE_PARTS[key]
+		if not on and _part_on.get(name_k, true) and _init_done and debris and node.visible and node is MeshInstance3D:
+			_throw_part(node as MeshInstance3D)
+		_part_on[name_k] = on
+		node.visible = on
 		if v > 0.6:
 			var k := (v - 0.6) / 0.25
 			var sag := Transform3D(Basis(Vector3.FORWARD, 0.08 * k) * Basis(Vector3.UP, 0.05 * k), Vector3(0, -0.04 * k, 0))
 			node.transform = sag * rest
 		else:
 			node.transform = rest
-	for w in _wheels:
-		var hub: Node3D = w[0]
-		var flat: float = d.get(str(hub.name), 0.0)
-		hub.position.y = def.wheel_radius - 0.09 * flat
+	_flat = d
 	var smoke: float = d.get("smoke", 0.0)
 	_smoke.emitting = smoke > 0.02
 	_smoke.amount_ratio = smoke
+	_shed_bodywork()
+
+
+## New dents since we last looked throw shards from that side of the car.
+func _shed_bodywork() -> void:
+	if _body_seen.size() != 4:
+		_body_seen = state.body_damage.duplicate()
+		return
+	for z in 4:
+		var now := state.body_damage[z]
+		var was := _body_seen[z]
+		_body_seen[z] = now
+		if now - was < 0.03 or debris == null or not _init_done:
+			continue
+		var c := _box.get_center()
+		var at: Vector3
+		match z:
+			0: at = Vector3(_box.end.x, 0.35, c.z)        # front
+			1: at = Vector3(_box.position.x, 0.45, c.z)   # rear
+			2: at = Vector3(c.x, 0.4, _box.position.z)    # left
+			_: at = Vector3(c.x, 0.4, _box.end.z)         # right
+		var n := clampi(int((now - was) * 45.0), 2, 18)
+		debris.burst(global_transform * at, _vel3(), n, _paint.get_shader_parameter("primary"), clampf((now - was) * 4.0, 0.4, 1.3))
+
+
+## A part has broken away: a copy of it flies off (the car's own stays,
+## hidden, until it's repaired in the pits).
+func _throw_part(node: MeshInstance3D) -> void:
+	var copy := node.duplicate() as MeshInstance3D
+	for sidx in node.get_surface_override_material_count():
+		copy.set_surface_override_material(sidx, node.get_surface_override_material(sidx))
+	var side := Vector3(0, 0, 1) if node.get_aabb().get_center().z >= 0.0 else Vector3(0, 0, -1)
+	var kick_local := (side * 2.5 + Vector3(randf_range(-1.5, 1.5), 0, 0))
+	var kick := global_transform.basis * kick_local
+	debris.detach(copy, node.global_transform, node.get_aabb(), _vel3(), kick)
+
+
+## The livery's main colour (pit crews wear it).
+func paint_colour() -> Color:
+	return _paint.get_shader_parameter("primary")
+
+
+func _vel3() -> Vector3:
+	return Vector3(state.vel.x, 0.0, state.vel.y)
 
 
 func _find(n: Node, want: String) -> Node:
@@ -728,20 +943,27 @@ func _process(delta: float) -> void:
 	var fwd := Vector3(cos(heading), 0.0, sin(heading))
 	fwd = (fwd - up * fwd.dot(up)).normalized()
 	var right := fwd.cross(up).normalized()
-	transform = Transform3D(Basis(fwd, up, right), Vector3(pos2.x, ground.call(pos2, state.track_idx), pos2.y))
+	var gy: float = ground.call(pos2, state.track_idx)
+	var lift := 0.0
+	if state.surface != TrackData.Surface.TRACK and state.surface != TrackData.Surface.KERB:
+		lift = maxf(float(terrain.call(pos2, state.track_idx)) + 0.05 - gy, 0.0)
+	_lift = lerpf(_lift, lift, 1.0 - exp(-12.0 * delta)) if lift < _lift else lift
+	transform = Transform3D(Basis(fwd, up, right), Vector3(pos2.x, gy + _lift, pos2.y))
+	_sprung.position.y = pit_lift - _ride_drop
 	# Body pitch under braking/acceleration and roll in corners.
 	var k2 := 1.0 - exp(-8.0 * delta)
 	_pitch = lerpf(_pitch, clampf(state.ax * 0.0032, -0.035, 0.03), k2)
 	_roll = lerpf(_roll, clampf(-state.ay * 0.0028, -0.04, 0.04), k2)
 	_sprung.rotation = Vector3(_roll, 0.0, _pitch)
-	_sprung.position.y = -_ride_drop
 	var v := state.vel.dot(state.forward())
 	for w in _wheels:
 		var hub: Node3D = w[0]
 		if w[2]:
 			hub.rotation.y = -state.steer_angle
+		hub.position.y = def.wheel_radius - 0.09 * float(_flat.get(str(hub.name), 0.0)) + pit_lift
 		if w[1]:
 			(w[1] as Node3D).rotate_z(-v / w[3] * delta)
+			(w[1] as Node3D).visible = not wheels_hidden
 	var braking := state.ax < -3.0
 	var dark := 0.0
 	var wet := 0.0
@@ -755,6 +977,7 @@ func _process(delta: float) -> void:
 	var spray := clampf(wet * 1.3, 0.0, 1.0) * clampf((state.speed() - 8.0) / 50.0, 0.0, 1.0)
 	_spray.emitting = spray > 0.03
 	_spray.amount_ratio = spray
+	_update_tyres(delta)
 	_damage_tick -= delta
 	if _damage_tick <= 0.0:
 		_damage_tick = 0.2

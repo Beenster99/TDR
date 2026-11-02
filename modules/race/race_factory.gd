@@ -40,8 +40,10 @@ static func plan(settings: RaceSettings, humans: Array, cars: Dictionary, driver
 	var entries := []
 	var pool := drivers.duplicate()
 	var start_weather := SimEnvironment.resolve_start_weather(settings.environment, {}, settings.seed)
-	# Standard grid: AI fill the front, humans start behind.
-	for k in settings.ai_count:
+	# Standard grid: AI fill the front, humans start behind. The grid holds
+	# 25 cars of one class, or 45 in a multi-class race.
+	var ai_count := clampi(settings.ai_count, 0, maxi(0, settings.max_cars() - humans.size()))
+	for k in ai_count:
 		var e := RaceEntry.new()
 		e.is_ai = true
 		if pool.is_empty():
@@ -58,7 +60,7 @@ static func plan(settings: RaceSettings, humans: Array, cars: Dictionary, driver
 			e.car_id = pick
 		_fit_tyres(e, "auto", start_weather)
 		entries.append(e.describe())
-	if settings.tuning_enabled and settings.ai_count > 0:
+	if settings.tuning_enabled and ai_count > 0:
 		_ai_setups(settings, entries, cars, track)
 	for k in humans.size():
 		var h: Dictionary = humans[k]

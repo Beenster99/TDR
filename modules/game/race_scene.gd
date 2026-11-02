@@ -51,6 +51,10 @@ func _ready() -> void:
 			livery = session.sim.entries[i].livery
 		car_views.append(world.add_car(def, session.sim.cars[i], session.sim.entries[i].driver_name,
 			i == session.local_car, i + 1, livery))
+	if session.sim.pits.enabled:
+		for i in session.sim.car_count():
+			world.add_pit_crew(i, session.sim.pits.box_index(i))
+		world.fill_pit_lane()
 	race_audio = RaceAudio.new()
 	add_child(race_audio)
 	race_audio.setup(session.sim.cars, session.sim.defs, session.local_car)
@@ -88,6 +92,12 @@ func _ready() -> void:
 	results = _build_results()
 	layer.add_child(results)
 	_make_autodrive()
+	# Filming (tools/record_highlights.sh): --no-hud shows just the race,
+	# --rotate-camera turns the view with the car.
+	if GameData.arg("no-hud"):
+		layer.visible = false
+	if GameData.arg("rotate-camera"):
+		rotate_camera = true
 	if DisplayServer.get_name() == "headless":
 		var env := session.sim.env
 		print("[race] %s, %d cars, %d laps, local car %d, %s %02d:00, air %d C, track %d C" % [RaceSession.Mode.keys()[session.mode],
@@ -200,6 +210,13 @@ func _default_offline_session() -> RaceSession:
 
 
 func _physics_process(delta: float) -> void:
+	for _k in _film_extra_ticks():
+		_tick_once(delta)
+	_tick_once(delta)
+	_after_tick()
+
+
+func _tick_once(delta: float) -> void:
 	var inp: CarInput = null
 	if session.local_car >= 0:
 		if autodrive:
@@ -208,6 +225,9 @@ func _physics_process(delta: float) -> void:
 		else:
 			inp = local_input.read(delta, session.sim.cars[session.local_car].speed())
 	session.tick(inp)
+
+
+func _after_tick() -> void:
 	# Testing: --request-swap asks for a driver change (this player takes the
 	# wheel at the next stop) once the race is green.
 	if GameData.arg("request-swap") and not _forced.has("swap") and session.team_car >= 0 \
@@ -276,6 +296,23 @@ func _set_zoom(z: float) -> void:
 	GameData.prefs["zoom"] = _zoom_target
 
 
+## Filming: --film-from 40 fast-forwards the race to 40 s (offline only:
+## extra sim ticks per physics frame), then plays it at normal speed and
+## prints the frame filming starts on.
+var _film_rolling := false
+
+
+func _film_extra_ticks() -> int:
+	if _film_rolling or not GameData.arg("film-from") or session.mode != RaceSession.Mode.OFFLINE:
+		return 0
+	if session.sim.race_time + session.sim.phase_time * float(session.sim.phase == RaceSim.Phase.COUNTDOWN) \
+			< float(GameData.arg("film-from")):
+		return 9
+	_film_rolling = true
+	print("[film] rolling at frame %d" % Engine.get_frames_drawn())
+	return 0
+
+
 func _process(delta: float) -> void:
 	var focus := session.local_car if session.local_car >= 0 else session.team_car
 	if focus < 0:
@@ -314,6 +351,7 @@ func _process(delta: float) -> void:
 	camera.zoom = Vector2(z, z)
 	for i in car_views.size():
 		car_views[i].visible = not session.sim.race_control.recovered[i]
+	_update_pit_crews()
 	var rc := session.sim.race_control
 	world.set_safety_car(rc.sc_visible, rc.sc_pos, rc.sc_heading, rc.sc_speed, rc.sc_lights)
 	world.update_driving_line(car.pos, speed)
@@ -327,6 +365,34 @@ func _process(delta: float) -> void:
 	world.set_camera(camera.get_screen_center_position(), z, camera.rotation if rot else 0.0)
 	_camera_placed = true
 	_maybe_screenshot()
+
+
+var _pit_work := {}   ## car -> the stop's work while it's on its way in
+
+
+## Tells the pit crews what each car's stop is doing.
+func _update_pit_crews() -> void:
+	var pits := session.sim.pits
+	if not pits.enabled:
+		return
+	for i in session.sim.car_count():
+		var p: Dictionary = session.sim.entries[i].pit
+		var ph: String = p["phase"]
+		var state := PitCrews.Stop.NONE
+		var work: Dictionary = p.get("work", {})
+		if ph == PitRules.PHASE_SERVICE:
+			state = PitCrews.Stop.SERVICE
+		elif ph == PitRules.PHASE_LEAVE:
+			state = PitCrews.Stop.LEAVING
+		elif p["box"] and (ph == PitRules.PHASE_ENTRY or ph == PitRules.PHASE_LIMIT):
+			state = PitCrews.Stop.COMING
+			if not _pit_work.has(i):
+				_pit_work[i] = pits.service_for(i, p["plan"])
+			work = _pit_work[i]
+		if state != PitCrews.Stop.COMING:
+			_pit_work.erase(i)
+		var elapsed := float(p.get("service_total", 0.0)) - float(p.get("service_left", 0.0))
+		world.set_pit_stop(i, state, elapsed, work)
 
 
 ## Z / R3: jump to the whole track, and back to where you were.
@@ -419,6 +485,15 @@ func _on_events(evs: Array) -> void:
 	race_audio.on_events(evs)
 	for e in evs:
 		match e["type"]:
+			"collision":
+				var ca: CarState = session.sim.cars[e["a"]]
+				var cb: CarState = session.sim.cars[e["b"]]
+				world.impact(e["pos"], (ca.vel + cb.vel) * 0.5, float(e["impulse"]) / 9000.0)
+			"barrier_impact":
+				var c: CarState = session.sim.cars[e["car"]]
+				var nrm: Vector2 = e.get("normal", c.right())
+				var soft: bool = int(e.get("barrier", TrackData.Barrier.ARMCO)) == TrackData.Barrier.TYRES
+				world.impact(c.pos + nrm * session.sim.defs[e["car"]].width * 0.5, c.vel, float(e["speed"]) / 22.0, not soft)
 			"countdown": pass
 			"green":
 				if session.sim.settings.is_qualifying():
