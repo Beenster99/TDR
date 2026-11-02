@@ -60,6 +60,14 @@ Reads the race (built on the pit wall race data, `RaceTelemetry`):
   age, stops, pace, and their latest strategy call;
 - **Full pit wall** (or P) opens the full-screen strategist screen with the
   weather radar and every car's sector times.
+- **Onboard camera**: a live picture-in-picture window, top right of the 3D
+  view, from any car's front camera (on the roof, looking ahead) or rear
+  camera (looking back over the wing). Pick the car on the *Onboard camera*
+  row (every car, ours included, in running order) and front / rear / off
+  on the *Camera view* row. It starts on our car's front camera. In the full
+  pit wall, Y / C shows the selected car's onboard camera where the feed
+  was (front, rear, off). It works online too: every machine draws it from
+  its own copy of the race, so nothing extra goes over the network.
 
 ### Radio
 
