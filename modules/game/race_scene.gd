@@ -242,6 +242,8 @@ func _default_offline_session() -> RaceSession:
 
 
 func _physics_process(delta: float) -> void:
+	if hud.editing and session.mode == RaceSession.Mode.OFFLINE:
+		return   # offline races wait while the HUD layout is edited
 	for _k in _film_extra_ticks():
 		_tick_once(delta)
 	_tick_once(delta)
@@ -254,6 +256,8 @@ func _tick_once(delta: float) -> void:
 		if autodrive:
 			inp = autodrive.get_input(session.sim, session.local_car)
 			_autodrive_throttle = inp.throttle
+		elif hud.editing:
+			inp = CarInput.neutral()   # online HUD editing: the keys move HUD items, not the car
 		else:
 			inp = local_input.read(delta, session.sim.cars[session.local_car].speed())
 	session.tick(inp)
@@ -463,7 +467,11 @@ func _maybe_screenshot() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event.is_action_pressed("strategy_screen") and not _results_shown:
+	if hud.editing:
+		return
+	if event.is_action_pressed("hud_edit") and session.local_car >= 0 and not _results_shown and not pit_wall.visible:
+		hud.open_editor()
+	elif event.is_action_pressed("strategy_screen") and not _results_shown:
 		pit_wall.toggle()
 	elif event is InputEventMouseButton and event.pressed:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
