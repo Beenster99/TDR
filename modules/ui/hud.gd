@@ -9,6 +9,10 @@ var message_time := 0.0
 var font: Font
 var _minimap_pts := PackedVector2Array()
 var _mm_rect := Rect2()
+## Damage last seen on the player's car, to flash a warning when it changes.
+var _seen_worst := 0.0
+var _seen_punctures := 0
+var _seen_engine_failed := false
 
 
 func setup(p_session: RaceSession) -> void:
@@ -27,7 +31,39 @@ func flash(text: String, secs := 2.0) -> void:
 func _process(delta: float) -> void:
 	size = get_viewport_rect().size
 	message_time -= delta
+	_watch_damage()
 	queue_redraw()
+
+
+## Flashes a warning when the player's car gets hurt (works the same online,
+## where the player's own car is simulated on their machine).
+func _watch_damage() -> void:
+	if session == null or session.local_car < 0 or session.sim.damage_level == CarDamage.Level.OFF:
+		return
+	var c := session.sim.cars[session.local_car]
+	var p := CarDamage.punctures(c)
+	var failed := CarDamage.engine_failed(c)
+	if failed and not _seen_engine_failed:
+		flash("ENGINE FAILURE", 4.0)
+	elif p > _seen_punctures:
+		flash("PUNCTURE! Box for new tyres", 3.0)
+	elif CarDamage.worst(c) - _seen_worst > 0.15:
+		flash("DAMAGE: " + _worst_part(c), 2.5)
+	_seen_punctures = p
+	_seen_engine_failed = failed
+	_seen_worst = CarDamage.worst(c)
+
+
+static func _worst_part(c: CarState) -> String:
+	var parts := {"aero": c.damage_aero, "suspension": c.damage_suspension, "steering alignment": absf(c.alignment),
+		"engine": c.damage_engine, "gearbox": c.damage_gearbox}
+	var best := "bodywork"
+	var v := 0.05
+	for k in parts:
+		if parts[k] > v:
+			v = parts[k]
+			best = k
+	return best.to_upper()
 
 
 static func fmt_time(t: float) -> String:
@@ -143,6 +179,54 @@ func _draw() -> void:
 	_text(bl + Vector2(146, 138), "Grip %d%%" % int(grip * 100.0), 15, Color(0.6, 1, 0.6) if grip > 0.85 else Color(1, 0.7, 0.4))
 	if sim.settings.fuel_enabled:
 		_text(bl + Vector2(146, 160), "Fuel %.1f L" % c.fuel_l, 15)
+	if sim.damage_level != CarDamage.Level.OFF:
+		_draw_damage(Vector2(10, vp.y - 196 - 126), c, sim.damage_level == CarDamage.Level.FULL)
+
+
+## Damage panel: a top view of the car with each zone coloured by how bent
+## it is, flat tyres in red, and (full damage) each system's state.
+func _draw_damage(o: Vector2, c: CarState, full: bool) -> void:
+	_panel(Rect2(o, Vector2(300, 116)))
+	_text(o + Vector2(14, 22), "DAMAGE", 14, Color(1, 1, 1, 0.7))
+	var car := Rect2(o + Vector2(36, 32), Vector2(40, 74))  # nose at the top
+	var b := c.body_damage
+	draw_rect(car, Color(0.25, 0.25, 0.28))
+	draw_rect(Rect2(car.position, Vector2(car.size.x, 16)), _damage_colour(b[CarDamage.FRONT]))
+	draw_rect(Rect2(car.position + Vector2(0, car.size.y - 16), Vector2(car.size.x, 16)), _damage_colour(b[CarDamage.REAR]))
+	draw_rect(Rect2(car.position + Vector2(0, 18), Vector2(9, car.size.y - 36)), _damage_colour(b[CarDamage.LEFT]))
+	draw_rect(Rect2(car.position + Vector2(car.size.x - 9, 18), Vector2(9, car.size.y - 36)), _damage_colour(b[CarDamage.RIGHT]))
+	var wheels := [Vector2(-10, 8), Vector2(car.size.x + 2, 8), Vector2(-10, car.size.y - 26), Vector2(car.size.x + 2, car.size.y - 26)]
+	for w in 4:
+		var flat := c.puncture[w] > 0.5
+		draw_rect(Rect2(car.position + wheels[w], Vector2(8, 18)), Color(1, 0.15, 0.1) if flat else Color(0.08, 0.08, 0.08))
+	if not full:
+		_text(o + Vector2(110, 60), "Visual only", 15, Color(1, 1, 1, 0.6))
+		return
+	var rows := [["Aero", c.damage_aero], ["Suspension", maxf(c.damage_suspension, absf(c.alignment))],
+		["Engine", c.damage_engine], ["Gearbox", c.damage_gearbox]]
+	for k in rows.size():
+		var y := o.y + 26 + k * 20
+		var v: float = rows[k][1]
+		_text(Vector2(o.x + 110, y + 12), rows[k][0], 14)
+		draw_rect(Rect2(o.x + 196, y + 1, 90, 12), Color(1, 1, 1, 0.12))
+		draw_rect(Rect2(o.x + 196, y + 1, 90 * v, 12), _damage_colour(v))
+	var note := ""
+	if CarDamage.engine_failed(c):
+		note = "ENGINE FAILED"
+	elif CarDamage.punctures(c) > 0:
+		note = "PUNCTURE"
+	elif absf(c.alignment) > 0.1:
+		note = "Pulls " + ("right" if c.alignment > 0.0 else "left")
+	if note != "":
+		_text(Vector2(o.x + 110, o.y + 110), note, 14, Color(1, 0.55, 0.35))
+
+
+static func _damage_colour(v: float) -> Color:
+	if v < 0.02:
+		return Color(0.3, 0.8, 0.4, 0.9)
+	if v < 0.5:
+		return Color(0.3, 0.8, 0.4).lerp(Color(1.0, 0.85, 0.2), v / 0.5)
+	return Color(1.0, 0.85, 0.2).lerp(Color(1.0, 0.2, 0.15), clampf((v - 0.5) / 0.5, 0.0, 1.0))
 
 
 static func _surface_text(env: SimEnvironment) -> String:
