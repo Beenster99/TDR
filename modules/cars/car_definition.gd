@@ -9,6 +9,8 @@ var id: String = ""
 var display_name: String = ""
 var description: String = ""
 var class_tag: String = ""
+## Kind of racing the car is built for: "circuit", "rallycross" or "derby".
+var discipline: String = "circuit"
 var colour: Color = Color.WHITE
 var mass: float = 1400.0
 var wheelbase: float = 2.6
@@ -84,6 +86,7 @@ static func from_dict(d: Dictionary) -> CarDefinition:
 	c.display_name = d.get("name", c.id)
 	c.description = d.get("description", "")
 	c.class_tag = d.get("class_tag", "")
+	c.discipline = str(d.get("discipline", "circuit"))
 	c.colour = Color.from_string(d.get("colour", "#ffffff"), Color.WHITE)
 	c.mass = float(d.get("mass_kg", c.mass)) + float(d.get("ballast_kg", 0.0))
 	c.wheelbase = d.get("wheelbase_m", c.wheelbase)

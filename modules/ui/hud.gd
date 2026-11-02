@@ -466,6 +466,13 @@ func _draw_timing(me: int) -> void:
 	_text(Vector2(14, 120), "Best  " + fmt_time(e.best_lap), 18, Color(0.6, 1, 0.6))
 	if e.penalty_s > 0.0:
 		_text(Vector2(160, 72), "+%d s penalty" % int(e.penalty_s), 16, Color(1, 0.55, 0.3))
+	# Rallycross: has the joker been taken yet? Amber until it has, and a
+	# warning on the last lap it can still be taken.
+	if sim.settings.is_rallycross() and sim.track.has_joker() and not e.finished:
+		var done := e.jokers >= sim.settings.joker_laps
+		var last_lap := sim.settings.laps - (1 if sim.track.joker_entry_s > sim.track.joker_exit_s and sim.settings.laps > 1 else 0)
+		var col := Color(0.45, 1.0, 0.55) if done else (Color(1, 0.35, 0.25) if lap_now >= last_lap else Color(1, 0.75, 0.3))
+		_text(Vector2(160, 120), "JOKER " + ("DONE" if done else ("NOW!" if lap_now >= last_lap else "TO DO")), 16, col)
 
 
 ## Speed, gear and the rev bar.
@@ -1076,6 +1083,8 @@ func _status_text(i: int) -> String:
 		return "DNF"
 	if sim.in_pit_lane(i):
 		return "PIT"
+	if sim.cars[i].in_joker:
+		return "JKR"
 	return ""
 
 
@@ -1347,6 +1356,11 @@ const BADGES := {
 	"bentley": ["BEN", Color(0.0, 0.25, 0.15), Color(0.9, 0.9, 0.9)],
 	"nissan": ["NIS", Color(0.75, 0.0, 0.1), Color(1, 1, 1)],
 	"honda": ["HON", Color(0.85, 0.0, 0.1), Color(1, 1, 1)],
+	"volkswagen": ["VW", Color(0.0, 0.2, 0.45), Color(1, 1, 1)],
+	"renault": ["REN", Color(1.0, 0.8, 0.0), Color(0.05, 0.05, 0.05)],
+	"hyundai": ["HYU", Color(0.0, 0.17, 0.37), Color(1, 1, 1)],
+	"skoda": ["ŠKO", Color(0.3, 0.65, 0.3), Color(1, 1, 1)],
+	"škoda": ["ŠKO", Color(0.3, 0.65, 0.3), Color(1, 1, 1)],
 }
 
 

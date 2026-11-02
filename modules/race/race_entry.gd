@@ -34,6 +34,10 @@ var dnf: bool = false
 var position: int = 0
 ## Time penalties (seconds) added to the race time in the classification.
 var penalty_s: float = 0.0
+## Rallycross: joker laps taken, and how far along the joker lane the car was
+## when it got on to it this time (-1 = not on it), so only a full run counts.
+var jokers: int = 0
+var joker_from: float = -1.0
 ## Pit lane and stops (see PitRules.new_state): phase, plan, stops, tyres...
 var pit: Dictionary = {}
 
@@ -45,7 +49,7 @@ func to_dict() -> Dictionary:
 		"last_sector_times": last_sector_times.duplicate(), "next_sector": next_sector,
 		"sector_start_time": sector_start_time, "distance": distance,
 		"finished": finished, "finish_time": finish_time, "dnf": dnf, "position": position,
-		"penalty_s": penalty_s, "pit": pit.duplicate(true),
+		"penalty_s": penalty_s, "pit": pit.duplicate(true), "jokers": jokers, "joker_from": joker_from,
 	}
 
 

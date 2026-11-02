@@ -1,0 +1,108 @@
+{
+  "format": 1,
+  "id": "skoda_fabia_rx",
+  "name": "Škoda Fabia RX",
+  "description": "A Fabia supercar: 2.0 turbo, four-wheel drive, small and agile (2015-2018).",
+  "class_tag": "RX1",
+  "discipline": "rallycross",
+  "colour": "#3d8f3a",
+  "mass_kg": 1220,
+  "weight_front": 0.57,
+  "wheelbase_m": 2.47,
+  "cg_height_m": 0.46,
+  "track_width_m": 1.62,
+  "length_m": 4.05,
+  "width_m": 1.82,
+  "body_offset_m": 0.12,
+  "inertia_factor": 0.9,
+  "engine": {
+    "idle_rpm": 1800,
+    "redline_rpm": 8500,
+    "shift_up_rpm": 8350,
+    "shift_down_rpm": 5200,
+    "torque_curve": [
+      [
+        1800,
+        420
+      ],
+      [
+        3000,
+        720
+      ],
+      [
+        4200,
+        900
+      ],
+      [
+        6000,
+        900
+      ],
+      [
+        7500,
+        800
+      ],
+      [
+        8500,
+        680
+      ]
+    ],
+    "engine_brake_nm": 90,
+    "cylinders": 4,
+    "sound": {
+      "family": "i4_turbo",
+      "hybrid": false
+    }
+  },
+  "gearbox": {
+    "ratios": [
+      2.95,
+      2.2,
+      1.74,
+      1.42,
+      1.18,
+      1.0
+    ],
+    "final_drive": 4.84,
+    "efficiency": 0.88
+  },
+  "drivetrain": "AWD",
+  "awd_front_split": 0.45,
+  "wheel_radius_m": 0.325,
+  "brakes": {
+    "max_force_n": 21000,
+    "bias_front": 0.62
+  },
+  "steering": {
+    "max_angle_deg": 34,
+    "rate_deg_s": 320
+  },
+  "aero": {
+    "cda": 0.9,
+    "cla": 0.7,
+    "balance_front": 0.42
+  },
+  "tyre_compound": "rx_tyre",
+  "fuel": {
+    "capacity_l": 40,
+    "bsfc_l_per_kwh": 0.3
+  },
+  "tuning_ranges": {
+    "brake_bias_front": [
+      0.55,
+      0.68
+    ],
+    "aero_cla": [
+      0.5,
+      0.9
+    ],
+    "final_drive": [
+      4.59,
+      5.09
+    ]
+  },
+  "chassis": {
+    "front_grip": 1.0,
+    "rear_grip": 1.02,
+    "roll_stiffness_front": 0.55
+  }
+}

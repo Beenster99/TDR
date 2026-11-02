@@ -20,5 +20,6 @@
   "aquaplaning": 0.14,
   "wear_rate": 0.09,
   "optimal_hot_psi": 26.0,
-  "pressure_window_psi": 3.0
+  "pressure_window_psi": 3.0,
+  "dirt_grip": 0.68
 }
