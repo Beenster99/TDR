@@ -8,6 +8,13 @@ var failures := 0
 
 func _init() -> void:
 	var t0 := Time.get_ticks_msec()
+	# TDR_ONLY=test_a,test_b runs just those tests (ones that take no arguments).
+	if OS.has_environment("TDR_ONLY"):
+		for t in OS.get_environment("TDR_ONLY").split(","):
+			call(t)
+		print("\n%s (%d failures, %.1fs)" % ["PASS" if failures == 0 else "FAIL", failures, (Time.get_ticks_msec() - t0) / 1000.0])
+		quit(1 if failures > 0 else 0)
+		return
 	test_module_boundaries()
 	test_data_loads()
 	test_input_wire_format()
@@ -867,10 +874,16 @@ func _sc_race(settings: RaceSettings, stop_at: float, force_sc: bool, snapshot_a
 			if e["type"] == "penalty":
 				out["penalties"] += 1
 				print("       penalty: %s %s" % [sim.entries[e["car"]].driver_name, e["reason"]])
-			if e["type"] == "safety_car" and e["state"] == "in_this_lap":
+			# The first (forced) safety car; another incident later in the
+			# race may bring out a second one.
+			if e["type"] == "safety_car" and e["state"] == "in_this_lap" and out["queue_at_call_in"] == INF:
 				out["queue_at_call_in"] = _lead_lap_queue(sim, 4)
+			if e["type"] == "safety_car" and e["state"] == "green" and not out.has("green_at"):
+				out["green_at"] = sim.race_time
 		if rc.sc_visible:
 			out["sc_seen"] = true
+		if out.has("green_at") and not out.has("sc_gone_at") and not rc.sc_visible and rc.mode == RaceControl.Mode.GREEN:
+			out["sc_gone_at"] = sim.race_time
 	out["sim"] = sim
 	out["end_hash"] = sim.state_hash()
 	return out
@@ -901,13 +914,13 @@ func test_safety_car_race() -> void:
 	var r := _sc_race(settings, 45.0, true, 120.0)
 	var sim: RaceSim = r["sim"]
 	var ev: Dictionary = r["events"]
-	check(r["sc_seen"] and sim.race_control.deployments == 1, "the safety car comes out")
+	check(r["sc_seen"] and sim.race_control.deployments >= 1, "the safety car comes out (%d deployments)" % sim.race_control.deployments)
 	check(ev.has("flag:yellow"), "the stopped car gets a local yellow flag")
 	check(ev.has("flag:recovered") and sim.race_control.recovered[r["victim"]] == 1, "marshals recover the retired car")
 	check(r["queue_at_call_in"] < 120.0, "the field bunches up behind the safety car (first 4 within %.0f m)" % r["queue_at_call_in"])
 	check(ev.has("safety_car:in_this_lap") and ev.has("safety_car:restart") and ev.has("safety_car:green"),
 		"safety car in this lap, into the pits, restart, green flag")
-	check(not sim.race_control.sc_visible and sim.race_control.mode == RaceControl.Mode.GREEN, "safety car gone after the restart")
+	check(r.has("sc_gone_at") and r["sc_gone_at"] - r["green_at"] < 120.0, "safety car gone after the restart (%.0f s after green)" % (r.get("sc_gone_at", INF) - r.get("green_at", 0.0)))
 	check(r["penalties"] <= 1, "AI keeps to the rules behind the safety car (%d penalties)" % r["penalties"])
 	check(sim.phase == RaceSim.Phase.FINISHED, "race finishes after the safety car (%.0f s)" % sim.race_time)
 	# Same inputs, same race: race control is part of the deterministic sim.
