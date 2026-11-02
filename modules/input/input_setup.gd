@@ -24,6 +24,7 @@ const KEYS := {
 	"crew_tab": [KEY_C],       # pit wall roles: switch between pit crew and strategy
 	"shift_up": [KEY_SHIFT, KEY_PERIOD],      # manual gearbox (Settings > Gameplay)
 	"shift_down": [KEY_CTRL, KEY_COMMA],
+	"hud_tower": [KEY_H],      # race HUD: timing tower on/off (also Settings > Gameplay)
 }
 ## Gamepad: analog triggers + left stick. Buttons use the Xbox layout names
 ## (Godot maps PlayStation/Nintendo pads to the same positions).
