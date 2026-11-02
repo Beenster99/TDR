@@ -176,6 +176,14 @@ func driver_peer() -> int:
 	return -1
 
 
+## True when a person is at the wheel (not the AI, not an AI co-driver).
+func is_player_driving() -> bool:
+	if is_ai:
+		return false
+	var d := driver_peer()
+	return d >= 0 and not is_ai_peer(d)
+
+
 func has_peer(peer_id: int) -> bool:
 	for m in crew:
 		if int(m.get("peer_id", 0)) == peer_id:

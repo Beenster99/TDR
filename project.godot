@@ -6,7 +6,7 @@ config_version=5
 [application]
 
 config/name="Top Down Racer"
-config/version="0.7.0"
+config/version="0.7.1"
 config/description="Multiplayer-ready top-down racing with physics-based cars."
 run/main_scene="res://modules/ui/splash.tscn"
 config/features=PackedStringArray("4.6", "Forward Plus")

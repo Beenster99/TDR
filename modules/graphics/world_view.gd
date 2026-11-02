@@ -175,6 +175,32 @@ func impact(pos: Vector2, vel: Vector2, strength: float, sparks := true) -> void
 		debris.sparks(p, v, strength)
 
 
+## Every car's paint for a race: car_ids[i], the paint each car's player chose
+## (own[i], {} = the model's livery) and whether a person races it
+## (players[i]). Depends only on these, so every machine in an online race
+## paints the field the same. A player's own scheme wins; when a model is in
+## the field more than once, players' cars keep the model's livery first and
+## the others get their own colour schemes (livery_variant).
+static func field_liveries(car_ids: Array, own: Array, players: Array) -> Array:
+	var out := []
+	out.resize(car_ids.size())
+	var order := []
+	for pass_players in [true, false]:
+		for i in car_ids.size():
+			if bool(players[i]) == pass_players:
+				order.append(i)
+	var seen := {}
+	for i in order:
+		if own[i] is Dictionary and not (own[i] as Dictionary).is_empty():
+			out[i] = own[i]
+			continue
+		var id := str(car_ids[i])
+		var k: int = seen.get(id, 0)
+		seen[id] = k + 1
+		out[i] = livery_variant(k, id)
+	return out
+
+
 ## A different colour scheme for the k-th car of the same model in a field,
 ## so identical cars can be told apart (k = 0 keeps the car's own livery).
 ## car_id spreads the schemes so different models don't share the same
@@ -227,6 +253,10 @@ func set_camera(centre: Vector2, zoom: float, rotation_rad := 0.0) -> void:
 		sun.directional_shadow_max_distance = clampf(_cam_dist * 2.2, 150.0, 12000.0)
 	if pit_crews:
 		pit_crews.set_camera(centre, _cam_dist)
+	var hk := _cam_dist / 60.0
+	for v in cars:
+		if v.highlight != CarView.Highlight.NONE:
+			v.set_highlight_zoom(hk)
 
 
 func _process(_delta: float) -> void:

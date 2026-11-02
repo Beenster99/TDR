@@ -577,6 +577,65 @@ func _update_light_bar(delta: float) -> void:
 	_bar_green.emission_energy_multiplier = 6.0 * flash if _bar_mode == "green" else 0.0
 
 
+# --- Player highlights -----------------------------------------------------------
+
+## set_highlight: no outline, this player's own car, or another human player.
+enum Highlight { NONE, SELF, PLAYER }
+const HIGHLIGHT_SHADER := preload("res://modules/graphics/shaders/car_highlight.gdshader")
+const HIGHLIGHT_SELF := Color(1.0, 0.8, 0.22)
+const HIGHLIGHT_PLAYER := Color(0.3, 0.8, 1.0)
+var highlight: int = Highlight.NONE
+var _hl: MeshInstance3D
+var _hl_mat: ShaderMaterial
+var _hl_zoom := -1.0
+
+
+## A soft glowing outline on the ground round the car: warm gold for your own
+## car (gently breathing), a quieter cyan for other people online. AI cars get
+## none. Stays readable when zoomed out (set_highlight_zoom).
+func set_highlight(kind: int) -> void:
+	highlight = kind
+	if kind == Highlight.NONE:
+		if _hl:
+			_hl.visible = false
+		return
+	if _hl == null:
+		_hl = MeshInstance3D.new()
+		_hl.name = "Highlight"
+		_hl_mat = ShaderMaterial.new()
+		_hl_mat.shader = HIGHLIGHT_SHADER
+		var pm := PlaneMesh.new()
+		pm.material = _hl_mat
+		_hl.mesh = pm
+		_hl.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		_hl.position = Vector3(def.body_offset, 0.05, 0)
+		add_child(_hl)
+		set_highlight_zoom(1.0)
+	_hl.visible = true
+	var mine := kind == Highlight.SELF
+	_hl_mat.set_shader_parameter("tint", HIGHLIGHT_SELF if mine else HIGHLIGHT_PLAYER)
+	_hl_mat.set_shader_parameter("strength", 0.6 if mine else 0.38)
+	_hl_mat.set_shader_parameter("pulse", 1.0 if mine else 0.0)
+
+
+## Zoomed out (camera far away), the outline gets thicker so a player's car
+## can still be picked out of the field. k = 1 close up, grows with distance.
+func set_highlight_zoom(k: float) -> void:
+	if _hl == null:
+		return
+	k = clampf(k, 1.0, 12.0)
+	if absf(k - _hl_zoom) < 0.03 * k:
+		return
+	_hl_zoom = k
+	var half := Vector2(def.length * 0.5, def.width * 0.5)
+	var margin := 0.9 * k + 0.4
+	var quad := half + Vector2(margin, margin)
+	(_hl.mesh as PlaneMesh).size = quad * 2.0
+	_hl_mat.set_shader_parameter("half_size", half)
+	_hl_mat.set_shader_parameter("quad_half", quad)
+	_hl_mat.set_shader_parameter("width", 0.35 * k)
+
+
 ## Soft dark patch on the ground under the car, so it sits on the road even
 ## where the sun's shadow falls to one side.
 func _add_contact_shadow() -> void:
@@ -935,9 +994,13 @@ func _process(delta: float) -> void:
 		heading = state.heading
 		_init_done = true
 	else:
+		# Glide between physics ticks: carry on at the car's speed and turn
+		# rate, then ease onto the simulated pose. (Easing alone drew every car
+		# a few metres behind where it really was, more for faster cars, so
+		# cars closing under braking touched with a gap still showing.)
 		var k := 1.0 - exp(-30.0 * delta)
-		pos2 = pos2.lerp(state.pos, k)
-		heading = lerp_angle(heading, state.heading, k)
+		pos2 = (pos2 + state.vel * delta).lerp(state.pos, k)
+		heading = lerp_angle(heading + state.yaw_rate * delta, state.heading, k)
 	# Sit on the ground, following its slope.
 	var up: Vector3 = ground_normal.call(pos2, state.track_idx)
 	var fwd := Vector3(cos(heading), 0.0, sin(heading))

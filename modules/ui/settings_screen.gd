@@ -28,6 +28,8 @@ var open_garage: Callable
 ## Waiting for a new key or button: {action, kind, slot, index, from, until}.
 var _listen := {}
 const LISTEN_TIME := 6.0
+## The HUD layout editor's preview, while it's open.
+var _hud_preview: Control = null
 
 
 func open(p_profile: TeamProfile, section := "gameplay") -> void:
@@ -123,6 +125,9 @@ func _show_section(id: String, focus_list := false) -> void:
 		_build_controls()
 	if id == "debug":
 		_build_debug()
+	if id == "gameplay":
+		_action("Edit HUD layout", _open_hud_editor,
+			"Move, resize, hide and bring back each part of the race screen (timing tower, map, speed, tyres...) with the mouse and keyboard, over a live preview race. Also F2 during a race.")
 	if id == "sound":
 		_action("Play test sound", func(): Sound.passby())
 	_help.text = ""
@@ -385,7 +390,28 @@ func _focus_first_row() -> void:
 			return
 
 
+## Opens the HUD layout editor over a little preview race, hiding this screen
+## until it's closed.
+func _open_hud_editor() -> void:
+	if _hud_preview != null:
+		return
+	var kids := []
+	for c in get_children():
+		if c is CanvasItem and c.visible:
+			c.visible = false
+			kids.append(c)
+	_hud_preview = HudEditor.open_preview(self)
+	_hud_preview.tree_exited.connect(func():
+		_hud_preview = null
+		for c in kids:
+			if is_instance_valid(c):
+				c.visible = true
+		_show_section("gameplay", true))
+
+
 func _unhandled_input(event: InputEvent) -> void:
+	if _hud_preview != null:
+		return
 	if event.is_action_pressed("ui_cancel"):
 		get_viewport().set_input_as_handled()
 		_close()
