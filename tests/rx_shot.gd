@@ -45,9 +45,13 @@ func _physics_process(_delta: float) -> void:
 	if _done or session == null:
 		return
 	var sim := session.sim
-	if sim.phase != RaceSim.Phase.RACING or sim.race_time < wait:
+	if sim.phase != RaceSim.Phase.RACING:
 		return
 	var me := sim.cars[session.local_car]
+	if where == "joker" and scene.autodrive and scene.autodrive.joker_lap != 1:
+		scene.autodrive.joker_lap = 1  # take it on the first lap
+	if sim.race_time < wait:
+		return
 	var ok := true
 	match where:
 		"dirt":  # well into a dirt stretch, so the dust has built up

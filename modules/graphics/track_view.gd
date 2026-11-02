@@ -36,6 +36,7 @@ var _field_size := Vector2i.ZERO
 var _field_idx := PackedInt32Array()
 var _field_td := PackedFloat32Array()   ## distance to the track only (for _field_idx)
 var _pit_rect := Rect2()
+var _joker_rect := Rect2()   ## around the rallycross joker lane and its verge
 ## Terrain mesh heights as built (row by row), for terrain_mesh_height.
 var _terrain_h := PackedFloat32Array()
 var _terrain_grid := Rect2()
@@ -174,7 +175,7 @@ func terrain_height(p: Vector2) -> float:
 		return 0.0
 	if clearance(p) >= track.runoff + 70.0:
 		return track.ground_height_at(p)
-	if _pit_rect.has_point(p):
+	if _pit_rect.has_point(p) or _joker_rect.has_point(p):
 		return track.surface_height_at(p, nearest_index(p))
 	var i := nearest_index(p)
 	var d := track.seg_dir[i]
@@ -247,6 +248,11 @@ func _build_field() -> void:
 		_pit_rect = _pit_rect.grow(track.pit_width + 40.0)
 	for i in range(0, n, 2):
 		_stamp(track.points[i], maxf(track.width_left[i], track.width_right[i]), i)
+	if track.has_joker():
+		_joker_rect = Rect2(track.joker_path[0], Vector2.ZERO)
+		for p in track.joker_path:
+			_joker_rect = _joker_rect.expand(p)
+		_joker_rect = _joker_rect.grow(track.joker_width + 40.0)
 	for p in track.joker_path:
 		_stamp(p, track.joker_width * 0.5, -1)
 
@@ -415,7 +421,7 @@ func _surface_y(k: int, s: float, off: float, q: Vector2) -> float:
 	var edge: float = (track.width_right[k] if off >= 0.0 else track.width_left[k]) + track.kerb_width
 	if absf(off) <= edge + 0.01 or not has_elevation():
 		return height(s, off)
-	if _pit_rect.has_point(q):   # the ground eases into the pit lane here
+	if _pit_rect.has_point(q) or _joker_rect.has_point(q):   # the ground eases into the pit lane / joker here
 		return track.surface_height_at(q, k)
 	var road := height(s, signf(off) * edge)
 	if track.terrain_size == Vector2i.ZERO:
