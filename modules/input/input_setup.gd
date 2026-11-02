@@ -84,3 +84,6 @@ static func register_actions() -> void:
 			InputMap.action_add_event(action, e)
 	InputMap.action_set_deadzone("accelerate", TRIGGER_DEADZONE)
 	InputMap.action_set_deadzone("brake", TRIGGER_DEADZONE)
+	# Sticks and triggers listen to one controller only (the one in use).
+	ActivePad.start()
+	ActivePad.bind_axes()

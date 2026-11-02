@@ -50,6 +50,7 @@ func _init() -> void:
 	test_coop_roles()
 	test_race_start()
 	test_driving_aids()
+	test_active_pad()
 	test_hud_timing()
 	test_graphics_effects()
 	test_settings_and_units()
@@ -2058,6 +2059,53 @@ func test_race_start() -> void:
 
 ## Settings > Gameplay aids: the driving line and its braking zones, the
 ## track assist, the manual gearbox.
+## A second "controller" with an axis stuck off centre (a pedal set, a
+## motion sensor, a virtual pad) must not steer or zoom: only the pad in use
+## feeds the stick and trigger actions.
+func test_active_pad() -> void:
+	print("active controller")
+	if not InputMap.has_action("steer_right"):
+		InputMap.load_from_project_settings()
+		InputSetup.register_actions()
+	ActivePad._choose(0)
+	var stuck := _pad_motion(3, JOY_AXIS_LEFT_X, 1.0)
+	var zoom := _pad_motion(3, JOY_AXIS_RIGHT_Y, 1.0)
+	check(Input.get_action_strength("steer_right") == 0.0, "a stuck axis on another device doesn't steer")
+	check(Input.get_action_strength("zoom_out") == 0.0, "... or zoom")
+	check(not ActivePad.observe(stuck) and not ActivePad.observe(stuck), "a stuck axis never takes over")
+	# The player's pad: moving its stick picks it, and then it steers.
+	ActivePad.observe(_pad_motion(2, JOY_AXIS_LEFT_X, 0.0))
+	check(ActivePad.observe(_pad_motion(2, JOY_AXIS_LEFT_X, -0.9)) and ActivePad.device == 2, "moving a stick picks that pad")
+	_pad_motion(2, JOY_AXIS_LEFT_X, -0.8)
+	check(Input.get_action_strength("steer_left") > 0.5 and Input.get_action_strength("steer_right") == 0.0,
+		"the pad in use steers (left %.2f right %.2f)" % [Input.get_action_strength("steer_left"), Input.get_action_strength("steer_right")])
+	_pad_motion(2, JOY_AXIS_LEFT_X, 0.0)
+	# A button picks a pad straight away, and the old pad's held axis lets go.
+	_pad_motion(2, JOY_AXIS_RIGHT_Y, 0.9)
+	var b := InputEventJoypadButton.new()
+	b.device = 4
+	b.button_index = JOY_BUTTON_A
+	b.pressed = true
+	check(ActivePad.observe(b) and ActivePad.device == 4, "a button press picks that pad")
+	check(Input.get_action_strength("zoom_out") == 0.0, "switching pads lets go of the old pad's stick")
+	var ui_ok := true
+	for ev in InputMap.action_get_events("ui_right"):
+		if ev is InputEventJoypadMotion:
+			ui_ok = ui_ok and ev.device == 4
+	check(ui_ok, "menu navigation sticks follow the pad in use too")
+	ActivePad._choose(-1)
+
+
+func _pad_motion(dev: int, axis: JoyAxis, v: float) -> InputEventJoypadMotion:
+	var m := InputEventJoypadMotion.new()
+	m.device = dev
+	m.axis = axis
+	m.axis_value = v
+	Input.parse_input_event(m)
+	Input.flush_buffered_events()
+	return m
+
+
 func test_driving_aids() -> void:
 	print("driving aids")
 	var d := _data()

@@ -70,19 +70,16 @@ static func key_steer(current: float, target: float, speed_mps: float, dt: float
 
 ## A pedal from the pad trigger only (plus the keyboard keys), not the A / X buttons.
 func _trigger(axis: JoyAxis, action: String) -> float:
-	var v := 0.0
-	for dev in Input.get_connected_joypads():
-		v = maxf(v, Input.get_joy_axis(dev, axis))
+	var v := ActivePad.axis(axis)
 	for ev in InputMap.action_get_events(action):
 		if ev is InputEventKey and Input.is_physical_key_pressed(ev.physical_keycode):
 			v = 1.0
 	return clampf(v, 0.0, 1.0) if v > 0.05 else 0.0
 
 
+## Only the controller in use counts (see ActivePad): a stray device with an
+## axis resting off centre must not switch the keyboard over to pad steering.
 func _pad_active() -> bool:
-	for dev in Input.get_connected_joypads():
-		if absf(Input.get_joy_axis(dev, JOY_AXIS_LEFT_X)) > 0.15 \
-				or Input.get_joy_axis(dev, JOY_AXIS_TRIGGER_RIGHT) > 0.05 \
-				or Input.get_joy_axis(dev, JOY_AXIS_TRIGGER_LEFT) > 0.05:
-			return true
-	return false
+	return absf(ActivePad.axis(JOY_AXIS_LEFT_X)) > 0.15 \
+			or ActivePad.axis(JOY_AXIS_TRIGGER_RIGHT) > 0.05 \
+			or ActivePad.axis(JOY_AXIS_TRIGGER_LEFT) > 0.05
