@@ -75,6 +75,53 @@ static func from_description(d: Dictionary) -> RaceEntry:
 const ROLE_DRIVER := "driver"
 const ROLE_PIT_CREW := "pit_crew"
 const ROLE_STRATEGIST := "strategist"
+## Co-op with two players: one player is both pit crew and strategist.
+const ROLE_PIT_WALL := "pit_wall"
+## Every role, in the order the lobby offers them.
+const ROLES := [ROLE_DRIVER, ROLE_PIT_CREW, ROLE_STRATEGIST, ROLE_PIT_WALL]
+
+
+## Whether someone with this role does that duty: "pit_wall" covers both
+## the pit crew and the strategist; every other role covers only itself.
+static func role_covers(role: String, duty: String) -> bool:
+	if role == duty:
+		return true
+	return role == ROLE_PIT_WALL and (duty == ROLE_PIT_CREW or duty == ROLE_STRATEGIST)
+
+
+## The roles a crew of this many players shares out: 1 a driver; 2 a driver
+## and a pit wall (pit crew + strategist); 3 a driver, a pit crew and a strategist.
+static func roles_for_crew(size: int) -> Array:
+	match size:
+		0: return []
+		1: return [ROLE_DRIVER]
+		2: return [ROLE_DRIVER, ROLE_PIT_WALL]
+		_: return [ROLE_DRIVER, ROLE_PIT_CREW, ROLE_STRATEGIST]
+
+
+## Gives every member of a crew (array of dicts with "role") a different role
+## that fits the crew's size, keeping the roles they already hold where it can.
+## Members past three are left without a valid role (callers cap crews at 3).
+static func share_roles(members: Array) -> void:
+	var wanted := roles_for_crew(mini(members.size(), 3))
+	var free := wanted.duplicate()
+	var unset := []
+	for m in members:
+		var r: String = m.get("role", "")
+		if r in free:
+			free.erase(r)
+		else:
+			unset.append(m)
+	for m in unset:
+		m["role"] = free.pop_front() if not free.is_empty() else ""
+
+
+## Role of a crew member (peer), "" if they're not in this car's crew.
+func member_role(peer_id: int) -> String:
+	for m in crew:
+		if int(m.get("peer_id", 0)) == peer_id:
+			return m.get("role", "")
+	return ""
 
 
 ## Peer whose inputs drive this car (0 = local/offline player, -1 = nobody).

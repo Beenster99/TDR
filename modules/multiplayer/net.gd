@@ -19,7 +19,7 @@ signal internet_status_changed
 const DEFAULT_PORT := 24690
 const MAX_PEERS := 16
 ## Bump whenever a message changes shape; mismatched games are told at the lobby.
-const PROTOCOL_VERSION := 11  # 4: track elevation, 5: damage in car states, 6: barrier types and run-off surfaces, 7: race control in the race state, 8: pit stops, 9: car upgrades, liveries and upgrades_mode, 10: car setups (tuning), 11: seasons (season_info in the lobby)
+const PROTOCOL_VERSION := 12  # 12: co-op crews (teams and roles in the lobby, role swaps, driver changes, team radio), 4: track elevation, 5: damage in car states, 6: barrier types and run-off surfaces, 7: race control in the race state, 8: pit stops, 9: car upgrades, liveries and upgrades_mode, 10: car setups (tuning), 11: seasons (season_info in the lobby)
 const COMPRESSION := ENetConnection.COMPRESS_ZSTD
 ## How long a player's game may go silent before they're taken to have left (ms).
 const TIMEOUT_MS := 15000
@@ -36,8 +36,12 @@ var peer: ENetMultiplayerPeer = null
 var dedicated := false
 var local_name := "Player"
 var local_car_id := ""
-## peer_id -> { name, car_id, ready, team, role }
-## team groups players onto one car (co-op, wave 5). -1 = own car.
+## peer_id -> { name, car_id, ready, team, role, ... }
+## Co-op (wave 5): team groups up to MAX_CREW players onto one car (-1 = own
+## car); role is RaceEntry.ROLE_DRIVER / ROLE_PIT_CREW / ROLE_STRATEGIST, or
+## ROLE_PIT_WALL in a team of two. The host keeps every team's roles valid
+## (one driver; see RaceEntry.share_roles). The team races the car of its
+## first player (lowest peer id).
 var players: Dictionary = {}
 var settings := RaceSettings.new()
 var session: RaceSession = null
@@ -348,6 +352,9 @@ func _broadcast_lobby() -> void:
 
 
 const TYRE_CHOICES := ["auto", "dry", "intermediate", "wet"]
+## Co-op: players sharing one car, and how many teams the lobby offers.
+const MAX_CREW := 3
+const MAX_TEAMS := 8
 
 
 ## Client (or host) changes its own lobby entry: car, tyres, ready flag.
@@ -380,7 +387,60 @@ func _apply_update(id: int, fields: Dictionary) -> void:
 		p["setup"] = fields["setup"]
 	if fields.get("livery") is Dictionary:
 		p["livery"] = fields["livery"]
+	if fields.has("team") or fields.has("role"):
+		_set_team(id, int(fields.get("team", p.get("team", -1))), str(fields.get("role", "")))
 	_broadcast_lobby()
+
+
+## Host: put a player in a co-op team (-1 = their own car) and/or give them a
+## role in it (from the lobby's team list; works for any player).
+func set_player_team(id: int, team: int, role := "") -> void:
+	if is_server() and players.has(id):
+		_set_team(id, team, role)
+		_broadcast_lobby()
+
+
+## Players in a team, by peer id (lowest first: the first one's car is raced).
+func team_members(team: int) -> Array:
+	var out := []
+	if team < 0:
+		return out
+	for id in players:
+		if int(players[id].get("team", -1)) == team:
+			out.append(id)
+	out.sort()
+	return out
+
+
+func _set_team(id: int, team: int, role: String) -> void:
+	var p: Dictionary = players[id]
+	team = clampi(team, -1, MAX_TEAMS - 1)
+	var old_team := int(p.get("team", -1))
+	if team != old_team and team >= 0 and team_members(team).size() >= MAX_CREW:
+		team = old_team  # that car is full
+	if team != old_team:
+		p["team"] = team
+		p["role"] = RaceEntry.ROLE_DRIVER if team_members(team).size() <= 1 else ""
+		_share_team_roles(old_team)
+	if team < 0:
+		p["role"] = RaceEntry.ROLE_DRIVER
+		return
+	if role != "" and role in RaceEntry.roles_for_crew(team_members(team).size()):
+		# Taking someone's role swaps with them.
+		for other in team_members(team):
+			if other != id and players[other].get("role", "") == role:
+				players[other]["role"] = p.get("role", "")
+		p["role"] = role
+	_share_team_roles(team)
+
+
+func _share_team_roles(team: int) -> void:
+	if team < 0:
+		return
+	var members := []
+	for id in team_members(team):
+		members.append(players[id])
+	RaceEntry.share_roles(members)
 
 
 ## Host only: race options.
@@ -417,15 +477,18 @@ func start_race() -> void:
 	var teams := {}
 	var ids := players.keys()
 	ids.sort()
+	for t in MAX_TEAMS:
+		_share_team_roles(t)
 	for id in ids:
 		var p: Dictionary = players[id]
 		var team: int = p.get("team", -1)
-		var key = team if team >= 0 else "solo_%d" % id
+		var key = team if team >= 0 and team_members(team).size() > 1 else "solo_%d" % id
 		if not teams.has(key):
 			teams[key] = {"name": p["name"], "car_id": p["car_id"], "tyre": p.get("tyre", "auto"), "crew": [],
 				"setup": p.get("setup", {}), "livery": p.get("livery", {})}
 			humans.append(teams[key])
-		teams[key]["crew"].append({"peer_id": id, "name": p["name"], "role": p.get("role", RaceEntry.ROLE_DRIVER)})
+		var role: String = RaceEntry.ROLE_DRIVER if str(key).begins_with("solo") else str(p.get("role", RaceEntry.ROLE_DRIVER))
+		teams[key]["crew"].append({"peer_id": id, "name": p["name"], "role": role})
 	settings.seed = randi()
 	var start_data: Dictionary = start_planner.call(settings, humans) if start_planner.is_valid() \
 		else RaceFactory.plan(settings, humans, GameData.cars, GameData.drivers)
@@ -513,3 +576,55 @@ func send_pit_request(to_peer: int, car: int, changes: Dictionary) -> void:
 func _rpc_pit_request(car: int, changes: Dictionary) -> void:
 	if session:
 		session.on_pit_request(multiplayer.get_remote_sender_id(), car, changes)
+
+
+
+# --- Co-op crews: role swaps, driver changes, team radio ------------------------
+
+## A crew member asks the host to swap two crew members' roles (0, 0 = cancel).
+func send_role_swap(car: int, a: int, b: int) -> void:
+	_rpc_role_swap.rpc_id(1, car, a, b)
+
+
+@rpc("any_peer", "reliable", "call_remote", 4)
+func _rpc_role_swap(car: int, a: int, b: int) -> void:
+	if session and is_server():
+		session.on_role_swap_request(multiplayer.get_remote_sender_id(), car, a, b)
+
+
+## The machine that simulated a car hands it to the host for a driver change.
+func send_handover(car: int, a: int, b: int, state: Dictionary) -> void:
+	_rpc_handover.rpc_id(1, car, a, b, state)
+
+
+@rpc("any_peer", "reliable", "call_remote", 4)
+func _rpc_handover(car: int, a: int, b: int, state: Dictionary) -> void:
+	if session and is_server():
+		session.on_handover(multiplayer.get_remote_sender_id(), car, a, b, state)
+
+
+## Host: a car's crew, owner, waiting driver change and (after a change) state.
+func broadcast_crew(car: int, crew: Array, owner: int, pending: Dictionary, state: Dictionary) -> void:
+	_rpc_crew.rpc(car, crew, owner, pending, state)
+
+
+@rpc("authority", "reliable", "call_remote", 4)
+func _rpc_crew(car: int, crew: Array, owner: int, pending: Dictionary, state: Dictionary) -> void:
+	if session:
+		session.apply_crew(car, crew, owner, pending, state)
+
+
+## Team radio: a player sends to the host, the host to each crew member.
+func send_team_radio(to_peer: int, car: int, msg: Dictionary) -> void:
+	if str(msg).length() < 2000:
+		_rpc_team_radio.rpc_id(to_peer, car, msg)
+
+
+@rpc("any_peer", "reliable", "call_remote", 5)
+func _rpc_team_radio(car: int, msg: Dictionary) -> void:
+	if session:
+		var sender := multiplayer.get_remote_sender_id()
+		if is_server():
+			session.on_team_radio(sender, car, msg)
+		elif sender == 1:
+			session.on_team_radio(1, car, msg)
