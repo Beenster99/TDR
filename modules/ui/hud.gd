@@ -1356,6 +1356,11 @@ const BADGES := {
 	"bentley": ["BEN", Color(0.0, 0.25, 0.15), Color(0.9, 0.9, 0.9)],
 	"nissan": ["NIS", Color(0.75, 0.0, 0.1), Color(1, 1, 1)],
 	"honda": ["HON", Color(0.85, 0.0, 0.1), Color(1, 1, 1)],
+	"volkswagen": ["VW", Color(0.0, 0.2, 0.45), Color(1, 1, 1)],
+	"renault": ["REN", Color(1.0, 0.8, 0.0), Color(0.05, 0.05, 0.05)],
+	"hyundai": ["HYU", Color(0.0, 0.17, 0.37), Color(1, 1, 1)],
+	"skoda": ["ŠKO", Color(0.3, 0.65, 0.3), Color(1, 1, 1)],
+	"škoda": ["ŠKO", Color(0.3, 0.65, 0.3), Color(1, 1, 1)],
 }
 
 

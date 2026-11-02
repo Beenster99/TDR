@@ -843,7 +843,7 @@ func _add_dirt_effects() -> void:
 	# Dust: big, slow, lingering clouds, left hanging in the air behind.
 	_dust = GPUParticles3D.new()
 	_dust.name = "DirtDust"
-	_dust.amount = 90
+	_dust.amount = 160
 	_dust.lifetime = 4.5
 	_dust.emitting = false
 	_dust.local_coords = false
@@ -870,13 +870,13 @@ func _add_dirt_effects() -> void:
 	pm.scale_curve = curve
 	var ga := Gradient.new()
 	ga.set_color(0, Color(1, 1, 1, 0.0))
-	ga.add_point(0.06, Color(1, 1, 1, 0.5))
-	ga.add_point(0.5, Color(1, 1, 1, 0.3))
+	ga.add_point(0.06, Color(1, 1, 1, 0.95))
+	ga.add_point(0.5, Color(1, 1, 1, 0.6))
 	ga.set_color(ga.get_point_count() - 1, Color(1, 1, 1, 0.0))
 	var gt := GradientTexture1D.new()
 	gt.gradient = ga
 	pm.color_ramp = gt
-	pm.color = Color(0.66, 0.55, 0.4)
+	pm.color = Color(0.86, 0.79, 0.67)
 	_dust.process_material = pm
 	_dust_mat = pm
 	var q := QuadMesh.new()
@@ -950,7 +950,7 @@ func _update_dirt(delta: float, wet: float) -> void:
 	var dust := _dirt * (1.0 - muddy) * clampf(go * 0.75 + slide * 0.5 + spin * 0.3, 0.0, 1.0)
 	_dust.emitting = dust > 0.04
 	_dust.amount_ratio = clampf(dust, 0.0, 1.0)
-	_dust_mat.color = Color(0.68, 0.57, 0.42).lerp(Color(0.5, 0.42, 0.32), muddy)
+	_dust_mat.color = Color(0.86, 0.79, 0.67).lerp(Color(0.45, 0.37, 0.28), muddy)
 	var roost := _dirt * clampf(smoothstep(5.0, 20.0, spd) * 0.35 + slide * 0.7 + spin * 0.8, 0.0, 1.0) * (0.6 + 0.6 * muddy)
 	_roost.emitting = roost > 0.05
 	_roost.amount_ratio = clampf(roost, 0.0, 1.0)
