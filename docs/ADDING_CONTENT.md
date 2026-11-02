@@ -77,6 +77,25 @@ track are used where mapped; defaults fill the rest. In `tracks.json`,
 `"runoff_style": "gravel" | "paved" | "grass"` sets the default run-off on
 the outside of corners, and `"street": true` puts walls all round.
 
+## A rallycross track
+
+Rallycross venues come from OpenStreetMap too, through
+`modules/tracks/tools/build_rx_tracks.py` and its list `tools/rx_tracks.json`
+(centre point, search radius, name, description, climate). The builder takes
+the venue's raceway ways (only `sport=rallycross` ones where they are
+tagged), cuts them where they meet, finds the longest closed one-way loop for
+the lap and the way named "Joker" (or `joker_ways`) for the joker lane. Way
+`surface` tags give the dirt stretches (`dirt_override` fixes them by hand,
+as fractions of the lap); the start is `start_way`, a `raceway=start` way or
+the longest straight tarmac. Run-off is grass. Afterwards run
+`tools/raceline.py <id>` for the racing line. Track JSON gets
+`"discipline": "rallycross"`, `"dirt"` and `"joker"`, and no pit lane.
+`tests/rx_probe.gd` races six AI on each rallycross track and prints lap
+times, jokers taken and offs.
+
+A rallycross car is a normal car file with `"discipline": "rallycross"`,
+class `RX1` and the `rx_tyre`.
+
 ## Tests
 
 ```
