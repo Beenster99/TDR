@@ -91,6 +91,12 @@ var carried: PackedByteArray = []         ## a recovery vehicle has it (lifted o
 ## Recovery vehicles at work (CarRecovery jobs, one per retired car out on the
 ## circuit). Draw them from recovery_vehicles().
 var recoveries: Array = []
+## Debris on the circuit, piles of it (TrackMarshals spots), and the crews of
+## marshals out clearing it under double yellows (TrackMarshals jobs). Draw
+## them from marshal_views().
+var debris: Array = []
+var marshal_jobs: Array = []
+var _marshal_ids: int = 0
 var _cleared: PackedByteArray = []        ## a live stopped car the marshals have made safe (yellow only)
 var vsc_delta: PackedFloat64Array = []    ## seconds; below 0 = faster than allowed
 var vsc_warned: PackedByteArray = []
@@ -145,6 +151,29 @@ func recovery_vehicles() -> Array:
 	return out
 
 
+## Every marshal out on the circuit: TrackMarshals.view() for each crew, one list.
+func marshal_views() -> Array:
+	var out := []
+	for job in marshal_jobs:
+		if not job["done"]:
+			out.append_array(TrackMarshals.view(job))
+	return out
+
+
+## Double yellow flags at track distance s (marshals on the circuit there).
+func double_yellow_at(s: float) -> bool:
+	for job in marshal_jobs:
+		if not job["done"] and _in_zone(s, fposmod(float(job["s"]) - TrackMarshals.DOUBLE_BEFORE_M, sim.track.length),
+				fposmod(float(job["s"]) + TrackMarshals.DOUBLE_AFTER_M, sim.track.length)):
+			return true
+	return false
+
+
+## Highest speed allowed at s under double yellows (m/s).
+func double_yellow_limit(s: float) -> float:
+	return vsc_speed_at(s) * TrackMarshals.DOUBLE_LIMIT
+
+
 ## The recovery job for car i, or {} when there is none.
 func recovery_for(i: int) -> Dictionary:
 	for job in recoveries:
@@ -161,7 +190,7 @@ func mode_name() -> String:
 func neutralisation() -> String:
 	if mode != Mode.GREEN:
 		return MODE_NAMES[mode]
-	return "yellow" if not yellows.is_empty() else "green"
+	return "yellow" if not yellows.is_empty() or not marshal_jobs.is_empty() else "green"
 
 
 func safety_car_active() -> bool:
@@ -183,7 +212,7 @@ func yellow_at(s: float) -> bool:
 	for y in yellows:
 		if _in_zone(s, y["from"], y["to"]):
 			return true
-	return false
+	return double_yellow_at(s)
 
 
 ## May car i overtake car j right now?
@@ -270,6 +299,8 @@ func instruction_for(i: int) -> String:
 						return "Restart: you control the pace, go when ready"
 					return "RESTART - no overtaking until the line" if not released[i] else ""
 			return "SAFETY CAR - no overtaking, close up"
+	if double_yellow_at(sim.cars[i].track_s):
+		return "Marshals on track: under %d km/h, no overtaking" % roundi(double_yellow_limit(sim.cars[i].track_s) * 3.6)
 	if yellow_at(sim.cars[i].track_s):
 		return "YELLOW FLAG - slow down, no overtaking"
 	if not released[i]:
@@ -313,12 +344,14 @@ func step(dt: float, prev_s: PackedFloat64Array) -> void:
 			_end_all_on_chequered()
 		_update_safety_car(dt)
 		_update_recoveries(dt)
+		_update_marshals(dt, PackedFloat64Array())
 		return
 	if not racing:
 		return
 	_read_incidents()
 	_track_stranded(dt)
 	_update_recoveries(dt)
+	_update_marshals(dt, prev_s)
 	_expire_yellows()
 	_escalate()
 	_update_mode()
@@ -346,6 +379,8 @@ func _read_incidents() -> void:
 		if e.has("pos") and e["pos"] is Vector2:
 			s = sim.track.project(e["pos"])["s"]
 		_add_yellow(s, car, "Incident")
+		var at: Vector2 = e["pos"] if e.has("pos") and e["pos"] is Vector2 else sim.track.position_at(s)
+		TrackMarshals.add_debris(debris, sim.track.length, s, at, sev)
 		if sev >= 0.85:
 			_big_incident_until = sim.race_time + 8.0
 
@@ -410,6 +445,53 @@ func _update_recoveries(dt: float) -> void:
 			recoveries.remove_at(k)
 			continue
 		k += 1
+
+
+# --- Marshals clearing debris -------------------------------------------------
+
+func _update_marshals(dt: float, prev_s: PackedFloat64Array) -> void:
+	# Enough debris in one place: send a crew (one per pile at a time).
+	var k := 0
+	while k < debris.size():
+		var spot: Dictionary = debris[k]
+		if float(spot["amount"]) >= TrackMarshals.CLEAR_AT:
+			_marshal_ids += 1
+			var job := TrackMarshals.plan(sim.track, spot, _marshal_ids)
+			marshal_jobs.append(job)
+			debris.remove_at(k)
+			_event({"type": "flag", "flag": "double_yellow", "zone_s": [
+				fposmod(float(job["s"]) - TrackMarshals.DOUBLE_BEFORE_M, sim.track.length),
+				fposmod(float(job["s"]) + TrackMarshals.DOUBLE_AFTER_M, sim.track.length)],
+				"reason": "Double yellow: marshals on track clearing debris"})
+			continue
+		k += 1
+	k = 0
+	while k < marshal_jobs.size():
+		var job: Dictionary = marshal_jobs[k]
+		TrackMarshals.step(job, dt)
+		if job["done"]:
+			_event({"type": "flag", "flag": "clear", "car": -1, "reason": "Debris cleared, marshals back behind the barrier"})
+			marshal_jobs.remove_at(k)
+			continue
+		if not prev_s.is_empty() and mode == Mode.GREEN:
+			_check_double_yellow_speed(job, prev_s)
+		k += 1
+
+
+## Too fast past the marshals: 5 s penalty.
+func _check_double_yellow_speed(job: Dictionary, prev_s: PackedFloat64Array) -> void:
+	var at: float = job["s"]
+	for i in sim.cars.size():
+		var e := sim.entries[i]
+		if e.finished or e.dnf or _pitting(i) or out_of_play(i) or i >= prev_s.size():
+			continue
+		var c := sim.cars[i]
+		if not _crossed(prev_s[i], c.track_s, at):
+			continue
+		var limit := double_yellow_limit(at) * TrackMarshals.DOUBLE_TOLERANCE
+		if c.speed() > limit:
+			sim.add_penalty(i, PENALTY_S, "Too fast past the marshals under double yellows (%d km/h, limit %d)" % [
+				roundi(c.speed() * 3.6), roundi(double_yellow_limit(at) * 3.6)])
 
 
 ## Puts the car where the recovery vehicle has it.
@@ -657,6 +739,8 @@ func _place_sc() -> void:
 func follower_step(dt: float) -> void:
 	for job in recoveries:
 		CarRecovery.step(job, dt)
+	for job in marshal_jobs:
+		TrackMarshals.step(job, dt)
 	if not sc_visible:
 		return
 	if sc_in_pit:
@@ -975,13 +1059,15 @@ func to_dict(full := false) -> Dictionary:
 		"unlapping": unlapping.duplicate(), "released": released.duplicate(), "recovered": recovered.duplicate(),
 		"give_back": give_back.duplicate(true), "restart_lap": _restart_lap,
 		"recoveries": recoveries.duplicate(true), "carried": carried.duplicate(),
+		"marshal_jobs": marshal_jobs.duplicate(true),
 	}
 	if full:
 		d["full"] = {"stranded_t": stranded_t.duplicate(), "cleared": _cleared.duplicate(),
 			"vsc_warned": vsc_warned.duplicate(), "vsc_penalised": vsc_penalised.duplicate(),
 			"unlap_from": unlap_from.duplicate(), "prev_order": _prev_order.duplicate(),
 			"sc_behind": _sc_behind.duplicate(), "big_until": _big_incident_until,
-			"leader_laps_at": _leader_laps_at, "danger": _danger}
+			"leader_laps_at": _leader_laps_at, "danger": _danger,
+			"debris": debris.duplicate(true), "marshal_ids": _marshal_ids}
 	return d
 
 
@@ -1003,6 +1089,7 @@ func apply_dict(d: Dictionary) -> void:
 	_restart_lap = d.get("restart_lap", 0)
 	give_back = d.get("give_back", {}).duplicate(true)
 	recoveries = d.get("recoveries", []).duplicate(true)
+	marshal_jobs = d.get("marshal_jobs", []).duplicate(true)
 	for k in ["vsc_delta", "unlapping", "released", "recovered", "carried"]:
 		if d.has(k) and d[k].size() == get(k).size():
 			set(k, d[k].duplicate())
@@ -1018,5 +1105,7 @@ func apply_dict(d: Dictionary) -> void:
 		_big_incident_until = f["big_until"]
 		_leader_laps_at = f["leader_laps_at"]
 		_danger = f["danger"]
+		debris = f.get("debris", []).duplicate(true)
+		_marshal_ids = f.get("marshal_ids", 0)
 	if sc_visible:
 		_place_sc()

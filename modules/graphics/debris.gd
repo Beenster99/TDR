@@ -84,6 +84,14 @@ func sparks(p: Vector3, vel: Vector3, strength := 1.0) -> void:
 	_spark(p, vel, strength)
 
 
+## Marshals sweeping at p (2D): pieces within radius metres go now.
+func clear_near(p: Vector2, radius: float) -> void:
+	for pc in _pieces:
+		var n: Node3D = pc[0]
+		if float(pc[3]) < LIE_S and Vector2(n.global_position.x, n.global_position.z).distance_to(p) < radius:
+			pc[3] = LIE_S
+
+
 func piece_count() -> int:
 	return _pieces.size()
 

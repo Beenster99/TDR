@@ -481,6 +481,7 @@ func _process(delta: float) -> void:
 	var rc := session.sim.race_control
 	var recovering := rc.recovery_vehicles()
 	world.set_recovery_vehicles(recovering)
+	world.set_marshals(rc.marshal_views())
 	for i in car_views.size():
 		car_views[i].visible = not rc.recovered[i]
 		car_views[i].hoist = 0.0

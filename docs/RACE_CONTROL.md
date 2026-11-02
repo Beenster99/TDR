@@ -19,6 +19,25 @@ No new SC is sent out on the leader's final lap. With the host setting
 "Safety car: Off" (`RaceSettings.safety_car_enabled = false`) there is no VSC or
 SC, but yellow flags still apply.
 
+## Marshals clearing debris (double yellows)
+
+`TrackMarshals` (modules/race/track_marshals.gd). Every incident (severity >= 0.25)
+leaves debris where it happened; debris within 60 m piles up (`RaceControl.debris`).
+When a pile reaches 1.4 (summed severity, e.g. two or three decent crashes in one
+place), a crew of 4 marshals runs out from the barrier, sweeps for 16 s and runs back
+(about 30-40 s in all, `RaceControl.marshal_jobs`).
+
+- Double yellow flags from 220 m before the marshals to 80 m after, until they're
+  back: no overtaking, and slow right down. The limit is the VSC reference speed x 1.2
+  (`double_yellow_limit(s)`, shown on the HUD); passing the marshals more than 10 %
+  over it is a 5 s penalty. The AI drives 8 % under it.
+- `double_yellow_at(s)`; `yellow_at(s)` is also true there; `neutralisation()` is
+  "yellow". Events: `flag` `double_yellow`, then `clear`.
+- Drawing: `marshal_views()` gives `{pos, heading, action ("run"/"sweep"/"wave"), t}`
+  per marshal; `WorldView.set_marshals` draws them (orange overalls, brooms) and
+  clears the debris bits where they sweep.
+- Screenshots: `tests/fx_race_shot.tscn -- out.png marshals spa <secs after sent>`.
+
 ## Recovery vehicles
 
 `CarRecovery` (modules/race/car_recovery.gd) plans and moves them; `RaceControl.recoveries`

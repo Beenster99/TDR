@@ -46,6 +46,7 @@ func _init() -> void:
 	test_race_control_rules()
 	test_safety_car_race()
 	test_car_recovery()
+	test_marshals_clear_debris()
 	test_gravel_escape()
 	test_safety_car_off()
 	test_points_systems()
@@ -1525,6 +1526,101 @@ func check_views(sim: RaceSim) -> void:
 			if _views_ok:
 				check(false, "recovery_vehicles() gives position, heading, hoist and reach")
 			_views_ok = false
+
+
+## Marshals: debris builds up from crashes; once there's a lot in one place a
+## crew runs out under double yellows, sweeps and runs back. Cars must slow
+## right down past them.
+func test_marshals_clear_debris() -> void:
+	print("marshals and double yellows")
+	var track := TrackCatalog.load_track("spielberg")
+	var spots := []
+	TrackMarshals.add_debris(spots, track.length, 800.0, track.position_at(800.0), 0.6)
+	TrackMarshals.add_debris(spots, track.length, 830.0, track.position_at(830.0, 2.0), 0.6)
+	TrackMarshals.add_debris(spots, track.length, 2000.0, track.position_at(2000.0), 0.5)
+	check(spots.size() == 2 and absf(float(spots[0]["amount"]) - 1.2) < 0.001, "debris close together piles up (%d piles)" % spots.size())
+	var job := TrackMarshals.plan(track, {"s": 800.0, "pos": track.position_at(800.0, 3.0), "amount": 2.0}, 1)
+	var phases := [job["phase"]]
+	var t := 0.0
+	var swept := false
+	while not job["done"] and t < 120.0:
+		TrackMarshals.step(job, 1.0 / 60.0)
+		t += 1.0 / 60.0
+		if phases[phases.size() - 1] != job["phase"]:
+			phases.append(job["phase"])
+		for m in TrackMarshals.view(job):
+			swept = swept or m["action"] == "sweep"
+	check(phases == ["out", "sweep", "back", "done"] and swept, "marshals run out, sweep, run back (%s, %.0f s)" % [" > ".join(phases), t])
+	check(job["crew"].size() == TrackMarshals.CREW and t < 60.0, "a crew of %d, done in %.0f s" % [job["crew"].size(), t])
+	# In a race: a pile of debris ahead of the field.
+	var settings := RaceSettings.new()
+	settings.laps = 2
+	settings.ai_count = 7
+	settings.seed = 515
+	var race := _race(settings, _data())
+	var sim: RaceSim = race["sim"]
+	var ai: Dictionary = race["ai"]
+	var rc := sim.race_control
+	var ev := {}
+	var placed := false
+	var marshal_s := 0.0
+	var fastest := 0.0
+	var limit := 0.0
+	var penalties := []
+	var snap := {}
+	while sim.phase != RaceSim.Phase.FINISHED and sim.tick < 60 * 60 * 10:
+		if not placed and sim.phase == RaceSim.Phase.RACING and sim.race_time > 20.0:
+			placed = true
+			var lead_s := sim.cars[sim.running_order[0]].track_s
+			marshal_s = fposmod(lead_s + 900.0, track.length)
+			TrackMarshals.add_debris(rc.debris, track.length, marshal_s, track.position_at(marshal_s, 1.0), 2.0)
+		var inputs := []
+		for i in sim.car_count():
+			inputs.append(ai[i].get_input(sim, i))
+		var before := PackedFloat64Array()
+		for c in sim.cars:
+			before.append(c.track_s)
+		sim.step(inputs)
+		for e in sim.events:
+			var key: String = e["type"] + ":" + str(e.get("state", e.get("flag", "")))
+			ev[key] = ev.get(key, 0) + 1
+			if e["type"] == "penalty":
+				penalties.append(e["reason"])
+		if not rc.marshal_jobs.is_empty():
+			if snap.is_empty():
+				snap = rc.to_dict(true)
+			var at: float = rc.marshal_jobs[0]["s"]
+			limit = rc.double_yellow_limit(at)
+			for i in sim.car_count():
+				if fposmod(at - before[i], track.length) < 60.0 and fposmod(sim.cars[i].track_s - at, track.length) < 60.0:
+					fastest = maxf(fastest, sim.cars[i].speed())
+	check(ev.has("flag:double_yellow"), "double yellow flags for the marshals")
+	check(rc.double_yellow_at(marshal_s) == false and rc.marshal_jobs.is_empty() and ev.get("flag:clear", 0) >= 1, "debris cleared, marshals back, flags withdrawn")
+	check(fastest > 1.0 and fastest <= limit * TrackMarshals.DOUBLE_TOLERANCE, "AI slows down past the marshals (%d km/h, limit %d)" % [roundi(fastest * 3.6), roundi(limit * 3.6)])
+	check(penalties.filter(func(r): return str(r).contains("marshals")).is_empty(), "no double yellow penalties for the AI (%s)" % str(penalties))
+	check(snap.has("marshal_jobs") and snap["full"].has("debris"), "marshals and debris go into snapshots and the race state")
+	# Too fast past them: penalty.
+	var race2 := _race(settings, _data())
+	var sim2: RaceSim = race2["sim"]
+	while sim2.phase != RaceSim.Phase.RACING:
+		sim2.step([])
+	for k in 60:
+		sim2.step([])
+	var rc2 := sim2.race_control
+	var c0 := sim2.cars[0]
+	var at2 := fposmod(c0.track_s + 30.0, track.length)
+	rc2.marshal_jobs.append(TrackMarshals.plan(track, {"s": at2, "pos": track.position_at(at2), "amount": 2.0}, 99))
+	c0.vel = c0.forward() * 70.0
+	var pen := 0.0
+	for k in 120:
+		var full := CarInput.new()
+		full.throttle = 1.0
+		var inp := []
+		for i in sim2.car_count():
+			inp.append(full if i == 0 else CarInput.neutral())
+		sim2.step(inp)
+	pen = sim2.entries[0].penalty_s
+	check(pen >= RaceControl.PENALTY_S, "flat out past the marshals: %.0f s penalty" % pen)
 
 
 ## Gravel: a car stopped in the middle of a gravel trap can drive out, but a
