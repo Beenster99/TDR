@@ -13,9 +13,14 @@ const MODEL_PATH := "res://modules/graphics/cars/%s.glb"
 const PAINT_SHADER := preload("res://modules/graphics/shaders/car_paint.gdshader")
 const PATTERNS := {"solid": 0, "stripes": 1, "split": 2, "sash": 3, "chevron": 4, "bmw": 5, "halves": 6}
 const SMALL_PARTS := ["mirror_l", "mirror_r", "interior", "diffuser"]
+const DECAL_ATLAS := preload("res://modules/graphics/textures/decals.png")
+const DIGITS := preload("res://modules/graphics/textures/digits.png")
+## Classes that race in sponsor stickers (road cars and the safety car stay clean).
+const STICKER_CLASSES := ["GT3", "Hypercar", "LMP2"]
 
 static var _scenes := {}
 static var _liveries := {}
+static var _sponsors := []
 
 var def: CarDefinition
 var state: CarState
@@ -35,6 +40,9 @@ var _init_done := false
 var _sprung: Node3D
 var _wheels: Array = []          ## [hub, spin, is_front, radius]
 var _paint: ShaderMaterial
+var _carbon_decals: ShaderMaterial   ## the rear wing: bare carbon with its stickers
+## The sponsors on this car, title sponsor first (names, for the UI).
+var sponsors: Array[String] = []
 var _tail: StandardMaterial3D
 var _head: StandardMaterial3D
 var _head_light: SpotLight3D
@@ -98,6 +106,12 @@ func _build(livery: Dictionary) -> void:
 	_paint.set_shader_parameter("x_front", def.cg_to_front + float(liv.get("front_overhang", def.length * 0.22)))
 	_paint.set_shader_parameter("car_length", def.length)
 	_paint.set_shader_parameter("half_width", def.width * 0.5)
+	_paint.set_shader_parameter("decal_atlas", DECAL_ATLAS)
+	_paint.set_shader_parameter("digits", DIGITS)
+	_apply_stickers(liv)
+	_carbon_decals = _paint.duplicate() as ShaderMaterial
+	_carbon_decals.set_shader_parameter("base_mode", 1)
+	_carbon_decals.set_shader_parameter("race_number", 0)
 	_tail = StandardMaterial3D.new()
 	_tail.albedo_color = Color(0.5, 0.03, 0.03)
 	_tail.emission_enabled = true
@@ -217,6 +231,9 @@ func _style(n: Node) -> void:
 		match mname:
 			"paint":
 				mi.set_surface_override_material(s, _paint)
+			"carbon":
+				if str(n.name).begins_with("wing_rear"):
+					mi.set_surface_override_material(s, _carbon_decals)
 			"light_tail":
 				mi.set_surface_override_material(s, _tail)
 			"light_head", "light_drl":
@@ -242,6 +259,172 @@ func _style(n: Node) -> void:
 				g.metallic = 0.2
 				g.metallic_specular = 0.9
 				mi.set_surface_override_material(s, g)
+
+
+static func _sponsor_list() -> Array:
+	if _sponsors.is_empty():
+		var parsed = JSON.parse_string(FileAccess.get_file_as_string("res://modules/graphics/data/sponsors.json"))
+		_sponsors = parsed.get("sponsors", []) if parsed is Dictionary else []
+	return _sponsors
+
+
+## The seed that picks a car's sponsors: livery "sponsor_seed", else its
+## sponsor package ("sponsor_pack" 1.., chosen in the garage), else the car
+## and its race number.
+static func sponsor_seed(d: CarDefinition, liv: Dictionary, race_number: int) -> int:
+	if liv.has("sponsor_seed"):
+		return int(liv["sponsor_seed"])
+	var pack := int(liv.get("sponsor_pack", 0))
+	if pack > 0:
+		return 7919 * pack + 13
+	return hash("%s#%d" % [d.id, race_number])
+
+
+## The title sponsor a sponsor package gives (garage preview).
+static func title_sponsor(pack: int) -> String:
+	var titles: Array = []
+	for sp in _sponsor_list():
+		if sp.get("kind", "") == "title":
+			titles.append(sp)
+	if pack <= 0 or titles.is_empty():
+		return ""
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 7919 * pack + 13
+	return str(titles[rng.randi_range(0, titles.size() - 1)].get("name", ""))
+
+
+static func _lum(c: Color) -> float:
+	return c.r * 0.299 + c.g * 0.587 + c.b * 0.114
+
+
+## A colour that reads on top of paint c: the livery's own second or accent
+## colour when it contrasts enough, else white or near-black.
+static func _contrast(c: Color, prefer: Array) -> Color:
+	for p in prefer:
+		if absf(_lum(p) - _lum(c)) > 0.38:
+			return p
+	return Color(0.06, 0.06, 0.06) if _lum(c) > 0.55 else Color(0.97, 0.97, 0.97)
+
+
+## Sponsor stickers and the door number, from the car's slots in
+## data/liveries.json ("decal_slots", made by tools/build_cars.py). Which
+## sponsors and how they're coloured comes from livery "sponsor_seed" (any
+## int; default: from the car and its race number), so each car in a field
+## has its own sponsors and the same car always gets the same ones. A
+## garage "sponsor_pack" (1..) keeps the player's sponsors the same in every
+## race. "sponsors": false or "sponsor_pack": -1 leaves the car clean.
+func _apply_stickers(liv: Dictionary) -> void:
+	var slots: Array = liv.get("decal_slots", [])
+	var pack := int(liv.get("sponsor_pack", 0))
+	if slots.is_empty() or not def.class_tag in STICKER_CLASSES or liv.get("sponsors", true) == false or pack < 0:
+		_paint.set_shader_parameter("decal_count", 0)
+		return
+	var all := _sponsor_list()
+	var titles: Array = []
+	var minors: Array = []
+	var conts: Array = []
+	for sp in all:
+		match str(sp.get("kind", "")):
+			"title": titles.append(sp)
+			"minor": minors.append(sp)
+			"contingency": conts.append(sp)
+	if titles.is_empty():
+		return
+	var rng := RandomNumberGenerator.new()
+	rng.seed = sponsor_seed(def, liv, number)
+	var primary := Color(liv.get("primary", "#cc2222"))
+	var second := Color(liv.get("secondary", "#ffffff"))
+	var accent := Color(liv.get("accent", "#111111"))
+	var pool := titles.duplicate()
+	pool.append_array(minors)
+	var pick := func() -> Dictionary:
+		var k := rng.randi_range(0, pool.size() - 1)
+		var sp: Dictionary = pool[k]
+		pool.remove_at(k)
+		if pool.is_empty():
+			pool = titles.duplicate()
+		return sp
+	var title: Dictionary = titles[rng.randi_range(0, titles.size() - 1)]
+	pool.erase(title)
+	var second_sp: Dictionary = pick.call()
+	var third_sp: Dictionary = pick.call()
+	# Title sponsor: its own brand sticker, or lettering in the team colours.
+	var title_brand := rng.randf() < 0.5
+	var boxes := PackedVector4Array()
+	var infos := PackedVector4Array()
+	var fgs := PackedVector3Array()
+	var bgs := PackedVector3Array()
+	var acs := PackedVector3Array()
+	sponsors.clear()
+	sponsors.append(str(title.get("name", "")))
+	sponsors.append(str(second_sp.get("name", "")))
+	sponsors.append(str(third_sp.get("name", "")))
+	var number_slot := {}
+	for slot in slots:
+		var role := str(slot.get("role", ""))
+		if role == "number":
+			number_slot = slot
+			continue
+		var sp: Dictionary
+		var brand := true
+		match role:
+			"bonnet", "door", "wing":
+				sp = title
+				brand = title_brand
+			"banner", "endplate":
+				sp = second_sp
+			"deck":
+				sp = second_sp if rng.randf() < 0.5 else third_sp
+				brand = rng.randf() < 0.7
+			"haunch":
+				sp = third_sp
+			"sill", "fender":
+				sp = conts[rng.randi_range(0, conts.size() - 1)] if not conts.is_empty() else third_sp
+			_:
+				sp = pick.call()
+		if boxes.size() >= 16:
+			break
+		var cell := float(sp.get("cell", 0))
+		var fg: Color
+		var bg: Color
+		var ac: Color
+		if brand:
+			fg = Color(sp.get("fg", "#ffffff"))
+			bg = Color(sp.get("bg", "#111111"))
+			ac = Color(sp.get("accent", "#ffffff"))
+		else:
+			var paint_here := Color(0.03, 0.03, 0.03) if role == "wing" else primary
+			fg = _contrast(paint_here, [second, accent])
+			ac = _contrast(paint_here, [accent, second]) if accent != fg else fg
+			bg = paint_here
+			cell += 100.0
+		fg = fg.srgb_to_linear()
+		bg = bg.srgb_to_linear()
+		ac = ac.srgb_to_linear()
+		boxes.append(Vector4(slot["x"], slot["c"], slot["hl"], slot["hh"]))
+		infos.append(Vector4(cell, slot["proj"], slot.get("y0", -1.0), slot.get("y1", 9.0)))
+		fgs.append(Vector3(fg.r, fg.g, fg.b))
+		bgs.append(Vector3(bg.r, bg.g, bg.b))
+		acs.append(Vector3(ac.r, ac.g, ac.b))
+	while boxes.size() < 16:
+		boxes.append(Vector4.ZERO)
+		infos.append(Vector4.ZERO)
+		fgs.append(Vector3.ZERO)
+		bgs.append(Vector3.ZERO)
+		acs.append(Vector3.ZERO)
+	var n := 0
+	for i in infos.size():
+		if boxes[i].z > 0.0:
+			n = i + 1
+	_paint.set_shader_parameter("decal_count", n)
+	_paint.set_shader_parameter("decal_box", boxes)
+	_paint.set_shader_parameter("decal_info", infos)
+	_paint.set_shader_parameter("decal_fg", fgs)
+	_paint.set_shader_parameter("decal_bg", bgs)
+	_paint.set_shader_parameter("decal_ac", acs)
+	if not number_slot.is_empty() and number > 0:
+		_paint.set_shader_parameter("race_number", number)
+		_paint.set_shader_parameter("number_box", Vector4(number_slot["x"], number_slot["c"], number_slot["hl"], number_slot["hh"]))
 
 
 ## Upgrade parts built into every model by tools/build_cars.py, hidden
@@ -306,7 +489,8 @@ func _add_number() -> void:
 		return
 	var board := MeshInstance3D.new()
 	var pm := PlaneMesh.new()
-	pm.size = Vector2(0.62, 0.7)
+	var bs: Array = default_livery(def).get("number_board", [0.62, 0.7])
+	pm.size = Vector2(float(bs[0]), float(bs[1]))
 	var bmat := StandardMaterial3D.new()
 	bmat.albedo_color = Color(0.95, 0.95, 0.93)
 	bmat.roughness = 0.4
@@ -318,7 +502,7 @@ func _add_number() -> void:
 	l.text = str(number)
 	l.font_size = 128
 	l.outline_size = 0
-	l.pixel_size = 0.0042
+	l.pixel_size = 0.0042 * float(bs[1]) / 0.7
 	l.modulate = Color(0.05, 0.05, 0.05)
 	l.double_sided = false
 	l.shaded = true

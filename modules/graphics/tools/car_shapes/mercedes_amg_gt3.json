@@ -13,7 +13,7 @@
   0.08,
   0.06
  ],
- "spokes": 10,
+ "spokes": 7,
  "caliper_colour": "#d0d0d0",
  "body": [
   {
@@ -186,12 +186,13 @@
  "wing": {
   "type": "gt3",
   "t": 1.0,
-  "z": 1.2,
+  "z": 1.22,
   "chord": 0.34,
   "span": 0.9,
   "angle": 10,
-  "mount": "swan",
-  "mount_y": 0.3
+  "mount": "pillar",
+  "mount_y": 0.4,
+  "endplate_h": 0.26
  },
  "mirrors": {
   "z": 0.12,
@@ -227,30 +228,6 @@
    "facing": "top",
    "shape": "slant",
    "slant": 0.04
-  },
-  {
-   "mat": "vent",
-   "t": [
-    0.18,
-    0.3
-   ],
-   "y": [
-    0.12,
-    0.32
-   ],
-   "facing": "top"
-  },
-  {
-   "mat": "vent",
-   "t": [
-    0.2,
-    0.3
-   ],
-   "y": [
-    0.5,
-    0.7
-   ],
-   "facing": "top"
   },
   {
    "mat": "light_tail",
@@ -295,6 +272,47 @@
     0.58
    ],
    "facing": "side"
+  },
+  {
+   "mat": "vent",
+   "t": [
+    0.16,
+    0.31
+   ],
+   "y": [
+    0.12,
+    0.34
+   ],
+   "facing": "top",
+   "louvres": 7,
+   "gap": 0.45
+  },
+  {
+   "mat": "vent",
+   "t": [
+    0.2,
+    0.3
+   ],
+   "y": [
+    0.52,
+    0.72
+   ],
+   "facing": "top",
+   "louvres": 4,
+   "gap": 0.4
+  },
+  {
+   "mat": "vent",
+   "t": [
+    0.07,
+    0.12
+   ],
+   "y": [
+    -0.4,
+    0.4
+   ],
+   "facing": "top",
+   "mirror": false
   }
  ],
  "livery": {

@@ -1,7 +1,7 @@
 {
   "id": "cars",
   "name": "Cars",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "status": "active",
   "summary": "What each car is: engine curve, gears, mass, aero, brakes, driver aids, tyre choice. Car specs are JSON in data/.",
   "depends": {
@@ -13,5 +13,5 @@
     "CarSetup"
   ],
   "internal": [],
-  "notes": "New cars are new JSON files; class_tag is the car class (GT3, Road). CarCatalog.classes() / ids_in_class() group them. Upgrades and tuning use CarDefinition.with_overrides(). Cars that never race (the safety car) live in special/ and load with CarCatalog.load_safety_car(). Car setups (wave 4): CarSetup lists the 21 settings, their ranges and plain explanations, and turns a setup ({\"tuning\": {...}} in the overrides) into physical numbers."
+  "notes": "New cars are new JSON files; class_tag is the car class (GT3, Road). CarCatalog.classes() / ids_in_class() group them. Upgrades and tuning use CarDefinition.with_overrides(). Cars that never race (the safety car) live in special/ and load with CarCatalog.load_safety_car(). Car setups (wave 4): CarSetup lists the 21 settings, their ranges and plain explanations, and turns a setup ({\"tuning\": {...}} in the overrides) into physical numbers. Classes now: Hypercar (Porsche 963, Ferrari 499P, Toyota GR010 Hybrid, Cadillac V-Series.R, Peugeot 9X8), LMP2 (Oreca 07, Ligier JS P217), GT3, Road; CarSetup.TEMPLATES has a template per class. engine.sound names the engine voice for the audio module."
 }

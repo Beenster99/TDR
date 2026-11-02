@@ -13,7 +13,7 @@
   0.07,
   0.06
  ],
- "spokes": 10,
+ "spokes": 6,
  "caliper_colour": "#ffcc00",
  "shoulder_crease": 0.9,
  "body": [
@@ -200,7 +200,9 @@
   "span": 0.88,
   "angle": 11,
   "mount": "swan",
-  "mount_y": 0.3
+  "mount_y": 0.3,
+  "endplate_h": 0.3,
+  "endplate_len": 1.9
  },
  "mirrors": {
   "z": 0.12,
@@ -264,19 +266,6 @@
    "facing": "side"
   },
   {
-   "mat": "vent",
-   "t": [
-    0.78,
-    0.92
-   ],
-   "y": [
-    -0.4,
-    0.4
-   ],
-   "facing": "top",
-   "mirror": false
-  },
-  {
    "mat": "light_tail",
    "t": [
     0.95,
@@ -307,11 +296,41 @@
     0.2,
     0.6
    ]
+  },
+  {
+   "mat": "vent",
+   "t": [
+    0.76,
+    0.93
+   ],
+   "y": [
+    -0.42,
+    0.42
+   ],
+   "facing": "top",
+   "mirror": false,
+   "louvres": 6,
+   "gap": 0.4
+  },
+  {
+   "mat": "intake",
+   "t": [
+    0.56,
+    0.66
+   ],
+   "y": [
+    0.64,
+    0.84
+   ],
+   "facing": "top",
+   "shape": "slant",
+   "slant": 0.06
   }
  ],
  "livery": {
   "pattern": "chevron",
   "secondary": "#111111",
   "accent": "#ffffff"
- }
+ },
+ "rim_colour": "#111214"
 }

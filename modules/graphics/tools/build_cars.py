@@ -2,6 +2,7 @@
 
 Run (Blender 4.5, no window needed):
     blender -b --python modules/graphics/tools/build_cars.py -- [car_id ...]
+    blender -b --python modules/graphics/tools/build_cars.py -- --liveries-only
 
 Inputs
   modules/cars/data/<id>.json          real dimensions (special/ for the safety car) (length, width, wheelbase,
@@ -495,7 +496,7 @@ class Car:
         for p in me.polygons:
             if p.normal.z < -0.6 or (p.center.z < mid_zb + 0.02 and p.normal.z < 0.0):
                 p.material_index = under
-        for r in self.s.get("regions", []):
+        for r in expand_louvres(self.s.get("regions", [])):
             sides = (1, -1) if r.get("mirror", True) and r.get("facing") in ("side",) else (1,)
             if r.get("mirror", True) and r.get("facing") != "side" and r.get("y", [0, 0])[0] > 0.0:
                 sides = (1, -1)
@@ -738,11 +739,35 @@ class Car:
         ep_h = wg.get("endplate_h", 0.3)
         for s in (-1, 1):
             y = s * (span * 0.5 + 0.004)
-            x0 = xt - 0.04
+            x0 = xt - wg.get("endplate_back", 0.04)
             x1 = x0 + ep_len
-            pts = ((x0, z + 0.07), (x1 - 0.1, z + 0.09), (x1, z - 0.02), (x1 - 0.05, z - ep_h + 0.08), (x0 + 0.08, z - ep_h), (x0, z - ep_h + 0.05))
+            et = wg.get("endplate_top", 0.07)
+            pts = ((x0, z + et), (x1 - 0.1, z + et + 0.02), (x1, z - 0.02), (x1 - 0.05, z - ep_h + 0.08), (x0 + 0.08, z - ep_h), (x0, z - ep_h + 0.05))
             vs = [bm.verts.new((px, y, pz)) for (px, pz) in pts]
             bm.faces.new(vs)
+        # Upper flap (two-element wings on prototypes): a smaller foil
+        # behind and above the main plane, at a steeper angle.
+        fl = wg.get("flap")
+        if fl:
+            fc = fl.get("chord", chord * 0.4)
+            fa = math.radians(wg.get("angle", 9.0) + fl.get("angle", 18.0))
+            lx = xt + fl.get("dx", 0.03)           # flap leading edge, over the main trailing edge
+            lz = z + fl.get("dz", 0.04)
+            fprof = airfoil(fc, 0.1, 0.07)
+            floops = []
+            for y in (-span * 0.5, span * 0.5):
+                ring = []
+                for (u, v) in fprof:
+                    dx, dz = -u, -v                   # behind and below the leading edge
+                    ring.append(bm.verts.new((lx + dx * math.cos(fa) + dz * math.sin(fa), y,
+                                              lz - dx * math.sin(fa) + dz * math.cos(fa))))
+                floops.append(ring)
+            m2 = len(fprof)
+            for i in range(m2):
+                i2 = (i + 1) % m2
+                bm.faces.new((floops[0][i], floops[0][i2], floops[1][i2], floops[1][i]))
+            bm.faces.new(list(reversed(floops[0])))
+            bm.faces.new(floops[1])
         me = bpy.data.meshes.new("wing_rear")
         bm.to_mesh(me)
         bm.free()
@@ -752,7 +777,8 @@ class Car:
         mount = wg.get("mount", "swan")
         my = self.W * 0.5 * wg.get("mount_y", 0.28)
         deck_t = self.t_of(xt + chord * 0.5)
-        for s in (-1, 1):
+        sides = () if mount == "none" else ((0,) if wg.get("mount_count", 2) == 1 else (-1, 1))
+        for s in sides:
             y = s * my
             base_z = self.deck_height(min(max(deck_t, 0.0), 1.0), y) - 0.02
             mb = bmesh.new()
@@ -813,6 +839,8 @@ class Car:
         out = []
         for s, name in ((1, "mirror_l"), (-1, "mirror_r")):
             base_y = interp_keys(c["stations"], max(t, c["stations"][0]["t"]), "wb") * hw
+            if "y" in mr:                # prototypes: mirrors out on the front wings
+                base_y = mr["y"] * hw
             z = self.deck_height(t, base_y) + mr.get("z", 0.13)
             y = s * (base_y + mr.get("out", 0.17))
             bm = bmesh.new()
@@ -891,7 +919,7 @@ class Car:
         h = new_object("helmet", m)
         objs.append(h)
         # roll cage for race cars
-        if self.s.get("race_car", True):
+        if self.s.get("race_car", True) and self.s.get("cage", True):
             ks = c["stations"]
             def roof_at(x):
                 t = min(max(self.t_of(x), ks[0]["t"]), ks[-1]["t"])
@@ -1018,6 +1046,44 @@ class Car:
         m.materials.append(MATS["caliper"])
         new_object(name + "_caliper", m, hub)
         return hub
+
+    # ---------------------------------------------------- prototype shark fin
+
+    def build_fin(self):
+        """Prototype shark fin: a thin painted plate on the centre line from
+        behind the cockpit to the rear wing. "fin": {"t": [t0, t1], "z": [top at
+        t0, top at t1], "thick": 0.018}."""
+        fn = self.s.get("fin")
+        if not fn:
+            return None
+        t0, t1 = fn["t"]
+        z0, z1 = fn.get("z", [1.05, 1.1])
+        n = 10
+        bm = bmesh.new()
+        top, bot = [], []
+        for i in range(n + 1):
+            k = i / n
+            t = lerp(t0, t1, k)
+            x = self.x_of(t)
+            base = self.deck_height(t, 0.0) - 0.03
+            zt = lerp(z0, z1, smooth(k) if fn.get("curve", True) else k)
+            if i == 0:
+                zt = base + 0.02
+            top.append(bm.verts.new((x, 0.0, max(zt, base + 0.02))))
+            bot.append(bm.verts.new((x, 0.0, base)))
+        for i in range(n):
+            bm.faces.new((bot[i], bot[i + 1], top[i + 1], top[i]))
+        me = bpy.data.meshes.new("fin")
+        bm.to_mesh(me)
+        bm.free()
+        me.materials.append(MATS["paint"])
+        ob = new_object("fin", me)
+        sol = ob.modifiers.new("t", "SOLIDIFY")
+        sol.thickness = fn.get("thick", 0.018)
+        sol.offset = 0
+        bake_modifiers(ob)
+        shade_smooth(ob, 30)
+        return ob
 
     # ---------------------------------------------------- safety car light bar
 
@@ -1179,7 +1245,7 @@ class Car:
             shade_smooth(ob, 48)
         cab = self.build_cabin()
         shade_smooth(cab, 50)
-        for f in (self.build_splitter, self.build_diffuser, self.build_wing, self.build_interior):
+        for f in (self.build_splitter, self.build_diffuser, self.build_wing, self.build_interior, self.build_fin):
             f()
         self.build_mirrors()
         if self.s.get("upgrades", True) and not self.s.get("light_bar"):
@@ -1190,6 +1256,28 @@ class Car:
             for side in (1, -1):
                 self.build_wheel(axle, side)
         self.markers()
+
+
+def expand_louvres(regions):
+    """A region with "louvres": n becomes n thin slats with gaps between
+    them (fender and bonnet louvres). "louvre_dir": "t" (default, slats run
+    across the car, one behind the other) or "y" (slats run along the car)."""
+    out = []
+    for r in regions:
+        n = int(r.get("louvres", 0))
+        if n <= 1:
+            out.append(r)
+            continue
+        gap = r.get("gap", 0.45)
+        key = "y" if r.get("louvre_dir", "t") == "y" else "t"
+        a, b = r.get(key, [0.0, 1.0])
+        step = (b - a) / n
+        for i in range(n):
+            rr = dict(r)
+            rr.pop("louvres", None)
+            rr[key] = [a + step * i, a + step * (i + 1 - gap)]
+            out.append(rr)
+    return out
 
 
 def region_hit(r, t, yf, z, n):
@@ -1308,22 +1396,166 @@ def build_car(cid):
 
 def main():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
+    if "--liveries-only" in argv:     # just rewrite data/liveries.json (decal slots)
+        write_liveries()
+        return
     ids = argv or sorted(f[:-5] for f in os.listdir(SHAPES) if f.endswith(".json"))
     for cid in ids:
         build_car(cid)
     write_liveries()
 
 
+def car_data(cid):
+    path = os.path.join(CARS_DATA, cid + ".json")
+    if not os.path.exists(path):
+        path = os.path.join(CARS_SPECIAL, cid + ".json")
+    with open(path) as f:
+        return json.load(f)
+
+
+def decal_slots(car):
+    """Where sponsor stickers and door numbers go on this car, in Godot car
+    space (x forward, y up, z right; symmetric so Blender's y sign does not
+    matter). Each slot: role, proj (0 top along, 1 top across, 2 sides,
+    3 top along on both sides), x, c (z for top / y for side), hl (half size
+    along the text), hh (half size across it), y range. CarView fills the
+    slots with sponsors (see textures/decals.png)."""
+    s = car.s
+    L, W, hw = car.L, car.W, car.W * 0.5
+    c = s["cabin"]
+    st = c["stations"]
+    ws, sw = c["windscreen"], c["side_windows"]
+    cab_end = st[-1]["t"]
+    rg = c.get("rear_glass")
+    out = []
+
+    def add(role, proj, x, cc, hl, hh, y0=-1.0, y1=9.0):
+        if hl > 0.05 and hh > 0.02:
+            out.append({"role": role, "proj": proj, "x": round(x, 3), "c": round(cc, 3), "hl": round(hl, 3),
+                        "hh": round(hh, 3), "y0": round(y0, 3), "y1": round(y1, 3)})
+
+    proto = s.get("prototype", False)
+    # Bonnet: across the car, between the nose and the windscreen.
+    tb0, tb1 = s.get("bonnet_t", [0.07, ws[0] - 0.015])
+    room = (tb1 - tb0) * L
+    hh = min(0.17, room * 0.32)
+    hl = min(hh * 4.0, (0.22 if proto else 0.34) * W)
+    hh = hl / 4.0
+    tb = lerp(tb0, tb1, s.get("bonnet_at", 0.55))
+    # Keep clear of vents and lights on the bonnet: use the longest free stretch.
+    blocked = []
+    for r in s.get("regions", []):
+        if r.get("facing", "top") != "top":
+            continue
+        yy = r.get("y", [-1, 1])
+        h = hl / hw
+        if r.get("mirror", True) and yy[0] >= 0.35:
+            # a pair out on the wings: make the sticker narrower to fit between
+            tt = r.get("t", [0, 1])
+            if tt[1] > tb0 and tt[0] < tb1:
+                hl = min(hl, yy[0] * hw * 0.95)
+                hh = hl / 4.0
+            hit = False
+        elif r.get("mirror", True) and yy[0] > 0:
+            hit = yy[0] < h                      # a pair, one each side: the inner edge matters
+        else:
+            hit = yy[0] < h and yy[1] > -h
+        if hit:
+            blocked.append(r.get("t", [0, 1]))
+    if "bonnet_at" not in s and blocked:
+        edges = sorted([tb0, tb1] + [x for b in blocked for x in b])
+        best = (0.0, tb)
+        for i in range(len(edges) - 1):
+            a, b = edges[i], edges[i + 1]
+            if a < tb0 - 1e-6 or b > tb1 + 1e-6:
+                continue
+            mid = (a + b) * 0.5
+            if any(bb[0] < mid < bb[1] for bb in blocked):
+                continue
+            if b - a > best[0]:
+                best = (b - a, mid)
+        if best[0] > 0:
+            tb = best[1]
+            hh = min(hh, best[0] * L * 0.42)
+            hl = min(hh * 4.0, hl)
+            hh = hl / 4.0
+    add("bonnet", 1, car.x_of(tb), 0.0, hl, hh, -1.0, car.deck_height(tb, 0.0) + 0.25)
+    # Windscreen banner on the roof's front edge.
+    roof_t = ws[1] + 0.012
+    roof_w = interp_keys(st, min(max(roof_t, st[0]["t"]), cab_end), "wt") * hw
+    bh = 0.065
+    bl = min(bh * 4.0, roof_w * 0.92)
+    add("banner", 1, car.x_of(ws[1]) - bh - 0.02, 0.0, bl, bl / 4.0, interp_keys(st, roof_t, "zt") - 0.2, 9.0)
+    # Rear deck / engine cover, under the wing.
+    wg = s.get("wing") or {}
+    wz = wg.get("z", 9.0) if wg.get("type") != "ducktail" else 9.0
+    td0 = (rg[1] if rg else cab_end) + 0.02
+    td1 = min(wg.get("t", 0.97), 0.97) if wg.get("type") != "ducktail" else 0.95
+    room = (td1 - td0) * L
+    if room > 0.25:
+        hh = min(0.14, room * 0.3)
+        hl = min(hh * 4.0, (0.25 if proto else 0.32) * W)
+        add("deck", 1, car.x_of((td0 + td1) * 0.5), 0.0, hl, hl / 4.0, -1.0, wz - 0.1)
+    # Rear wing: across the top, and on the end plates.
+    if wg and wg.get("type") != "ducktail":
+        chord = wg.get("chord", 0.34)
+        xt = car.x_of(wg.get("t", 0.95))
+        span = W * wg.get("span", 0.88)
+        hh = chord * 0.4
+        hl = min(hh * 4.0, span * 0.42)
+        add("wing", 1, xt + chord * 0.5, 0.0, hl, hl / 4.0, wz - 0.12, wz + 0.2)
+        ep_len = chord * wg.get("endplate_len", 1.7)
+        ep_h = wg.get("endplate_h", 0.3)
+        hh = ep_h * 0.22
+        hl = min(hh * 4.0, ep_len * 0.42)
+        add("endplate", 2, xt - 0.04 + ep_len * 0.5, wz - ep_h * 0.45, hl, hl / 4.0, wz - ep_h - 0.05, wz + 0.15)
+    # Doors: race number (proj 2) and a sponsor behind it.
+    nd = s.get("number_door", {"t": 0.48, "z": 0.55})
+    nsz = s.get("number_size", 0.17)
+    add("number", 2, car.x_of(nd["t"]), nd["z"], nsz, nsz)
+    t_ra = car.t_of(car.axles[1] + car.R * 1.45)
+    ts = min(nd["t"] + nsz / L + 0.075, t_ra - 0.06)
+    room = (t_ra - (nd["t"] + nsz / L + 0.01)) * L
+    hl = min(0.34, room * 0.48)
+    add("door", 2, car.x_of(ts), nd["z"], hl, hl / 4.0)
+    # Sills: a strip of small contingency stickers; another behind the front wheel.
+    p = car.section_params(0.5)
+    t_fa = car.t_of(car.axles[0] - car.R * 1.45)
+    sill_y = p["zb"] + s.get("sill_up", 0.13)
+    hl = min(0.28, (t_ra - t_fa) * L * 0.25)
+    add("sill", 2, car.x_of((t_fa + t_ra) * 0.5), sill_y, hl, hl / 4.0)
+    tf = t_fa + 0.05
+    pf = car.section_params(tf)
+    add("fender", 2, car.x_of(tf), (pf["zs"] + pf["zb"]) * 0.5 + 0.06, 0.2, 0.05)
+    # Rear haunches, on top beside the cabin (both sides).
+    t_h = car.t_of(car.axles[1] + 0.12)
+    ph = car.section_params(t_h)
+    cab_w = interp_keys(st, min(max(t_h, st[0]["t"]), cab_end), "wb") * hw if st[0]["t"] <= t_h <= cab_end else 0.0
+    lane = (ph["w"] - max(cab_w, ph["wt"] * 0.35))
+    if lane > 0.16:
+        hh = min(0.06, lane * 0.3)
+        add("haunch", 3, car.x_of(t_h), max(cab_w, ph["wt"] * 0.35) + lane * 0.5, hh * 4.0, hh, 0.3, 9.0)
+    return out
+
+
 def write_liveries():
-    """Default livery per car for the game (modules/graphics/data/liveries.json)."""
+    """Default livery per car for the game (modules/graphics/data/liveries.json),
+    with each car's sticker slots (decal_slots)."""
     out = {}
     for f in sorted(os.listdir(SHAPES)):
         if f.endswith(".json"):
+            cid = f[:-5]
             with open(os.path.join(SHAPES, f)) as fh:
                 s = json.load(fh)
             liv = dict(s.get("livery", {}))
             liv["front_overhang"] = s["front_overhang"]
-            out[f[:-5]] = liv
+            if "number_board" in s:
+                liv["number_board"] = s["number_board"]
+            try:
+                liv["decal_slots"] = decal_slots(Car(cid, car_data(cid), s))
+            except Exception as e:  # a car without data still gets its paint
+                print("[cars] no decal slots for %s: %s" % (cid, e))
+            out[cid] = liv
     path = os.path.join(GFX, "data", "liveries.json")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as fh:

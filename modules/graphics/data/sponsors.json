@@ -1,0 +1,647 @@
+{
+ "_doc": "Invented sponsors for car liveries (none are real brands). cell = index in textures/decals.png (4 x 16 cells of 512x128). Built by tools/build_decals.py.",
+ "columns": 4,
+ "rows": 16,
+ "sponsors": [
+  {
+   "name": "VOLTRIX",
+   "cell": 0,
+   "kind": "title",
+   "style": "slash",
+   "fg": "#111111",
+   "bg": "#c6ff00",
+   "accent": "#111111",
+   "panel": true
+  },
+  {
+   "name": "KESTREL OIL",
+   "cell": 1,
+   "kind": "title",
+   "style": "emblem_circle",
+   "fg": "#111111",
+   "bg": "#ffcc00",
+   "accent": "#d40000",
+   "panel": true
+  },
+  {
+   "name": "NORDHAVN",
+   "cell": 2,
+   "kind": "title",
+   "style": "wave",
+   "fg": "#ffffff",
+   "bg": "#0b2e59",
+   "accent": "#5ec8f2",
+   "panel": true
+  },
+  {
+   "name": "PYRAXIS",
+   "cell": 3,
+   "kind": "title",
+   "style": "chevrons",
+   "fg": "#ffffff",
+   "bg": "#e4002b",
+   "accent": "#ffd100",
+   "panel": true
+  },
+  {
+   "name": "HALCYON TYRES",
+   "cell": 4,
+   "kind": "title",
+   "style": "underline",
+   "fg": "#ffffff",
+   "bg": "#111111",
+   "accent": "#f5a300",
+   "panel": true
+  },
+  {
+   "name": "BRISKA",
+   "cell": 5,
+   "kind": "title",
+   "style": "panel",
+   "fg": "#ffffff",
+   "bg": "#ff5a00",
+   "accent": "#ffffff",
+   "panel": true
+  },
+  {
+   "name": "ORBITAL",
+   "cell": 6,
+   "kind": "title",
+   "style": "emblem_circle",
+   "fg": "#1f2a44",
+   "bg": "#ffffff",
+   "accent": "#00a3e0",
+   "panel": true
+  },
+  {
+   "name": "MARLOWE & FINCH",
+   "cell": 7,
+   "kind": "minor",
+   "style": "plain",
+   "fg": "#c9a646",
+   "bg": "#101820",
+   "accent": "#c9a646",
+   "panel": false
+  },
+  {
+   "name": "QUANTEX",
+   "cell": 8,
+   "kind": "title",
+   "style": "boxed",
+   "fg": "#ffffff",
+   "bg": "#5b2c83",
+   "accent": "#00e5a0",
+   "panel": true
+  },
+  {
+   "name": "SOLENNE",
+   "cell": 9,
+   "kind": "title",
+   "style": "star",
+   "fg": "#ffffff",
+   "bg": "#c8102e",
+   "accent": "#ffffff",
+   "panel": true
+  },
+  {
+   "name": "TIDEWATER BANK",
+   "cell": 10,
+   "kind": "title",
+   "style": "wave",
+   "fg": "#003b5c",
+   "bg": "#ffffff",
+   "accent": "#00a499",
+   "panel": true
+  },
+  {
+   "name": "ZEPHYRA",
+   "cell": 11,
+   "kind": "title",
+   "style": "wing",
+   "fg": "#ffffff",
+   "bg": "#00838f",
+   "accent": "#ffffff",
+   "panel": true
+  },
+  {
+   "name": "IRONVALE",
+   "cell": 12,
+   "kind": "title",
+   "style": "emblem_diamond",
+   "fg": "#ffffff",
+   "bg": "#2b2b2b",
+   "accent": "#e10600",
+   "panel": true
+  },
+  {
+   "name": "COPPERLINE",
+   "cell": 13,
+   "kind": "title",
+   "style": "underline",
+   "fg": "#b5651d",
+   "bg": "#ffffff",
+   "accent": "#b5651d",
+   "panel": true
+  },
+  {
+   "name": "AURELIO",
+   "cell": 14,
+   "kind": "title",
+   "style": "panel",
+   "fg": "#111111",
+   "bg": "#f2c94c",
+   "accent": "#111111",
+   "panel": true
+  },
+  {
+   "name": "CINDRA FUELS",
+   "cell": 15,
+   "kind": "title",
+   "style": "slash",
+   "fg": "#ffffff",
+   "bg": "#d62828",
+   "accent": "#fcbf49",
+   "panel": true
+  },
+  {
+   "name": "FALKENRIDGE",
+   "cell": 16,
+   "kind": "title",
+   "style": "chevrons",
+   "fg": "#ffffff",
+   "bg": "#14213d",
+   "accent": "#fca311",
+   "panel": true
+  },
+  {
+   "name": "lumio",
+   "cell": 17,
+   "kind": "title",
+   "style": "emblem_circle",
+   "fg": "#ffffff",
+   "bg": "#7b2ff7",
+   "accent": "#ffd60a",
+   "panel": true
+  },
+  {
+   "name": "RAPTEC",
+   "cell": 18,
+   "kind": "title",
+   "style": "slash",
+   "fg": "#111111",
+   "bg": "#ffffff",
+   "accent": "#e10600",
+   "panel": true
+  },
+  {
+   "name": "BLUEWICK",
+   "cell": 19,
+   "kind": "title",
+   "style": "panel",
+   "fg": "#ffffff",
+   "bg": "#1565c0",
+   "accent": "#ffffff",
+   "panel": true
+  },
+  {
+   "name": "OKTANO",
+   "cell": 20,
+   "kind": "title",
+   "style": "boxed",
+   "fg": "#ffffff",
+   "bg": "#111111",
+   "accent": "#ff6f00",
+   "panel": true
+  },
+  {
+   "name": "STRATA DATA",
+   "cell": 21,
+   "kind": "title",
+   "style": "emblem_diamond",
+   "fg": "#263238",
+   "bg": "#ffffff",
+   "accent": "#00bfa5",
+   "panel": true
+  },
+  {
+   "name": "AEROLUNA",
+   "cell": 22,
+   "kind": "title",
+   "style": "wing",
+   "fg": "#0d47a1",
+   "bg": "#ffffff",
+   "accent": "#e53935",
+   "panel": true
+  },
+  {
+   "name": "TORVIK",
+   "cell": 23,
+   "kind": "title",
+   "style": "underline",
+   "fg": "#ffffff",
+   "bg": "#37474f",
+   "accent": "#ffeb3b",
+   "panel": true
+  },
+  {
+   "name": "HEXAFIN",
+   "cell": 24,
+   "kind": "title",
+   "style": "emblem_diamond",
+   "fg": "#ffffff",
+   "bg": "#00695c",
+   "accent": "#a5d6a7",
+   "panel": true
+  },
+  {
+   "name": "GLACIA",
+   "cell": 25,
+   "kind": "title",
+   "style": "wave",
+   "fg": "#ffffff",
+   "bg": "#4fc3f7",
+   "accent": "#ffffff",
+   "panel": true
+  },
+  {
+   "name": "REDMOOR",
+   "cell": 26,
+   "kind": "minor",
+   "style": "plain",
+   "fg": "#ffffff",
+   "bg": "#7f0000",
+   "accent": "#ffffff",
+   "panel": false
+  },
+  {
+   "name": "NOVACELL",
+   "cell": 27,
+   "kind": "title",
+   "style": "star",
+   "fg": "#111111",
+   "bg": "#00e676",
+   "accent": "#111111",
+   "panel": true
+  },
+  {
+   "name": "BRIGHTFORGE",
+   "cell": 28,
+   "kind": "title",
+   "style": "chevrons",
+   "fg": "#212121",
+   "bg": "#ffab00",
+   "accent": "#212121",
+   "panel": true
+  },
+  {
+   "name": "KYRELL",
+   "cell": 29,
+   "kind": "title",
+   "style": "panel",
+   "fg": "#ffffff",
+   "bg": "#ad1457",
+   "accent": "#ffffff",
+   "panel": true
+  },
+  {
+   "name": "ONDINE",
+   "cell": 30,
+   "kind": "title",
+   "style": "wave",
+   "fg": "#1a237e",
+   "bg": "#e3f2fd",
+   "accent": "#1a237e",
+   "panel": true
+  },
+  {
+   "name": "GRAVITON",
+   "cell": 31,
+   "kind": "title",
+   "style": "slash",
+   "fg": "#ffffff",
+   "bg": "#212121",
+   "accent": "#76ff03",
+   "panel": true
+  },
+  {
+   "name": "VELOCITA",
+   "cell": 32,
+   "kind": "title",
+   "style": "underline",
+   "fg": "#ffffff",
+   "bg": "#c62828",
+   "accent": "#ffffff",
+   "panel": true
+  },
+  {
+   "name": "MOSSGATE",
+   "cell": 33,
+   "kind": "title",
+   "style": "emblem_circle",
+   "fg": "#ffffff",
+   "bg": "#2e7d32",
+   "accent": "#c5e1a5",
+   "panel": true
+  },
+  {
+   "name": "SIGNAL ONE",
+   "cell": 34,
+   "kind": "title",
+   "style": "boxed",
+   "fg": "#111111",
+   "bg": "#ffffff",
+   "accent": "#ff3d00",
+   "panel": true
+  },
+  {
+   "name": "ATLASPAY",
+   "cell": 35,
+   "kind": "title",
+   "style": "emblem_diamond",
+   "fg": "#ffffff",
+   "bg": "#283593",
+   "accent": "#ffca28",
+   "panel": true
+  },
+  {
+   "name": "BRAKEMASTER",
+   "cell": 36,
+   "kind": "title",
+   "style": "chevrons",
+   "fg": "#ffffff",
+   "bg": "#111111",
+   "accent": "#ff1744",
+   "panel": true
+  },
+  {
+   "name": "PELLARO",
+   "cell": 37,
+   "kind": "title",
+   "style": "panel",
+   "fg": "#ffffff",
+   "bg": "#4e342e",
+   "accent": "#ffffff",
+   "panel": true
+  },
+  {
+   "name": "TRIDENTA",
+   "cell": 38,
+   "kind": "title",
+   "style": "star",
+   "fg": "#ffffff",
+   "bg": "#006064",
+   "accent": "#ffffff",
+   "panel": true
+  },
+  {
+   "name": "WREN SYSTEMS",
+   "cell": 39,
+   "kind": "title",
+   "style": "underline",
+   "fg": "#212121",
+   "bg": "#ffffff",
+   "accent": "#7c4dff",
+   "panel": true
+  },
+  {
+   "name": "FUSELINK",
+   "cell": 40,
+   "kind": "title",
+   "style": "slash",
+   "fg": "#ffffff",
+   "bg": "#0277bd",
+   "accent": "#ffee58",
+   "panel": true
+  },
+  {
+   "name": "CASTELLAN",
+   "cell": 41,
+   "kind": "title",
+   "style": "emblem_circle",
+   "fg": "#ffffff",
+   "bg": "#1b1b1b",
+   "accent": "#d4af37",
+   "panel": true
+  },
+  {
+   "name": "ZINNIA",
+   "cell": 42,
+   "kind": "title",
+   "style": "wave",
+   "fg": "#ffffff",
+   "bg": "#ec407a",
+   "accent": "#ffffff",
+   "panel": true
+  },
+  {
+   "name": "PROVANT",
+   "cell": 43,
+   "kind": "title",
+   "style": "boxed",
+   "fg": "#ffffff",
+   "bg": "#455a64",
+   "accent": "#80deea",
+   "panel": true
+  },
+  {
+   "name": "RUSTICA",
+   "cell": 44,
+   "kind": "minor",
+   "style": "plain",
+   "fg": "#ffffff",
+   "bg": "#bf360c",
+   "accent": "#ffffff",
+   "panel": false
+  },
+  {
+   "name": "ECHOVIA",
+   "cell": 45,
+   "kind": "title",
+   "style": "wing",
+   "fg": "#ffffff",
+   "bg": "#6a1b9a",
+   "accent": "#ffffff",
+   "panel": true
+  },
+  {
+   "name": "TALONTECH",
+   "cell": 46,
+   "kind": "title",
+   "style": "emblem_diamond",
+   "fg": "#111111",
+   "bg": "#cfd8dc",
+   "accent": "#d50000",
+   "panel": true
+  },
+  {
+   "name": "SKARA",
+   "cell": 47,
+   "kind": "title",
+   "style": "chevrons",
+   "fg": "#ffffff",
+   "bg": "#ff6d00",
+   "accent": "#111111",
+   "panel": true
+  },
+  {
+   "name": "BLACKFEN",
+   "cell": 48,
+   "kind": "title",
+   "style": "panel",
+   "fg": "#ffffff",
+   "bg": "#111111",
+   "accent": "#ffffff",
+   "panel": true
+  },
+  {
+   "name": "HELIOR",
+   "cell": 49,
+   "kind": "title",
+   "style": "star",
+   "fg": "#ff8f00",
+   "bg": "#ffffff",
+   "accent": "#ff8f00",
+   "panel": true
+  },
+  {
+   "name": "NEXORA",
+   "cell": 50,
+   "kind": "title",
+   "style": "underline",
+   "fg": "#ffffff",
+   "bg": "#00897b",
+   "accent": "#ffffff",
+   "panel": true
+  },
+  {
+   "name": "ALDERTON",
+   "cell": 51,
+   "kind": "title",
+   "style": "boxed",
+   "fg": "#ffffff",
+   "bg": "#1a237e",
+   "accent": "#ff5252",
+   "panel": true
+  },
+  {
+   "name": "SPEEDWELL",
+   "cell": 52,
+   "kind": "title",
+   "style": "slash",
+   "fg": "#111111",
+   "bg": "#ffeb3b",
+   "accent": "#111111",
+   "panel": true
+  },
+  {
+   "name": "CORVANE",
+   "cell": 53,
+   "kind": "title",
+   "style": "emblem_circle",
+   "fg": "#ffffff",
+   "bg": "#c2185b",
+   "accent": "#ffffff",
+   "panel": true
+  },
+  {
+   "name": "TERRAFIX",
+   "cell": 54,
+   "kind": "title",
+   "style": "chevrons",
+   "fg": "#ffffff",
+   "bg": "#5d4037",
+   "accent": "#ffb300",
+   "panel": true
+  },
+  {
+   "name": "FLUXWORKS",
+   "cell": 55,
+   "kind": "title",
+   "style": "wave",
+   "fg": "#ffffff",
+   "bg": "#304ffe",
+   "accent": "#82b1ff",
+   "panel": true
+  },
+  {
+   "name": "OBERLAND",
+   "cell": 56,
+   "kind": "minor",
+   "style": "plain",
+   "fg": "#111111",
+   "bg": "#ffffff",
+   "accent": "#111111",
+   "panel": false
+  },
+  {
+   "name": "MAGNIS",
+   "cell": 57,
+   "kind": "title",
+   "style": "emblem_diamond",
+   "fg": "#ffffff",
+   "bg": "#b71c1c",
+   "accent": "#ffffff",
+   "panel": true
+  },
+  {
+   "name": "QUILLON",
+   "cell": 58,
+   "kind": "title",
+   "style": "underline",
+   "fg": "#ffffff",
+   "bg": "#263238",
+   "accent": "#ffc107",
+   "panel": true
+  },
+  {
+   "name": "VIRELLO",
+   "cell": 59,
+   "kind": "title",
+   "style": "wing",
+   "fg": "#111111",
+   "bg": "#ffffff",
+   "accent": "#00b0ff",
+   "panel": true
+  },
+  {
+   "name": "contingency 1",
+   "cell": 60,
+   "kind": "contingency",
+   "style": "contingency",
+   "fg": "#111111",
+   "bg": "#ffffff",
+   "accent": "#e10600",
+   "panel": true
+  },
+  {
+   "name": "contingency 2",
+   "cell": 61,
+   "kind": "contingency",
+   "style": "contingency",
+   "fg": "#111111",
+   "bg": "#ffffff",
+   "accent": "#e10600",
+   "panel": true
+  },
+  {
+   "name": "contingency 3",
+   "cell": 62,
+   "kind": "contingency",
+   "style": "contingency",
+   "fg": "#111111",
+   "bg": "#ffffff",
+   "accent": "#e10600",
+   "panel": true
+  },
+  {
+   "name": "contingency 4",
+   "cell": 63,
+   "kind": "contingency",
+   "style": "contingency",
+   "fg": "#111111",
+   "bg": "#ffffff",
+   "accent": "#e10600",
+   "panel": true
+  }
+ ]
+}

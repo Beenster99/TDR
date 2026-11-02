@@ -1,0 +1,105 @@
+{
+  "format": 1,
+  "id": "oreca_07_gibson",
+  "name": "Oreca 07 Gibson",
+  "description": "LMP2 prototype with the Gibson GK428 4.2 naturally aspirated V8 (2017-).",
+  "class_tag": "LMP2",
+  "colour": "#1b4fa0",
+  "mass_kg": 975,
+  "weight_front": 0.46,
+  "wheelbase_m": 3.01,
+  "cg_height_m": 0.32,
+  "track_width_m": 1.62,
+  "length_m": 4.745,
+  "width_m": 1.895,
+  "inertia_factor": 1.0,
+  "engine": {
+    "idle_rpm": 3000,
+    "redline_rpm": 9200,
+    "shift_up_rpm": 9000,
+    "shift_down_rpm": 5704,
+    "torque_curve": [
+      [
+        3000,
+        374
+      ],
+      [
+        5000,
+        458
+      ],
+      [
+        6500,
+        494
+      ],
+      [
+        7800,
+        489
+      ],
+      [
+        8600,
+        463
+      ],
+      [
+        9200,
+        426
+      ]
+    ],
+    "engine_brake_nm": 100,
+    "cylinders": 8,
+    "sound": {
+      "family": "v8_cross_na"
+    }
+  },
+  "gearbox": {
+    "ratios": [
+      2.92,
+      2.2,
+      1.78,
+      1.5,
+      1.3,
+      1.15
+    ],
+    "final_drive": 3.35,
+    "efficiency": 0.91
+  },
+  "drivetrain": "RWD",
+  "awd_front_split": 0.0,
+  "wheel_radius_m": 0.35,
+  "brakes": {
+    "max_force_n": 28000,
+    "bias_front": 0.56
+  },
+  "steering": {
+    "max_angle_deg": 24,
+    "rate_deg_s": 270
+  },
+  "aero": {
+    "cda": 0.873,
+    "cla": 4.08,
+    "balance_front": 0.45
+  },
+  "tyre_compound": "race_slick",
+  "fuel": {
+    "capacity_l": 75,
+    "bsfc_l_per_kwh": 0.26
+  },
+  "tuning_ranges": {
+    "brake_bias_front": [
+      0.5,
+      0.62
+    ],
+    "aero_cla": [
+      3.47,
+      4.69
+    ],
+    "final_drive": [
+      3.08,
+      3.62
+    ]
+  },
+  "chassis": {
+    "front_grip": 1.08,
+    "rear_grip": 1.16,
+    "roll_stiffness_front": 0.58
+  }
+}

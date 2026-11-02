@@ -5,7 +5,9 @@
  "refund_share": 0.5,
  "price_scale": {
   "Road": 1.0,
-  "GT3": 1.6
+  "GT3": 1.6,
+  "LMP2": 2.0,
+  "Hypercar": 2.5
  },
  "categories": [
   {
