@@ -1,0 +1,319 @@
+{
+ "_doc": "Car upgrades (R&D). Each category has levels 0 (stock) to 3. Effects are multipliers or offsets on the car's own spec (CarDefinition), applied by UpgradeCatalog.overrides_for(). price is credits per level for a Road car; price_scale per class multiplies it. Visual entries swap parts on the 3D model (CarView).",
+ "currency": "cr",
+ "start_money": 150000,
+ "refund_share": 0.5,
+ "price_scale": {
+  "Road": 1.0,
+  "GT3": 1.6
+ },
+ "categories": [
+  {
+   "id": "engine",
+   "name": "Engine",
+   "blurb": "More torque across the rev range.",
+   "levels": [
+    {
+     "name": "Stock",
+     "price": 0,
+     "torque_scale": 1.0
+    },
+    {
+     "name": "Stage 1 remap",
+     "price": 22000,
+     "torque_scale": 1.04
+    },
+    {
+     "name": "Stage 2 intake and exhaust",
+     "price": 48000,
+     "torque_scale": 1.08
+    },
+    {
+     "name": "Stage 3 race engine",
+     "price": 90000,
+     "torque_scale": 1.13
+    }
+   ]
+  },
+  {
+   "id": "aero",
+   "name": "Aero",
+   "blurb": "More downforce for faster corners, a little more drag.",
+   "levels": [
+    {
+     "name": "Stock",
+     "price": 0,
+     "cla_scale": 1.0,
+     "cda_scale": 1.0
+    },
+    {
+     "name": "Front splitter",
+     "price": 18000,
+     "cla_scale": 1.08,
+     "cda_scale": 1.015,
+     "visual": {
+      "splitter": 1
+     }
+    },
+    {
+     "name": "Sport rear wing",
+     "price": 40000,
+     "cla_scale": 1.18,
+     "cda_scale": 1.04,
+     "visual": {
+      "splitter": 1,
+      "wing": 2
+     }
+    },
+    {
+     "name": "Race aero kit",
+     "price": 75000,
+     "cla_scale": 1.3,
+     "cda_scale": 1.08,
+     "visual": {
+      "splitter": 1,
+      "wing": 3,
+      "canards": 1
+     }
+    }
+   ]
+  },
+  {
+   "id": "brakes",
+   "name": "Brakes",
+   "blurb": "Stronger brakes: stop later.",
+   "levels": [
+    {
+     "name": "Stock",
+     "price": 0,
+     "brake_scale": 1.0
+    },
+    {
+     "name": "Performance pads",
+     "price": 12000,
+     "brake_scale": 1.06,
+     "visual": {
+      "calipers": "#c8102e"
+     }
+    },
+    {
+     "name": "Big brake kit",
+     "price": 30000,
+     "brake_scale": 1.12,
+     "visual": {
+      "calipers": "#c8102e"
+     }
+    },
+    {
+     "name": "Carbon-ceramic brakes",
+     "price": 60000,
+     "brake_scale": 1.2,
+     "visual": {
+      "calipers": "#d8a31a"
+     }
+    }
+   ]
+  },
+  {
+   "id": "suspension",
+   "name": "Suspension",
+   "blurb": "Lower and stiffer: more grip, less body roll.",
+   "levels": [
+    {
+     "name": "Stock",
+     "price": 0,
+     "grip_scale": 1.0,
+     "cg_drop_m": 0.0
+    },
+    {
+     "name": "Lowering springs",
+     "price": 14000,
+     "grip_scale": 1.015,
+     "cg_drop_m": 0.01,
+     "visual": {
+      "ride_drop_m": 0.012
+     }
+    },
+    {
+     "name": "Coilovers",
+     "price": 32000,
+     "grip_scale": 1.03,
+     "cg_drop_m": 0.02,
+     "visual": {
+      "ride_drop_m": 0.022
+     }
+    },
+    {
+     "name": "Race suspension",
+     "price": 58000,
+     "grip_scale": 1.05,
+     "cg_drop_m": 0.03,
+     "visual": {
+      "ride_drop_m": 0.032
+     }
+    }
+   ]
+  },
+  {
+   "id": "weight",
+   "name": "Weight",
+   "blurb": "A lighter car accelerates, brakes and turns better.",
+   "levels": [
+    {
+     "name": "Stock",
+     "price": 0,
+     "mass_scale": 1.0
+    },
+    {
+     "name": "Lightweight seats",
+     "price": 16000,
+     "mass_scale": 0.98
+    },
+    {
+     "name": "Carbon panels",
+     "price": 38000,
+     "mass_scale": 0.955
+    },
+    {
+     "name": "Full strip-out",
+     "price": 70000,
+     "mass_scale": 0.93
+    }
+   ]
+  },
+  {
+   "id": "tyres",
+   "name": "Tyres",
+   "blurb": "Wider, stickier tyres on lighter wheels.",
+   "levels": [
+    {
+     "name": "Stock",
+     "price": 0,
+     "grip_scale": 1.0
+    },
+    {
+     "name": "Sport tyres",
+     "price": 15000,
+     "grip_scale": 1.025,
+     "visual": {
+      "rims": "#3a3d42",
+      "tyre_width": 1.03
+     }
+    },
+    {
+     "name": "Wider semi-slicks",
+     "price": 34000,
+     "grip_scale": 1.05,
+     "visual": {
+      "rims": "#b8892e",
+      "tyre_width": 1.06
+     }
+    },
+    {
+     "name": "Race tyres on forged wheels",
+     "price": 62000,
+     "grip_scale": 1.08,
+     "visual": {
+      "rims": "#111214",
+      "tyre_width": 1.1
+     }
+    }
+   ]
+  }
+ ],
+ "livery": {
+  "patterns": [
+   "solid",
+   "stripes",
+   "split",
+   "sash",
+   "chevron",
+   "halves",
+   "bmw"
+  ],
+  "pattern_names": {
+   "solid": "Solid",
+   "stripes": "Twin stripes",
+   "split": "Split",
+   "sash": "Sash",
+   "chevron": "Chevron",
+   "halves": "Two-tone",
+   "bmw": "M stripes"
+  },
+  "palette": [
+   [
+    "#f2f2f2",
+    "White"
+   ],
+   [
+    "#111111",
+    "Black"
+   ],
+   [
+    "#7a7f87",
+    "Silver grey"
+   ],
+   [
+    "#c8102e",
+    "Racing red"
+   ],
+   [
+    "#e10600",
+    "Bright red"
+   ],
+   [
+    "#ff7f00",
+    "Orange"
+   ],
+   [
+    "#ffd100",
+    "Yellow"
+   ],
+   [
+    "#0a7d3b",
+    "Racing green"
+   ],
+   [
+    "#2ecc71",
+    "Lime"
+   ],
+   [
+    "#87ceeb",
+    "Sky blue"
+   ],
+   [
+    "#1e90ff",
+    "Blue"
+   ],
+   [
+    "#0b3d91",
+    "Navy"
+   ],
+   [
+    "#5b2c83",
+    "Purple"
+   ],
+   [
+    "#ff1493",
+    "Pink"
+   ],
+   [
+    "#d8a31a",
+    "Gold"
+   ],
+   [
+    "#6b3e26",
+    "Brown"
+   ]
+  ]
+ },
+ "prizes": {
+  "_doc": "Economy.race_prize: winner gets base * tier * distance factor; last finisher gets last_share of that, linear between. Retired cars get dnf_share.",
+  "base": 40000,
+  "last_share": 0.15,
+  "dnf_share": 0.08,
+  "reference_km": 40.0,
+  "min_factor": 0.25,
+  "max_factor": 1.5
+ }
+}

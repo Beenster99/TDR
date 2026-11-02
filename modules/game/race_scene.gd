@@ -45,6 +45,8 @@ func _ready() -> void:
 		var k: int = seen.get(def.id, 0)
 		seen[def.id] = k + 1
 		var livery := {} if i == session.local_car else WorldView.livery_variant(k)
+		if not session.sim.entries[i].livery.is_empty():   # the player's own paint scheme
+			livery = session.sim.entries[i].livery
 		car_views.append(world.add_car(def, session.sim.cars[i], session.sim.entries[i].driver_name,
 			i == session.local_car, i + 1, livery))
 	race_audio = RaceAudio.new()
@@ -337,12 +339,22 @@ func _on_race_finished() -> void:
 			extra += "  +%d pts" % got if got > 0 else ""
 		lines.append("P%-2d %-18s %-16s %s  best %s%s" % [p + 1, e.driver_name, sim.defs[i].display_name,
 			"DNF" if e.dnf else RaceHud.fmt_time(e.finish_time + e.penalty_s), RaceHud.fmt_time(e.best_lap), extra])
+	var prize := _pay_prize() + _season_prize
+	if prize > 0:
+		lines.append("")
+		lines.append("Prize money: +%s  (team budget %s)" % [UpgradeCatalog.format_money(prize),
+			UpgradeCatalog.format_money(TeamProfile.load_or_new().money)])
 	var title := "RESULTS"
 	if not season_info.is_empty():
 		title = "%s  ·  %s  ·  round %d of %d" % ["QUALIFYING" if quali else "RESULTS", season_info.get("name", "Season"),
 			int(season_info["round"]) + 1, int(season_info["rounds"])]
 		lines.append_array(_season_standings_lines(season_info))
 	if DisplayServer.get_name() == "headless" or GameData.arg("quit-after-race"):
+		for e in sim.entries:
+			if not e.is_ai and not e.setup.is_empty():
+				var keys: Array = e.setup.keys()
+				keys.sort()
+				print("[setup] %s: %s" % [e.driver_name, ", ".join(keys)])
 		print("[results]\n" + "\n".join(lines))
 		var heard := []
 		for i in session.timelines:
@@ -404,11 +416,23 @@ func _season_session_done(info: Dictionary) -> Dictionary:
 	return pts
 
 
+## Championship races pay a little more than single races.
+const SEASON_PRIZE_TIER := 1.25
+var _season_prize := 0
+
+
 ## A season race ended for this player (on their own machine, online too):
 ## {season_id, round, rounds, is_final_round, my_position, dnf, field_size,
 ## points_earned}. Prize money (business module) is paid from here.
-func _on_season_round_done(_result: Dictionary) -> void:
-	pass
+func _on_season_round_done(result: Dictionary) -> void:
+	var sim := session.sim
+	var pos: int = 0 if result["dnf"] else int(result["my_position"])
+	var km := sim.settings.laps * sim.track.length / 1000.0
+	_season_prize = Economy.race_prize(pos, int(result["field_size"]), km, SEASON_PRIZE_TIER)
+	var profile := TeamProfile.load_or_new()
+	profile.earn(_season_prize, "Season round %d: %s at %s" % [int(result["round"]) + 1,
+		"P%d" % pos if pos > 0 else "DNF", sim.track.display_name])
+	profile.save()
 
 
 ## The championship after this session (host / offline only; clients see it in the lobby).
@@ -424,6 +448,22 @@ func _season_standings_lines(info: Dictionary) -> Array:
 	if s.is_complete() and not s.champion().is_empty():
 		out.append("%s is the champion!" % s.champion()["name"])
 	return out
+
+
+## Prize money for this player's own car, into their team budget (business
+## module). Season rounds are paid by the season's own end-of-round hook.
+func _pay_prize() -> int:
+	var sim := session.sim
+	if session.local_car < 0 or session.start_data.has("season"):
+		return 0
+	var e := sim.entries[session.local_car]
+	var pos := 0 if e.dnf else sim.running_order.find(session.local_car) + 1
+	var km := sim.settings.laps * sim.track.length / 1000.0
+	var amount := Economy.race_prize(pos, sim.car_count(), km)
+	var profile := TeamProfile.load_or_new()
+	profile.earn(amount, "P%d at %s" % [pos, sim.track.display_name] if pos > 0 else "DNF at %s" % sim.track.display_name)
+	profile.save()
+	return amount
 
 
 ## Every race's data (lap log, sectors, gaps, feed, weather) is kept as JSON

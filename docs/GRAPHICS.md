@@ -46,6 +46,11 @@ Each model is split into parts so upgrades and damage can swap or move them:
 found by name: `paint` is the livery; others include `carbon`, `glass`,
 `light_head`, `light_tail`, `tyre`, `rim` and `caliper`.
 
+Upgrade parts (wave 4, see docs/BUSINESS.md) are built into every model and
+hidden until a car has them: `splitter_up`, `wing_rear_up2`, `wing_rear_up3`
+and `canards`. `CarView` shows them from the car's `visual` overrides, and
+also recolours calipers and rims, widens tyres and lowers the body.
+
 Liveries: the paint shader draws a pattern (solid, stripes, split, sash,
 chevron, M stripes, two-tone) in three colours from the car's position, so it
 lines up across every part. Each model also has a livery UV unwrap (UV0: nose

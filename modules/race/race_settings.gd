@@ -37,6 +37,15 @@ var mandatory_pit_stops: int = 0   ## stops each car must make inside the pit wi
 ## from about a fifth of the race in to a fifth before the end.
 var pit_window_open_lap: int = 0
 var pit_window_close_lap: int = 0
+## Car upgrades (wave 4, host option): UPGRADES_ON = everyone races their
+## upgraded cars, UPGRADES_BOP = balance of performance (upgrades are for
+## looks only and every car in a class is brought to the same power-to-weight
+## and downforce), UPGRADES_STOCK = factory cars. Track tuning has its own
+## switch and is left alone here.
+var upgrades_mode: String = "on"
+const UPGRADES_ON := "on"
+const UPGRADES_BOP := "bop"
+const UPGRADES_STOCK := "stock"
 var finish_timeout_s: float = 90.0 ## after the leader finishes
 var countdown_s: float = 4.0
 ## "race" or "qualifying" (a timed session: classified by best lap, see RaceSim).
@@ -54,7 +63,7 @@ func to_dict() -> Dictionary:
 		"mandatory_pit_stops": mandatory_pit_stops, "finish_timeout_s": finish_timeout_s,
 		"tyre_wear_rate": tyre_wear_rate, "pit_window_open_lap": pit_window_open_lap,
 		"pit_window_close_lap": pit_window_close_lap,
-		"countdown_s": countdown_s, "session_type": session_type,
+		"countdown_s": countdown_s, "upgrades_mode": upgrades_mode, "session_type": session_type,
 	}
 
 

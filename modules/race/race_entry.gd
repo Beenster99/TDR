@@ -10,7 +10,9 @@ var is_ai: bool = false
 var crew: Array = []
 var car_id: String = ""
 var traits: Dictionary = {}
-var setup: Dictionary = {}       ## tuning overrides (wave 4)
+var setup: Dictionary = {}       ## CarDefinition overrides: upgrades, tuning ("tuning"), tyres, balance
+## Paint scheme {pattern, primary, secondary, accent} ({} = the car's default).
+var livery: Dictionary = {}
 
 var started_lap: bool = false    ## crossed the line once (off the grid)
 var laps_done: int = 0
@@ -55,7 +57,7 @@ func from_dict(d: Dictionary) -> void:
 
 func describe() -> Dictionary:
 	return {"driver_name": driver_name, "is_ai": is_ai, "crew": crew,
-		"car_id": car_id, "traits": traits, "setup": setup}
+		"car_id": car_id, "traits": traits, "setup": setup, "livery": livery}
 
 
 static func from_description(d: Dictionary) -> RaceEntry:
@@ -66,6 +68,7 @@ static func from_description(d: Dictionary) -> RaceEntry:
 	e.car_id = d.get("car_id", "")
 	e.traits = d.get("traits", {})
 	e.setup = d.get("setup", {})
+	e.livery = d.get("livery", {})
 	return e
 
 

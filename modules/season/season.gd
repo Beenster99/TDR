@@ -199,10 +199,11 @@ func plan_next(p_humans: Array, cars: Dictionary, p_seed: int) -> Dictionary:
 	return start
 
 
-## For the online lobby (Net.start_planner): plans the next session with
-## the players in the lobby and saves the season (new players joined).
-func plan_for_lobby(settings: RaceSettings, p_humans: Array) -> Dictionary:
-	var start := plan_next(p_humans, GameData.cars, settings.seed)
+## For the online lobby: Net.start_planner = season.plan_for_lobby.bind(cars).
+## Plans the next session with the players in the lobby and saves the
+## season (new players joined).
+func plan_for_lobby(settings: RaceSettings, p_humans: Array, cars: Dictionary) -> Dictionary:
+	var start := plan_next(p_humans, cars, settings.seed)
 	SeasonStore.save(self)
 	return start
 
