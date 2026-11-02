@@ -358,6 +358,8 @@ func _surface_y(k: int, s: float, off: float, q: Vector2) -> float:
 	var edge: float = (track.width_right[k] if off >= 0.0 else track.width_left[k]) + track.kerb_width
 	if absf(off) <= edge + 0.01 or not has_elevation():
 		return height(s, off)
+	if _pit_rect.has_point(q):   # the ground eases into the pit lane here
+		return track.surface_height_at(q, k)
 	var road := height(s, signf(off) * edge)
 	if track.terrain_size == Vector2i.ZERO:
 		return road
@@ -428,6 +430,14 @@ func _runoff_width(i: int, side: float) -> float:
 	if absf(c) > 1e-4:
 		var e := (track.width_right[i] if side > 0 else track.width_left[i]) + track.kerb_width
 		w = clampf(0.8 / absf(c) - e, 0.0, w)
+	# Beside the pit lane the run-off stops at the lane (the lane's own verge
+	# fills a narrow gap), so it never lies across the lane in a slab.
+	if track.has_pit_lane() and side == track.pit_side:
+		var e := (track.width_right[i] if side > 0 else track.width_left[i]) + track.kerb_width
+		var q := track.points[i] + track.vertex_normal(i) * side * e
+		if _pit_rect.has_point(q):
+			var room: float = track.project_pit(q)["dist"] - track.pit_width * 0.5 - PIT_SHOULDER
+			w = clampf(room, 0.0, w)
 	return w
 
 
@@ -626,33 +636,90 @@ func _flat(st: SurfaceTool, a: Vector2, b: Vector2, c: Vector2, d: Vector2, y: f
 
 # --- Pit lane ----------------------------------------------------------------------
 
+const PIT_LIFT := 0.045        ## above the run-off and asphalt, under the kerbs
+const PIT_SHOULDER := 1.5      ## m of tarmac beside the lane's painted edges
+const PIT_GORE_FULL := 8.0     ## lane this close to the track: tarmac all the way across
+const PIT_GORE_END := 16.0     ## and by here only the shoulder
+
+
+## Height for paint on the pit lane at a point.
+func _pit_paint_y(p: Vector2) -> float:
+	return surface_height(p) + PIT_LIFT + 0.015
+
+
+## Width of the track on the pit side at a projected point.
+func _pit_side_edge(q: Dictionary) -> float:
+	return q["w_right"] if track.pit_side > 0.0 else q["w_left"]
+
+
+## How far a projected point is beyond the track's edge on the pit side
+## (negative = on the track, or past it on the other side).
+func _pit_gap(q: Dictionary) -> float:
+	return float(q["offset"]) * track.pit_side - _pit_side_edge(q)
+
+
 func _build_pit_lane() -> void:
 	var path := track.pit_path
 	var w := track.pit_width
+	var h := w * 0.5
+	var ps := track.pit_side
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	# Across the lane, from the track side to the garage side (lane offsets
+	# times pit_side, so + is towards the garages): a verge on the track side
+	# (which fills the whole gap to the track where the lane is splitting off
+	# or merging), the lane itself, and a narrow shoulder by the garages.
+	var across := [-h - PIT_SHOULDER, -h, -h * 0.5, 0.0, h * 0.5, h, h + PIT_SHOULDER]
+	var cols := across.size()
 	var m := path.size()
+	var hint := -1
 	for i in m:
 		var d := track.pit_cum[i]
 		var dir := (path[mini(i + 1, m - 1)] - path[maxi(i - 1, 0)]).normalized()
-		var nrm := Vector2(-dir.y, dir.x)
-		for l in 3:
-			var off := lerpf(-w * 0.5 - 1.5, w * 0.5 + 1.5, l / 2.0)
+		var nrm := Vector2(-dir.y, dir.x) * ps   # towards the garages
+		# The verge on the track side: tarmac right up to the track's edge
+		# while the gap is narrow (hatched where the lane splits off).
+		var inner := path[i] - nrm * h
+		var qi := track.project(inner, hint)
+		hint = qi["idx"]
+		var gap := _pit_gap(qi)
+		var fill := 1.0 - smoothstep(PIT_GORE_FULL, PIT_GORE_END, gap)
+		var gore := 1.0 if gap > 0.3 and fill > 0.5 else 0.0
+		for c in cols:
+			var off: float = across[c]
 			var q := path[i] + nrm * off
+			if c == 0:
+				var edge_pt := track.position_at(qi["s"], ps * _pit_side_edge(qi))
+				q = q.lerp(edge_pt, fill) if gap > 0.0 else edge_pt
+			# Never on top of the track: anything inside its edge is moved to
+			# the edge, so the lane meets the track exactly at its edge line.
+			var qt := track.project(q, hint)
+			if _pit_gap(qt) < 0.0:
+				q = track.position_at(qt["s"], ps * _pit_side_edge(qt))
+				qt = track.project(q, hint)
+			var lane_off := (q - path[i]).dot(nrm)
 			st.set_color(Color(1, 1, 1, K_PIT))
-			st.set_uv(Vector2(d, off))
-			st.set_uv2(Vector2(99.0, 99.0))
-			st.add_vertex(Vector3(q.x, pit_height(d) + 0.025, q.y))
+			st.set_uv(Vector2(d, lane_off))
+			st.set_uv2(Vector2(gore, h - absf(lane_off)))
+			st.add_vertex(Vector3(q.x, track.surface_height_at(q, qt["idx"]) + PIT_LIFT, q.y))
 	for i in m - 1:
-		for l in 2:
-			var a := i * 3 + l
-			var b := a + 3
-			st.add_index(a)
-			st.add_index(b)
-			st.add_index(a + 1)
-			st.add_index(a + 1)
-			st.add_index(b)
-			st.add_index(b + 1)
+		for l in cols - 1:
+			var a := i * cols + l
+			var b := a + cols
+			if ps > 0.0:
+				st.add_index(a)
+				st.add_index(b)
+				st.add_index(a + 1)
+				st.add_index(a + 1)
+				st.add_index(b)
+				st.add_index(b + 1)
+			else:
+				st.add_index(a)
+				st.add_index(a + 1)
+				st.add_index(b)
+				st.add_index(a + 1)
+				st.add_index(b + 1)
+				st.add_index(b)
 	_mesh_node(st, road_material, "PitLane")
 	# pit wall on the track side, speed-limit lines and the boxes
 	var wall: Array = []
@@ -676,14 +743,14 @@ func _build_pit_lane() -> void:
 		var b := track.pit_position_at(lim, w * 0.5)
 		var dir := (b - a).normalized()
 		var fwd := Vector2(dir.y, -dir.x) * 0.3
-		_flat(mk, a, b, b + fwd, a + fwd, pit_height(lim) + 0.04, Color(0.9, 0.9, 0.88))
+		_flat(mk, a, b, b + fwd, a + fwd, _pit_paint_y((a + b) * 0.5), Color(0.9, 0.9, 0.88))
 	var yellow := Color(0.95, 0.82, 0.2)
 	for i in track.pit_box_count:
 		var box := track.pit_box(i)
 		var bd := Vector2.from_angle(box["heading"])
 		var bn := Vector2(-bd.y, bd.x)
 		var c: Vector2 = box["pos"]
-		var y := pit_height(track.project_pit(c).get("d", 0.0)) + 0.04
+		var y := _pit_paint_y(c)
 		var corners := [c - bd * 2.6 - bn * 1.4, c + bd * 2.6 - bn * 1.4, c + bd * 2.6 + bn * 1.4, c - bd * 2.6 + bn * 1.4]
 		for k in 4:
 			var a: Vector2 = corners[k]
