@@ -32,6 +32,7 @@ const KEYS := {
 	"shift_up": [KEY_SHIFT, KEY_PERIOD],      # manual gearbox (Settings > Gameplay)
 	"shift_down": [KEY_CTRL, KEY_COMMA],
 	"hud_tower": [KEY_H],      # race HUD: timing tower on/off (also Settings > Gameplay)
+	"hud_edit": [KEY_F2],      # race HUD: layout editor (move, resize, hide items; also Settings > Gameplay)
 }
 ## Gamepad: analog triggers + left stick. Buttons use the Xbox layout names
 ## (Godot maps PlayStation/Nintendo pads to the same positions).
@@ -72,7 +73,7 @@ const REBINDABLE := [
 	["pit_box", "Box this lap"], ["pit_limiter", "Pit limiter"], ["pit_tyres", "Next tyres"], ["pit_fuel", "Next fuel"],
 	["pit_wheels", "Which tyres to change"], ["pit_driver", "Driver change"],
 	["strategy_screen", "Pit wall"], ["crew_tab", "Pit wall: switch tab"], ["team_radio", "Team radio"],
-	["hud_tower", "Timing tower"], ["restart_race", "Restart race"], ["back_to_menu", "Pause / menu"],
+	["hud_tower", "Timing tower"], ["hud_edit", "Edit HUD layout"], ["restart_race", "Restart race"], ["back_to_menu", "Pause / menu"],
 ]
 ## Bindings shown (and changeable) per action: keyboard 1 and 2, controller 1 and 2.
 const SLOTS := 2
