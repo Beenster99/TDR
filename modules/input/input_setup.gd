@@ -104,6 +104,9 @@ static func apply_bindings(overrides: Dictionary) -> void:
 			var ev := pad_event(b)
 			if ev:
 				InputMap.action_add_event(action, ev)
+	# Sticks and triggers listen to one controller only (the one in use).
+	ActivePad.start()
+	ActivePad.bind_axes()
 
 
 ## The stick dead zone for every action (0..1); the pedals keep a small one

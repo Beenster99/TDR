@@ -1,7 +1,8 @@
 extends Node
 ## Autoload "Game" (game module): starts the game by wiring the modules
 ## together. It runs after GameData and before Net, and before the first scene.
-##   - registers the input actions (input module)
+##   - registers the input actions (input module) and tells it which
+##     controller the player is using (ActivePad)
 ##   - loads all content into GameData (cars, tracks, physics, ai modules)
 
 
@@ -10,6 +11,12 @@ func _ready() -> void:
 	var controls = GameData.prefs.get("controls", {})
 	InputSetup.register_actions(controls if controls is Dictionary else {}, float(GameData.prefs.get("pad_deadzone", 12)) / 100.0)
 	reload_content()
+
+
+## Follows which game controller the player is using (input module).
+func _input(event: InputEvent) -> void:
+	if event is InputEventJoypadButton or event is InputEventJoypadMotion:
+		ActivePad.observe(event)
 
 
 func reload_content() -> void:
