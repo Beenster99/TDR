@@ -47,6 +47,7 @@ func _init() -> void:
 	test_safety_car_off()
 	test_points_systems()
 	test_seasons()
+	test_coop_roles()
 	print("\n%s (%d failures, %.1fs)" % ["PASS" if failures == 0 else "FAIL", failures, (Time.get_ticks_msec() - t0) / 1000.0])
 	quit(1 if failures > 0 else 0)
 
@@ -1750,3 +1751,57 @@ func test_upgrades() -> void:
 		var df: CarDefinition = bsim.defs[i]
 		worst = maxf(worst, absf(df.peak_power_kw() / df.mass / ref["kw_per_kg"] - 1.0))
 	check(worst < 0.01, "bop: every GT3 within 1%% of the same power-to-weight (worst %.2f%%)" % (worst * 100.0))
+
+
+## Co-op crews (wave 5): roles shared out by crew size, a driver change in
+## the box, and the car's pit state moving to another machine.
+func test_coop_roles() -> void:
+	print("co-op crews")
+	check(RaceEntry.roles_for_crew(1) == [RaceEntry.ROLE_DRIVER], "one player: a driver")
+	check(RaceEntry.roles_for_crew(2) == [RaceEntry.ROLE_DRIVER, RaceEntry.ROLE_PIT_WALL], "two players: driver + pit crew/strategist in one")
+	check(RaceEntry.roles_for_crew(3) == [RaceEntry.ROLE_DRIVER, RaceEntry.ROLE_PIT_CREW, RaceEntry.ROLE_STRATEGIST], "three players: driver, pit crew, strategist")
+	check(RaceEntry.role_covers(RaceEntry.ROLE_PIT_WALL, RaceEntry.ROLE_STRATEGIST) and RaceEntry.role_covers(RaceEntry.ROLE_PIT_WALL, RaceEntry.ROLE_PIT_CREW)
+		and not RaceEntry.role_covers(RaceEntry.ROLE_PIT_CREW, RaceEntry.ROLE_STRATEGIST), "pit wall covers both pit duties")
+	var two := [{"role": RaceEntry.ROLE_DRIVER}, {"role": RaceEntry.ROLE_DRIVER}]
+	RaceEntry.share_roles(two)
+	check(two[0]["role"] == RaceEntry.ROLE_DRIVER and two[1]["role"] == RaceEntry.ROLE_PIT_WALL, "two drivers: the second goes to the pit wall")
+	var three := [{"role": RaceEntry.ROLE_PIT_WALL}, {"role": RaceEntry.ROLE_STRATEGIST}, {"role": ""}]
+	RaceEntry.share_roles(three)
+	var got := []
+	for m in three:
+		got.append(m["role"])
+	got.sort()
+	var want := [RaceEntry.ROLE_DRIVER, RaceEntry.ROLE_PIT_CREW, RaceEntry.ROLE_STRATEGIST]
+	want.sort()
+	check(got == want and three[1]["role"] == RaceEntry.ROLE_STRATEGIST, "three players get one each, keeping the roles they had (%s)" % str(got))
+	var left := [{"role": RaceEntry.ROLE_PIT_CREW}]
+	RaceEntry.share_roles(left)
+	check(left[0]["role"] == RaceEntry.ROLE_DRIVER, "the last one left drives")
+	var e := RaceEntry.new()
+	e.crew = [{"peer_id": 5, "name": "A", "role": RaceEntry.ROLE_DRIVER}, {"peer_id": 9, "name": "B", "role": RaceEntry.ROLE_PIT_WALL}]
+	check(e.driver_peer() == 5 and e.member_role(9) == RaceEntry.ROLE_PIT_WALL and e.member_role(3) == "", "crew roles by peer")
+
+	# Driver change in the box: the stop lasts at least DRIVER_CHANGE_S, and the
+	# car's pit state moves to the new driver's machine intact.
+	var d := _data()
+	var st := RaceSettings.new()
+	st.laps = 5
+	st.ai_count = 2
+	st.mandatory_pit_stops = 1
+	var sim: RaceSim = _race(st, d)["sim"]
+	var p: Dictionary = sim.entries[0].pit
+	p["phase"] = PitRules.PHASE_SERVICE
+	p["service_left"] = 1.0
+	p["service_total"] = 8.5
+	sim.pits.add_driver_change(0)
+	check(is_equal_approx(float(p["service_left"]), PitRules.DRIVER_CHANGE_S) and is_equal_approx(float(p["service_total"]), 8.5 + PitRules.DRIVER_CHANGE_S - 1.0),
+		"a driver change keeps the car in the box for %.0f s more" % PitRules.DRIVER_CHANGE_S)
+	var hand := sim.pits.car_handover(0)
+	var other: RaceSim = _race(st, d)["sim"]
+	other.pits.apply_handover(0, hand)
+	check(other.entries[0].pit["phase"] == PitRules.PHASE_SERVICE and is_equal_approx(float(other.entries[0].pit["service_left"]), PitRules.DRIVER_CHANGE_S),
+		"the new driver's machine carries on with the stop")
+	sim.cars[0].fuel_l = 12.5
+	sim.cars[0].tyre_wear[2] = 0.4
+	other.cars[0].deserialize(sim.cars[0].serialize())
+	check(is_equal_approx(other.cars[0].fuel_l, 12.5) and is_equal_approx(other.cars[0].tyre_wear[2], 0.4), "fuel and tyre wear move with the car")

@@ -48,6 +48,11 @@ var profile: TeamProfile
 var _garage: GarageScreen
 var _menu_root: Control
 var lobby_list: VBoxContainer
+## Co-op crews in the lobby: one row per player with a car share and a role.
+var crew_box: VBoxContainer
+var _crew_rows: Dictionary = {}   ## peer id -> {"team": Stepper, "role": Stepper}
+var _crew_ids: Array = []
+var _cmdline_team_sent := false
 var lobby_title: Label
 var join_info_label: Label
 var ready_button: Button
@@ -374,6 +379,12 @@ func _build_ui() -> void:
 	lobby.add_child(lobby_title)
 	lobby_list = VBoxContainer.new()
 	lobby.add_child(lobby_list)
+	crew_box = VBoxContainer.new()
+	lobby.add_child(crew_box)
+	var crew_head := Label.new()
+	crew_head.text = "Co-op: share a car with up to 3 players (driver, pit crew, strategist)"
+	crew_head.modulate = Color(0.75, 0.9, 1)
+	crew_box.add_child(crew_head)
 	join_info_label = Label.new()
 	join_info_label.modulate = Color(0.75, 0.9, 1)
 	join_info_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -582,8 +593,13 @@ func _open_setup() -> void:
 func _on_single() -> void:
 	var s := _settings_from_ui()
 	s.seed = randi()
+	# Testing the co-op screens alone: --role strategist (or pit_crew, pit_wall)
+	# puts you on your car's pit wall with the AI at the wheel.
+	var role := str(GameData.arg("role", RaceEntry.ROLE_DRIVER))
+	if not role in RaceEntry.ROLES:
+		role = RaceEntry.ROLE_DRIVER
 	var humans := [{"name": name_edit.text, "car_id": car_stepper.value, "tyre": tyre_stepper.value,
-		"crew": [{"peer_id": 0, "name": name_edit.text, "role": RaceEntry.ROLE_DRIVER}],
+		"crew": [{"peer_id": 0, "name": name_edit.text, "role": role}],
 		"setup": _my_setup(car_stepper.value), "livery": profile.livery_for(car_stepper.value)}]
 	var start := RaceFactory.plan(s, humans, GameData.cars, GameData.drivers)
 	GameData.active_session = RaceSession.create(RaceSession.Mode.OFFLINE, start, 0)
@@ -629,6 +645,61 @@ func _on_leave() -> void:
 func _push_settings() -> void:
 	if Net.is_server() and Net.season_info.is_empty():  # in a season, the season sets the race
 		Net.set_settings(_settings_from_ui())
+
+
+const ROLE_NAMES := {"driver": "driver", "pit_crew": "pit crew", "strategist": "strategist",
+	"pit_wall": "pit crew + strategist"}
+
+
+## The lobby's co-op rows: each player's car share and role. The host can set
+## anyone's; players set their own. Rows are kept (not rebuilt) while the
+## same players are in, so a controller keeps its place.
+func _refresh_crews() -> void:
+	var ids := Net.players.keys()
+	ids.sort()
+	if ids != _crew_ids:
+		_crew_ids = ids
+		for id in _crew_rows:
+			_crew_rows[id]["row"].queue_free()
+		_crew_rows.clear()
+		for id in ids:
+			var row := HBoxContainer.new()
+			var team_opts := [[-1, "own car"]]
+			for t in Net.MAX_TEAMS:
+				team_opts.append([t, "car share %d" % (t + 1)])
+			var ts := Stepper.choice(str(Net.players[id]["name"]).left(14), team_opts, -1)
+			ts.custom_minimum_size = Vector2(360, 40)
+			var rs := Stepper.choice("Role", [[RaceEntry.ROLE_DRIVER, "driver"]], RaceEntry.ROLE_DRIVER)
+			rs.custom_minimum_size = Vector2(400, 40)
+			ts.value_changed.connect(func(v): _set_crew(id, {"team": int(v)}))
+			rs.value_changed.connect(func(v): _set_crew(id, {"role": str(v)}))
+			row.add_child(ts)
+			row.add_child(rs)
+			crew_box.add_child(row)
+			_crew_rows[id] = {"row": row, "team": ts, "role": rs}
+		Sound.wire_buttons(crew_box)
+	var me := Net.my_id()
+	for id in ids:
+		var p: Dictionary = Net.players[id]
+		var r: Dictionary = _crew_rows[id]
+		var team: int = p.get("team", -1)
+		var size := Net.team_members(team).size() if team >= 0 else 1
+		var mine: bool = id == me or Net.is_server()
+		r["team"].set_value(team)
+		r["team"].disabled = not mine or Net.in_race
+		var opts := []
+		for role in RaceEntry.roles_for_crew(maxi(size, 1)):
+			opts.append([role, ROLE_NAMES[role]])
+		r["role"].options = opts
+		r["role"].set_value(p.get("role", RaceEntry.ROLE_DRIVER))
+		r["role"].disabled = not mine or size <= 1 or Net.in_race
+
+
+func _set_crew(id: int, fields: Dictionary) -> void:
+	if id == Net.my_id():
+		Net.update_me(fields)
+	elif Net.is_server():
+		Net.set_player_team(id, int(fields.get("team", Net.players.get(id, {}).get("team", -1))), str(fields.get("role", "")))
 
 
 func _my_ready() -> bool:
@@ -679,9 +750,20 @@ func _refresh_lobby() -> void:
 			rd = "  ·  upgraded"
 		elif not vis.is_empty() and Net.settings.upgrades_mode == RaceSettings.UPGRADES_BOP:
 			rd = "  ·  upgraded (looks only)"
-		l.text = "%s %s  ·  %s%s%s%s" % ["★" if id == 1 else "•", p["name"], car.display_name if car else p["car_id"], tyre_name, rd,
-			"" if id == 1 else ("  ·  READY" if p["ready"] else "  ·  not ready")]
+		var crew := ""
+		var team: int = p.get("team", -1)
+		if team >= 0 and Net.team_members(team).size() > 1:
+			var lead: Dictionary = Net.players[Net.team_members(team)[0]]
+			var lead_car: CarDefinition = GameData.cars.get(lead["car_id"])
+			crew = "  ·  car share %d (%s): %s" % [team + 1, lead_car.display_name if lead_car else lead["car_id"],
+				ROLE_NAMES.get(p.get("role", ""), "?")]
+		l.text = "%s %s  ·  %s%s%s%s%s" % ["★" if id == 1 else "•", p["name"], car.display_name if car else p["car_id"], tyre_name, rd,
+			crew, "" if id == 1 else ("  ·  READY" if p["ready"] else "  ·  not ready")]
 		lobby_list.add_child(l)
+	_refresh_crews()
+	if GameData.arg("team") and Net.players.has(me) and not _cmdline_team_sent:
+		_cmdline_team_sent = true  # testing: --team 1 --role strategist
+		Net.update_me({"team": int(GameData.arg("team")) - 1, "role": str(GameData.arg("role", ""))})
 	var host := Net.is_server()
 	var in_season := not Net.season_info.is_empty()
 	for s in _settings_steppers:

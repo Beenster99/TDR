@@ -40,6 +40,9 @@ const ROUTE_MAX_SPEED := 75.0
 const STOP_BASE_S := 2.5
 const TYRE_CHANGE_S := 6.0
 const FUEL_FLOW_LPS := 3.0
+## Co-op driver change in the box: the stop lasts at least this long from
+## the moment the drivers swap (done alongside tyres and fuel).
+const DRIVER_CHANGE_S := 5.0
 
 const PHASE_NONE := ""
 const PHASE_APPROACH := "approach"  ## being driven to the pit entry (box requested)
@@ -732,6 +735,34 @@ func apply_remote(i: int, state: Dictionary) -> void:
 static func signature(p: Dictionary) -> String:
 	return "%s|%s|%s|%s|%d|%d|%d|%s|%s|%d" % [p["phase"], p["auto"], p["box"], p["limiter"], p["stops"],
 		p["window_stops"], p["speeding"], p["compound"], str(p["plan"]), int(float(p["service_left"]) * 2.0)]
+
+
+# --- Co-op: handing a car to another machine --------------------------------
+
+## Everything the machine that simulates car i keeps about its pit stop, for
+## a driver change that moves the car to the new driver's machine.
+func car_handover(i: int) -> Dictionary:
+	return {"pit": sim.entries[i].pit.duplicate(true), "route_k": _route_k[i],
+		"prev_s": _prev_s[i], "lap_fuel": _lap_fuel[i]}
+
+
+## The new driver's machine takes over car i's pit state (see car_handover).
+func apply_handover(i: int, d: Dictionary) -> void:
+	if d.has("pit"):
+		apply_remote(i, d["pit"])
+	_route_k[i] = int(d.get("route_k", _route_k[i]))
+	_prev_s[i] = float(d.get("prev_s", _prev_s[i]))
+	_lap_fuel[i] = float(d.get("lap_fuel", _lap_fuel[i]))
+
+
+## A driver change in the box: the stop goes on for at least DRIVER_CHANGE_S.
+func add_driver_change(i: int) -> void:
+	var p: Dictionary = sim.entries[i].pit
+	if p["phase"] != PHASE_SERVICE:
+		return
+	var extra := maxf(DRIVER_CHANGE_S - float(p["service_left"]), 0.0)
+	p["service_left"] = float(p["service_left"]) + extra
+	p["service_total"] = float(p["service_total"]) + extra
 
 
 # --- Snapshots ----------------------------------------------------------------

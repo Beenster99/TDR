@@ -27,7 +27,7 @@ func _ready() -> void:
 	if session == null:
 		session = _default_offline_session()
 	GameData.active_session = session
-	_set_assists()
+	_set_driving_aids()
 	session.events_emitted.connect(_on_events)
 	session.role_changed.connect(_on_role_changed)
 	session.team_radio.connect(_on_team_radio)
@@ -83,9 +83,7 @@ func _ready() -> void:
 		pit_wall.open()
 	results = _build_results()
 	layer.add_child(results)
-	if GameData.arg("autodrive") and session.local_car >= 0:
-		autodrive = AIDriver.for_car(session.sim, session.local_car)
-		autodrive.pit_strategy.telemetry = session.telemetry
+	_make_autodrive()
 	if DisplayServer.get_name() == "headless":
 		var env := session.sim.env
 		print("[race] %s, %d cars, %d laps, local car %d, %s %02d:00, air %d C, track %d C" % [RaceSession.Mode.keys()[session.mode],
@@ -93,13 +91,21 @@ func _ready() -> void:
 			int(env.time_of_day_h), roundi(env.ambient_c), roundi(env.track_c)])
 
 
-func _set_assists() -> void:
+func _set_driving_aids() -> void:
 	if session.local_car >= 0:
 		var me: CarState = session.sim.cars[session.local_car]
 		var help: int = GameData.prefs.get("driving_help", 2)
 		me.assist_stability = help >= 2
 		me.assist_tc = help >= 1
 		me.assist_abs = help >= 1
+
+
+## Testing: --autodrive lets the AI drive this player's car.
+func _make_autodrive() -> void:
+	autodrive = null
+	if GameData.arg("autodrive") and session.local_car >= 0:
+		autodrive = AIDriver.for_car(session.sim, session.local_car)
+		autodrive.pit_strategy.telemetry = session.telemetry
 
 
 ## True when this player is in a car's crew but not driving it (co-op).
@@ -129,8 +135,12 @@ func _apply_role() -> void:
 	_was_crew = is_crew
 
 
-func _on_role_changed(_role: String) -> void:
-	_set_assists()
+## Co-op: this player's role changed, e.g. took over the wheel at a pit stop.
+func _on_role_changed(role: String) -> void:
+	_set_driving_aids()
+	_make_autodrive()
+	if DisplayServer.get_name() == "headless":
+		print("[coop] %s is now %s of car %d (driving car %d)" % [Net.local_name, role, session.team_car, session.local_car])
 	local_input = LocalInput.new()
 	if race_audio:
 		race_audio.queue_free()
@@ -178,6 +188,15 @@ func _physics_process(delta: float) -> void:
 		else:
 			inp = local_input.read(delta, session.sim.cars[session.local_car].speed())
 	session.tick(inp)
+	# Testing: --request-swap asks for a driver change (this player takes the
+	# wheel at the next stop) once the race is green.
+	if GameData.arg("request-swap") and not _forced.has("swap") and session.team_car >= 0 \
+			and session.local_car < 0 and session.sim.phase == RaceSim.Phase.RACING:
+		_forced["swap"] = true
+		var driver := session.sim.entries[session.team_car].driver_peer()
+		if driver > 0:
+			session.request_role_swap(session.team_car, session.local_peer, driver)
+			print("[coop] %s asked to take over from peer %d at the next stop" % [Net.local_name, driver])
 	# Testing: --force-sc 30 sends the safety car out after 30 s (--force-vsc too).
 	for opt in ["force-sc", "force-vsc"]:
 		if GameData.arg(opt) and not _forced.has(opt) and session.is_authority() \
@@ -238,7 +257,7 @@ func _set_zoom(z: float) -> void:
 
 
 func _process(delta: float) -> void:
-	var focus := session.local_car
+	var focus := session.local_car if session.local_car >= 0 else session.team_car
 	if focus < 0:
 		focus = session.team_car if session.team_car >= 0 else session.sim.running_order[0]
 	var car: CarState = session.sim.cars[focus]
@@ -495,8 +514,8 @@ func _season_session_done(info: Dictionary) -> Dictionary:
 	if pts.is_empty():
 		pts = Season.race_points(PointsSystem.from_dict(info.get("points", {})), result["classification"],
 			result["fastest_key"], info.get("pole_key", ""))
-	if session.local_car >= 0:
-		var me := sim.entries[session.local_car]
+	if session.team_car >= 0:
+		var me := sim.entries[session.team_car]
 		_on_season_round_done({"season_id": info.get("id", ""), "round": int(info.get("round", 0)),
 			"rounds": int(info.get("rounds", 0)), "is_final_round": int(info.get("round", 0)) + 1 >= int(info.get("rounds", 0)),
 			"my_position": me.position, "dnf": me.dnf and not me.finished, "field_size": sim.car_count(),
@@ -542,10 +561,10 @@ func _season_standings_lines(info: Dictionary) -> Array:
 ## module). Season rounds are paid by the season's own end-of-round hook.
 func _pay_prize() -> int:
 	var sim := session.sim
-	if session.local_car < 0 or session.start_data.has("season"):
+	if session.team_car < 0 or session.start_data.has("season"):
 		return 0
-	var e := sim.entries[session.local_car]
-	var pos := 0 if e.dnf else sim.running_order.find(session.local_car) + 1
+	var e := sim.entries[session.team_car]
+	var pos := 0 if e.dnf else sim.running_order.find(session.team_car) + 1
 	var km := sim.settings.laps * sim.track.length / 1000.0
 	var amount := Economy.race_prize(pos, sim.car_count(), km)
 	var profile := TeamProfile.load_or_new()
