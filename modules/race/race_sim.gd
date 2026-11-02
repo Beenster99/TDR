@@ -456,7 +456,8 @@ func _apply_damage() -> void:
 			if external[i]:
 				continue
 			var c := cars[i]
-			var dv: float = ev["speed"] * 1.3
+			# A concrete wall hurts more than armco, a tyre wall much less.
+			var dv: float = ev["speed"] * 1.3 * float(TrackData.BARRIER_HARDNESS[ev.get("barrier", TrackData.Barrier.ARMCO)])
 			var nrm: Vector2 = ev.get("normal", -c.right())
 			var local := CarDamage.outline_point(nrm.rotated(-c.heading), defs[i])
 			salt += 1

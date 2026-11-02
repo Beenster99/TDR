@@ -13,6 +13,8 @@ from the list in `modules/tracks/tools/tracks.json`.
   © OpenStreetMap contributors, available under the Open Database Licence
   (ODbL).
 
+- Barrier types and gravel traps come from OpenStreetMap where mapped
+  (ODbL, as above); elsewhere they are estimated.
 - Elevation (heights, terrain, estimated camber) comes from the
   [Terrain Tiles](https://registry.opendata.aws/terrain-tiles/) on the
   Registry of Open Data on AWS (Terrarium format), which combine SRTM

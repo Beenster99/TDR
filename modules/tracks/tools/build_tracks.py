@@ -28,6 +28,7 @@ import xml.etree.ElementTree as ET
 import numpy as np
 
 from elevation import add_elevation, add_flat_elevation
+from barriers import add_barriers
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pit_limit_zone import limit_zone  # noqa: E402
 
@@ -552,6 +553,7 @@ def build(cfg, cache):
             print("   elevation unavailable:", e)
     elif cfg.get("flat_if_unplaced"):
         add_flat_elevation(out)
+    add_barriers(out, cfg, cache)
     with open(os.path.join(DATA, tid + ".json"), "w") as f:
         json.dump(out, f, separators=(",", ":"))
 

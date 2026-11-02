@@ -1,9 +1,9 @@
 {
   "id": "graphics",
   "name": "Graphics",
-  "version": "1.1.1",
+  "version": "2.0.1",
   "status": "active",
-  "summary": "Drawing the world: the track (tarmac, kerbs, grass, barriers) and the cars.",
+  "summary": "Drawing the world in 3D: the track and terrain, trackside (trees, grandstands, pits), the Blender-built car models with liveries, sun, sky, weather and the camera.",
   "depends": {
     "core": "1",
     "cars": "1",
@@ -11,10 +11,14 @@
     "physics": "1"
   },
   "api": [
+    "WorldView",
     "TrackView",
     "CarView",
-    "WeatherView"
+    "WeatherView",
+    "GfxSettings"
   ],
-  "internal": [],
-  "notes": "Only reads state, never changes the race. Daylight, rain, spray and headlights live in WeatherView / CarView. Skid marks, smoke and better sprites go here."
+  "internal": [
+    "Trackside"
+  ],
+  "notes": "Only reads state, never changes the race. Cars: tools/build_cars.py (Blender) turns tools/car_shapes/<id>.json + the cars module dimensions into cars/<id>.glb (and cars_blend/<id>.blend to edit). See docs/GRAPHICS.md."
 }

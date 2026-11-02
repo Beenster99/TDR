@@ -40,12 +40,16 @@ const SURFACE_GRIP := {
 	TrackData.Surface.KERB: 0.92,
 	TrackData.Surface.GRASS: 0.55,
 	TrackData.Surface.BARRIER: 0.5,
+	TrackData.Surface.GRAVEL: 0.45,
+	TrackData.Surface.RUNOFF: 0.95,
 }
 const SURFACE_ROLL := {
 	TrackData.Surface.TRACK: 0.0,
 	TrackData.Surface.KERB: 0.01,
 	TrackData.Surface.GRASS: 0.07,
 	TrackData.Surface.BARRIER: 0.1,
+	TrackData.Surface.GRAVEL: 0.3,    # a gravel trap digs in and stops the car
+	TrackData.Surface.RUNOFF: 0.0,
 }
 
 
@@ -305,10 +309,12 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 		var normal := Vector2(-dirv.y, dirv.x) * side  # points away from track
 		var vn := s.vel.dot(normal)
 		if vn > 0.0:
-			s.vel -= normal * vn * 1.3
-			s.vel *= 0.85
+			# Walls throw the car back, tyre walls and fencing soak it up.
+			var kind := track.barrier_for(q)
+			s.vel -= normal * vn * float(TrackData.BARRIER_REBOUND[kind])
+			s.vel *= 0.85 if kind == TrackData.Barrier.WALL or kind == TrackData.Barrier.ARMCO else 0.7
 			s.yaw_rate *= 0.6
-			events.append({"type": "barrier_impact", "car": car_index, "speed": vn, "normal": normal})
+			events.append({"type": "barrier_impact", "car": car_index, "speed": vn, "normal": normal, "barrier": kind})
 		s.pos -= normal * 0.2
 
 	# --- Kerbs taken flat out wear the suspension, and can cut a tyre ------
