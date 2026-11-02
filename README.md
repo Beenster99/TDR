@@ -49,6 +49,7 @@ address into the join box and pick **Connect**. The game uses UDP port
 | Zoom in / out (hold) | E / Q, + / -, mouse wheel | LB / RB, right stick up / down, D-pad up / down |
 | Whole track and back | Z or Tab | Click the right stick |
 | Timing tower on / off | H | Settings > Gameplay |
+| Edit HUD layout | F2 | Settings > Gameplay |
 
 **Race HUD:** bottom centre shows your sector times for this lap (purple is
 the fastest anyone has gone, green your personal best, yellow slower; white
@@ -57,6 +58,16 @@ car behind on the right (green when you're gaining, red when you're losing).
 The timing tower on the left lists every car: position, manufacturer badge,
 driver, last lap and gap to the car ahead. On big grids it shows the top
 three and the cars around you.
+
+**Your own HUD layout:** press F2 in a race (or Settings > Gameplay > Edit
+HUD layout, over a live preview race) to move, resize, hide and bring back
+every part of the race screen with the mouse and keyboard. Drag an item to
+move it (it snaps to the screen edges, the centre and the other items; hold
+Alt to place it freely), drag a corner or turn the mouse wheel over it to
+resize, right-click to hide; tick items in the panel to bring them back.
+Keys: Tab picks the next item, arrows nudge (Shift for bigger steps), + / -
+resize, Delete hides, R resets the item, Ctrl+Z undoes, Enter or Esc saves.
+Offline races wait while you edit. The layout is saved with your settings.
 
 **Co-op pit wall (wave 5):** players who share a car but aren't driving run
 the pit wall: the pit crew calls the stops (tyres, fuel, repairs, wing and

@@ -416,7 +416,16 @@ func _check_race_end() -> void:
 		events.append({"type": "race_finished"})
 
 
-# --- Car-to-car contact (capsule vs capsule, impulse based) ----------------
+# --- Car-to-car contact (rounded box vs rounded box, impulse based) -----------
+# Each car is its real footprint seen from above: a box the car's length and
+# width with rounded corners, centred on the middle of the bodywork (which
+# sits a little ahead of the centre of gravity on most cars,
+# CarDefinition.body_offset). The old hit shape was a capsule round the CG,
+# so a mid-engined car's hit shape stuck out ~0.3 m behind its rear bumper.
+
+## Corner rounding of the hit box (m).
+const BODY_CORNER_R := 0.35
+
 
 func _resolve_collisions() -> void:
 	var n := cars.size()
@@ -434,37 +443,23 @@ func _collide_pair(i: int, j: int) -> void:
 	var b := cars[j]
 	var da := defs[i]
 	var db := defs[j]
-	var reach := (da.length + db.length) * 0.5
+	var reach := (da.length + db.length) * 0.5 + absf(da.body_offset) + absf(db.body_offset)
 	if a.pos.distance_squared_to(b.pos) > reach * reach:
 		return
-	var ra := da.width * 0.5
-	var rb := db.width * 0.5
-	var ha := da.length * 0.5 - ra
-	var hb := db.length * 0.5 - rb
-	var fa := a.forward()
-	var fb := b.forward()
-	var cp := _closest_points(a.pos - fa * ha, a.pos + fa * ha, b.pos - fb * hb, b.pos + fb * hb)
-	var pa: Vector2 = cp[0]
-	var pb: Vector2 = cp[1]
-	var delta := pb - pa
-	var dist := delta.length()
-	var min_dist := ra + rb
-	if dist >= min_dist:
+	var hit := body_contact(a.pos, a.heading, da, b.pos, b.heading, db)
+	if hit.is_empty():
 		return
-	var nrm := delta / dist if dist > 0.0001 else (b.pos - a.pos).normalized()
-	if nrm == Vector2.ZERO:
-		nrm = Vector2.RIGHT
+	var nrm: Vector2 = hit["normal"]
+	var pen: float = hit["depth"]
+	var contact: Vector2 = hit["point"]
 	var ma := da.mass + a.fuel_l * CarPhysics.FUEL_DENSITY
 	var mb := db.mass + b.fuel_l * CarPhysics.FUEL_DENSITY
-	var pen := min_dist - dist
 	# Only cars simulated here move; a remote car acts like a solid wall here
 	# and its owner applies the matching push on their side.
 	var share_a := 0.0 if external[i] else (1.0 if external[j] else mb / (ma + mb))
 	var share_b := 0.0 if external[j] else (1.0 if external[i] else ma / (ma + mb))
 	a.pos -= nrm * pen * share_a
 	b.pos += nrm * pen * share_b
-	# Contact point halfway between surfaces.
-	var contact := pa + nrm * ra
 	var r_a := contact - a.pos
 	var r_b := contact - b.pos
 	var va := a.vel + a.yaw_rate * Vector2(-r_a.y, r_a.x)
@@ -486,6 +481,92 @@ func _collide_pair(i: int, j: int) -> void:
 		b.yaw_rate += r_b.cross(imp) / db.inertia
 	if jmag > 500.0:
 		events.append({"type": "collision", "a": i, "b": j, "impulse": jmag, "pos": contact})
+
+
+## Where two cars' bodies touch, or {} if they don't. Car A at pos_a facing
+## heading_a, car B likewise. Returns {normal (unit, from A towards B),
+## depth (m of overlap), point (the contact point, world)}.
+static func body_contact(pos_a: Vector2, heading_a: float, da: CarDefinition,
+		pos_b: Vector2, heading_b: float, db: CarDefinition) -> Dictionary:
+	var ra := minf(BODY_CORNER_R, da.width * 0.5)
+	var rb := minf(BODY_CORNER_R, db.width * 0.5)
+	var qa := _core_box(pos_a, heading_a, da, ra)
+	var qb := _core_box(pos_b, heading_b, db, rb)
+	var radius := ra + rb
+	# 1) Cores apart: closest points between the two (shrunk) boxes.
+	var sep := _box_overlap(qa, qb)
+	if sep["depth"] < 0.0:
+		var best := INF
+		var pa := Vector2.ZERO
+		var pb := Vector2.ZERO
+		for k in 4:
+			for m in 4:
+				var cp := _closest_points(qa[k], qa[(k + 1) % 4], qb[m], qb[(m + 1) % 4])
+				var d2: float = (cp[1] - cp[0]).length_squared()
+				if d2 < best:
+					best = d2
+					pa = cp[0]
+					pb = cp[1]
+		var dist := sqrt(best)
+		if dist >= radius:
+			return {}
+		var nrm := (pb - pa) / dist if dist > 0.0001 else (pos_b - pos_a).normalized()
+		return {"normal": nrm, "depth": radius - dist, "point": pa + nrm * ra}
+	# 2) Cores overlap (a deep hit): push out along the axis of least overlap.
+	var n2: Vector2 = sep["normal"]
+	if n2.dot(pos_b - pos_a) < 0.0:
+		n2 = -n2
+	# Contact: the corner of either box that is deepest inside the other.
+	var point: Vector2 = (pos_a + pos_b) * 0.5
+	var deepest := -INF
+	for k in 4:
+		var da_k: float = (qa[k] - pos_b).dot(-n2)
+		if da_k > deepest:
+			deepest = da_k
+			point = qa[k]
+		var db_k: float = (qb[k] - pos_a).dot(n2)
+		if db_k > deepest:
+			deepest = db_k
+			point = qb[k]
+	return {"normal": n2, "depth": float(sep["depth"]) + radius, "point": point}
+
+
+## The four corners of a car's footprint shrunk by the corner radius r.
+static func _core_box(pos: Vector2, heading: float, d: CarDefinition, r: float) -> PackedVector2Array:
+	var f := Vector2(cos(heading), sin(heading))
+	var s := Vector2(-f.y, f.x)
+	var c := pos + f * d.body_offset
+	var hl := maxf(d.length * 0.5 - r, 0.01)
+	var hw := maxf(d.width * 0.5 - r, 0.01)
+	return PackedVector2Array([c + f * hl + s * hw, c - f * hl + s * hw, c - f * hl - s * hw, c + f * hl - s * hw])
+
+
+## Separating axis test of two boxes: {depth, normal}; depth < 0 = apart,
+## otherwise the smallest overlap and the axis it is along.
+static func _box_overlap(qa: PackedVector2Array, qb: PackedVector2Array) -> Dictionary:
+	var best := INF
+	var axis := Vector2.RIGHT
+	for q in [qa, qb]:
+		for k in 2:
+			var ax: Vector2 = (q[k + 1] - q[k]).normalized()
+			var mina := INF
+			var maxa := -INF
+			var minb := INF
+			var maxb := -INF
+			for m in 4:
+				var pa: float = qa[m].dot(ax)
+				var pb: float = qb[m].dot(ax)
+				mina = minf(mina, pa)
+				maxa = maxf(maxa, pa)
+				minb = minf(minb, pb)
+				maxb = maxf(maxb, pb)
+			var o := minf(maxa, maxb) - maxf(mina, minb)
+			if o < 0.0:
+				return {"depth": o, "normal": ax}
+			if o < best:
+				best = o
+				axis = ax
+	return {"depth": best, "normal": axis}
 
 
 # --- Damage and incidents ------------------------------------------------------

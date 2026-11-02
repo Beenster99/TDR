@@ -19,7 +19,7 @@ signal internet_status_changed
 const DEFAULT_PORT := 24690
 const MAX_PEERS := 16
 ## Bump whenever a message changes shape; mismatched games are told at the lobby.
-const PROTOCOL_VERSION := 14  # 14: per-wheel tyre compounds and pressures in pit plans and pit state, strategist pit plans read out on the radio, 13: tyre choice per wheel, driver line-ups and AI co-drivers, 12: co-op crews (teams and roles in the lobby, role swaps, driver changes, team radio), 4: track elevation, 5: damage in car states, 6: barrier types and run-off surfaces, 7: race control in the race state, 8: pit stops, 9: car upgrades, liveries and upgrades_mode, 10: car setups (tuning), 11: seasons (season_info in the lobby)
+const PROTOCOL_VERSION := 15  # 15: per-wheel tyre compounds and pressures in pit plans and pit state, strategist pit plans read out on the radio, 14: car states stamped with the host's clock (synced by pings) so remote cars are placed in the present, 13: tyre choice per wheel, driver line-ups and AI co-drivers, 12: co-op crews (teams and roles in the lobby, role swaps, driver changes, team radio), 4: track elevation, 5: damage in car states, 6: barrier types and run-off surfaces, 7: race control in the race state, 8: pit stops, 9: car upgrades, liveries and upgrades_mode, 10: car setups (tuning), 11: seasons (season_info in the lobby)
 const COMPRESSION := ENetConnection.COMPRESS_ZSTD
 ## How long a player's game may go silent before they're taken to have left (ms).
 const TIMEOUT_MS := 15000
@@ -49,6 +49,16 @@ var in_race := false
 ## Season mode: a summary the host shares with everyone in the lobby
 ## (Season.summary(): name, round, next track, standings). Empty = single race.
 var season_info: Dictionary = {}
+## The host's race clock, worked out from pings (NetClock). Every car state is
+## stamped on the host's clock so each machine can place remote cars where
+## they are now. clock_offset is 0 on the host and offline.
+var clock := NetClock.new()
+var clock_offset: float:
+	get: return clock.offset
+var clock_synced: bool:
+	get: return clock.synced
+const PING_EVERY := 0.5
+var _ping_timer := 0.0
 ## Host: how to plan the next race, when not a plain single race. Called as
 ## planner.call(settings, humans) -> start data (a season plans its own field
 ## and grid). Unset = RaceFactory.plan with every AI driver.
@@ -62,6 +72,27 @@ func _ready() -> void:
 	multiplayer.connection_failed.connect(func(): _fail(
 		"Could not reach the host. Check the address, that the host's UDP port %d is open (their lobby says), and that the firewall lets the game through." % port))
 	multiplayer.server_disconnected.connect(_on_server_disconnected)
+
+
+func _process(delta: float) -> void:
+	if peer == null or is_server() or multiplayer.multiplayer_peer.get_connection_status() != MultiplayerPeer.CONNECTION_CONNECTED:
+		return
+	_ping_timer -= delta
+	if _ping_timer <= 0.0:
+		_ping_timer = PING_EVERY
+		_rpc_ping.rpc_id(1, precise_clock())
+
+
+## This machine's race clock (RaceSession.clock(), physics time), read
+## between physics ticks to the fraction of a tick.
+static func precise_clock() -> float:
+	var tps := float(Engine.physics_ticks_per_second)
+	return (float(Engine.get_physics_frames()) + Engine.get_physics_interpolation_fraction()) / tps
+
+
+## The host's race clock, as best this machine knows it.
+func host_clock() -> float:
+	return RaceSession.clock() + clock_offset
 
 
 func is_online() -> bool:
@@ -153,6 +184,7 @@ func leave() -> void:
 	dedicated = false
 	season_info = {}
 	start_planner = Callable()
+	clock.reset()
 
 
 # --- Reaching the host over the internet (UPnP, as in Torque Shed) ----------
@@ -520,6 +552,23 @@ func _back_to_lobby() -> void:
 	in_race = false
 	session = null
 	returned_to_lobby.emit()
+
+
+# --- Clock sync (so every machine agrees on when a car state was taken) --------
+
+@rpc("any_peer", "unreliable", "call_remote", 6)
+func _rpc_ping(t0: float) -> void:
+	if is_server():
+		_rpc_pong.rpc_id(multiplayer.get_remote_sender_id(), t0, precise_clock())
+
+
+@rpc("authority", "unreliable", "call_remote", 6)
+func _rpc_pong(t0: float, host_t: float) -> void:
+	_on_pong(t0, host_t, precise_clock())
+
+
+func _on_pong(t0: float, host_t: float, now: float) -> void:
+	clock.add_pong(t0, host_t, now)
 
 
 # --- Race traffic -------------------------------------------------------------
