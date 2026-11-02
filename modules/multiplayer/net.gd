@@ -125,8 +125,40 @@ func host(p_port: int, player_name: String, p_dedicated := false) -> Error:
 	if not dedicated:
 		players[1] = _new_player(player_name, GameData.cars.keys()[0])
 	_open_router_port(p_port)
+	_start_ping_watch()
 	lobby_changed.emit()
 	return OK
+
+
+## Host: each joiner's round trip in ms goes into their lobby entry ("ping"),
+## so everyone can see how good each connection is.
+const PING_WATCH_S := 2.0
+var _ping_watch: Timer
+
+
+func _start_ping_watch() -> void:
+	if _ping_watch == null:
+		_ping_watch = Timer.new()
+		_ping_watch.wait_time = PING_WATCH_S
+		_ping_watch.timeout.connect(_measure_pings)
+		add_child(_ping_watch)
+	_ping_watch.start()
+
+
+func _measure_pings() -> void:
+	if not is_server() or in_race or not (peer is ENetMultiplayerPeer):
+		return
+	var changed := false
+	for id in players:
+		var link: ENetPacketPeer = peer.get_peer(id) if id != 1 else null
+		if link == null:
+			continue
+		var rtt := int(link.get_statistic(ENetPacketPeer.PEER_LAST_ROUND_TRIP_TIME))
+		if absi(rtt - int(players[id].get("ping", -100))) >= 10:
+			players[id]["ping"] = rtt
+			changed = true
+	if changed:
+		_broadcast_lobby()
 
 
 ## Splits what a player typed into the join box into host and port. Takes
@@ -308,7 +340,7 @@ func join_instructions() -> String:
 
 func _new_player(player_name: String, car_id: String) -> Dictionary:
 	return {"name": player_name, "car_id": car_id, "tyre": "auto", "ready": false, "team": -1,
-		"role": RaceEntry.ROLE_DRIVER, "setup": {}, "livery": {}}
+		"role": RaceEntry.ROLE_DRIVER, "setup": {}, "livery": {}, "activity": "lobby"}
 
 
 func _fail(reason: String) -> void:
@@ -384,6 +416,8 @@ func _broadcast_lobby() -> void:
 
 
 const TYRE_CHOICES := ["auto", "dry", "intermediate", "wet"]
+## What a player is doing in the menus, shown in everyone's lobby.
+const ACTIVITIES := ["lobby", "garage", "setup", "settings"]
 ## Co-op: players sharing one car, and how many teams the lobby offers.
 const MAX_CREW := 3
 const MAX_TEAMS := 8
@@ -413,6 +447,8 @@ func _apply_update(id: int, fields: Dictionary) -> void:
 		p["ready"] = bool(fields["ready"])
 	if fields.has("tyre") and fields["tyre"] in TYRE_CHOICES:
 		p["tyre"] = fields["tyre"]
+	if fields.has("activity") and fields["activity"] in ACTIVITIES:
+		p["activity"] = fields["activity"]
 	# The car's setup (upgrade overrides + tuning) and livery, from the
 	# player's own profile. The host's upgrades_mode decides what counts.
 	if fields.get("setup") is Dictionary and str(fields["setup"]).length() < 4000:

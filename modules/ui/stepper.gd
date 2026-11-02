@@ -116,6 +116,11 @@ func _value_width() -> float:
 	return font.get_string_size(_shown, HORIZONTAL_ALIGNMENT_LEFT, -1, get_theme_font_size("font_size")).x
 
 
+## The value as it's shown, e.g. "Light rain".
+func shown_text() -> String:
+	return _shown
+
+
 func set_value(v) -> void:
 	value = v
 	_refresh()

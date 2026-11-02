@@ -524,6 +524,7 @@ def build(cfg, cache):
         "short_name": cfg.get("short_name", cfg["name"]),
         "location": cfg.get("location", ""),
         "country": cfg.get("country", ""),
+        "description": cfg.get("description", ""),
         "length_m": round(length, 1),
         "real_length_m": cfg.get("real_length_m", 0),
         "source": source,
