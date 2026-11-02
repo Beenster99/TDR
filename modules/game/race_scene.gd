@@ -92,6 +92,12 @@ func _ready() -> void:
 	results = _build_results()
 	layer.add_child(results)
 	_make_autodrive()
+	# Filming (tools/record_highlights.sh): --no-hud shows just the race,
+	# --rotate-camera turns the view with the car.
+	if GameData.arg("no-hud"):
+		layer.visible = false
+	if GameData.arg("rotate-camera"):
+		rotate_camera = true
 	if DisplayServer.get_name() == "headless":
 		var env := session.sim.env
 		print("[race] %s, %d cars, %d laps, local car %d, %s %02d:00, air %d C, track %d C" % [RaceSession.Mode.keys()[session.mode],
@@ -204,6 +210,13 @@ func _default_offline_session() -> RaceSession:
 
 
 func _physics_process(delta: float) -> void:
+	for _k in _film_extra_ticks():
+		_tick_once(delta)
+	_tick_once(delta)
+	_after_tick()
+
+
+func _tick_once(delta: float) -> void:
 	var inp: CarInput = null
 	if session.local_car >= 0:
 		if autodrive:
@@ -212,6 +225,9 @@ func _physics_process(delta: float) -> void:
 		else:
 			inp = local_input.read(delta, session.sim.cars[session.local_car].speed())
 	session.tick(inp)
+
+
+func _after_tick() -> void:
 	# Testing: --request-swap asks for a driver change (this player takes the
 	# wheel at the next stop) once the race is green.
 	if GameData.arg("request-swap") and not _forced.has("swap") and session.team_car >= 0 \
@@ -278,6 +294,23 @@ func _view_rect() -> Rect2:
 func _set_zoom(z: float) -> void:
 	_zoom_target = clampf(z, 0.0, 1.0)
 	GameData.prefs["zoom"] = _zoom_target
+
+
+## Filming: --film-from 40 fast-forwards the race to 40 s (offline only:
+## extra sim ticks per physics frame), then plays it at normal speed and
+## prints the frame filming starts on.
+var _film_rolling := false
+
+
+func _film_extra_ticks() -> int:
+	if _film_rolling or not GameData.arg("film-from") or session.mode != RaceSession.Mode.OFFLINE:
+		return 0
+	if session.sim.race_time + session.sim.phase_time * float(session.sim.phase == RaceSim.Phase.COUNTDOWN) \
+			< float(GameData.arg("film-from")):
+		return 9
+	_film_rolling = true
+	print("[film] rolling at frame %d" % Engine.get_frames_drawn())
+	return 0
 
 
 func _process(delta: float) -> void:

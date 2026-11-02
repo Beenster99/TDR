@@ -1,9 +1,9 @@
 {
   "id": "audio",
   "name": "Audio",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "status": "active",
-  "summary": "Every sound in the game, all synthesised (no recordings): each engine family (cross- and flat-plane V8, V10, V12, flat-six, straight-six, V6, four) baked at many rpm bands by tools/engine_synth.py, with rev limiter, gearshift cuts and blips, pops and crackles, turbo, supercharger, hybrid and gearbox whines; tyre squeal, scrub, lock-up, road roar, kerbs, gravel, grass, wind and rain spray; Doppler for passing cars; crashes and contacts, start lights, menu clicks.",
+  "summary": "Every sound in the game, all synthesised (no recordings): each engine family (cross- and flat-plane V8, V10, V12, flat-six, straight-six, V6, four) baked at many rpm bands by tools/engine_synth.py, with rev limiter, gearshift cuts and blips, pops and crackles, turbo, supercharger, hybrid and gearbox whines; tyre squeal, scrub, lock-up, road roar, kerbs, gravel, grass, wind and rain spray; Doppler for passing cars; crashes and contacts, start lights, menu clicks (short switch clicks, not beeps) and the intro screen's GT3 pass-by (Sound.passby()).",
   "depends": {
     "core": "1",
     "cars": "1",
@@ -14,10 +14,11 @@
     "SoundBank"
   ],
   "internal": [
-    "CarAudio"
+    "CarAudio",
+    "MenuSounds"
   ],
   "autoloads": [
     "Sound"
   ],
-  "notes": "Only listens: reads car state and race events, never changes the race. Engine loops, tyre and road loops and pops are WAVs in baked/, made by tools/engine_synth.py (python3 + numpy; rerun it after changing a family). The game crossfades the two baked rpm bands either side of the revs (see docs/AUDIO.md). A car picks its engine voice with engine.sound in its JSON ({family, turbo, supercharged, hybrid, gear_whine, limiter_hz, pops}) or it is worked out from cylinders and the description. Buses: Engine (engines, turbos, pops), Effects (tyres, road, crashes), UI. RaceAudio.set_environment(env) makes wet tracks hiss instead of squeal."
+  "notes": "Only listens: reads car state and race events, never changes the race. Engine loops, tyre and road loops and pops are WAVs in baked/, made by tools/engine_synth.py (python3 + numpy; rerun it after changing a family). The game crossfades the two baked rpm bands either side of the revs (see docs/AUDIO.md). A car picks its engine voice with engine.sound in its JSON ({family, turbo, supercharged, hybrid, gear_whine, limiter_hz, pops}) or it is worked out from cylinders and the description. Buses: Engine (engines, turbos, pops), Effects (tyres, road, crashes), UI. RaceAudio.set_environment(env) makes wet tracks hiss instead of squeal. Menu sounds live in menu_sounds.gd; a file in samples/ (same name, .wav or .ogg) replaces the synthesised one."
 }

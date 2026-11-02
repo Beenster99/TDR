@@ -1,9 +1,9 @@
 {
   "id": "ui",
   "name": "UI",
-  "version": "1.12.0",
+  "version": "1.13.0",
   "status": "active",
-  "summary": "Screens and overlays: main menu, lobby, race settings, the in-race HUD, and controller-friendly widgets (Stepper), and the pit wall (StrategistScreen: timing, gaps, pit windows, weather radar, team radio feed). Co-op pit wall roles (CrewConsole: pit crew and strategist panels around the zoomed-out 3D race, combined for 2 players) and quick team radio calls (TeamRadio).",
+  "summary": "Screens and overlays: main menu, lobby, race settings, the in-race HUD, and controller-friendly widgets (Stepper), and the pit wall (StrategistScreen: timing, gaps, pit windows, weather radar, team radio feed). Co-op pit wall roles (CrewConsole: pit crew and strategist panels around the zoomed-out 3D race, combined for 2 players) and quick team radio calls (TeamRadio). Intro screen (SplashScreen: key art and a GT3 pass-by), the main menu over a loop of race highlights (MenuBackground), the player's profile badge top right (ProfileBadge), and Settings (SettingsScreen: Gameplay, Graphics, Sound, Garage, Debug, built from GameData.settings_catalog; SettingsRuntime applies them).",
   "depends": {
     "core": "1",
     "cars": "1",
@@ -25,8 +25,14 @@
     "SetupScreen",
     "SetupStore",
     "CrewConsole",
-    "TeamRadio"
+    "TeamRadio",
+    "SettingsScreen"
   ],
-  "internal": [],
-  "notes": "Main menu scene: main_menu.tscn. SetupScreen: the controller-friendly car setup screen; SetupStore saves setups per car per track in user://setups/."
+  "internal": [
+    "SettingsRuntime",
+    "MenuBackground",
+    "ProfileBadge",
+    "SplashScreen"
+  ],
+  "notes": "Main menu scene: main_menu.tscn. SetupScreen: the controller-friendly car setup screen; SetupStore saves setups per car per track in user://setups/. First scene: splash.tscn, which goes on to main_menu.tscn. Menu media in media/ (splash.jpg, highlights.ogv; tools/record_highlights.sh films the highlights)."
 }

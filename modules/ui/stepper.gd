@@ -13,6 +13,13 @@ var step_value := 1.0
 var value = 0
 var suffix := ""
 var loop_options := true       ## choice lists loop round at the ends
+## When above 0, the label and the value are drawn in two columns, the value
+## starting this many pixels in (lines up a list of steppers, e.g. Settings).
+var value_column := 0.0:
+	set(v):
+		value_column = v
+		_refresh()
+var _shown := ""
 
 
 static func numeric(p_label: String, p_min: float, p_max: float, p_step: float, p_value: float, p_suffix := "") -> Stepper:
@@ -80,8 +87,29 @@ func set_value(v) -> void:
 
 
 func _refresh() -> void:
-	var shown := str(value) + suffix
+	var shown := (str(int(value)) if options.is_empty() and step_value == int(step_value) else str(value)) + suffix
 	for o in options:
 		if o[0] == value:
 			shown = o[1]
-	text = "%-16s <  %s  >" % [label_text, shown]
+	_shown = shown
+	if value_column > 0.0:
+		text = ""
+		queue_redraw()
+	else:
+		text = "%-16s <  %s  >" % [label_text, shown]
+
+
+func _draw() -> void:
+	if value_column <= 0.0:
+		return
+	var font := get_theme_font("font")
+	var fs := get_theme_font_size("font_size")
+	var col := get_theme_color("font_disabled_color") if disabled else (get_theme_color("font_focus_color") if has_focus() \
+		else get_theme_color("font_color"))
+	var y := (size.y + font.get_ascent(fs) - font.get_descent(fs)) * 0.5
+	draw_string(font, Vector2(12, y), label_text, HORIZONTAL_ALIGNMENT_LEFT, value_column - 20, fs, col)
+	var accent := Color(0.94, 0.26, 0.2) if has_focus() and not disabled else Color(col, col.a * 0.5)
+	draw_string(font, Vector2(value_column, y), "<", HORIZONTAL_ALIGNMENT_LEFT, -1, fs, accent)
+	draw_string(font, Vector2(value_column + 26, y), _shown, HORIZONTAL_ALIGNMENT_LEFT, size.x - value_column - 60, fs, col)
+	var w := font.get_string_size(_shown, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+	draw_string(font, Vector2(value_column + 26 + minf(w, size.x - value_column - 60) + 14, y), ">", HORIZONTAL_ALIGNMENT_LEFT, -1, fs, accent)

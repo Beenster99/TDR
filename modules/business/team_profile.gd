@@ -1,8 +1,13 @@
 class_name TeamProfile
 extends RefCounted
 ## The player's own team, saved on this machine (user://profile.json): money,
-## the upgrade levels bought for each car, and each car's livery. Upgrades
-## stay with the car between races and seasons.
+## the cars bought into the garage, the upgrade levels bought for each car,
+## and each car's livery. Everything stays between races, seasons and game
+## versions. Saving writes a new file and keeps the previous one as
+## profile.json.bak, so a crash mid-save never loses the garage.
+##
+## Any car can be raced stock; bought cars (owns()) are the ones kept in the
+## garage with their upgrades and livery.
 ##
 ## Each player's profile lives on their own machine; for a race the lobby sends
 ## setup_for(car_id) (CarDefinition overrides) and livery_for(car_id).
@@ -11,11 +16,12 @@ const DEFAULT_PATH := "user://profile.json"
 ## Where load_or_new() looks when given no path (the menu sets it from
 ## the --profile command line option, so test bots can have their own teams).
 static var default_path := DEFAULT_PATH
-const VERSION := 1
+const VERSION := 2
 
 var path := DEFAULT_PATH
 var money: int = 0
-## car id -> {"upgrades": {category: level}, "livery": {pattern, primary, secondary, accent}}
+## car id -> {"owned": bool, "bought_for": credits, "upgrades": {category: level},
+##            "livery": {pattern, primary, secondary, accent}}
 var cars: Dictionary = {}
 ## Last few money changes, newest last: [{"amount", "reason"}]
 var ledger: Array = []
@@ -27,10 +33,12 @@ static func load_or_new(p_path := "") -> TeamProfile:
 	var p := TeamProfile.new()
 	p.path = p_path
 	p.money = int(UpgradeCatalog.data().get("start_money", 150000))
-	if FileAccess.file_exists(p_path):
-		var d = JSON.parse_string(FileAccess.get_file_as_string(p_path))
-		if d is Dictionary:
-			p.from_dict(d)
+	for f in [p_path, p_path + ".bak"]:   # the backup if the save is missing or broken
+		if FileAccess.file_exists(f):
+			var d = JSON.parse_string(FileAccess.get_file_as_string(f))
+			if d is Dictionary:
+				p.from_dict(d)
+				break
 	return p
 
 
@@ -47,14 +55,62 @@ func from_dict(d: Dictionary) -> void:
 		var ups: Dictionary = cars[id].get("upgrades", {})
 		for k in ups:
 			ups[k] = int(ups[k])
+		# Saves from before cars were bought: a car you upgraded or painted is yours.
+		if int(d.get("version", 1)) < 2 and (not ups.is_empty() or not cars[id].get("livery", {}).is_empty()):
+			cars[id]["owned"] = true
 
 
 func save() -> Error:
-	var f := FileAccess.open(path, FileAccess.WRITE)
+	var tmp := path + ".tmp"
+	var f := FileAccess.open(tmp, FileAccess.WRITE)
 	if f == null:
 		return FileAccess.get_open_error()
 	f.store_string(JSON.stringify(to_dict(), " "))
-	return OK
+	f.close()
+	var dir := DirAccess.open(path.get_base_dir())
+	if dir == null:
+		return DirAccess.get_open_error()
+	if FileAccess.file_exists(path):
+		dir.remove(path + ".bak")
+		dir.rename(path, path + ".bak")
+	return dir.rename(tmp, path)
+
+
+# --- Cars in the garage ------------------------------------------------------
+
+func owns(car_id: String) -> bool:
+	return bool(cars.get(car_id, {}).get("owned", false))
+
+
+## Bought cars, in the order they were bought.
+func owned_ids() -> Array:
+	return cars.keys().filter(func(id): return owns(id))
+
+
+## Buys a car into the garage. False (nothing changes) if already owned or
+## there isn't enough money.
+func buy_car(def: CarDefinition) -> bool:
+	if owns(def.id):
+		return false
+	var price := UpgradeCatalog.car_price(def)
+	if not spend(price, "Bought " + def.display_name):
+		return false
+	_car(def.id)["owned"] = true
+	_car(def.id)["bought_for"] = price
+	return true
+
+
+## Sells a car (and the upgrades on it) for the refund share of what was paid.
+## Returns the money received.
+func sell_car(def: CarDefinition) -> int:
+	if not owns(def.id):
+		return 0
+	var back := int(float(cars[def.id].get("bought_for", UpgradeCatalog.car_price(def))) * UpgradeCatalog.refund_share())
+	for cat in levels(def.id):
+		back += -UpgradeCatalog.cost_of_change(def, cat, level(def.id, cat), 0)
+	cars.erase(def.id)
+	earn(back, "Sold " + def.display_name)
+	return back
 
 
 func earn(amount: int, reason: String) -> void:

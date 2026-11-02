@@ -7,6 +7,14 @@
   "Road": 1.0,
   "GT3": 1.6
  },
+ "car_prices": {
+  "_doc": "Price to buy a car into your garage, by class (Road cars vary a little with power-to-weight).",
+  "Road": 60000,
+  "GT3": 140000,
+  "LMP2": 220000,
+  "Hypercar": 380000,
+  "default": 120000
+ },
  "categories": [
   {
    "id": "engine",
