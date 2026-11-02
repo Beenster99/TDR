@@ -191,7 +191,7 @@ func item_size(id: String) -> Vector2:
 		"pitguide": return Vector2(440, 74)
 		"lights": return Vector2(224, 44)
 		"flags": return Vector2(520, 58)
-		"radio": return Vector2(_radio_width(), 44)
+		"radio": return _radio_size()
 		"messages": return Vector2(1000, 50)
 	return Vector2.ZERO
 
@@ -649,7 +649,26 @@ func _radio_width() -> float:
 	return minf(font.get_string_size(_radio_line(), HORIZONTAL_ALIGNMENT_LEFT, -1, 22).x + 120, size.x - 40)
 
 
+## The radio item's size: one line, or a pit stop plan (one job per line).
+func _radio_size() -> Vector2:
+	var lines := _plan_lines()
+	if lines.size() <= 1:
+		return Vector2(_radio_width(), 44)
+	var w := 560.0
+	for ln in lines:
+		w = maxf(w, font.get_string_size(str(ln), HORIZONTAL_ALIGNMENT_LEFT, -1, 20).x + 60)
+	return Vector2(minf(w, size.x - 40), 52.0 + lines.size() * 28.0)
+
+
+func _plan_lines() -> Array:
+	return radio_msg.get("lines", []) if radio_time > 0.0 else []
+
+
 func _draw_radio() -> void:
+	var lines := _plan_lines()
+	if lines.size() > 1:
+		_draw_radio_plan(lines)
+		return
 	var line := _radio_line()
 	var w := _radio_width()
 	var r := Rect2(0, 0, w, 44)
@@ -658,6 +677,26 @@ func _draw_radio() -> void:
 	draw_rect(r, Color(1, 0.88, 0.35, 0.8 * a), false, 2.0)
 	_text(r.position + Vector2(14, 30), "RADIO", 16, Color(1, 0.88, 0.35, a))
 	_text(r.position + Vector2(84, 30), line, 22, Color(1, 1, 1, a), HORIZONTAL_ALIGNMENT_LEFT, w - 96)
+
+
+## A pit stop plan from the strategist: a box with one line per job.
+func _draw_radio_plan(lines: Array) -> void:
+	var sz := _radio_size()
+	var w := sz.x
+	var r := Rect2(Vector2.ZERO, sz)
+	var who := str(radio_msg.get("from", "Pit wall"))
+	var role := str(radio_msg.get("role", "")).replace("_", " ")
+	var a := clampf(radio_time / 0.5, 0.0, 1.0)
+	draw_rect(r, Color(0.02, 0.04, 0.08, 0.86 * a))
+	draw_rect(r, Color(1, 0.88, 0.35, 0.8 * a), false, 2.0)
+	_text(Vector2(16, 28), "RADIO  ·  PIT STOP PLAN", 16, Color(1, 0.88, 0.35, a))
+	_text(Vector2(w - 16, 28), "%s%s" % [who, (" (%s)" % role) if role != "" else ""], 15,
+		Color(1, 1, 1, 0.7 * a), HORIZONTAL_ALIGNMENT_RIGHT, w * 0.5)
+	for k in lines.size():
+		var y := 62 + k * 28
+		var col := Color(1, 0.88, 0.35, a) if k == 0 else Color(1, 1, 1, a)
+		_text(Vector2(20, y), str(lines[k]) if k == 0 else "•  " + str(lines[k]), 20, col,
+			HORIZONTAL_ALIGNMENT_LEFT, w - 40)
 
 
 static func _crew_name(e: RaceEntry, peer_id: int) -> String:

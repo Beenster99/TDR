@@ -50,6 +50,7 @@ func _init() -> void:
 	test_seasons()
 	test_coop_roles()
 	test_tyre_choice_and_line_ups()
+	test_mixed_tyres_per_wheel()
 	test_race_start()
 	test_driving_aids()
 	test_active_pad()
@@ -2112,6 +2113,56 @@ func test_rebinding() -> void:
 
 ## Pit stops that change only some tyres, and drivers sharing a car: AI
 ## line-ups that change at a stop, a solo player's AI co-driver.
+func test_mixed_tyres_per_wheel() -> void:
+	print("strategist plans: mixed tyres and per-tyre pressures")
+	var d := _data()
+	var st := RaceSettings.new()
+	st.laps = 6
+	st.ai_count = 2
+	st.tuning_enabled = true
+	var sim: RaceSim = _race(st, d)["sim"]
+	var pits := sim.pits
+	var dry := sim.dry_compound[0]
+	var p: Dictionary = sim.entries[0].pit
+	check(not sim.mixed_tyres(0) and (p["compounds"] as Array).size() == 4, "a car starts on one compound, listed per wheel")
+	var psi := pits.wheel_psi(0)
+	pits.set_plan(0, {"wheel_tyres": [PitRules.TYRE_INTER, "", PitRules.TYRE_INTER, "bogus"], "fuel": 0.0,
+		"psi": [float(psi[0]), float(psi[1]) + 1.5, float(psi[2]), float(psi[3]) - 0.5]})
+	check(p["plan"]["wheel_tyres"] == [PitRules.TYRE_INTER, "", PitRules.TYRE_INTER, ""], "unknown tyres in a per-wheel plan are ignored")
+	var w := pits.service_for(0, p["plan"])
+	check(w["wheels"] == [0, 2] and w["wheel_tyres"] == [PitRules.TYRE_INTER, "", PitRules.TYRE_INTER, ""],
+		"only the left tyres change, to inters (%s)" % str(w["wheel_tyres"]))
+	check(w["setup_s"] >= PitRules.PRESSURE_ONLY_S, "re-setting pressures on tyres that stay on takes time")
+	p["work"] = w
+	pits._finish_service(0)
+	var ids: Array = sim.wheel_compounds[0].map(func(t: TyreCompound) -> String: return t.id)
+	check(ids == [PitRules.TYRE_INTER, dry, PitRules.TYRE_INTER, dry] and sim.mixed_tyres(0), "the car runs mixed tyres (%s)" % str(ids))
+	check(p["compounds"] == ids and not p["plan"].has("wheel_tyres") and not p["plan"].has("psi"), "the pit state lists them; the plan is used once")
+	check(is_equal_approx(float(p["psi_trim"][1]), 1.5) and is_equal_approx(sim.cars[0].psi_trim[3], -0.5), "per-tyre pressure trims are set")
+	check(is_equal_approx(float(pits.wheel_psi(0)[1]), float(psi[1]) + 1.5), "and the car's tyre pressures follow")
+	# Physics: the wheels behave as their own compounds.
+	var c := sim.cars[0]
+	var env := sim.env
+	var events := []
+	for k in 60:
+		CarPhysics.step(c, CarInput.neutral(), sim.defs[0], sim.compounds[0], env, sim.track, 1.0 / 60.0, 1.0, events, 0, 1.0, sim.wheel_compounds[0])
+	var slick: TyreCompound = sim.wheel_compounds[0][1]
+	var plain := slick.hot_psi(sim.defs[0].pressure_delta_front, c.tyre_temp[1])
+	check(c.tyre_psi[1] - plain > 1.3, "per-tyre pressures reach the physics (%.1f psi hot vs %.1f untrimmed)" % [c.tyre_psi[1], plain])
+	# The pit state carries the wheels to another machine.
+	var st2 := RaceSettings.new()
+	st2.laps = 6
+	st2.ai_count = 2
+	st2.tuning_enabled = true
+	var other: RaceSim = _race(st2, d)["sim"]
+	other.pits.apply_remote(0, p.duplicate(true))
+	var ids2: Array = other.wheel_compounds[0].map(func(t: TyreCompound) -> String: return t.id)
+	check(ids2 == ids and is_equal_approx(other.cars[0].psi_trim[1], 1.5), "mixed tyres and pressures survive the network / a driver change")
+	# A plain tyre call afterwards changes all four (no leftover mix).
+	var w2 := pits.service_for(0, {"tyre": PitRules.TYRE_DRY, "wheels": "front", "fuel": 0.0, "repair": true})
+	check(w2["wheels"] == [0, 1, 2, 3], "a plain tyre call on a mixed car fits all four")
+
+
 func test_tyre_choice_and_line_ups() -> void:
 	print("tyre choice and driver line-ups")
 	check(PitRules.wheels_of("front") == [0, 1] and PitRules.wheels_of("rr") == [3] and PitRules.wheels_of("left") == [0, 2]

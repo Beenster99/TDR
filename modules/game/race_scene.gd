@@ -18,6 +18,8 @@ var crew: CrewConsole
 ## Single player: the quick menu for a pit call (tyres, wings, fuel).
 var pit_menu: PitCallMenu
 var driver_radio: TeamRadio
+## The strategist's pit stop planner (over the pit wall screens).
+var planner: PitPlanner
 var results: PanelContainer
 var rotate_camera := false
 var _results_shown := false
@@ -109,6 +111,15 @@ func _ready() -> void:
 	driver_radio = TeamRadio.new()
 	layer.add_child(driver_radio)
 	driver_radio.setup(session, session.local_car, true)
+	planner = PitPlanner.new()
+	layer.add_child(planner)
+	planner.setup(session)
+	crew.planner = planner
+	pit_wall.planner = planner
+	crew.open_planner.connect(_open_planner)
+	pit_wall.open_planner.connect(_open_planner)
+	if GameData.arg("planner"):
+		_open_planner.call_deferred()
 	_apply_role()
 	if GameData.arg("pit-wall"):
 		pit_wall.open()
@@ -277,11 +288,21 @@ func _on_team_radio(car: int, msg: Dictionary) -> void:
 	if car != session.team_car and car != session.local_car:
 		return
 	crew.add_radio(msg)
-	if session.local_car == car and str(msg.get("role", "")) != RaceEntry.ROLE_DRIVER:
-		hud.show_radio(msg)
 	var me := driver_radio.my_name() if session.local_car >= 0 else crew.radio.my_name()
-	if str(msg.get("from", "")) != me:
+	if session.local_car == car and str(msg.get("role", "")) != RaceEntry.ROLE_DRIVER:
+		# The driver: on screen, and read out over the radio.
+		var lines: Array = msg.get("lines", [])
+		hud.show_radio(msg, clampf(4.0 + lines.size() * 2.2, 5.0, 16.0))
+		Sound.radio(str(msg.get("text", "")))
+	elif str(msg.get("from", "")) != me:
 		Sound.ui("chime", -6.0)
+
+
+## The pit stop planner for our car (the strategist's, or the driver's own).
+func _open_planner() -> void:
+	var car := session.team_car if session.team_car >= 0 else session.local_car
+	if car >= 0 and session.sim.pits.enabled:
+		planner.open_for(car)
 
 
 func _on_returned_to_lobby() -> void:
@@ -569,7 +590,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event.is_action_pressed("restart_race") and session.mode == RaceSession.Mode.OFFLINE \
 			and not session.start_data.has("season"):  # no do-overs in a championship
 		_restart()
-	elif event.is_action_pressed("back_to_menu") and not _results_shown and not pit_wall.visible \
+	elif event.is_action_pressed("back_to_menu") and not _results_shown and not pit_wall.visible and not planner.visible \
 			and not driver_radio.visible and not crew.radio.visible:
 		_back_to_menu()
 
