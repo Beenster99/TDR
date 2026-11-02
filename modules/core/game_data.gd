@@ -180,10 +180,20 @@ func _register_defaults() -> void:
 		"A gentle pull on the steering that helps you stay inside the track limits and on the driving line.")
 	register_setting("gameplay", "aid_racing_line", "Racing line", [[true, "On"], [false, "Off"]], true,
 		"Shows the ideal line through each corner.")
+	register_setting("gameplay", "pit_drive_in", "Pit stops", [["self", "Drive in yourself"], ["auto", "Automatic"]], "self",
+		"Drive in yourself: when you've called a stop, follow the pit line, be down to the speed limit by the limit line and stop on your box (overshoot and it costs time). Automatic: the car drives itself in and out.")
+	register_setting("gameplay", "aid_pit_guide", "Pit lane guide", [[true, "On"], [false, "Off"]], true,
+		"When you drive in yourself: a line into the pit lane and onto your box, red where you must brake for the speed limit or to stop, plus distance and brake cues on screen.")
+	register_setting("gameplay", "pit_menu", "Pit call menu", [[true, "On"], [false, "Off"]], true,
+		"Single player: calling a stop opens a quick menu (tyres, which tyres, front splitter, rear wing, fuel) and pauses the race while it's open.")
 	register_setting("gameplay", "manual_gears", "Gears", [[false, "Automatic"], [true, "Manual"]], false,
 		"Manual: change gear yourself with the shift buttons.")
 	register_setting("gameplay", "hud_timing_tower", "Timing tower", [[true, "Show"], [false, "Hide"]], true,
 		"The column on the left of the race screen: position, make, driver, last lap and gap to the car ahead.")
+	register_setting("gameplay", "highlight_me", "Highlight my car", [[true, "On"], [false, "Off"]], true,
+		"A soft gold outline on the ground round your own car (or your team's car on the pit wall), so you can find it at any zoom.")
+	register_setting("gameplay", "highlight_players", "Highlight other players", [[true, "On"], [false, "Off"]], true,
+		"Online: a faint blue outline round cars driven by other people, so you can tell them from the AI.")
 	register_setting("gameplay", "units", "Units of measure", [["metric", "Metric (km/h, °C, km, litres)"],
 		["uk", "UK (mph, °C, miles, litres)"], ["imperial", "US (mph, °F, miles, gallons)"]], "metric",
 		"How speeds, temperatures, distances and fuel are shown.")
@@ -216,6 +226,9 @@ func _register_defaults() -> void:
 	register_number("sound", "vol_engine", "Engines", 0, 100, 5, 100, "%")
 	register_number("sound", "vol_effects", "Tyres, crashes and effects", 0, 100, 5, 100, "%")
 	register_number("sound", "vol_ui", "Menus", 0, 100, 5, 80, "%")
+	register_number("sound", "vol_radio", "Team radio", 0, 100, 5, 90, "%")
+	register_setting("sound", "radio_voice", "Radio read-out", [[true, "On"], [false, "Off"]], true,
+		"Reads pit wall messages to the driver out loud, with radio crackle (uses the computer's own voice).")
 	register_setting("sound", "splash_sound", "Intro sound", [[true, "On"], [false, "Off"]], true)
 	# Debug
 	register_setting("debug", "show_fps", "Frame rate counter", [[false, "Off"], [true, "On"]], false)

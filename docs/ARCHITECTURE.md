@@ -196,14 +196,33 @@ request:
   them the same way, and it alone decides the race: countdown, laps,
   sectors, positions, finish, DNFs. It sends that race state 10 times a
   second, and events (laps, finish, chequered flag) reliably.
-- **Remote cars** are drawn from a `NetTimeline`: the sender stamps each
-  state with its physics clock, and receivers show the car 100 ms in the
-  past, blending between the two states either side (up to 250 ms of
-  extrapolation if packets stop). These cars are `external` in the local
-  `RaceSim`. Physics skips them, the track position is refreshed from their
-  streamed position (that's how the host times them), and contacts push only
-  the locally simulated car. The other owner applies the matching push on
-  their side.
+- **One clock for everyone:** clients ping the host twice a second
+  (`NetClock`, NTP-style: the quickest recent pings give the host's clock).
+  Every car state is stamped with the **host's** race clock.
+- **Remote cars** come from a `NetTimeline`. Once the clocks are synced they
+  are placed **in the present**: the newest state is carried forward over
+  the time it took to arrive (speed, turn rate, braking), and when a fresher
+  state shows the guess was off, the difference is eased out over a few
+  frames (`SMOOTH_RATE`). So each machine has every car where it really is
+  now, and a contact on one screen is a contact on the others. (Until v0.7
+  remote cars were shown 100 ms plus the ping in the past, 8-15 m behind at
+  racing speed, so a player could hit a car where it *had been*: the
+  "phantom impacts".) Before the clocks sync, the old delayed blend is used.
+  These cars are `external` in the local `RaceSim`. Physics skips them, the
+  track position is refreshed from their streamed position (that's how the
+  host times them), and contacts push only the locally simulated car. The
+  other owner applies the matching push on their side.
+- **Hit boxes:** each car is its real footprint from above, a box its length
+  and width with 0.35 m rounded corners (`RaceSim.body_contact`), centred
+  on the middle of the bodywork (`CarDefinition.body_offset`, measured from
+  the 3D model: mid-engined cars' bodies sit ~0.25 m ahead of their centre
+  of gravity). `tests/hitbox_probe.gd` checks the models against the data.
+- **Highlights:** your own car (or your team's car on the pit wall) has a
+  soft gold outline on the ground, other people's cars a fainter blue one,
+  thicker when zoomed out (`CarView.set_highlight`, Settings > Gameplay).
+- **Same paint everywhere:** the field's liveries are worked out from the
+  start data only (`WorldView.field_liveries`), never from which car is this
+  machine's, so host and guests see the same colours.
 - **Trust:** like Torque Shed, players are trusted with their own car. A car
   state is only accepted from the peer that owns that car. A modified game
   could still cheat; wave 2 adds host-side sanity checks on speed and
@@ -214,6 +233,7 @@ request:
 | each player → everyone (host relays) | states of the cars they simulate, 30 Hz | unreliable ordered, ch 1 |
 | host → clients | race state: phase, timing, entries, car owners, 10 Hz | unreliable ordered, ch 2 |
 | host → clients | race events | reliable, ch 3 |
+| client ↔ host | clock pings and replies, 2 Hz | unreliable, ch 6 |
 
 **Lobby:** clients register with a protocol version, name and car. The host
 owns the `RaceSettings` and broadcasts the lobby on every change. A

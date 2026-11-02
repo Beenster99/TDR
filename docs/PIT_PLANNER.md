@@ -1,0 +1,86 @@
+# Pit stop planner
+
+The strategist plans the whole next stop on one screen, then sends it. Until
+Send, nothing reaches the car: the crew keeps its current plan and the driver
+hears nothing.
+
+## Opening it
+
+- Co-op pit wall (CrewConsole): the first row, **Plan the stop**, on both tabs.
+- Full pit wall (StrategistScreen, P): the **PLAN THE STOP** button on the
+  selected car panel, or Enter.
+- A driver can open it from the full pit wall to plan their own stop; then
+  the button says **SET MY STOP** and no radio message goes out.
+
+## The screen
+
+Left: the car seen from above, nose up, with its four tyres, the front
+splitter and the rear wing. Beside each tyre a card shows the tyre now (its
+compound, how much is left, temperature), what will be fitted (click to
+cycle Keep / the car's slick / Intermediate / Full wet, mixing allowed) and
+its cold pressure with − / +. Above and below the car: front and rear
+downforce with − / +. Anything that will change is drawn in yellow.
+
+Right: picked tyres (All, Fronts, Rears, Left, Right, then a compound or a
+pressure step for all of them), fuel, repairs, driver change (who takes
+over), the box call (box this lap, or keep the plan for later), the work
+queue in words with the stationary time and the total time lost, then
+**Start again** and **SEND TO DRIVER**.
+
+Pressures and downforce can only change when the host allows car setups
+(race settings, Car setups: Free). Road cars have fixed wings.
+
+## Mouse and keyboard
+
+| Do | Mouse | Key |
+|---|---|---|
+| Pick a tyre | click it (Shift or Ctrl click adds) | 1-4 (Shift adds), A all |
+| Compound for picked tyres | click a compound button | Q keep, W slick, E inter, R wet |
+| Pressure for picked tyres | − / + buttons | ↑ ↓ |
+| One tyre's pressure or compound | its card; wheel over the value | |
+| Front / rear downforce | − / + or wheel | Z X / C V |
+| Fuel | − / +, To end, None | F G |
+| Repairs, driver change, box | click | H, D, B |
+| Send | SEND TO DRIVER | Enter |
+| Start again from the car's plan | Start again | Backspace |
+| Close | ✕ | Esc |
+
+Right-click steps any value back. A controller still works: D-pad up/down
+pressure, left/right compound for the picked tyres, A sends, B closes.
+
+## What Send does
+
+1. `RaceSession.request_pit` with `wheel_tyres` (per tyre), `psi` (per tyre),
+   `setup` (wings), `fuel`, `repair` and `box`. The per-tyre plan is used at
+   the next stop and then cleared, so later stops go back to the plain tyre
+   call (HUD keys, AI, the pit crew tab).
+2. The driver change as a role swap that waits for the car in its box
+   (`request_role_swap`), or cancels one that was waiting.
+3. A team radio message `{kind: "radio", code: "pit_plan", text, lines}`.
+   The driver sees it as a box on the race screen, one job per line, and
+   hears it read out: the radio click and squelch, static under the
+   computer's own voice, then the squelch tail (audio `Sound.radio`). Every
+   pit wall call to the driver is read out the same way.
+
+The read-out uses the operating system's text-to-speech (Windows SAPI on
+Windows). Settings > Sound has **Team radio** (volume) and **Radio
+read-out** (on/off). With no voice installed only the crackle plays.
+
+## Mixed tyres in the physics
+
+`RaceSim.wheel_compounds[i]` holds the compound on each wheel; `compounds[i]`
+is the one on most wheels (what timing, the AI and the HUD show). Each tyre's
+grip, pressure, heat and wear come from its own compound, and each axle's
+slip curve is the average of its two tyres. Per-tyre pressures are kept as a
+trim on the setup's front/rear pressure (`pit["psi_trim"]`,
+`CarState.psi_trim`). Both travel in the pit state, so clients and a driver
+change (the car moving to another machine) keep them.
+
+## Tests
+
+- `tests/run_tests.gd` (pit tests) for the rules.
+- `godot --headless --path . res://tests/planner_check.tscn`: a real race,
+  you on the pit wall with your AI co-driver driving; plans a mixed-tyre stop
+  with pressures, downforce, fuel and a driver change, sends it and checks
+  the stop fitted it. With xvfb, `-- out.png` saves shots of the planner,
+  the console and the driver's screen.

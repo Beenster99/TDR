@@ -11,7 +11,9 @@ extends Node3D
 ##
 ## Effects: tyre smoke and rubber marks (SkidMarks), bits flying off cars in
 ## crashes and sparks (Debris, impact), and the pit crews who do each stop
-## (PitCrews, add_pit_crew / set_pit_stop).
+## (PitCrews, add_pit_crew / set_pit_stop). The marshals' crane trucks and
+## tractors that take retired cars away (RecoveryVehicles,
+## set_recovery_vehicles).
 
 var track: TrackData
 var env: SimEnvironment
@@ -24,6 +26,8 @@ var cars: Array[CarView] = []
 var safety_car: CarView           ## made on first use
 var driving_line: DrivingLineView ## the driving line aid (add_driving_aids)
 var brake_boards: BrakeBoards
+var recovery: RecoveryVehicles   ## made on first use
+var pit_guide: PitGuideView      ## the pit guide for a driver driving in themselves (add_pit_guide)
 var _sc_state: CarState
 var camera: Camera3D
 var sun: DirectionalLight3D
@@ -82,6 +86,21 @@ func add_driving_aids(line: DrivingLine, show_line: bool, show_brake: bool) -> v
 	driving_line.setup(line, track_view, show_line, show_brake)
 
 
+## The pit guide line, limit lines and box marks for the player's car
+## (g = PitRules.guide_line). Call once after setup; update_pit_guide shows it.
+func add_pit_guide(g: Dictionary) -> void:
+	pit_guide = PitGuideView.new()
+	pit_guide.name = "PitGuide"
+	add_child(pit_guide)
+	pit_guide.setup(g, track_view)
+
+
+## Every frame (see PitGuideView.update).
+func update_pit_guide(progress: float, speed: float, stopping: bool, on_marks: bool, delta: float) -> void:
+	if pit_guide:
+		pit_guide.update(progress, speed, stopping, on_marks, delta)
+
+
 ## Every frame: the player's car for the driving line colours.
 func update_driving_line(pos: Vector2, speed: float) -> void:
 	if driving_line:
@@ -133,6 +152,22 @@ func set_safety_car(p_visible: bool, pos: Vector2, p_heading: float, speed: floa
 	safety_car.set_light_bar(lights)
 
 
+## The marshals' recovery vehicles (crane trucks and tractors). views: one
+## Dictionary per vehicle, from RaceControl.recovery_vehicles(). Call every
+## frame; vehicles that are no longer listed go away.
+func set_recovery_vehicles(views: Array) -> void:
+	if recovery == null:
+		if views.is_empty():
+			return
+		recovery = RecoveryVehicles.new()
+		recovery.name = "RecoveryVehicles"
+		recovery.ground = track_view.surface_height
+		recovery.ground_normal = track_view.surface_normal
+		recovery.terrain = track_view.terrain_mesh_height
+		add_child(recovery)
+	recovery.set_vehicles(views)
+
+
 ## Car i's team crew at pit box `box` (the race's box for that car), in the
 ## car's colours. Call once per car after add_car, then fill_pit_lane.
 func add_pit_crew(i: int, box: int) -> void:
@@ -173,6 +208,32 @@ func impact(pos: Vector2, vel: Vector2, strength: float, sparks := true) -> void
 		debris.burst(p, v, clampi(int(strength * 6.0), 1, 8), Color(0.08, 0.08, 0.09), clampf(strength, 0.3, 1.2))
 	elif sparks:
 		debris.sparks(p, v, strength)
+
+
+## Every car's paint for a race: car_ids[i], the paint each car's player chose
+## (own[i], {} = the model's livery) and whether a person races it
+## (players[i]). Depends only on these, so every machine in an online race
+## paints the field the same. A player's own scheme wins; when a model is in
+## the field more than once, players' cars keep the model's livery first and
+## the others get their own colour schemes (livery_variant).
+static func field_liveries(car_ids: Array, own: Array, players: Array) -> Array:
+	var out := []
+	out.resize(car_ids.size())
+	var order := []
+	for pass_players in [true, false]:
+		for i in car_ids.size():
+			if bool(players[i]) == pass_players:
+				order.append(i)
+	var seen := {}
+	for i in order:
+		if own[i] is Dictionary and not (own[i] as Dictionary).is_empty():
+			out[i] = own[i]
+			continue
+		var id := str(car_ids[i])
+		var k: int = seen.get(id, 0)
+		seen[id] = k + 1
+		out[i] = livery_variant(k, id)
+	return out
 
 
 ## A different colour scheme for the k-th car of the same model in a field,
@@ -227,6 +288,10 @@ func set_camera(centre: Vector2, zoom: float, rotation_rad := 0.0) -> void:
 		sun.directional_shadow_max_distance = clampf(_cam_dist * 2.2, 150.0, 12000.0)
 	if pit_crews:
 		pit_crews.set_camera(centre, _cam_dist)
+	var hk := _cam_dist / 60.0
+	for v in cars:
+		if v.highlight != CarView.Highlight.NONE:
+			v.set_highlight_zoom(hk)
 
 
 func _process(_delta: float) -> void:

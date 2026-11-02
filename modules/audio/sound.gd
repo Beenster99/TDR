@@ -7,11 +7,12 @@ extends Node
 const POOL := 6
 var _players: Array[AudioStreamPlayer] = []
 var _next := 0
+var _radio: RadioVoice
 
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
-	for bus in ["Effects", "Engine", "UI"]:
+	for bus in ["Effects", "Engine", "UI", "Radio"]:
 		if AudioServer.get_bus_index(bus) == -1:
 			AudioServer.add_bus()
 			var idx := AudioServer.bus_count - 1
@@ -28,6 +29,8 @@ func _ready() -> void:
 		p.bus = "UI"
 		add_child(p)
 		_players.append(p)
+	_radio = RadioVoice.new()
+	add_child(_radio)
 
 
 ## Plays a short sound by SoundBank name, e.g. "ui_move", "ui_select", "beep".
@@ -47,6 +50,25 @@ func ui(name: String, volume_db := 0.0, pitch := 1.0) -> void:
 ## modules/audio/samples/, else made in code). Plays on the UI bus.
 func passby(volume_db := 0.0) -> void:
 	ui("gt3_passby", volume_db)
+
+
+## Reads a team radio message out loud over the radio: the click and squelch,
+## static under the computer's voice, then the squelch tail. Queues behind a
+## message still being read. With no voice on the machine (or the read-out
+## off in Settings > Sound) only the crackle plays.
+func radio(text: String) -> void:
+	if _radio:
+		_radio.say(text)
+
+
+func radio_stop() -> void:
+	if _radio:
+		_radio.stop()
+
+
+## True when this machine has a voice to read radio messages out with.
+func radio_can_speak() -> bool:
+	return _radio != null and _radio.can_speak()
 
 
 ## Gives every button under a node click and focus sounds (menus, results).

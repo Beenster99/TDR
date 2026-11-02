@@ -17,6 +17,9 @@ var cg_height: float = 0.45
 var track_width: float = 1.6
 var length: float = 4.5
 var width: float = 1.9
+## How far the middle of the bodywork sits ahead of the centre of gravity (m):
+## the car's hit box is centred there ("body_offset_m", measured from the 3D model).
+var body_offset: float = 0.0
 var inertia: float = 2000.0
 var front_grip: float = 1.0          ## tyre size / setup grip multipliers
 var rear_grip: float = 1.1
@@ -89,6 +92,7 @@ static func from_dict(d: Dictionary) -> CarDefinition:
 	c.track_width = d.get("track_width_m", c.track_width)
 	c.length = d.get("length_m", c.length)
 	c.width = d.get("width_m", c.width)
+	c.body_offset = float(d.get("body_offset_m", c.body_offset))
 	var b := c.wheelbase - c.cg_to_front
 	c.inertia = float(d.get("inertia_factor", 1.0)) * c.mass * c.cg_to_front * b * 1.1
 	var ch: Dictionary = d.get("chassis", {})

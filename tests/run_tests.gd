@@ -35,6 +35,7 @@ func _init() -> void:
 	test_barriers()
 	test_pit_rules()
 	test_pit_setup_changes()
+	test_pit_self_drive()
 	test_car_setups()
 	test_upgrades()
 	var replay := test_ai_race_completes()
@@ -44,21 +45,26 @@ func _init() -> void:
 	test_weather_forecast()
 	test_race_control_rules()
 	test_safety_car_race()
+	test_car_recovery()
+	test_gravel_escape()
 	test_safety_car_off()
 	test_points_systems()
 	test_seasons()
 	test_coop_roles()
 	test_tyre_choice_and_line_ups()
+	test_mixed_tyres_per_wheel()
 	test_race_start()
 	test_driving_aids()
 	test_active_pad()
 	test_hud_timing()
+	test_hud_layout()
 	test_graphics_effects()
 	test_pit_lane_blend()
 	test_settings_and_units()
 	test_rebinding()
 	test_grid_limits()
 	test_garage_saves()
+	test_online_contacts()
 	print("\n%s (%d failures, %.1fs)" % ["PASS" if failures == 0 else "FAIL", failures, (Time.get_ticks_msec() - t0) / 1000.0])
 	quit(1 if failures > 0 else 0)
 
@@ -804,6 +810,219 @@ func test_pit_rules() -> void:
 	check(e.pit["compound"] == "intermediate" and e.pit["plan"] is Dictionary, "pit state survives the network round trip")
 
 
+## A driver driving their own pit stop (Settings > Gameplay > Pit stops):
+## the guide line, the limit line, stopping on the box, overshooting it,
+## missing it, and handing the stop back to the guide. Driven by a simple
+## "player" that follows the guide line and its speeds.
+func test_pit_self_drive() -> void:
+	print("pit stops driven by the driver")
+	var d := _data()
+	var st := RaceSettings.new()
+	st.laps = 10
+	st.ai_count = 2
+	st.car_class = "GT3"
+	var made: Dictionary = _race(st, d)
+	var sim: RaceSim = made["sim"]
+	var pits := sim.pits
+	var t := sim.track
+	var i := 0
+	var g := pits.guide_line(i)
+	check(not g.is_empty() and (g["points"] as PackedVector2Array).size() == (g["speed"] as PackedFloat64Array).size(),
+		"guide line built (%.0f m)" % float(g.get("length", 0.0)))
+	var sp: PackedFloat64Array = g["speed"]
+	var ds: PackedFloat64Array = g["dist"]
+	var zone_ok := true
+	var box_v := INF
+	var lead_v := 0.0
+	for k in sp.size():
+		if ds[k] >= float(g["limit_start"]) and ds[k] <= float(g["limit_end"]):
+			zone_ok = zone_ok and sp[k] <= t.pit_speed_limit
+		if absf(ds[k] - float(g["box_d"])) < 3.0:
+			box_v = minf(box_v, sp[k])
+		if k == 0:
+			lead_v = sp[k]
+	check(zone_ok, "guide speeds stay under the limit in the speed-limit zone")
+	check(box_v < 2.5, "guide speed comes down to a stop on the box (%.1f m/s)" % box_v)
+	check(lead_v > 2.0 * t.pit_speed_limit, "guide starts at racing speed on the track (%.0f m/s)" % lead_v)
+
+	# The "player": pure pursuit on the guide line, speeds from the guide.
+	var pts: PackedVector2Array = g["points"]
+	var drive := func(stop_on_box: bool, overshoot_m: float, ignore_limit: bool) -> CarInput:
+		var c := sim.cars[i]
+		var prog := pits.guide_progress(i)
+		var inp := CarInput.new()
+		var k := 0
+		var best := INF
+		for j in pts.size():
+			var dd := c.pos.distance_squared_to(pts[j])
+			if dd < best:
+				best = dd
+				k = j
+		var aim_d := ds[k] + clampf(c.speed() * 0.5, 6.0, 25.0)
+		var a := k
+		while a < pts.size() - 1 and ds[a] < aim_d:
+			a += 1
+		var aim := pts[a]
+		var ph := pits.phase(i)
+		if stop_on_box and ph == PitRules.PHASE_LIMIT:
+			var box: Dictionary = t.pit_box(pits.box_index(i))
+			var into := smoothstep(float(g["box_d"]) - 45.0, float(g["box_d"]) - 20.0, ds[k])
+			var bf := Vector2.from_angle(box["heading"])
+			var along := float(pits.box_marks(i, c.pos)["along"])
+			aim = aim.lerp(box["pos"] + bf * (minf(along, overshoot_m) + maxf(9.0, c.speed() * 1.3)), into)
+		var rel := aim - c.pos
+		var alpha := atan2(rel.dot(c.right()), rel.dot(c.forward()))
+		inp.steer = clampf(atan(2.0 * sim.defs[i].wheelbase * sin(alpha) / maxf(rel.length(), 1.0)) / sim.defs[i].max_steer, -1, 1)
+		var target := sp[k]
+		if ph == PitRules.PHASE_LIMIT and stop_on_box:
+			var m := pits.box_marks(i, c.pos)
+			target = minf(t.pit_speed_limit - 0.5, sqrt(2.0 * 3.0 * maxf(overshoot_m - float(m["along"]), 0.0)))
+		elif ph in [PitRules.PHASE_LIMIT, PitRules.PHASE_LEAVE, PitRules.PHASE_EXIT]:
+			target = t.pit_speed_limit - 0.5 if ph != PitRules.PHASE_EXIT else 30.0
+		if ignore_limit:
+			target = maxf(target, 30.0)
+		var dv := target - c.speed()
+		if dv > 0.0:
+			inp.throttle = clampf(dv * 0.3, 0.0, 1.0)
+		elif dv < -0.5:
+			inp.brake = clampf(-dv * 0.3, 0.0, 1.0)
+		if target < 0.3 and c.speed() < 2.0:
+			inp.brake = 1.0
+		return inp.quantized()
+	var place := func() -> void:
+		var c := sim.cars[i]
+		var s0 := pits.commit_s - 250.0
+		c.pos = t.position_at(fposmod(s0, t.length), 0.0)
+		c.heading = t.seg_dir[t.index_at(fposmod(s0, t.length))].angle()
+		c.vel = Vector2.from_angle(c.heading) * 45.0
+		c.yaw_rate = 0.0
+		var q := t.project(c.pos)
+		c.track_idx = q["idx"]
+		c.track_s = q["s"]
+		pits._prev_s[i] = c.track_s
+		var p: Dictionary = sim.entries[i].pit
+		p["phase"] = PitRules.PHASE_NONE
+		p["auto"] = false
+		p["limiter"] = false
+		p.erase("missed_box")
+	var run := func(stop_on_box: bool, overshoot_m: float, ignore_limit: bool, secs: float) -> Array:
+		var seen := []
+		var pens := []
+		for n in int(secs * 60):
+			var ins := []
+			for k in sim.car_count():
+				ins.append(CarInput.neutral())
+			ins[i] = drive.call(stop_on_box, overshoot_m, ignore_limit)
+			sim.step(ins)
+			var ph := pits.phase(i)
+			if seen.is_empty() or seen[-1] != ph:
+				seen.append(ph)
+			for ev in sim.events:
+				if ev["type"] == "penalty" and int(ev["car"]) == i:
+					pens.append(ev)
+			if ph == PitRules.PHASE_NONE and seen.size() > 2:
+				break
+
+		return [seen, pens]
+	sim.phase = RaceSim.Phase.RACING
+	pits.set_self_drive(i, true)
+
+	# 1. A clean stop: down to the limit at the line, stopped on the marks.
+	place.call()
+	pits.set_plan(i, {"box": true, "tyre": PitRules.TYRE_DRY, "fuel": 0.0})
+	var info := pits.guide_info(i)
+	check(str(info["stage"]) == "approach" and float(info["to_limit"]) > 200.0, "box call: the HUD counts down to the limit line (%.0f m)" % float(info.get("to_limit", -1)))
+	var out: Array = run.call(true, 0.0, false, 90.0)
+	var seen: Array = out[0]
+	check(not pits.controls(i) or pits.phase(i) == PitRules.PHASE_NONE, "the driver keeps the wheel on the way in")
+	check(seen.has(PitRules.PHASE_APPROACH) and seen.has(PitRules.PHASE_SERVICE) and seen.has(PitRules.PHASE_LEAVE),
+		"driven in by the driver, stopped in the box, drove out (%s)" % str(seen))
+	check((out[1] as Array).is_empty(), "no speeding penalty at the limit line (%s)" % str(out[1]))
+	var last: Dictionary = sim.entries[i].pit["last_stop"]
+	check(int(sim.entries[i].pit["stops"]) == 1 and not sim.entries[i].pit["box"], "the stop counts (%d)" % int(sim.entries[i].pit["stops"]))
+	check(float(last.get("stationary_s", 99.0)) < PitRules.STOP_BASE_S + PitRules.TYRE_CHANGE_S + 0.5,
+		"on the marks: no time lost (%.1f s)" % float(last.get("stationary_s", -1)))
+
+	# 2. Too fast at the limit line: a speeding penalty.
+	place.call()
+	pits.set_plan(i, {"box": true, "tyre": PitRules.TYRE_KEEP})
+	out = run.call(true, 0.0, true, 90.0)
+	check((out[1] as Array).size() >= 1, "too fast at the limit line: a speeding penalty")
+
+	# 3. Overshooting the box a little costs time; a lot misses the box.
+	place.call()
+	pits.set_plan(i, {"box": true, "tyre": PitRules.TYRE_KEEP, "fuel": 0.0})
+	var stops := int(sim.entries[i].pit["stops"])
+	out = run.call(true, 6.0, false, 90.0)
+	last = sim.entries[i].pit["last_stop"]
+	check(int(sim.entries[i].pit["stops"]) == stops + 1 and float(last.get("stationary_s", 0.0)) > PitRules.STOP_BASE_S + PitRules.BOX_OVERSHOOT_S,
+		"overshooting the marks by a few metres costs time (%.1f s)" % float(last.get("stationary_s", -1)))
+	place.call()
+	pits.set_plan(i, {"box": true})
+	stops = int(sim.entries[i].pit["stops"])
+	out = run.call(false, 0.0, false, 90.0)
+	check(int(sim.entries[i].pit["stops"]) == stops and sim.entries[i].pit["box"] and (out[0] as Array).has(PitRules.PHASE_LIMIT),
+		"driving past the box: no stop, the call stays for next lap (%s)" % str(out[0]))
+
+	# 4. Handing the car to the guide mid-stop (an AI co-driver takes over).
+	place.call()
+	pits.set_plan(i, {"box": true})
+	for n in 60 * 30:
+		var ins := [CarInput.neutral(), CarInput.neutral(), CarInput.neutral()]
+		ins[i] = drive.call(true, 0.0, false)
+		sim.step(ins)
+		if pits.phase(i) == PitRules.PHASE_LIMIT:
+			break
+	pits.set_self_drive(i, false)
+	check(pits.phase(i) == PitRules.PHASE_LIMIT and pits.controls(i), "self drive off in the lane: the guide takes the car to its box")
+	# Automatic drivers are untouched: a box call is driven in from the commit point.
+	pits.set_self_drive(1, false)
+	check(not pits.self_drives(1), "AI cars are never self-driven")
+
+	# The driver's pit call menu: tyres and wings into the plan.
+	var st2 := RaceSettings.new()
+	st2.laps = 10
+	st2.ai_count = 2
+	st2.car_class = "GT3"
+	st2.tuning_enabled = true
+	st2.fuel_enabled = true
+	var sim2: RaceSim = _race(st2, d)["sim"]
+	var car := -1
+	for k in sim2.car_count():
+		if CarSetup.adjustable(sim2.defs[k], "wing_rear"):
+			car = k
+			break
+	var menu := PitCallMenu.new()
+	menu.setup(sim2)
+	menu.open(car)
+	var ids := menu.rows.map(func(r): return r["id"])
+	check(ids.has("tyre") and ids.has("wheels") and ids.has("wing_front") and ids.has("wing_rear") and ids.has("fuel") and ids[-2] == "box",
+		"pit menu: tyres, which tyres, splitter, rear wing, fuel (%s)" % str(ids))
+	check(menu.changes()["setup"].is_empty(), "pit menu: wings untouched = no wing change")
+	var rw_row := ids.find("wing_rear")
+	var now_rw := float(sim2.pits.current_setup(car)["wing_rear"])
+	menu.step(rw_row, -1 if now_rw > 0.0 else 1)
+	menu.step(ids.find("tyre"), 1)
+	var ch := menu.changes()
+	check((ch["setup"] as Dictionary).has("wing_rear") and str(ch["tyre"]) != "auto", "pit menu: a new rear wing and tyre choice go into the plan (%s)" % str(ch))
+	var w := menu.preview()
+	check(float(w["setup_s"]) >= PitRules.WING_CHANGE_S, "pit menu: the stop time counts the wing change (%.1f s)" % float(w["total_s"]))
+	var got := []
+	menu.confirmed.connect(func(c): got.append(c))
+	menu.confirm()
+	check(got.size() == 1 and not menu.visible, "pit menu: confirming closes it and hands back the plan")
+	var road := RaceSettings.new()
+	road.ai_count = 1
+	road.car_class = "Road"
+	road.tuning_enabled = true
+	var sim3: RaceSim = _race(road, d)["sim"]
+	menu.sim = sim3
+	menu.open(0)
+	check(not menu.rows.map(func(r): return r["id"]).has("wing_rear") or CarSetup.adjustable(sim3.defs[0], "wing_rear"),
+		"pit menu: no wing lines for a car with fixed wings")
+	menu.free()
+
+
 ## Co-op pit crew: wing and tyre pressure changes made during a stop.
 func test_pit_setup_changes() -> void:
 	print("pit setup changes")
@@ -1199,6 +1418,166 @@ func test_safety_car_race() -> void:
 		_retire_like(late, k >= r["victim_tick"], r["victim"])
 		late.step(inputs[k])
 	check(late.state_hash() == r["end_hash"], "snapshot restore under the safety car matches the original race")
+
+
+## Recovery vehicles: a car that crashed into the wall is craned over it, a
+## car stopped anywhere else is towed out by a tractor, under the safety car,
+## which only goes in once the car is clear.
+func test_car_recovery() -> void:
+	print("car recovery")
+	var track := TrackCatalog.load_track("spielberg")
+	var s0 := 1200.0
+	var i0 := track.index_at(s0)
+	var wall_off := -(track.width_left[i0] + track.runoff - 1.0)
+	for spot in [["crane", wall_off], ["tractor", -(track.width_left[i0] + 12.0)], ["tractor", 1.0]]:
+		var off: float = spot[1]
+		var pos := track.position_at(s0, off)
+		var job := CarRecovery.plan(track, 3, pos, track.heading_at(s0) + 1.2, s0, off, 4.6)
+		var phases: Array = [job["phase"]]
+		var top := 0.0
+		var t := 0.0
+		var clear_at := INF
+		while not job["done"] and t < 200.0:
+			CarRecovery.step(job, 1.0 / 60.0)
+			t += 1.0 / 60.0
+			if phases[phases.size() - 1] != job["phase"]:
+				phases.append(job["phase"])
+			top = maxf(top, job["hoist"])
+			if clear_at == INF and CarRecovery.car_clear(job):
+				clear_at = t
+		var q := track.project(job["car_pos"], i0)
+		var bo := track.width_left[track.index_at(q["s"])] + track.runoff
+		var label := "%s for a car %.0f m off the centre line" % [spot[0], off]
+		check(job["kind"] == spot[0], "%s: right vehicle sent (%s)" % [label, job["kind"]])
+		var want: Array = ["drive_in", "reach", "lift", "swing", "lower", "drive_out", "done"] if spot[0] == "crane" \
+			else ["drive_in", "hook", "drive_out", "done"]
+		check(phases == want, "%s: %s" % [label, " > ".join(phases)])
+		check(t < 70.0 and clear_at < t + 0.01, "%s: car clear in %.0f s, done in %.0f s" % [label, clear_at, t])
+		check(absf(q["offset"]) > bo, "%s: car taken behind the barrier (%.0f m out, barrier at %.0f m)" % [label, absf(q["offset"]), bo])
+		if spot[0] == "crane":
+			check(top >= CarRecovery.LIFT_HEIGHT - 0.01, "crane lifts the car %.1f m, over the barrier" % top)
+	# In a race: a car crashes into the wall and retires.
+	var settings := RaceSettings.new()
+	settings.laps = 4
+	settings.ai_count = 7
+	settings.seed = 777
+	var race := _race(settings, _data())
+	var sim: RaceSim = race["sim"]
+	var ai: Dictionary = race["ai"]
+	var victim := -1
+	var ev := {}
+	var sc_reason := ""
+	var hoisted := 0.0
+	var moved := 0.0
+	var recovered_at := INF
+	var in_lap_at := INF
+	var start_pos := Vector2.ZERO
+	while sim.phase != RaceSim.Phase.FINISHED and sim.tick < 60 * 60 * 15:
+		var inputs := []
+		for i in sim.car_count():
+			inputs.append(ai[i].get_input(sim, i))
+		if victim < 0 and sim.phase == RaceSim.Phase.RACING and sim.race_time >= 40.0:
+			victim = sim.running_order[sim.car_count() / 2]
+			var c := sim.cars[victim]
+			var k := track.index_at(c.track_s)
+			# Into the wall on the outside, stopped and out of the race.
+			c.pos = track.position_at(c.track_s, -(track.width_left[k] + track.runoff - 1.0))
+			c.vel = Vector2.ZERO
+			c.track_idx = -1
+			sim.entries[victim].dnf = true
+			start_pos = c.pos
+		if victim >= 0 and not sim.race_control.out_of_play(victim):
+			inputs[victim] = CarInput.neutral()
+		sim.step(inputs)
+		for e in sim.events:
+			var key: String = e["type"] + ":" + str(e.get("state", e.get("flag", "")))
+			ev[key] = ev.get(key, 0) + 1
+			if key == "safety_car:sc" and sc_reason == "":
+				sc_reason = e["reason"]
+			if key == "flag:recovery":
+				ev["kind"] = e["kind"]
+			if key == "flag:recovered" and int(e["car"]) == victim:
+				recovered_at = sim.race_time
+			if key == "safety_car:in_this_lap" and in_lap_at == INF:
+				in_lap_at = sim.race_time
+		if victim >= 0:
+			var job := sim.race_control.recovery_for(victim)
+			if not job.is_empty():
+				hoisted = maxf(hoisted, job["hoist"])
+				check_views(sim)
+			moved = maxf(moved, sim.cars[victim].pos.distance_to(start_pos))
+	check(ev.get("kind", "") == "crane", "a crane is sent for the car in the wall")
+	check(sc_reason == "Recovery vehicle on track", "the safety car comes out for it (%s)" % sc_reason)
+	check(hoisted > 4.0 and moved > 20.0, "the crane lifts the car %.1f m and takes it away (%.0f m)" % [hoisted, moved])
+	check(recovered_at < INF and sim.race_control.recovered[victim] == 1, "car recovered at %.0f s" % recovered_at)
+	check(in_lap_at > recovered_at - 30.0, "safety car only comes in once the car is clear (in this lap at %.0f s)" % in_lap_at)
+	check(ev.has("safety_car:green") and sim.phase == RaceSim.Phase.FINISHED, "green flag again and the race finishes")
+	# Clients get the recovery vehicles with the race state.
+	var st := sim.race_control.to_dict()
+	check(st.has("recoveries") and st.has("carried"), "recovery vehicles go out with the race state")
+
+
+var _views_ok := true
+
+func check_views(sim: RaceSim) -> void:
+	for v in sim.race_control.recovery_vehicles():
+		if not (v.has("pos") and v.has("heading") and v.has("hoist") and v.has("reach")):
+			if _views_ok:
+				check(false, "recovery_vehicles() gives position, heading, hoist and reach")
+			_views_ok = false
+
+
+## Gravel: a car stopped in the middle of a gravel trap can drive out, but a
+## car running into one at speed still loses a lot.
+func test_gravel_escape() -> void:
+	print("gravel")
+	var cars := CarCatalog.load_all()
+	var tyres := TyreCatalog.load_all()
+	var track := TrackCatalog.load_track("spa")
+	var k := -1
+	for i in track.point_count():
+		if track.runoff_left[i] == TrackData.Surface.GRAVEL and track.runoff_left[(i + 6) % track.point_count()] == TrackData.Surface.GRAVEL \
+				and track.runoff_left[(i - 6 + track.point_count()) % track.point_count()] == TrackData.Surface.GRAVEL:
+			k = i
+			break
+	check(k >= 0, "Spa has a gravel trap")
+	if k < 0:
+		return
+	var s0 := track.cum_s[k]
+	var edge := track.width_left[k] + track.kerb_width
+	var d: CarDefinition = cars["bmw_m4_gt3"]
+	var tc: TyreCompound = tyres[d.tyre_compound_id]
+	var env := SimEnvironment.new()
+	env.bind_track(track)
+	var along := track.heading_at(s0)
+	var c := CarState.new()
+	c.pos = track.position_at(s0, -(edge + track.runoff * 0.5))
+	c.heading = along + PI * 0.25
+	c.tyre_temp = PackedFloat64Array([80.0, 80.0, 80.0, 80.0])
+	c.assist_tc = true
+	var t := 0.0
+	var out_at := INF
+	var ev := []
+	while t < 20.0:
+		var inp := CarInput.new()
+		inp.throttle = 1.0
+		CarPhysics.step(c, inp, d, tc, env, track, 1.0 / 240.0, 0.0, ev, 0)
+		t += 1.0 / 240.0
+		if c.surface == TrackData.Surface.TRACK or c.surface == TrackData.Surface.KERB:
+			out_at = t
+			break
+	check(out_at < 10.0, "a GT3 stopped in the middle of a gravel trap drives out in %.1f s" % out_at)
+	# Into the gravel at 40 m/s, off the throttle: still a big loss.
+	c = CarState.new()
+	c.pos = track.position_at(s0, -(edge + track.runoff * 0.5))
+	c.heading = along
+	c.vel = Vector2.from_angle(along) * 40.0
+	c.tyre_temp = PackedFloat64Array([80.0, 80.0, 80.0, 80.0])
+	t = 0.0
+	while t < 2.0:
+		CarPhysics.step(c, CarInput.new(), d, tc, env, track, 1.0 / 240.0, 0.0, ev, 0)
+		t += 1.0 / 240.0
+	check(c.speed() < 34.0, "running into gravel at 144 km/h: down to %.0f km/h after 2 s" % (c.speed() * 3.6))
 
 
 ## Replays the test's retirement (the stopped car is marked retired once still).
@@ -1896,6 +2275,56 @@ func test_rebinding() -> void:
 
 ## Pit stops that change only some tyres, and drivers sharing a car: AI
 ## line-ups that change at a stop, a solo player's AI co-driver.
+func test_mixed_tyres_per_wheel() -> void:
+	print("strategist plans: mixed tyres and per-tyre pressures")
+	var d := _data()
+	var st := RaceSettings.new()
+	st.laps = 6
+	st.ai_count = 2
+	st.tuning_enabled = true
+	var sim: RaceSim = _race(st, d)["sim"]
+	var pits := sim.pits
+	var dry := sim.dry_compound[0]
+	var p: Dictionary = sim.entries[0].pit
+	check(not sim.mixed_tyres(0) and (p["compounds"] as Array).size() == 4, "a car starts on one compound, listed per wheel")
+	var psi := pits.wheel_psi(0)
+	pits.set_plan(0, {"wheel_tyres": [PitRules.TYRE_INTER, "", PitRules.TYRE_INTER, "bogus"], "fuel": 0.0,
+		"psi": [float(psi[0]), float(psi[1]) + 1.5, float(psi[2]), float(psi[3]) - 0.5]})
+	check(p["plan"]["wheel_tyres"] == [PitRules.TYRE_INTER, "", PitRules.TYRE_INTER, ""], "unknown tyres in a per-wheel plan are ignored")
+	var w := pits.service_for(0, p["plan"])
+	check(w["wheels"] == [0, 2] and w["wheel_tyres"] == [PitRules.TYRE_INTER, "", PitRules.TYRE_INTER, ""],
+		"only the left tyres change, to inters (%s)" % str(w["wheel_tyres"]))
+	check(w["setup_s"] >= PitRules.PRESSURE_ONLY_S, "re-setting pressures on tyres that stay on takes time")
+	p["work"] = w
+	pits._finish_service(0)
+	var ids: Array = sim.wheel_compounds[0].map(func(t: TyreCompound) -> String: return t.id)
+	check(ids == [PitRules.TYRE_INTER, dry, PitRules.TYRE_INTER, dry] and sim.mixed_tyres(0), "the car runs mixed tyres (%s)" % str(ids))
+	check(p["compounds"] == ids and not p["plan"].has("wheel_tyres") and not p["plan"].has("psi"), "the pit state lists them; the plan is used once")
+	check(is_equal_approx(float(p["psi_trim"][1]), 1.5) and is_equal_approx(sim.cars[0].psi_trim[3], -0.5), "per-tyre pressure trims are set")
+	check(is_equal_approx(float(pits.wheel_psi(0)[1]), float(psi[1]) + 1.5), "and the car's tyre pressures follow")
+	# Physics: the wheels behave as their own compounds.
+	var c := sim.cars[0]
+	var env := sim.env
+	var events := []
+	for k in 60:
+		CarPhysics.step(c, CarInput.neutral(), sim.defs[0], sim.compounds[0], env, sim.track, 1.0 / 60.0, 1.0, events, 0, 1.0, sim.wheel_compounds[0])
+	var slick: TyreCompound = sim.wheel_compounds[0][1]
+	var plain := slick.hot_psi(sim.defs[0].pressure_delta_front, c.tyre_temp[1])
+	check(c.tyre_psi[1] - plain > 1.3, "per-tyre pressures reach the physics (%.1f psi hot vs %.1f untrimmed)" % [c.tyre_psi[1], plain])
+	# The pit state carries the wheels to another machine.
+	var st2 := RaceSettings.new()
+	st2.laps = 6
+	st2.ai_count = 2
+	st2.tuning_enabled = true
+	var other: RaceSim = _race(st2, d)["sim"]
+	other.pits.apply_remote(0, p.duplicate(true))
+	var ids2: Array = other.wheel_compounds[0].map(func(t: TyreCompound) -> String: return t.id)
+	check(ids2 == ids and is_equal_approx(other.cars[0].psi_trim[1], 1.5), "mixed tyres and pressures survive the network / a driver change")
+	# A plain tyre call afterwards changes all four (no leftover mix).
+	var w2 := pits.service_for(0, {"tyre": PitRules.TYRE_DRY, "wheels": "front", "fuel": 0.0, "repair": true})
+	check(w2["wheels"] == [0, 1, 2, 3], "a plain tyre call on a mixed car fits all four")
+
+
 func test_tyre_choice_and_line_ups() -> void:
 	print("tyre choice and driver line-ups")
 	check(PitRules.wheels_of("front") == [0, 1] and PitRules.wheels_of("rr") == [3] and PitRules.wheels_of("left") == [0, 2]
@@ -2346,6 +2775,42 @@ func test_driving_aids() -> void:
 	g.assist_track = 2
 	c2.deserialize(g.serialize())
 	check(c2.manual_gears and c2.assist_track == 2, "manual gearbox and track assist survive a snapshot")
+## HUD layout editor: items keep their spot on any screen shape, resizes are
+## clamped, hidden items come back, and the saved form round-trips.
+func test_hud_layout() -> void:
+	print("hud layout:")
+	var l := HudLayout.new()
+	check(l.is_on("map") and l.scale_of("map") == 1.0 and not l.has_pos("map"), "a new layout is as designed")
+	var vp := Vector2(1600, 900)
+	var sz := Vector2(250, 120)
+	var tl := Vector2(1340, 770)
+	var f := HudLayout.frac_of(tl, sz, vp)
+	check(HudLayout.place(f, sz, vp).distance_to(tl) < 0.01, "place() undoes frac_of()")
+	var wide := HudLayout.place(Vector2(1, 1), sz, Vector2(2560, 1080))
+	check(wide.is_equal_approx(Vector2(2310, 960)), "an item on the bottom-right edge stays there on an ultrawide screen")
+	l.set_pos("speed", f)
+	l.set_scale("speed", 5.0)
+	check(l.scale_of("speed") == HudLayout.MAX_SCALE, "size is capped")
+	l.set_scale("speed", 0.1)
+	check(l.scale_of("speed") == HudLayout.MIN_SCALE, "size has a floor")
+	l.set_on("hint", false)
+	check(not l.is_on("hint"), "items can be hidden")
+	var back := HudLayout.from_value(l.to_value())
+	check(not back.is_on("hint") and back.has_pos("speed") and back.scale_of("speed") == HudLayout.MIN_SCALE, "the saved layout round-trips")
+	back.reset("hint")
+	check(not back.is_on("hint"), "reset keeps an item hidden")
+	back.set_on("hint", true)
+	back.reset("speed")
+	check(back.to_value().is_empty(), "shown again and reset: nothing left to save")
+	check(HudLayout.from_value("junk").items.is_empty(), "a broken saved layout is ignored")
+	var ids := {}
+	for it in RaceHud.ITEMS:
+		ids[it[0]] = true
+	for id in RaceHud.CAR_ITEMS:
+		check(ids.has(id), "car item %s is a HUD item" % id)
+	check(InputMap.has_action("hud_edit") or InputSetup.KEYS.has("hud_edit"), "F2 opens the HUD layout editor")
+
+
 ## Race HUD: the timing tower fits big grids (top three plus a window round
 ## the player), every car gets a manufacturer badge, names stay short.
 func test_hud_timing() -> void:
@@ -2370,3 +2835,119 @@ func test_hud_timing() -> void:
 			break
 	check(RaceHud.short_name("Driver 727") == "Driver 727" and RaceHud.short_name("Alessandro Bellini-Rossi") == "A. Bellini-Ross", "driver names fit the tower")
 	check(RaceHud.fmt_sector(32.4567) == "32.457" and RaceHud.fmt_sector(0.0) == "--.---", "sector times format")
+
+
+## Online play: hit boxes match the bodywork, remote cars are placed where
+## they are now (clock sync + prediction), and every machine paints the
+## field the same.
+func test_online_contacts() -> void:
+	print("online contacts")
+	var cars := CarCatalog.load_all()
+	var mid: CarDefinition = cars["v8_mid_berlinetta"]
+	check(mid.body_offset > 0.15, "mid-engined car's body sits ahead of its CG (%.2f m)" % mid.body_offset)
+	# Nose to tail on a straight: the hit is when the bumpers meet, not before.
+	var rear_bumper := mid.body_offset - mid.length * 0.5
+	var at_gap := func(gap: float) -> Dictionary:
+		var x_b := rear_bumper - gap - (mid.body_offset + mid.length * 0.5)
+		return RaceSim.body_contact(Vector2.ZERO, 0.0, mid, Vector2(x_b, 0.0), 0.0, mid)
+	check(at_gap.call(0.12).is_empty(), "no contact with 12 cm between the bumpers")
+	var hit: Dictionary = at_gap.call(-0.05)
+	check(not hit.is_empty() and absf(hit["depth"] - 0.05) < 0.02 and hit["normal"].x < -0.9,
+		"contact when the bumpers overlap 5 cm (depth %.3f)" % (hit.get("depth", -1.0)))
+	# Side by side.
+	var side := func(gap: float) -> Dictionary:
+		return RaceSim.body_contact(Vector2.ZERO, 0.0, mid, Vector2(0.4, mid.width + gap), 0.0, mid)
+	check(side.call(0.1).is_empty(), "no contact with 10 cm between the doors")
+	check(not side.call(-0.04).is_empty(), "contact when the doors overlap")
+	# Deep overlap still pushes apart along the shortest way.
+	var deep := RaceSim.body_contact(Vector2.ZERO, 0.0, mid, Vector2(0.0, 1.2), 0.0, mid)
+	check(not deep.is_empty() and deep["normal"].y > 0.9 and deep["depth"] > 0.7, "deep overlap pushes sideways")
+	# Turned 90 degrees: T-bone, the nose of B into A's door.
+	var tb := RaceSim.body_contact(Vector2.ZERO, 0.0, mid, Vector2(mid.body_offset, mid.width * 0.5 + mid.length * 0.5 + mid.body_offset - 0.05), -PI * 0.5, mid)
+	check(not tb.is_empty() and tb["normal"].y > 0.9, "T-bone contact found")
+
+	# A remote car at 70 m/s round a long bend, sent at 30 Hz, arriving 90 ms
+	# (+/- 15 ms) later. Placed in the present it is within a car's width of
+	# where its driver has it; the old delayed view was many metres behind.
+	var path := []        # true state each 1/60 s, steering in and out
+	var c0 := CarState.new()
+	for tick in 601:
+		var t := tick / 60.0
+		var w := 0.12 + 0.1 * sin(t * 1.3)
+		var speed := 70.0 - 8.0 * sin(t * 0.7)
+		c0.ax = -8.0 * 0.7 * cos(t * 0.7)
+		var snap := CarState.new()
+		snap.pos = c0.pos
+		snap.heading = c0.heading
+		snap.vel = Vector2(cos(c0.heading), sin(c0.heading)) * speed
+		snap.yaw_rate = w
+		snap.ax = c0.ax
+		path.append(snap)
+		for sub in 10:
+			c0.heading += w / 600.0
+			c0.pos += Vector2(cos(c0.heading), sin(c0.heading)) * speed / 600.0
+	var truth := func(t: float) -> CarState:
+		return path[clampi(roundi(t * 60.0), 0, path.size() - 1)]
+	var live := NetTimeline.new()
+	var old := NetTimeline.new()
+	var pending := []
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 7
+	var err_now := 0.0
+	var err_old := 0.0
+	var shown := CarState.new()
+	var shown_old := CarState.new()
+	for tick in 600:
+		var now := tick / 60.0
+		if tick % 2 == 0:
+			var data := PackedFloat32Array()
+			truth.call(now).pack_net(data)
+			pending.append([now + 0.09 + rng.randf_range(-0.015, 0.015), now, data])
+		for p in pending.duplicate():
+			if p[0] <= now:
+				live.add(p[1], now, p[2])
+				old.add(p[1], now, p[2])
+				pending.erase(p)
+		live.apply(shown, now, true)
+		old.apply(shown_old, now, false)
+		if tick > 120:
+			var real: CarState = truth.call(now)
+			err_now = maxf(err_now, shown.pos.distance_to(real.pos))
+			err_old = maxf(err_old, shown_old.pos.distance_to(real.pos))
+	check(err_now < 0.6, "remote car placed in the present: worst error %.2f m" % err_now)
+	check(err_old > 8.0, "(the old delayed view was up to %.1f m behind)" % err_old)
+	# Braking hard: the guess doesn't run past where the car stops.
+	var b := CarState.new()
+	b.vel = Vector2(5.0, 0.0)
+	b.ax = -40.0
+	NetTimeline.predict(b, 0.3)
+	check(b.vel.x >= -0.01 and b.pos.x <= 1.6, "prediction brakes to a stop, not backwards (%.2f m/s)" % b.vel.x)
+
+	# Clock sync: the host's clock is 5 s ahead; uneven pings are ignored.
+	var nc := NetClock.new()
+	nc.add_pong(10.0, 15.05, 10.1)        # even 100 ms round trip
+	nc.add_pong(10.5, 15.70, 10.9)        # slow way back, 400 ms
+	check(nc.synced and absf(nc.offset - 5.0) < 0.03, "clock offset from the quickest pings (%.3f s)" % nc.offset)
+	nc.add_pong(20.0, 27.05, 20.1)        # host clock jumped 2 s (a hitch)
+	check(absf(nc.offset - 7.0) < 0.03, "clock offset follows a jump (%.3f s)" % nc.offset)
+	# A timeline whose sender switches to the host clock starts over.
+	var sw := NetTimeline.new()
+	var st := PackedFloat32Array()
+	CarState.new().pack_net(st)
+	sw.add(100.0, 3.0, st)
+	sw.add(3.05, 3.1, st)
+	check(sw.clocks_agree() and sw.received == 2, "timeline follows a sender that syncs its clock")
+
+	# Every machine paints the field the same, whichever car is its own.
+	var ids := ["bmw_m4_gt3", "bmw_m4_gt3", "bmw_m4_gt3", "bmw_m4_gt3"]
+	var liv := WorldView.field_liveries(ids, [{}, {}, {}, {}], [false, true, true, false])
+	check(liv[1].is_empty(), "first player in a model keeps its own livery (even behind an AI car)")
+	check(not liv[2].is_empty() and not liv[0].is_empty() and str(liv[0]) != str(liv[2]),
+		"same model again gets its own colours")
+	liv = WorldView.field_liveries(ids, [{}, {}, {"primary": "#123456"}, {}], [false, true, true, false])
+	check(liv[2]["primary"] == "#123456", "a player's own paint wins")
+	var p := RaceEntry.new()
+	p.crew = [{"peer_id": 5, "role": RaceEntry.ROLE_DRIVER}]
+	check(p.is_player_driving(), "a person at the wheel is highlighted")
+	p.crew = [{"peer_id": RaceEntry.AI_PEER, "role": RaceEntry.ROLE_DRIVER}]
+	check(not p.is_player_driving(), "an AI co-driver is not")

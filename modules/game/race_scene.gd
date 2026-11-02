@@ -15,7 +15,11 @@ var pit_wall: StrategistScreen
 ## Co-op: the pit crew / strategist console (players in a car's crew who are
 ## not driving it) and the driver's radio calls to them.
 var crew: CrewConsole
+## Single player: the quick menu for a pit call (tyres, wings, fuel).
+var pit_menu: PitCallMenu
 var driver_radio: TeamRadio
+## The strategist's pit stop planner (over the pit wall screens).
+var planner: PitPlanner
 var results: PanelContainer
 var rotate_camera := false
 var _results_shown := false
@@ -40,21 +44,29 @@ func _ready() -> void:
 	add_child(world)
 	world.setup(session.sim.track, session.sim.env)
 	_add_driving_aids()
-	var seen := {}
+	# Painted from the race's start data only, never from which car is this
+	# machine's, so the host and every guest see the same colours.
+	var ids := []
+	var own := []
+	var players := []
 	for i in session.sim.car_count():
-		var def: CarDefinition = session.sim.defs[i]
-		# Same model more than once: give the others their own colours.
-		var k: int = seen.get(def.id, 0)
-		seen[def.id] = k + 1
-		var livery := {} if i == session.local_car else WorldView.livery_variant(k, def.id)
-		if not session.sim.entries[i].livery.is_empty():   # the player's own paint scheme
-			livery = session.sim.entries[i].livery
-		car_views.append(world.add_car(def, session.sim.cars[i], session.sim.entries[i].driver_name,
-			i == session.local_car, i + 1, livery))
+		ids.append(session.sim.defs[i].id)
+		own.append(session.sim.entries[i].livery)
+		players.append(not session.sim.entries[i].is_ai)
+	var liveries := WorldView.field_liveries(ids, own, players)
+	for i in session.sim.car_count():
+		car_views.append(world.add_car(session.sim.defs[i], session.sim.cars[i], session.sim.entries[i].driver_name,
+			i == session.local_car, i + 1, liveries[i]))
+	_refresh_highlights()
+	session.crew_changed.connect(func(_car): _refresh_highlights())
+	GameData.pref_changed.connect(func(key, _v):
+		if str(key).begins_with("highlight_"):
+			_refresh_highlights())
 	if session.sim.pits.enabled:
 		for i in session.sim.car_count():
 			world.add_pit_crew(i, session.sim.pits.box_index(i))
 		world.fill_pit_lane()
+		_add_pit_guide()
 	race_audio = RaceAudio.new()
 	add_child(race_audio)
 	race_audio.setup(session.sim.cars, session.sim.defs, session.local_car)
@@ -78,14 +90,36 @@ func _ready() -> void:
 	layer.add_child(crew)
 	crew.setup(session)
 	crew.open_pit_wall.connect(pit_wall.open)
+	if DisplayServer.get_name() != "headless":
+		# The strategist's picture-in-picture onboard camera on any car.
+		var onboard := OnboardCamera.new()
+		onboard.name = "OnboardCamera"
+		add_child(onboard)
+		onboard.setup(world)
+		crew.onboard = onboard
+		pit_wall.onboard = onboard
 	crew.cover = pit_wall
 	crew.car_screen_pos = func(i: int) -> Vector2:
 		if not _camera_placed or world.camera == null or world.camera.is_position_behind(car_views[i].global_position):
 			return Vector2(-1000, -1000)
 		return world.camera.unproject_position(car_views[i].global_position)
+	pit_menu = PitCallMenu.new()
+	layer.add_child(pit_menu)
+	pit_menu.setup(session.sim)
+	pit_menu.confirmed.connect(_on_pit_menu_confirmed)
+	hud.pit_guide_on = bool(GameData.prefs.get("aid_pit_guide", true))
 	driver_radio = TeamRadio.new()
 	layer.add_child(driver_radio)
 	driver_radio.setup(session, session.local_car, true)
+	planner = PitPlanner.new()
+	layer.add_child(planner)
+	planner.setup(session)
+	crew.planner = planner
+	pit_wall.planner = planner
+	crew.open_planner.connect(_open_planner)
+	pit_wall.open_planner.connect(_open_planner)
+	if GameData.arg("planner"):
+		_open_planner.call_deferred()
 	_apply_role()
 	if GameData.arg("pit-wall"):
 		pit_wall.open()
@@ -126,6 +160,74 @@ func _add_driving_aids() -> void:
 	var line := DrivingLine.build(session.sim.track, session.sim.defs[i], session.sim.compounds[i])
 	world.add_driving_aids(line, bool(GameData.prefs.get("aid_racing_line", true)),
 		bool(GameData.prefs.get("aid_braking_zones", true)))
+
+
+## The pit guide (line into the pits, limit lines, box marks) for this
+## player's car, or the team's car they may take over in co-op. Shown while
+## they drive in themselves (Settings > Gameplay > Pit stops / Pit lane guide).
+func _add_pit_guide() -> void:
+	var i := session.local_car if session.local_car >= 0 else session.team_car
+	if i < 0 or DisplayServer.get_name() == "headless":
+		return
+	world.add_pit_guide(session.sim.pits.guide_line(i))
+
+
+## The car this machine has handed to its driver to drive into the pits
+## themselves (-1 none), and that car's pit phase last tick (for messages).
+var _self_drive_car := -1
+var _seen_pit := {}
+
+
+## Each tick: the player at the wheel drives their own pit stops (unless
+## they chose automatic, or the autodrive is driving for them); a car that's
+## no longer theirs (handed to an AI co-driver) goes back to the guide.
+func _update_self_drive() -> void:
+	var pits := session.sim.pits
+	if not pits.enabled:
+		return
+	var me := session.local_car
+	var want := me >= 0 and autodrive == null and str(GameData.prefs.get("pit_drive_in", "self")) == "self"
+	var car := me if want else -1
+	if car != _self_drive_car:
+		if _self_drive_car >= 0 and session.owns(_self_drive_car):
+			pits.set_self_drive(_self_drive_car, false)
+		_self_drive_car = car
+	if car >= 0:
+		pits.set_self_drive(car, true)
+		_pit_messages(car)
+
+
+## Messages for a driver driving their own stop: a missed pit entry, a box
+## overshot or missed.
+func _pit_messages(car: int) -> void:
+	var p: Dictionary = session.sim.entries[car].pit
+	var was: Dictionary = _seen_pit
+	var ph: String = p["phase"]
+	if not was.is_empty():
+		if was["phase"] == PitRules.PHASE_APPROACH and ph == PitRules.PHASE_NONE and p["box"]:
+			hud.flash("Missed the pit entry: box next lap", 3.0)
+		if was["phase"] == PitRules.PHASE_LIMIT and ph == PitRules.PHASE_SERVICE:
+			var extra := float((p.get("work", {}) as Dictionary).get("overshoot_s", 0.0))
+			hud.flash("Overshot your box: +%.1f s" % extra if extra > 0.0 else "On your marks", 2.0)
+		if bool(p.get("missed_box", false)) and not bool(was.get("missed", false)):
+			hud.flash("Missed your box: box again next lap", 3.0)
+	_seen_pit = {"phase": ph, "missed": bool(p.get("missed_box", false))}
+
+
+## Outlines on the ground: gold round this player's own car (or the team's
+## car on the pit wall), a fainter blue round cars other people are driving.
+## Settings > Gameplay turns each on or off.
+func _refresh_highlights() -> void:
+	var show_me := bool(GameData.prefs.get("highlight_me", true))
+	var show_others := bool(GameData.prefs.get("highlight_players", true))
+	var mine := session.local_car if session.local_car >= 0 else session.team_car
+	for i in car_views.size():
+		var kind := CarView.Highlight.NONE
+		if i == mine:
+			kind = CarView.Highlight.SELF if show_me else CarView.Highlight.NONE
+		elif session.mode != RaceSession.Mode.OFFLINE and show_others and session.sim.entries[i].is_player_driving():
+			kind = CarView.Highlight.PLAYER
+		car_views[i].set_highlight(kind)
 
 
 ## Testing: --autodrive lets the AI drive this player's car.
@@ -178,6 +280,7 @@ func _on_role_changed(role: String) -> void:
 	race_audio.setup(session.sim.cars, session.sim.defs, session.local_car)
 	race_audio.set_environment(session.sim.env)
 	_apply_role()
+	_refresh_highlights()
 	hud.flash("You're driving!" if session.local_car >= 0 else "You're on the pit wall: " + CrewConsole.role_title(session.local_role).to_lower(), 3.0)
 
 
@@ -185,11 +288,21 @@ func _on_team_radio(car: int, msg: Dictionary) -> void:
 	if car != session.team_car and car != session.local_car:
 		return
 	crew.add_radio(msg)
-	if session.local_car == car and str(msg.get("role", "")) != RaceEntry.ROLE_DRIVER:
-		hud.show_radio(msg)
 	var me := driver_radio.my_name() if session.local_car >= 0 else crew.radio.my_name()
-	if str(msg.get("from", "")) != me:
+	if session.local_car == car and str(msg.get("role", "")) != RaceEntry.ROLE_DRIVER:
+		# The driver: on screen, and read out over the radio.
+		var lines: Array = msg.get("lines", [])
+		hud.show_radio(msg, clampf(4.0 + lines.size() * 2.2, 5.0, 16.0))
+		Sound.radio(str(msg.get("text", "")))
+	elif str(msg.get("from", "")) != me:
 		Sound.ui("chime", -6.0)
+
+
+## The pit stop planner for our car (the strategist's, or the driver's own).
+func _open_planner() -> void:
+	var car := session.team_car if session.team_car >= 0 else session.local_car
+	if car >= 0 and session.sim.pits.enabled:
+		planner.open_for(car)
 
 
 func _on_returned_to_lobby() -> void:
@@ -210,6 +323,8 @@ func _default_offline_session() -> RaceSession:
 
 
 func _physics_process(delta: float) -> void:
+	if (hud.editing or pit_menu.visible) and session.mode == RaceSession.Mode.OFFLINE:
+		return   # offline races wait while the HUD layout is edited or a stop is planned
 	for _k in _film_extra_ticks():
 		_tick_once(delta)
 	_tick_once(delta)
@@ -222,12 +337,15 @@ func _tick_once(delta: float) -> void:
 		if autodrive:
 			inp = autodrive.get_input(session.sim, session.local_car)
 			_autodrive_throttle = inp.throttle
+		elif hud.editing:
+			inp = CarInput.neutral()   # online HUD editing: the keys move HUD items, not the car
 		else:
 			inp = local_input.read(delta, session.sim.cars[session.local_car].speed())
 	session.tick(inp)
 
 
 func _after_tick() -> void:
+	_update_self_drive()
 	# Testing: --request-swap asks for a driver change (this player takes the
 	# wheel at the next stop) once the race is green (and once they're on the
 	# pit wall, after --hand-over).
@@ -360,12 +478,19 @@ func _process(delta: float) -> void:
 	camera.position = follow.lerp(_track_rect.get_center(), centre_mix) - shift
 	camera.position_smoothing_enabled = centre_mix < 0.01
 	camera.zoom = Vector2(z, z)
-	for i in car_views.size():
-		car_views[i].visible = not session.sim.race_control.recovered[i]
-	_update_pit_crews()
 	var rc := session.sim.race_control
+	var recovering := rc.recovery_vehicles()
+	world.set_recovery_vehicles(recovering)
+	for i in car_views.size():
+		car_views[i].visible = not rc.recovered[i]
+		car_views[i].hoist = 0.0
+	for v in recovering:
+		if v["kind"] == "crane" and int(v["car"]) < car_views.size():
+			car_views[int(v["car"])].hoist = v["hoist"]
+	_update_pit_crews()
 	world.set_safety_car(rc.sc_visible, rc.sc_pos, rc.sc_heading, rc.sc_speed, rc.sc_lights)
 	world.update_driving_line(car.pos, speed)
+	_update_pit_guide(delta)
 	if world.driving_line:
 		world.driving_line.visible = world.driving_line.enabled and session.local_car >= 0
 	race_audio.update(delta, camera.position, local_input.last_throttle if autodrive == null else _autodrive_throttle, _zoom)
@@ -376,6 +501,24 @@ func _process(delta: float) -> void:
 	world.set_camera(camera.get_screen_center_position(), z, camera.rotation if rot else 0.0)
 	_camera_placed = true
 	_maybe_screenshot()
+
+
+## The pit guide line follows this player's car while they drive in themselves.
+func _update_pit_guide(delta: float) -> void:
+	var me := session.local_car
+	var pits := session.sim.pits
+	if world.pit_guide == null or me < 0 or not pits.self_drives(me) or not hud.pit_guide_on:
+		world.update_pit_guide(PitRules.GUIDE_NONE, 0.0, true, false, delta)
+		return
+	var p: Dictionary = session.sim.entries[me].pit
+	var ph: String = p["phase"]
+	var g := pits.guide_info(me)
+	var progress := pits.guide_progress(me)
+	if ph == PitRules.PHASE_EXIT or str(g["stage"]) == "":
+		progress = PitRules.GUIDE_NONE
+	var stopping: bool = ph in [PitRules.PHASE_NONE, PitRules.PHASE_APPROACH, PitRules.PHASE_ENTRY, PitRules.PHASE_LIMIT] \
+		and not bool(p.get("missed_box", false))
+	world.update_pit_guide(progress, session.sim.cars[me].speed(), stopping, bool(g.get("on_marks", false)), delta)
 
 
 var _pit_work := {}   ## car -> the stop's work while it's on its way in
@@ -431,7 +574,11 @@ func _maybe_screenshot() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event.is_action_pressed("strategy_screen") and not _results_shown:
+	if hud.editing or pit_menu.visible:
+		return
+	if event.is_action_pressed("hud_edit") and session.local_car >= 0 and not _results_shown and not pit_wall.visible:
+		hud.open_editor()
+	elif event.is_action_pressed("strategy_screen") and not _results_shown:
 		pit_wall.toggle()
 	elif event is InputEventMouseButton and event.pressed:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
@@ -449,7 +596,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event.is_action_pressed("restart_race") and session.mode == RaceSession.Mode.OFFLINE \
 			and not session.start_data.has("season"):  # no do-overs in a championship
 		_restart()
-	elif event.is_action_pressed("back_to_menu") and not _results_shown and not pit_wall.visible \
+	elif event.is_action_pressed("back_to_menu") and not _results_shown and not pit_wall.visible and not planner.visible \
 			and not driver_radio.visible and not crew.radio.visible:
 		_back_to_menu()
 
@@ -471,6 +618,9 @@ func _pit_input(event: InputEvent) -> bool:
 	var plan: Dictionary = p["plan"]
 	if event.is_action_pressed("pit_box"):
 		var box: bool = not p["box"]
+		if box and _pit_menu_wanted(me):
+			pit_menu.open(me)
+			return true
 		session.request_pit(me, {"box": box})
 		hud.flash("BOX THIS LAP" if box else "Pit call cancelled", 1.5)
 	elif event.is_action_pressed("pit_limiter"):
@@ -498,6 +648,23 @@ func _pit_input(event: InputEvent) -> bool:
 		return false
 	return true
 
+
+
+## Single player: calling a stop opens the pit call menu (Settings >
+## Gameplay > Pit call menu). Online races don't stop for it, so there the
+## keys and the pit wall do the job.
+func _pit_menu_wanted(me: int) -> bool:
+	return session.mode == RaceSession.Mode.OFFLINE and bool(GameData.prefs.get("pit_menu", true)) \
+		and session.sim.pits.phase(me) == PitRules.PHASE_NONE and session.sim.phase == RaceSim.Phase.RACING
+
+
+func _on_pit_menu_confirmed(changes: Dictionary) -> void:
+	var me := session.local_car
+	if me < 0:
+		return
+	changes["box"] = true
+	session.request_pit(me, changes)
+	hud.flash("BOX THIS LAP", 1.5)
 
 
 func _on_events(evs: Array) -> void:
@@ -586,6 +753,12 @@ func _on_race_finished() -> void:
 			heard.append("%s=%d" % [sim.entries[i].driver_name, session.timelines[i].received])
 		if not heard.is_empty():
 			print("[net] car states received: " + ", ".join(heard))
+			var present := 0
+			for i in session.timelines:
+				if session.timelines[i].clocks_agree():
+					present += 1
+			print("[net] clock synced %s (ping %d ms), %d of %d remote cars placed in the present" % [
+				session.clock_synced(), roundi(Net.clock.rtt * 1000.0), present, session.timelines.size()])
 	var final_session := not season_info.is_empty() and not quali \
 		and int(season_info.get("round", 0)) + 1 >= int(season_info.get("rounds", 0))
 	if GameData.arg("quit-after-race") or (GameData.arg("quit-after-season") and final_session):

@@ -6,8 +6,13 @@ extends Control
 ## forecast; the selected car's details and pit window; and the feed of
 ## other teams' radio and strategy calls.
 ##
-## Controller first: D-pad up/down picks a car, left/right filters the feed,
-## B (or P / Esc) closes. Drawn immediate-mode at 1600x900 and scaled by
+## Mouse and keyboard first: click a car in the timing to look at it, click
+## ◀ ▶ on the feed (or roll the wheel over it) to filter it, "Plan the stop"
+## opens the PitPlanner for our car; ↑ ↓ choose a car, ← → filter, Enter
+## plans the stop, P or Esc closes. A controller works too (D-pad, B).
+## Pit wall players (not driving) can watch the selected car's onboard
+## camera (OnboardCamera) above the feed: Y / C switches front, rear, off.
+## Drawn immediate-mode at 1600x900 and scaled by
 ## the window's stretch, so it stays sharp at 4K.
 
 const FILTERS := [["All", []], ["Radio", ["radio"]], ["Strategy", ["strategy"]], ["Pit", ["pit"]],
@@ -22,6 +27,8 @@ const DIM := Color(1, 1, 1, 0.55)
 const BG := Color(0.03, 0.05, 0.08, 0.98)
 const PANEL := Color(1, 1, 1, 0.05)
 
+signal open_planner
+
 var session: RaceSession
 var selected: int = -1          ## car index
 var filter: int = 0
@@ -30,6 +37,13 @@ var _sweep := 0.0
 var _note := ""                 ## a short line after a pit call (driver change)
 var _note_time := 0.0
 var _track_pts := PackedVector2Array()
+## The pit stop planner (PitPlanner): input goes there while it's open.
+var planner: Control
+var _hits: Array = []                ## [Rect2, action, arg] from the last draw
+var _hover := Vector2(-1, -1)
+## Onboard camera for the selected car (set by the race scene; null = none).
+var onboard: OnboardCamera
+var cam_mode := 0               ## 0 off, 1 front, 2 rear
 
 
 func setup(p_session: RaceSession) -> void:
@@ -68,7 +82,21 @@ func toggle() -> void:
 
 
 func _input(event: InputEvent) -> void:
-	if not visible or not event.is_pressed() or event.is_echo() and not (event.is_action("ui_up") or event.is_action("ui_down")):
+	if not visible or (planner and planner.visible):
+		return
+	if event is InputEventMouseMotion:
+		_hover = event.position
+		return
+	if event is InputEventMouseButton:
+		if event.pressed:
+			_click(event.position, event.button_index)
+		get_viewport().set_input_as_handled()
+		return
+	if not event.is_pressed() or event.is_echo() and not (event.is_action("ui_up") or event.is_action("ui_down")):
+		return
+	if event is InputEventKey and event.keycode in [KEY_ENTER, KEY_KP_ENTER] and _can_plan():
+		open_planner.emit()
+		get_viewport().set_input_as_handled()
 		return
 	var order := session.sim.running_order
 	var p := order.find(selected)
@@ -90,6 +118,8 @@ func _input(event: InputEvent) -> void:
 		var now := ch.find(str(session.sim.entries[me].pit["plan"].get("wheels", PitRules.WHEELS_ALL)))
 		var step := 1 if event.button_index == JOY_BUTTON_RIGHT_SHOULDER else -1
 		session.request_pit(me, {"wheels": ch[posmod(now + step, ch.size())]})
+	elif event.is_action_pressed("camera_toggle") and _cam_allowed():
+		cam_mode = (cam_mode + 1) % 3
 	elif event is InputEventJoypadButton and event.button_index == JOY_BUTTON_Y and session.local_car >= 0:
 		_note = RaceHud.toggle_driver_change(session, session.local_car)
 		_note_time = 3.0
@@ -98,13 +128,72 @@ func _input(event: InputEvent) -> void:
 	get_viewport().set_input_as_handled()
 
 
+## True when this player can plan our car's next stop here.
+func _can_plan() -> bool:
+	return _our_car() >= 0 and session.sim.pits.enabled
+
+
+func _click(pos: Vector2, button: int) -> void:
+	var dir := 0
+	match button:
+		MOUSE_BUTTON_LEFT: dir = 1
+		MOUSE_BUTTON_RIGHT: dir = -1
+		MOUSE_BUTTON_WHEEL_UP: dir = -2
+		MOUSE_BUTTON_WHEEL_DOWN: dir = 2
+	for k in range(_hits.size() - 1, -1, -1):
+		var h: Array = _hits[k]
+		if not (h[0] as Rect2).has_point(pos):
+			continue
+		match str(h[1]):
+			"car":
+				if absi(dir) == 1:
+					selected = int(h[2])
+			"filter":
+				filter = posmod(filter + (int(h[2]) if absi(dir) == 1 else signi(dir)), FILTERS.size())
+			"plan":
+				if dir == 1:
+					open_planner.emit()
+			"close":
+				if dir == 1:
+					close()
+		if absi(dir) == 1:
+			Sound.ui("ui_select", -6.0)
+		return
+
+
+func _button(r: Rect2, label: String, action: String, fs := 15, col := Color.WHITE) -> void:
+	var hover := r.has_point(_hover)
+	draw_rect(r, Color(1, 0.88, 0.35, 0.3 if hover else 0.18))
+	draw_rect(r, Color(1, 0.88, 0.35, 0.9 if hover else 0.6), false, 1.5)
+	_text(Vector2(r.position.x, r.position.y + r.size.y * 0.5 + fs * 0.36), label, fs, col, HORIZONTAL_ALIGNMENT_CENTER, r.size.x)
+	_hits.append([r, action, null])
+
+
 func _process(delta: float) -> void:
 	if not visible:
 		return
 	size = get_viewport_rect().size
 	_sweep = fmod(_sweep + delta * 1.6, TAU)
 	_note_time = maxf(_note_time - delta, 0.0)
+	if _pip_on():
+		OnboardPip.feed(self, onboard, _pip_rect(), selected, cam_mode == 2)
 	queue_redraw()
+
+
+## The onboard camera is for the pit wall (players not driving).
+func _cam_allowed() -> bool:
+	return onboard != null and session.local_car < 0
+
+
+func _pip_on() -> bool:
+	return _cam_allowed() and cam_mode > 0 and selected >= 0 and selected < session.sim.car_count()
+
+
+var _pip_at := Rect2()   ## where the right column leaves room for the picture
+
+
+func _pip_rect() -> Rect2:
+	return _pip_at
 
 
 # --- Drawing helpers ------------------------------------------------------------
@@ -166,6 +255,7 @@ func _temp_colour(t: float, tc: TyreCompound) -> Color:
 # --- Screen ----------------------------------------------------------------------
 
 func _draw() -> void:
+	_hits.clear()
 	if session == null:
 		return
 	var vp := size
@@ -182,11 +272,20 @@ func _draw() -> void:
 	var car_h := 236.0
 	_draw_car(Rect2(rx, 58 + radar_h + 10, rw, car_h), sim, tel)
 	var fy := 58 + radar_h + 10 + car_h + 10
+	# The picture takes the feed's place (the feed is back when it's off).
+	var ph := minf(rw * 9.0 / 16.0, vp.y - fy - 40)
+	_pip_at = Rect2(rx + (rw - ph * 16.0 / 9.0) * 0.5, fy + 3, ph * 16.0 / 9.0, ph)
+	if _pip_on():
+		OnboardPip.draw(self, font, onboard, _pip_at, session, selected, cam_mode == 2)
+		fy += _pip_at.size.y + 12
 	_draw_feed(Rect2(rx, fy, rw, vp.y - fy - 34), tel)
-	var keys := "D-pad ↑↓ choose car    ←→ filter feed    B / P close"
-	if session.local_car >= 0 and sim.pits.enabled:
-		keys += "    LB / RB (Y key) tyres to change    Y (N key) driver change"
+	var keys := "Click a car to look at it    ↑↓ choose car    ←→ or wheel filter feed    P / Esc close"
+	if _can_plan():
+		keys += "    Enter plan the stop"
+	if _cam_allowed():
+		keys += "    C onboard camera: " + ["off", "front", "rear"][cam_mode]
 	_text(Vector2(16, vp.y - 12), keys + "    The race keeps running", 13, DIM)
+	_button(Rect2(vp.x - 52, 14, 36, 32), "✕", "close", 18)
 	if _note_time > 0.0:
 		_text(Vector2(vp.x - 16, vp.y - 12), _note, 14, YELLOW, HORIZONTAL_ALIGNMENT_RIGHT, vp.x * 0.4)
 
@@ -198,7 +297,7 @@ func _draw_header(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 	_text(r.position + Vector2(150, 26), "%s   ·   Lap %d / %d   ·   %s" % [sim.track.display_name, lap,
 		sim.settings.laps, fmt_lap(sim.race_time).trim_suffix("0")], 18)
 	var f := tel.forecast
-	_text(r.position + Vector2(r.size.x - 520, 26), "%02d:%02d   %s   Air %d°   Track %d°   Wet %d%%" % [
+	_text(r.position + Vector2(r.size.x - 580, 26), "%02d:%02d   %s   Air %d°   Track %d°   Wet %d%%" % [
 		int(f.time_of_day_h), int(fmod(f.time_of_day_h, 1.0) * 60.0), WeatherForecast.weather_label(f.weather),
 		int(f.ambient_c), int(f.track_c), int(f.wetness * 100.0)], 16, Color(0.75, 0.85, 1.0),
 		HORIZONTAL_ALIGNMENT_RIGHT, 520)
@@ -231,8 +330,11 @@ func _draw_timing(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 		if i == selected:
 			draw_rect(row, Color(1, 0.88, 0.35, 0.16))
 			draw_rect(row, Color(1, 0.88, 0.35, 0.6), false, 1.5)
+		elif row.has_point(_hover):
+			draw_rect(row, Color(1, 1, 1, 0.07))
 		elif p % 2 == 1:
 			draw_rect(row, Color(1, 1, 1, 0.025))
+		_hits.append([row, "car", i])
 		var ty := y + rh * 0.5 + fs * 0.35
 		var name_col := YELLOW if i == _our_car() else (Color(0.75, 0.85, 1) if not e.is_ai else Color.WHITE)
 		_text(Vector2(cols["pos"], ty), str(e.position), fs, Color.WHITE, HORIZONTAL_ALIGNMENT_RIGHT, 26 * k)
@@ -336,6 +438,8 @@ func _draw_car(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 		return
 	_panel(r, "SELECTED CAR")
 	var i := selected
+	if _can_plan():
+		_button(Rect2(r.end.x - 196, r.position.y + 6, 186, 28), "PLAN THE STOP  ⏎", "plan", 14, YELLOW)
 	var e := sim.entries[i]
 	var c := tel.cars[i]
 	var x := r.position.x + 10
@@ -397,6 +501,10 @@ func _draw_feed(r: Rect2, tel: RaceTelemetry) -> void:
 	if r.size.y < 60:
 		return
 	_panel(r, "FEED  ◀ %s ▶" % FILTERS[filter][0])
+	var head_w := font.get_string_size("FEED  ◀ %s ▶" % FILTERS[filter][0], HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x
+	_hits.append([Rect2(r.position.x, r.position.y, r.size.x, r.size.y), "filter", 0])
+	_hits.append([Rect2(r.position.x + 40, r.position.y + 4, 26, 22), "filter", -1])
+	_hits.append([Rect2(r.position.x + head_w - 6, r.position.y + 4, 26, 22), "filter", 1])
 	var fs := 13
 	var y := r.position.y + 42
 	var w := r.size.x - 20
