@@ -45,6 +45,8 @@ var line_right: PackedVector2Array = []
 var room_left: PackedFloat64Array = []   ## metres the car may move left of the line
 var room_right: PackedFloat64Array = []
 var curv: PackedFloat64Array = []        ## signed curvature (+ = right-hander)
+var grade: PackedFloat64Array = []       ## road gradient at each line point (+ = uphill)
+var vcurv: PackedFloat64Array = []       ## vertical curvature (+ = dip, - = crest)
 var target_speed: PackedFloat64Array = []
 var learn: PackedFloat64Array = []       ## per-section pace scale (learned)
 var _learn_hit: PackedByteArray = []     ## section has found its limit once
@@ -158,6 +160,8 @@ func _build_line(track: TrackData) -> void:
 		line[k] += Vector2(-q["dir"].y, q["dir"].x) * (clamped - off)
 		room_right[k] = maxf(float(q["w_right"]) - clamped - ROOM_MARGIN, 0.0)
 		room_left[k] = maxf(float(q["w_left"]) + clamped - ROOM_MARGIN, 0.0)
+		grade.append(track.grade_at(q["s"]))
+		vcurv.append(track.vertical_curvature_at(q["s"]))
 	for k in count:
 		var d := (line[(k + 1) % count] - line[(k - 1 + count) % count]).normalized()
 		line_right.append(Vector2(-d.y, d.x))
@@ -194,7 +198,8 @@ func _build_speed_profile() -> void:
 	for k in n:
 		var mu := _mu * _corner_frac * learn[k / BLOCK]
 		var kk := maxf(absf(curv[k]), 1e-5)
-		var den := _mass * kk - mu * _aero * AERO_TRUST
+		# Over a crest the car is lighter (less grip), in a dip heavier.
+		var den := _mass * kk - mu * _aero * AERO_TRUST - mu * _mass * vcurv[k]
 		var v := MAX_SPEED if den <= 0.0 else sqrt(mu * _mass * CarPhysics.G / den)
 		target_speed[k] = minf(v, MAX_SPEED)
 	for _pass in 2:
@@ -202,7 +207,10 @@ func _build_speed_profile() -> void:
 			var k := n - 1 - j
 			var nxt := target_speed[(k + 1) % n]
 			var mu := _mu * _brake_frac * learn[k / BLOCK]
-			var decel := mu * (CarPhysics.G + _aero * AERO_TRUST * nxt * nxt / _mass) + _drag * nxt * nxt / _mass * 0.5
+			# Braking downhill or over a crest takes longer; uphill helps.
+			var weight_g := maxf(CarPhysics.G + nxt * nxt * vcurv[k], CarPhysics.G * 0.25)
+			var decel := mu * (weight_g + _aero * AERO_TRUST * nxt * nxt / _mass) + _drag * nxt * nxt / _mass * 0.5 + CarPhysics.G * grade[k]
+			decel = maxf(decel, 2.0)
 			target_speed[k] = minf(target_speed[k], sqrt(nxt * nxt + 2.0 * decel * SPACING))
 	_profile_dirty = false
 	_profile_age = 0

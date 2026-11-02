@@ -53,6 +53,10 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 	s.surface = track.surface_for(q)
 	var surf_mu: float = SURFACE_GRIP[s.surface]
 	var surf_roll: float = SURFACE_ROLL[s.surface]
+	# Slopes, banking and crests (all zero on a flat track).
+	var slope := track.surface_gradient(q)          # uphill vector, rise per metre
+	var slope_cos := 1.0 / sqrt(1.0 + slope.length_squared())
+	var g_plane := -slope * G * slope_cos           # gravity along the road surface
 
 	# --- Steering (rate limited, damage adds pull later) ------------------
 	var steer_target := clampf(inp.steer, -1.0, 1.0) * d.max_steer
@@ -77,10 +81,16 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 	# --- Vertical loads (static + aero + longitudinal/lateral transfer) ----
 	var cla := d.cla * (1.0 - 0.6 * s.damage_aero)
 	var downforce := 0.5 * rho * cla * vx * vx
-	var fz_front := m * G * b / L + downforce * d.aero_balance_front - m * s.ax * d.cg_height / L
-	var fz_rear := m * G * a / L + downforce * (1.0 - d.aero_balance_front) + m * s.ax * d.cg_height / L
-	fz_front = maxf(fz_front, 0.15 * m * G * b / L)
-	fz_rear = maxf(fz_rear, 0.15 * m * G * a / L)
+	# Weight pressing the car into the road: less on a slope, more in a dip,
+	# less over a crest (enough speed over a sharp crest and the car goes light).
+	var v_along := s.vel.dot(q["dir"])
+	var load_g := clampf(slope_cos + v_along * v_along * track.vertical_curvature_at(s.track_s) / G, 0.2, 3.0)
+	s.load_factor = load_g
+	var mg := m * G * load_g
+	var fz_front := mg * b / L + downforce * d.aero_balance_front - m * s.ax * d.cg_height / L
+	var fz_rear := mg * a / L + downforce * (1.0 - d.aero_balance_front) + m * s.ax * d.cg_height / L
+	fz_front = maxf(fz_front, 0.15 * mg * b / L)
+	fz_rear = maxf(fz_rear, 0.15 * mg * a / L)
 	# Positive ay (turning right) moves load onto the left (outside) tyres.
 	var lat_transfer := m * s.ay * d.cg_height / d.track_width
 	var tf := lat_transfer * d.roll_stiffness_front
@@ -224,18 +234,26 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 	var fy_body := fx_f * sin_d + fy_f * cos_d + fy_r
 	fx_body -= 0.5 * rho * d.cda * (1.0 + 0.3 * s.damage_aero) * vx * absf(vx)
 	fy_body -= 0.5 * rho * d.cda * 2.5 * vy * absf(vy)
-	var roll := (ROLL_RESIST + surf_roll) * m * G * clampf(absf(vx) / 0.5, 0.0, 1.0)
+	var roll := (ROLL_RESIST + surf_roll) * mg * clampf(absf(vx) / 0.5, 0.0, 1.0)
 	fx_body -= dir_sign * roll
 	var yaw_torque := a * (fx_f * sin_d + fy_f * cos_d) - b * fy_r + esc_torque
 
+	# ax / ay are what the driver feels (tyres and air); they drive load
+	# transfer. Gravity along the slope adds to the motion on top: uphill
+	# slows the car, downhill makes it harder to stop, banking holds it in.
 	s.ax = fx_body / m
 	s.ay = fy_body / m
-	s.vel += (fwd * s.ax + rgt * s.ay) * dt
+	s.vel += (fwd * s.ax + rgt * s.ay + g_plane) * dt
 	s.yaw_rate += yaw_torque / d.inertia * dt
-	# Parking: kill creep when stationary with no drive.
+	# Parking: kill creep when stationary with no drive. On a hill only the
+	# brakes hold the car (if they're strong enough for the slope).
 	if speed < 0.3 and absf(drive_force) < 1.0:
-		s.vel *= 0.8
-		s.yaw_rate *= 0.8
+		if brake > 0.1 and brake * d.brake_force > g_plane.length() * m * 1.2:
+			s.vel = Vector2.ZERO
+			s.yaw_rate *= 0.5
+		elif g_plane.length() < 0.3:
+			s.vel *= 0.8
+			s.yaw_rate *= 0.8
 	s.pos += s.vel * dt
 	s.heading = wrapf(s.heading + s.yaw_rate * dt, -PI, PI)
 

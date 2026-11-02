@@ -3,3 +3,4 @@
 export/
 /android/
 build/
+__pycache__/
