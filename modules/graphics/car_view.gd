@@ -47,6 +47,10 @@ var _damage_tick := 0.0
 var _bar_amber: StandardMaterial3D   ## safety car light bar lenses (null on other cars)
 var _bar_green: StandardMaterial3D
 var _bar_mode := "off"
+## Upgraded parts that stand in for a stock part (e.g. "wing_rear" -> "wing_rear_up3").
+var _part_alias := {}
+## Lowered suspension (upgrade), metres.
+var _ride_drop := 0.0
 var _bar_t := 0.0
 
 ## CarDamage.visual_parts() name -> model part name.
@@ -126,6 +130,7 @@ func _build(livery: Dictionary) -> void:
 				_parts[str(c.name)] = [c, (c as Node3D).transform]
 	model.free()
 	_style(self)
+	_apply_upgrades(def.raw.get("visual", {}))
 	_add_number()
 	_add_contact_shadow()
 	_add_headlight()
@@ -237,6 +242,60 @@ func _style(n: Node) -> void:
 				g.metallic = 0.2
 				g.metallic_specular = 0.9
 				mi.set_surface_override_material(s, g)
+
+
+## Upgrade parts built into every model by tools/build_cars.py, hidden
+## unless the car has the upgrade: level -> part shown instead of a stock part.
+const UPGRADE_PARTS := {
+	"splitter": {1: ["splitter_up", "splitter"]},
+	"wing": {2: ["wing_rear_up2", "wing_rear"], 3: ["wing_rear_up3", "wing_rear"]},
+	"canards": {1: ["canards", ""]},
+}
+
+
+## visual (from the car's overrides, see the business module):
+## {"splitter": 1, "wing": 2|3, "canards": 1, "calipers": "#rrggbb",
+##  "rims": "#rrggbb", "tyre_width": 1.06, "ride_drop_m": 0.02}
+func _apply_upgrades(visual: Dictionary) -> void:
+	_part_alias.clear()
+	for key in UPGRADE_PARTS:
+		var want := int(visual.get(key, 0))
+		for lvl in UPGRADE_PARTS[key]:
+			var pair: Array = UPGRADE_PARTS[key][lvl]
+			var on: bool = lvl == want
+			if _parts.has(pair[0]):
+				(_parts[pair[0]][0] as Node3D).visible = on
+				if on and pair[1] != "" and _parts.has(pair[1]):
+					(_parts[pair[1]][0] as Node3D).visible = false
+					_part_alias[pair[1]] = pair[0]
+	if visual.has("calipers"):
+		var cm := StandardMaterial3D.new()
+		cm.albedo_color = Color(str(visual["calipers"]))
+		cm.roughness = 0.35
+		cm.metallic = 0.2
+		_recolour(self, "caliper", cm)
+	if visual.has("rims"):
+		var rm := StandardMaterial3D.new()
+		rm.albedo_color = Color(str(visual["rims"]))
+		rm.metallic = 0.85
+		rm.roughness = 0.28
+		_recolour(self, "rim", rm)
+	var tw := float(visual.get("tyre_width", 1.0))
+	for w in _wheels:
+		(w[0] as Node3D).scale = Vector3(1.0, 1.0, tw)
+	_ride_drop = float(visual.get("ride_drop_m", 0.0))
+	_sprung.position.y = -_ride_drop
+
+
+func _recolour(n: Node, material_name: String, m: Material) -> void:
+	for c in n.get_children():
+		_recolour(c, material_name, m)
+	if n is MeshInstance3D and (n as MeshInstance3D).mesh:
+		var mi := n as MeshInstance3D
+		for s in mi.mesh.get_surface_count():
+			var base := mi.mesh.surface_get_material(s)
+			if base and base.resource_name == material_name:
+				mi.set_surface_override_material(s, m)
 
 
 func _add_number() -> void:
@@ -436,7 +495,7 @@ func _apply_damage() -> void:
 	var front: float = d.get("front_bumper", 0.0)
 	_paint.set_shader_parameter("damage", Vector4(front, d.get("rear_bumper", 0.0), d.get("side_left", 0.0), d.get("side_right", 0.0)))
 	for key in DAMAGE_PARTS:
-		var part: Array = _parts.get(DAMAGE_PARTS[key], [])
+		var part: Array = _parts.get(_part_alias.get(DAMAGE_PARTS[key], DAMAGE_PARTS[key]), [])
 		if part.is_empty():
 			continue
 		var node: Node3D = part[0]
@@ -491,6 +550,7 @@ func _process(delta: float) -> void:
 	_pitch = lerpf(_pitch, clampf(state.ax * 0.0032, -0.035, 0.03), k2)
 	_roll = lerpf(_roll, clampf(-state.ay * 0.0028, -0.04, 0.04), k2)
 	_sprung.rotation = Vector3(_roll, 0.0, _pitch)
+	_sprung.position.y = -_ride_drop
 	var v := state.vel.dot(state.forward())
 	for w in _wheels:
 		var hub: Node3D = w[0]

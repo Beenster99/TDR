@@ -19,7 +19,7 @@ signal internet_status_changed
 const DEFAULT_PORT := 24690
 const MAX_PEERS := 16
 ## Bump whenever a message changes shape; mismatched games are told at the lobby.
-const PROTOCOL_VERSION := 9  # 4: track elevation, 5: damage in car states, 6: barrier types and run-off surfaces, 7: race control in the race state, 8: pit stops, 9: car setups
+const PROTOCOL_VERSION := 10  # 4: track elevation, 5: damage in car states, 6: barrier types and run-off surfaces, 7: race control in the race state, 8: pit stops, 9: car upgrades, liveries and upgrades_mode, 10: car setups (tuning)
 const COMPRESSION := ENetConnection.COMPRESS_ZSTD
 ## How long a player's game may go silent before they're taken to have left (ms).
 const TIMEOUT_MS := 15000
@@ -263,7 +263,7 @@ func join_instructions() -> String:
 
 func _new_player(player_name: String, car_id: String) -> Dictionary:
 	return {"name": player_name, "car_id": car_id, "tyre": "auto", "ready": false, "team": -1,
-		"role": RaceEntry.ROLE_DRIVER}
+		"role": RaceEntry.ROLE_DRIVER, "setup": {}, "livery": {}}
 
 
 func _fail(reason: String) -> void:
@@ -364,9 +364,12 @@ func _apply_update(id: int, fields: Dictionary) -> void:
 		p["ready"] = bool(fields["ready"])
 	if fields.has("tyre") and fields["tyre"] in TYRE_CHOICES:
 		p["tyre"] = fields["tyre"]
-	if fields.has("setup") and fields["setup"] is Dictionary and str(fields["setup"]).length() < 4000:
-		# Car setup overrides ({"tuning": CarSetup values}); the car sanitises them.
+	# The car's setup (upgrade overrides + tuning) and livery, from the
+	# player's own profile. The host's upgrades_mode decides what counts.
+	if fields.get("setup") is Dictionary and str(fields["setup"]).length() < 4000:
 		p["setup"] = fields["setup"]
+	if fields.get("livery") is Dictionary:
+		p["livery"] = fields["livery"]
 	_broadcast_lobby()
 
 
@@ -403,7 +406,7 @@ func start_race() -> void:
 		var key = team if team >= 0 else "solo_%d" % id
 		if not teams.has(key):
 			teams[key] = {"name": p["name"], "car_id": p["car_id"], "tyre": p.get("tyre", "auto"), "crew": [],
-				"setup": p.get("setup", {})}
+				"setup": p.get("setup", {}), "livery": p.get("livery", {})}
 			humans.append(teams[key])
 		teams[key]["crew"].append({"peer_id": id, "name": p["name"], "role": p.get("role", RaceEntry.ROLE_DRIVER)})
 	settings.seed = randi()

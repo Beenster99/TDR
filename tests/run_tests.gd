@@ -35,6 +35,7 @@ func _init() -> void:
 	test_barriers()
 	test_pit_rules()
 	test_car_setups()
+	test_upgrades()
 	var replay := test_ai_race_completes()
 	test_deterministic_replay(replay)
 	test_snapshot_restore(replay)
@@ -1461,3 +1462,89 @@ func test_weather_forecast() -> void:
 			nearest = minf(nearest, c["pos"].distance_to(f.centre))
 	check(nearest > f.track_radius, "rain still upwind of the track")
 	print("       " + f.summary())
+
+
+## Wave 4 business: upgrades change the car through overrides, money buys
+## and sells them, the profile saves, prizes pay by position, and the host's
+## upgrades option (on / bop / stock) holds in the race plan.
+func test_upgrades() -> void:
+	print("upgrades and money")
+	var d := _data()
+	var cars: Dictionary = d["cars"]
+	check(UpgradeCatalog.category_ids() == ["engine", "aero", "brakes", "suspension", "weight", "tyres"], "six upgrade categories")
+	var gt3: CarDefinition = cars["bmw_m4_gt3"]
+	var all3 := {}
+	for c in UpgradeCatalog.category_ids():
+		check(UpgradeCatalog.max_level(c) == 3, "%s has levels 0-3" % c)
+		all3[c] = 3
+	var up := gt3.with_overrides(UpgradeCatalog.overrides_for(gt3, all3))
+	check(UpgradeCatalog.overrides_for(gt3, {}).is_empty(), "no upgrades, no overrides")
+	check(absf(up.peak_power_kw() / gt3.peak_power_kw() - 1.13) < 0.005, "stage 3 engine: +13%% power (%.0f -> %.0f kW)" % [gt3.peak_power_kw(), up.peak_power_kw()])
+	check(up.cla > gt3.cla * 1.29 and up.cda > gt3.cda, "race aero: more downforce, more drag")
+	check(up.mass < gt3.mass * 0.94 and up.brake_force > gt3.brake_force * 1.19, "lighter, stronger brakes")
+	check(up.front_grip > gt3.front_grip * 1.1 and up.cg_height < gt3.cg_height, "more grip, lower centre of gravity")
+	var vis: Dictionary = up.raw.get("visual", {})
+	check(vis.get("wing") == 3 and vis.get("splitter") == 1 and vis.has("rims") and vis.has("calipers"), "visual parts ride along in the car data")
+	# Faster in a straight line.
+	var tc: TyreCompound = d["tyres"][gt3.tyre_compound_id]
+	var env := SimEnvironment.from_dict({})
+	var a := _car_at(d["track"], 0.0, 15.0)
+	var b := _car_at(d["track"], 0.0, 15.0)
+	var go := CarInput.new()
+	go.throttle = 1.0
+	for i in 180:
+		CarPhysics.step(a, go, gt3, tc, env, d["track"], 1.0 / 60.0, 0.0, [], 0)
+		CarPhysics.step(b, go, up, tc, env, d["track"], 1.0 / 60.0, 0.0, [], 0)
+	check(b.speed() > a.speed() + 0.5, "upgraded car accelerates harder (%.1f vs %.1f m/s)" % [b.speed(), a.speed()])
+	# Money: buy, sell for half, can't overspend, saves.
+	var path := "user://test_profile.json"
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	var p := TeamProfile.load_or_new(path)
+	var start := p.money
+	check(start == 150000, "a new team starts with 150,000 cr")
+	var price := UpgradeCatalog.price(gt3, "engine", 1)
+	check(price == 35200, "GT3 parts cost 1.6x (stage 1 engine %d)" % price)
+	check(p.set_level(gt3, "engine", 1) and p.money == start - price, "buying an upgrade takes its price")
+	check(p.set_level(gt3, "engine", 0) and p.money == start - price + price / 2, "selling refunds half")
+	p.money = 1000
+	check(not p.set_level(gt3, "aero", 3) and p.level(gt3.id, "aero") == 0 and p.money == 1000, "can't buy without the money")
+	p.money = 500000
+	p.set_level(gt3, "aero", 2)
+	p.set_livery(gt3.id, {"pattern": "stripes", "primary": "#111111"})
+	p.save()
+	var back := TeamProfile.load_or_new(path)
+	check(back.money == p.money and back.level(gt3.id, "aero") == 2 and back.livery_for(gt3.id)["pattern"] == "stripes", "profile saves and loads")
+	check(back.setup_for(gt3).get("visual", {}).get("wing") == 2, "setup_for carries the upgrades")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	# Prize money.
+	var win := Economy.race_prize(1, 10, 40.0)
+	var last := Economy.race_prize(10, 10, 40.0)
+	check(win == 40000 and last < win and Economy.race_prize(0, 10, 40.0) < last and Economy.race_prize(1, 10, 5.0) < win,
+		"prizes: winner %d, last %d, shorter races pay less" % [win, last])
+	# Race plan: upgrades count, or are stripped, or balanced.
+	var s := RaceSettings.new()
+	s.ai_count = 5
+	s.car_class = "GT3"
+	s.track_id = "spielberg"
+	var setup := UpgradeCatalog.overrides_for(gt3, all3)
+	setup["tuning"] = {"wing_rear": 2}
+	var humans := [{"name": "Me", "car_id": gt3.id, "tyre": "dry", "setup": setup, "livery": {"pattern": "sash"}}]
+	var on := RaceFactory.plan(s, humans, cars, d["drivers"])
+	var me: Dictionary = on["entries"][-1]
+	check(me["setup"].has("engine") and me["livery"]["pattern"] == "sash", "the player's upgrades and livery reach the race")
+	var sim := RaceFactory.build_sim(on, cars, d["tyres"], d["track"])
+	check(absf(sim.defs[sim.car_count() - 1].peak_power_kw() - up.peak_power_kw()) < 0.5, "the sim races the upgraded car")
+	s.upgrades_mode = RaceSettings.UPGRADES_STOCK
+	me = RaceFactory.plan(s, humans, cars, d["drivers"])["entries"][-1]
+	check(me["setup"].keys() == ["tuning"], "stock: upgrades stripped, tuning left to its own switch (%s)" % str(me["setup"].keys()))
+	s.upgrades_mode = RaceSettings.UPGRADES_BOP
+	var bop := RaceFactory.plan(s, humans, cars, d["drivers"])
+	me = bop["entries"][-1]
+	check(me["setup"].has("visual") and me["setup"].has("bop") and not me["setup"].has("brakes"), "bop: looks kept, performance replaced by balance")
+	var ref: Dictionary = RaceFactory.bop_reference(cars)["GT3"]
+	var bsim := RaceFactory.build_sim(bop, cars, d["tyres"], d["track"])
+	var worst := 0.0
+	for i in bsim.car_count():
+		var df: CarDefinition = bsim.defs[i]
+		worst = maxf(worst, absf(df.peak_power_kw() / df.mass / ref["kw_per_kg"] - 1.0))
+	check(worst < 0.01, "bop: every GT3 within 1%% of the same power-to-weight (worst %.2f%%)" % (worst * 100.0))

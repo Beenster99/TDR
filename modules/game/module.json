@@ -1,7 +1,7 @@
 {
   "id": "game",
   "name": "Game",
-  "version": "1.2.4",
+  "version": "1.3.0",
   "status": "active",
   "summary": "Puts the modules together: starts the game (Game autoload loads content and controls), and the race scene that joins input, graphics, HUD and the race session.",
   "depends": {
@@ -16,12 +16,13 @@
     "graphics": "2",
     "ui": "1",
     "audio": "1",
-    "telemetry": "1"
+    "telemetry": "1",
+    "business": "1"
   },
   "api": [],
   "internal": [],
   "autoloads": [
     "Game"
   ],
-  "notes": "The only module allowed to know about every other one. Race scene: race.tscn."
+  "notes": "The only module allowed to know about every other one. Race scene: race.tscn. After a race it pays this player's prize money into their team (business)."
 }

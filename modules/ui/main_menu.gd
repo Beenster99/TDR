@@ -9,8 +9,9 @@ extends Control
 ##   --single [--laps 1] [--ai 3] [--car id]                         skip to a race
 ##   --track id  --class GT3|Road|multi|open                         pick track / car class
 ##   --autodrive --ready --quit-after-race --time-scale 3            test bots
+##   --profile user://bob.json                                       use another team save
 ##   race options: --weather heavy_rain --weather-changes --time 20 --clock-speed 60 --grid reversed
-##                 --damage off|visual|full
+##                 --damage off|visual|full  --upgrades on|bop|stock
 ##   --setup-screen [--menu-screenshot out.png]                     open the car setup screen
 
 
@@ -38,6 +39,11 @@ var safety_car_stepper: Stepper
 var damage_stepper: Stepper
 var tuning_stepper: Stepper
 var setup_button: Button
+var upgrades_stepper: Stepper
+## This player's team (business module): money, upgrades and liveries.
+var profile: TeamProfile
+var _garage: GarageScreen
+var _menu_root: Control
 var lobby_list: VBoxContainer
 var lobby_title: Label
 var join_info_label: Label
@@ -48,6 +54,9 @@ var _settings_steppers: Array[Stepper] = []
 
 
 func _ready() -> void:
+	if GameData.arg("profile"):
+		TeamProfile.default_path = str(GameData.arg("profile"))
+	profile = TeamProfile.load_or_new()
 	_build_ui()
 	Net.lobby_changed.connect(_refresh_lobby)
 	# Named methods (not lambdas) so the connections die with this scene.
@@ -106,6 +115,8 @@ func _handle_cmdline() -> void:
 		safety_car_stepper.set_value(str(GameData.arg("safety-car")) != "off")
 	if GameData.arg("damage"):
 		damage_stepper.set_value(str(GameData.arg("damage")))
+	if GameData.arg("upgrades"):
+		upgrades_stepper.set_value(str(GameData.arg("upgrades")))
 	if GameData.arg("tyres"):
 		tyre_stepper.set_value(str(GameData.arg("tyres")))
 	if GameData.arg("car") and GameData.cars.has(GameData.arg("car")):
@@ -157,7 +168,7 @@ func _ready_all_check() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if has_node("SetupScreen"):
 		return  # the setup screen handles its own back button
-	if event.is_action_pressed("ui_cancel"):
+	if event.is_action_pressed("ui_cancel") and _garage == null:
 		match current_page:
 			"single", "join": _show("main")
 			"lobby": _on_leave()
@@ -174,6 +185,7 @@ func _build_ui() -> void:
 	var center := CenterContainer.new()
 	center.set_anchors_preset(PRESET_FULL_RECT)
 	add_child(center)
+	_menu_root = center
 	var root := VBoxContainer.new()
 	root.add_theme_constant_override("separation", 14)
 	center.add_child(root)
@@ -206,7 +218,7 @@ func _build_ui() -> void:
 	class_stepper.value_changed.connect(func(_v): _rebuild_car_options(); _push_settings())
 	root.add_child(class_stepper)
 	car_stepper = Stepper.choice("Car", [], "")
-	car_stepper.value_changed.connect(func(v): if Net.is_online(): Net.update_me({"car_id": v}))
+	car_stepper.value_changed.connect(func(v): if Net.is_online(): Net.update_me(_my_lobby_fields(v)))
 	root.add_child(car_stepper)
 	_rebuild_car_options()
 	var help_stepper := Stepper.choice("Driving help", [[2, "Full (stability, traction, ABS)"],
@@ -231,6 +243,7 @@ func _build_ui() -> void:
 	# Main page
 	var main := _page(root, "main")
 	_button(main, "Single race", func(): _show("single"))
+	_button(main, "Garage (upgrades, livery)", _open_garage)
 	_button(main, "Host online race", _on_host)
 	_button(main, "Join online race", func(): _show("join"))
 	_button(main, "Quit", func(): get_tree().quit())
@@ -259,9 +272,12 @@ func _build_ui() -> void:
 		["full", "Full (affects the car)"]], "full")
 	tuning_stepper = Stepper.choice("Car setups", [[true, "Free (tune per track)"], [false, "Fixed (all on default)"]], true)
 	tuning_stepper.value_changed.connect(func(_v): _setup_changed())
+	upgrades_stepper = Stepper.choice("Car upgrades", [[RaceSettings.UPGRADES_ON, "On (R&D counts)"],
+		[RaceSettings.UPGRADES_BOP, "Balanced (BoP, looks only)"], [RaceSettings.UPGRADES_STOCK, "Off (stock cars)"]],
+		RaceSettings.UPGRADES_ON)
 	_settings_steppers = [laps_stepper, ai_stepper, difficulty_stepper, tod_stepper, clock_stepper, weather_stepper,
 		weather_change_stepper, grid_stepper, damage_stepper, safety_car_stepper, fuel_stepper, wear_stepper, stops_stepper,
-		tuning_stepper]
+		upgrades_stepper, tuning_stepper]
 
 	var single := _page(root, "single")
 	var single_settings := _settings_grid()
@@ -292,6 +308,7 @@ func _build_ui() -> void:
 	lobby_settings_box = _settings_grid()
 	lobby.add_child(lobby_settings_box)
 	ready_button = _button(lobby, "Ready", func(): Net.update_me({"ready": not _my_ready()}))
+	_button(lobby, "Garage (upgrades, livery)", _open_garage)
 	start_button = _button(lobby, "Start race", _on_start_online)
 	_button(lobby, "Leave", _on_leave)
 
@@ -376,7 +393,12 @@ func _rebuild_car_options() -> void:
 	var opts := []
 	for id in CarCatalog.ids_in_class(GameData.cars, cls if fixed else ""):
 		var c: CarDefinition = GameData.cars[id]
-		opts.append([id, "%s  (%s, %.0f kW, %.0f kg)" % [c.display_name, c.class_tag, c.peak_power_kw(), c.mass]])
+		var st := UpgradeCatalog.stats(c, profile.levels(id))
+		var rd := 0
+		for l in profile.levels(id).values():
+			rd += int(l)
+		opts.append([id, "%s  (%s, %.0f kW, %.0f kg%s)" % [c.display_name, c.class_tag, st["power_kw"], st["mass_kg"],
+			", R&D %d" % rd if rd > 0 else ""]])
 	car_stepper.options = opts
 	var keep := false
 	for o in opts:
@@ -384,7 +406,7 @@ func _rebuild_car_options() -> void:
 	if not keep and not opts.is_empty():
 		car_stepper.set_value(opts[0][0])
 		if Net.is_online():
-			Net.update_me({"car_id": car_stepper.value})
+			Net.update_me(_my_lobby_fields(car_stepper.value))
 	else:
 		car_stepper.set_value(car_stepper.value)
 
@@ -413,21 +435,17 @@ func _settings_from_ui() -> RaceSettings:
 	s.mandatory_pit_stops = int(stops_stepper.value)
 	s.safety_car_enabled = bool(safety_car_stepper.value)
 	s.set_damage_level(str(damage_stepper.value))
+	s.upgrades_mode = str(upgrades_stepper.value)
 	s.tuning_enabled = bool(tuning_stepper.value)
 	return s
 
 
 # --- Car setup (per car per track) ----------------------------------------
 
-## This player's setup overrides for the chosen car on the chosen track.
-func _my_setup() -> Dictionary:
-	return SetupStore.entry_setup(str(car_stepper.value), str(track_stepper.value))
-
-
 func _setup_changed() -> void:
 	_refresh_setup_button()
 	if Net.is_online() and Net.players.has(Net.my_id()):
-		Net.update_me({"setup": _my_setup()})
+		Net.update_me({"setup": _my_setup(str(car_stepper.value))})
 
 
 func _refresh_setup_button() -> void:
@@ -471,7 +489,7 @@ func _on_single() -> void:
 	s.seed = randi()
 	var humans := [{"name": name_edit.text, "car_id": car_stepper.value, "tyre": tyre_stepper.value,
 		"crew": [{"peer_id": 0, "name": name_edit.text, "role": RaceEntry.ROLE_DRIVER}],
-		"setup": _my_setup()}]
+		"setup": _my_setup(car_stepper.value), "livery": profile.livery_for(car_stepper.value)}]
 	var start := RaceFactory.plan(s, humans, GameData.cars, GameData.drivers)
 	GameData.active_session = RaceSession.create(RaceSession.Mode.OFFLINE, start, 0)
 	get_tree().change_scene_to_file(GameData.SCENE_RACE)
@@ -483,7 +501,9 @@ func _on_host() -> void:
 	if err != OK:
 		_status("Could not host on port %d (error %d)." % [port, err])
 		return
-	Net.update_me({"car_id": car_stepper.value, "tyre": tyre_stepper.value, "setup": _my_setup()})
+	var fields := _my_lobby_fields(car_stepper.value)
+	fields["tyre"] = tyre_stepper.value
+	Net.update_me(fields)
 	Net.set_settings(_settings_from_ui())
 	_show("lobby")
 
@@ -531,6 +551,11 @@ func _refresh_lobby() -> void:
 		var my_car: String = Net.players[me]["car_id"]
 		if my_car != car_stepper.value:
 			car_stepper.set_value(my_car)
+		# Send my upgrades and livery once the host knows me (and after changes).
+		var mine := _my_lobby_fields(my_car)
+		if JSON.stringify(Net.players[me].get("setup", {})) != JSON.stringify(mine["setup"]) \
+				or JSON.stringify(Net.players[me].get("livery", {})) != JSON.stringify(mine["livery"]):
+			Net.update_me({"setup": mine["setup"], "livery": mine["livery"]})
 		var my_tyre: String = Net.players[me].get("tyre", "auto")
 		if my_tyre != tyre_stepper.value:
 			if my_tyre == "auto" and tyre_stepper.value != "auto":
@@ -553,7 +578,13 @@ func _refresh_lobby() -> void:
 		var l := Label.new()
 		var car: CarDefinition = GameData.cars.get(p["car_id"])
 		var tyre_name: String = {"auto": "", "dry": "  ·  dry tyres", "intermediate": "  ·  inters", "wet": "  ·  wets"}.get(p.get("tyre", "auto"), "")
-		l.text = "%s %s  ·  %s%s%s" % ["★" if id == 1 else "•", p["name"], car.display_name if car else p["car_id"], tyre_name,
+		var rd := ""
+		var vis: Dictionary = p.get("setup", {}).get("visual", {})
+		if not p.get("setup", {}).is_empty() and Net.settings.upgrades_mode == RaceSettings.UPGRADES_ON:
+			rd = "  ·  upgraded"
+		elif not vis.is_empty() and Net.settings.upgrades_mode == RaceSettings.UPGRADES_BOP:
+			rd = "  ·  upgraded (looks only)"
+		l.text = "%s %s  ·  %s%s%s%s" % ["★" if id == 1 else "•", p["name"], car.display_name if car else p["car_id"], tyre_name, rd,
 			"" if id == 1 else ("  ·  READY" if p["ready"] else "  ·  not ready")]
 		lobby_list.add_child(l)
 	var host := Net.is_server()
@@ -581,15 +612,56 @@ func _refresh_lobby() -> void:
 		stops_stepper.set_value(Net.settings.mandatory_pit_stops)
 		safety_car_stepper.set_value(Net.settings.safety_car_enabled)
 		damage_stepper.set_value(Net.settings.effective_damage_level())
+		upgrades_stepper.set_value(Net.settings.upgrades_mode)
 		if tuning_stepper.value != Net.settings.tuning_enabled:
 			tuning_stepper.set_value(Net.settings.tuning_enabled)
 	_refresh_setup_button()
 	var mine: Dictionary = Net.players.get(me, {})
-	if not mine.is_empty() and mine.get("setup", {}) != _my_setup():
-		Net.update_me({"setup": _my_setup()})  # joined, or the host changed track
+	if not mine.is_empty() and JSON.stringify(mine.get("setup", {})) != JSON.stringify(_my_setup(str(car_stepper.value))):
+		Net.update_me({"setup": _my_setup(str(car_stepper.value))})  # joined, or the host changed track
 	join_info_label.visible = host and not Net.dedicated
 	if join_info_label.visible:
 		join_info_label.text = Net.join_instructions()
 	ready_button.visible = not host
 	ready_button.text = "Not ready" if _my_ready() else "Ready"
 	start_button.visible = host and not Net.dedicated
+
+
+# --- Garage and the player's team (business module) ------------------------
+
+## CarDefinition overrides to race this car with: its bought upgrades.
+## (Track tuning, from the setup screen, is merged into the same dictionary.)
+func _my_setup(id: String) -> Dictionary:
+	var c: CarDefinition = GameData.cars.get(id)
+	var out: Dictionary = profile.setup_for(c).duplicate(true) if c else {}
+	out.merge(SetupStore.entry_setup(id, str(track_stepper.value)), true)
+	return out
+
+
+## Lobby fields for my car: id, setup and livery.
+func _my_lobby_fields(id: String) -> Dictionary:
+	return {"car_id": id, "setup": _my_setup(id), "livery": profile.livery_for(id)}
+
+
+func _open_garage() -> void:
+	if _garage:
+		return
+	_garage = GarageScreen.new()
+	_menu_root.visible = false
+	add_child(_garage)
+	_garage.open(car_stepper.value, profile)
+	_garage.closed.connect(_on_garage_closed)
+
+
+func _on_garage_closed(picked_car: String) -> void:
+	_garage = null
+	_menu_root.visible = true
+	profile = TeamProfile.load_or_new()
+	# Race the car you were working on, if the class allows it.
+	_rebuild_car_options()
+	for o in car_stepper.options:
+		if o[0] == picked_car:
+			car_stepper.set_value(picked_car)
+	if Net.is_online():
+		Net.update_me(_my_lobby_fields(car_stepper.value))
+	_show(current_page)

@@ -82,7 +82,7 @@ static func from_dict(d: Dictionary) -> CarDefinition:
 	c.description = d.get("description", "")
 	c.class_tag = d.get("class_tag", "")
 	c.colour = Color.from_string(d.get("colour", "#ffffff"), Color.WHITE)
-	c.mass = d.get("mass_kg", c.mass)
+	c.mass = float(d.get("mass_kg", c.mass)) + float(d.get("ballast_kg", 0.0))
 	c.wheelbase = d.get("wheelbase_m", c.wheelbase)
 	c.cg_to_front = c.wheelbase * (1.0 - float(d.get("weight_front", 0.5)))
 	c.cg_height = d.get("cg_height_m", c.cg_height)
@@ -104,6 +104,11 @@ static func from_dict(d: Dictionary) -> CarDefinition:
 	for p in e.get("torque_curve", [[1000, 200], [7000, 300]]):
 		c.torque_rpm.append(float(p[0]))
 		c.torque_nm.append(float(p[1]))
+	# Engine upgrades and balance of performance scale the whole curve.
+	var torque_scale := float(e.get("torque_scale", 1.0))
+	if torque_scale != 1.0:
+		for i in c.torque_nm.size():
+			c.torque_nm[i] *= torque_scale
 	var g: Dictionary = d.get("gearbox", {})
 	for r in g.get("ratios", [3.0, 2.0, 1.5, 1.2, 1.0]):
 		c.gear_ratios.append(float(r))
@@ -134,8 +139,12 @@ static func from_dict(d: Dictionary) -> CarDefinition:
 
 
 ## Deep-merge overrides (upgrades / tuning setups) over the base spec.
-## e.g. {"aero": {"cla": 1.3}, "brakes": {"bias_front": 0.58}}. A setup goes
-## in as {"tuning": {...CarSetup values...}} and is applied after the rest.
+## e.g. {"aero": {"cla": 1.3}, "brakes": {"bias_front": 0.58}}
+## Keys the sim reads besides the base spec: engine.torque_scale (multiplies
+## the torque curve), ballast_kg (added to mass_kg). A "visual" block (upgrade
+## parts for the 3D model, see the business module) is kept in raw only.
+## A setup goes in as {"tuning": {...CarSetup values...}} and is applied after
+## the rest.
 func with_overrides(overrides: Dictionary) -> CarDefinition:
 	var merged := raw.duplicate(true)
 	_merge(merged, overrides)

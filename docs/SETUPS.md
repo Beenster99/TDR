@@ -13,7 +13,7 @@ setups off for equal-car races ("Car setups: Fixed").
 | A good setup for a car and track (AI and the "Recommended" button) | `modules/physics/setup_advisor.gd` (`SetupAdvisor`) |
 | AI setups at race start, the host switch, fuel load | `modules/race/race_factory.gd`, `race_settings.gd` (`tuning_enabled`), `race_sim.gd` |
 | Setup screen and saved setups (`user://setups/<car>/<track>.json`) | `modules/ui/setup_screen.gd`, `modules/ui/setup_store.gd` |
-| Multiplayer: each lobby player's `setup` goes into the start data | `modules/multiplayer/net.gd` (protocol 9) |
+| Multiplayer: each lobby player's `setup` goes into the start data | `modules/multiplayer/net.gd` (protocol 10) |
 
 ## How a setup travels
 

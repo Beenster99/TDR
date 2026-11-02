@@ -7,7 +7,7 @@ extends RefCounted
 ## The AI drivers live in the ai module, which builds on this one.
 
 ## humans: [{ "name": String, "car_id": String, "tyre": String, "crew": [{peer_id, name, role}],
-##   "setup": {overrides, incl. "tuning": CarSetup values} }]
+##           "setup": Dictionary (CarDefinition overrides: upgrades, tuning), "livery": Dictionary }]
 ## tyre: "auto" (match the start weather), "dry", "intermediate" or "wet".
 ## track: the race's track (loaded from settings.track_id when not given),
 ## used to pick the AI's setups.
@@ -61,11 +61,14 @@ static func plan(settings: RaceSettings, humans: Array, cars: Dictionary, driver
 		e.driver_name = h.get("name", "Player")
 		e.car_id = human_cars[k]
 		e.crew = h.get("crew", [{"peer_id": 0, "name": e.driver_name, "role": RaceEntry.ROLE_DRIVER}])
-		var own = h.get("setup", {})
-		if own is Dictionary and not own.is_empty():
-			e.setup = own.duplicate(true)
+		if h.get("car_id", "") == e.car_id:   # upgrades belong to the car they were bought for
+			var su = h.get("setup", {})
+			e.setup = su.duplicate(true) if su is Dictionary else {}
+		var lv = h.get("livery", {})
+		e.livery = lv.duplicate(true) if lv is Dictionary else {}
 		_fit_tyres(e, h.get("tyre", "auto"), start_weather)
 		entries.append(e.describe())
+	apply_balance(entries, settings.upgrades_mode, cars)
 	_order_grid(entries, settings.grid_order, cars, rng)
 	return {"settings": settings.to_dict(), "entries": entries}
 
@@ -93,6 +96,64 @@ static func _ai_setups(settings: RaceSettings, entries: Array, cars: Dictionary,
 		if compound != def.tyre_compound_id:
 			cond["wetness"] = maxf(env.wetness, 0.5)
 		d["setup"]["tuning"] = SetupAdvisor.recommend(def, track, cond)
+
+
+## Setup keys that are not upgrades: tyre choice and track tuning (its own
+## host switch), kept in every upgrades mode.
+const NOT_UPGRADES := ["tyre_compound", "tuning"]
+## Balance of performance limits.
+const BOP_POWER := Vector2(0.85, 1.15)
+const BOP_DOWNFORCE := Vector2(0.8, 1.25)
+
+
+## Host option RaceSettings.upgrades_mode on entry descriptions (plan output):
+##   "on": as they are. "stock": upgrades removed (looks too).
+##   "bop": upgrade performance removed but the looks kept, then every car is
+##   given engine.torque_scale and aero.cla so its power-to-weight and
+##   downforce-to-weight match the median of the stock cars in its class.
+## The result is written in setup["bop"] = {"power": x, "downforce": y}.
+static func apply_balance(entries: Array, mode: String, cars: Dictionary) -> void:
+	if mode != RaceSettings.UPGRADES_STOCK and mode != RaceSettings.UPGRADES_BOP:
+		return
+	for d in entries:
+		var keep := {}
+		for k in NOT_UPGRADES:
+			if d.get("setup", {}).has(k):
+				keep[k] = d["setup"][k]
+		if mode == RaceSettings.UPGRADES_BOP and d.get("setup", {}).has("visual"):
+			keep["visual"] = d["setup"]["visual"]
+		d["setup"] = keep
+	if mode != RaceSettings.UPGRADES_BOP:
+		return
+	var ref := bop_reference(cars)
+	for d in entries:
+		var c: CarDefinition = cars.get(d.get("car_id", ""))
+		if c == null or not ref.has(c.class_tag):
+			continue
+		var r: Dictionary = ref[c.class_tag]
+		var power := clampf(r["kw_per_kg"] / (c.peak_power_kw() / c.mass), BOP_POWER.x, BOP_POWER.y)
+		var down := clampf(r["cla_per_kg"] / (c.cla / c.mass), BOP_DOWNFORCE.x, BOP_DOWNFORCE.y)
+		var su: Dictionary = d["setup"]
+		var base_ts: float = c.raw.get("engine", {}).get("torque_scale", 1.0)
+		su["engine"] = {"torque_scale": base_ts * power}
+		su["aero"] = {"cla": c.cla * down}
+		su["bop"] = {"power": snappedf(power, 0.001), "downforce": snappedf(down, 0.001)}
+
+
+## Per class: median stock power-to-weight (kW/kg) and downforce (ClA/kg).
+static func bop_reference(cars: Dictionary) -> Dictionary:
+	var out := {}
+	for cls in CarCatalog.classes(cars):
+		var pw: Array = []
+		var df: Array = []
+		for id in CarCatalog.ids_in_class(cars, cls):
+			var c: CarDefinition = cars[id]
+			pw.append(c.peak_power_kw() / c.mass)
+			df.append(c.cla / c.mass)
+		pw.sort()
+		df.sort()
+		out[cls] = {"kw_per_kg": pw[pw.size() / 2], "cla_per_kg": df[df.size() / 2]}
+	return out
 
 
 const TYRE_FOR_WEATHER := {"light_rain": "intermediate", "heavy_rain": "full_wet"}
