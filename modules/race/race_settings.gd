@@ -30,7 +30,7 @@ var damage_enabled: bool = false  ## true unless damage_level is "off"
 ## Damage (CarDamage): "off", "visual" (bodywork bends, car drives as new)
 ## or "full" (aero, suspension, alignment, engine, gearbox, punctures).
 var damage_level: String = "off"
-var safety_car_enabled: bool = false
+var safety_car_enabled: bool = true  ## VSC + safety car (yellow flags always)
 var mandatory_pit_stops: int = 0
 var finish_timeout_s: float = 90.0 ## after the leader finishes
 var countdown_s: float = 4.0

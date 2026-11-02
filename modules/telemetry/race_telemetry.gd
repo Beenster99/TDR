@@ -140,11 +140,13 @@ func on_events(evs: Array) -> void:
 				var text := str(ev.get("text", ev.get("reason", "")))
 				match ev["type"]:
 					"flag":
-						text = "%s flag%s" % [str(ev.get("flag", "")).capitalize(), (": " + text) if text != "" else ""]
+						if ev.get("flag", "") in ["yellow", "clear"]:
+							text = "%s flag%s" % [str(ev.get("flag", "")).capitalize(), (": " + text) if text != "" else ""]
 					"safety_car":
 						text = "%s%s" % [{"vsc": "Virtual safety car", "sc": "Safety car deployed", "green": "Green flag, racing resumes",
 							"in_this_lap": "Safety car in this lap", "vsc_ending": "VSC ending",
-							"lapped_may_overtake": "Lapped cars may overtake"}.get(str(ev.get("state", "")), str(ev.get("state", ""))),
+							"lapped_may_overtake": "Lapped cars may overtake",
+							"restart": "Safety car in, restart"}.get(str(ev.get("state", "")), str(ev.get("state", ""))),
 							(": " + text) if text != "" else ""]
 					"penalty":
 						text = "%s: %.0f s penalty%s" % [driver_name(int(ev.get("car", -1))), float(ev.get("seconds", 0.0)),

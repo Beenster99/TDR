@@ -30,6 +30,7 @@ var weather_stepper: Stepper
 var weather_change_stepper: Stepper
 var grid_stepper: Stepper
 var difficulty_stepper: Stepper
+var safety_car_stepper: Stepper
 var damage_stepper: Stepper
 var lobby_list: VBoxContainer
 var lobby_title: Label
@@ -88,6 +89,8 @@ func _handle_cmdline() -> void:
 		weather_change_stepper.set_value(true)
 	if GameData.arg("grid"):
 		grid_stepper.set_value(str(GameData.arg("grid")))
+	if GameData.arg("safety-car"):
+		safety_car_stepper.set_value(str(GameData.arg("safety-car")) != "off")
 	if GameData.arg("damage"):
 		damage_stepper.set_value(str(GameData.arg("damage")))
 	if GameData.arg("tyres"):
@@ -222,10 +225,11 @@ func _build_ui() -> void:
 	weather_change_stepper = Stepper.choice("Weather changes", [[false, "No, stays the same"], [true, "Yes, can change"]], false)
 	grid_stepper = Stepper.choice("Grid order", [["standard", "AI ahead, players behind"], ["random", "Random"],
 		["reversed", "Reversed (fastest at back)"]], "standard")
+	safety_car_stepper = Stepper.choice("Safety car", [[true, "On (yellows, VSC and safety car)"], [false, "Off (yellow flags only)"]], true)
 	damage_stepper = Stepper.choice("Damage", [["off", "Off"], ["visual", "Visual only"],
 		["full", "Full (affects the car)"]], "full")
 	_settings_steppers = [laps_stepper, ai_stepper, difficulty_stepper, tod_stepper, clock_stepper, weather_stepper,
-		weather_change_stepper, grid_stepper, damage_stepper]
+		weather_change_stepper, grid_stepper, damage_stepper, safety_car_stepper]
 
 	var single := _page(root, "single")
 	var single_settings := _settings_grid()
@@ -370,6 +374,7 @@ func _settings_from_ui() -> RaceSettings:
 	s.environment = {"time_of_day_h": float(tod_stepper.value), "time_scale": float(clock_stepper.value),
 		"weather": str(weather_stepper.value), "weather_changes": bool(weather_change_stepper.value)}
 	s.grid_order = str(grid_stepper.value)
+	s.safety_car_enabled = bool(safety_car_stepper.value)
 	s.set_damage_level(str(damage_stepper.value))
 	return s
 
@@ -485,6 +490,7 @@ func _refresh_lobby() -> void:
 		weather_stepper.set_value(str(env.get("weather", "dry")))
 		weather_change_stepper.set_value(bool(env.get("weather_changes", false)))
 		grid_stepper.set_value(Net.settings.grid_order)
+		safety_car_stepper.set_value(Net.settings.safety_car_enabled)
 		damage_stepper.set_value(Net.settings.effective_damage_level())
 	join_info_label.visible = host and not Net.dedicated
 	if join_info_label.visible:

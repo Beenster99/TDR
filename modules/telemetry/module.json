@@ -1,7 +1,7 @@
 {
   "id": "telemetry",
   "name": "Race data",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "status": "active",
   "summary": "Race data for the pit wall: sector and lap times, last-5-lap averages, gaps and intervals, tyre state, pit-window analysis (pit lane loss per track), weather radar and forecast, and a feed of strategy, radio and timing calls. Runs on every machine; the host's gaps and pit analysis are synced to clients. Every race keeps a full lap-by-lap log (to_dict).",
   "depends": {
