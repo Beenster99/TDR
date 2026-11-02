@@ -6,26 +6,22 @@ shader_type spatial;
 //   UV2.x    : offset from the racing line (m), UV2.y : distance to the track edge (m)
 //   (pit lane: UV.y = offset, + towards the garages; UV2.x = 1 where hatched;
 //    UV2.y = distance inside the lane's painted edge)
-// Height cues for elevation (vertex height): rungs every rung_step metres.
+// Height cue for elevation: hillshade by slope.
 
 uniform sampler2D noise : filter_linear_mipmap, repeat_enable;
 uniform float wetness = 0.0;
 uniform float dry_line = 0.0;      // 0..1 how dry the racing line is (SimEnvironment)
 uniform float dry_line_width = 2.2;
-uniform float rungs = 0.0;
-uniform float rung_step = 1.0;
 uniform float hillshade = 0.0;
 uniform vec3 light_dir = vec3(0.5, 0.6, 0.6);
 uniform vec3 kerb_a : source_color = vec3(0.78, 0.1, 0.09);
 uniform vec3 kerb_b : source_color = vec3(0.93, 0.93, 0.92);
 uniform float kerb_len = 1.0;
 
-varying float h;
 varying vec3 wn;
 varying vec3 wp;
 
 void vertex() {
-	h = VERTEX.y;
 	wn = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz);
 	wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 }
@@ -84,11 +80,6 @@ void fragment() {
 	}
 	vec3 L = normalize(light_dir);
 	c *= clamp(1.0 + hillshade * 0.6 * (dot(normalize(wn), L) - L.y), 0.5, 1.5);
-	if (rungs > 0.0 && kind > 0.875) {
-		float f = abs(fract(h / rung_step + 0.5) - 0.5) / max(fwidth(h / rung_step), 1e-4);
-		float line = 1.0 - clamp(f - 0.75, 0.0, 1.0);
-		c = mix(c, c * 1.5 + 0.06, line * rungs * 0.55);
-	}
 	// wet: darker and shinier, puddles in the low noise spots
 	float wet = wetness * (1.0 - dry_line * exp(-pow(UV2.x / dry_line_width, 2.0)) * step(0.875, kind));
 	if (kind > 0.125 && kind < 0.375) { wet *= 0.4; }
