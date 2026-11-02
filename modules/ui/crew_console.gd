@@ -10,7 +10,10 @@ extends Control
 ##     wear and temperatures, fuel, damage). STRATEGY reads the race: gaps
 ##     and pace against the cars around, the pit window and where a stop now
 ##     rejoins, rival strategies, weather;
-##   * bottom: team radio with the driver, and race control.
+##   * bottom: team radio with the driver, and race control;
+##   * top right of the 3D view (strategist): a picture-in-picture onboard
+##     camera on any car, front or rear (OnboardCamera), picked on the
+##     strategy tab.
 ## A combined role switches tabs with Y / C. Radio calls to the driver open
 ## with X / V. The full-screen pit wall (StrategistScreen) opens from the
 ## strategy tab or with P.
@@ -41,6 +44,10 @@ const BLUE := Color(0.55, 0.75, 1.0)
 const DIM := Color(1, 1, 1, 0.55)
 const PANEL := Color(0.02, 0.04, 0.07, 0.86)
 const RADIO_LOG := 40
+const CAM_OFF := "off"
+const CAM_FRONT := "front"
+const CAM_REAR := "rear"
+const CAM_MODES := [CAM_FRONT, CAM_REAR, CAM_OFF]
 
 var session: RaceSession
 var font: Font
@@ -60,6 +67,11 @@ var cover: Control
 var planner: Control
 var _hits: Array = []                ## [Rect2, action, arg] from the last draw
 var _hover := Vector2(-1, -1)
+## The onboard camera for the picture-in-picture window (set by the race
+## scene; null = no PiP, e.g. on a dedicated server).
+var onboard: OnboardCamera
+var cam_car := -1                    ## car the onboard camera is on
+var cam_mode := CAM_FRONT
 var _items: Array = []               ## rows of the current tab: [id, label, value text, can_change]
 
 
@@ -103,6 +115,20 @@ func refresh_role() -> void:
 		radio.car = team_car()
 	if watch_car < 0 or watch_car == team_car():
 		watch_car = _neighbour(-1)
+	if cam_car < 0:
+		cam_car = team_car()
+
+
+## True when the onboard camera window is showing (strategist roles only).
+func pip_on() -> bool:
+	return onboard != null and session != null and cam_mode != CAM_OFF and cam_car >= 0 \
+			and cam_car < session.sim.car_count() and RaceEntry.role_covers(role(), RaceEntry.ROLE_STRATEGIST)
+
+
+## Where the onboard camera window sits: the top right of the 3D view.
+func pip_rect() -> Rect2:
+	var vr := view_rect()
+	return Rect2(Vector2(vr.end.x - OnboardPip.SIZE.x - 10, vr.position.y + 10), OnboardPip.SIZE)
 
 
 func current_tab() -> String:
@@ -264,6 +290,10 @@ func _change(dir: int) -> void:
 		"watch":
 			watch_car = _cycle_car(watch_car, dir)
 			watch_changed.emit(watch_car)
+		"cam_car":
+			cam_car = _cycle_any(cam_car, dir)
+		"cam_view":
+			cam_mode = CAM_MODES[posmod(CAM_MODES.find(cam_mode) + dir, CAM_MODES.size())]
 		"swap":
 			var mates := crew_mates()
 			if not mates.is_empty():
@@ -302,7 +332,7 @@ func _activate() -> void:
 			radio.open()
 		"pit_wall":
 			open_pit_wall.emit()
-		"watch":
+		"watch", "cam_car", "cam_view":
 			_change(1)
 		"swap":
 			var pend: Dictionary = session.pending_swap(car)
@@ -340,6 +370,15 @@ func _neighbour(dir: int) -> int:
 	if q < 0 or q >= order.size():
 		q = p - dir
 	return order[clampi(q, 0, order.size() - 1)]
+
+
+## The next car in the running order, ours included.
+func _cycle_any(car: int, dir: int) -> int:
+	var order := session.sim.running_order
+	if order.is_empty():
+		return car
+	var p := order.find(car)
+	return order[posmod(p + dir, order.size())] if p >= 0 else order[0]
 
 
 func _cycle_car(car: int, dir: int) -> int:
@@ -403,6 +442,12 @@ func _build_items() -> void:
 	else:
 		_items.append(["pit_wall", "Full pit wall", "radar, all timing (P)", true])
 		_items.append(["watch", "Watch", sim.entries[watch_car].driver_name if watch_car >= 0 else "-", true])
+		if onboard:
+			var who := "-"
+			if cam_car >= 0:
+				who = "P%d %s%s" % [sim.entries[cam_car].position, sim.entries[cam_car].at_wheel(), " (us)" if cam_car == car else ""]
+			_items.append(["cam_car", "Onboard camera", who, true])
+			_items.append(["cam_view", "Camera view", {CAM_FRONT: "Front", CAM_REAR: "Rear", CAM_OFF: "Off"}[cam_mode], true])
 	_items.append(["radio", "Radio the driver", "quick calls (V)", true])
 	var mates := crew_mates()
 	if not mates.is_empty():
@@ -434,6 +479,8 @@ func _process(_delta: float) -> void:
 		return
 	size = get_viewport_rect().size
 	_build_items()
+	if pip_on() and not (cover and cover.visible):
+		OnboardPip.feed(self, onboard, pip_rect(), cam_car, cam_mode == CAM_REAR)
 	queue_redraw()
 
 
@@ -479,6 +526,8 @@ func _draw() -> void:
 	_draw_radio(mid)
 	_hits.append([mid, "radio", null])
 	_draw_markers(car)
+	if pip_on():
+		OnboardPip.draw(self, font, onboard, pip_rect(), session, cam_car, cam_mode == CAM_REAR)
 	_text(Vector2(LEFT_W + 24, mid.position.y - 10), "Click: act   Right-click / wheel: change   ↑↓ ←→ Enter   %sV radio   P pit wall" % (
 		"C switch tab   " if tabs.size() > 1 else ""), 13, Color(1, 1, 1, 0.75))
 

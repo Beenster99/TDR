@@ -8,7 +8,11 @@ extends RefCounted
 ## How a stop works:
 ##  * "Box this lap" (AI strategy, the player's box button, or a co-op pit
 ##    crew / strategist) sets the car's pit plan and its box flag. From about
-##    300 m before the pit entry the car is then driven in automatically.
+##    300 m before the pit entry the car is then driven in automatically,
+##    unless its driver drives in themselves (set_self_drive, Settings >
+##    Gameplay): then they follow the pit guide line (guide_line) into the
+##    lane, must be down to the limit by the limit line, stop on their box
+##    (BOX_STOP_*, overshooting costs time) and drive out with the limiter.
 ##  * A player can also just drive into the pit lane. They must be at the
 ##    speed limit by the limit line (the pit limiter button caps the speed),
 ##    or get a time penalty. From the limit line the car is guided to its box.
@@ -24,6 +28,31 @@ extends RefCounted
 ## from other crew members go through the host to the car's owner.
 
 const LIMIT_TOLERANCE := 1.0     ## m/s over the limit before it counts as speeding
+## A driver stopping in their box themselves (self drive): how close to the
+## box's marks counts. Along the lane: up to BOX_STOP_SHORT before the marks
+## and BOX_STOP_LONG past them is spot on; up to BOX_OVERSHOOT_MAX past them
+## the crew still work on the car, but it costs BOX_OVERSHOOT_S plus
+## BOX_OVERSHOOT_S_PER_M a metre (they have to move the kit to it); further
+## than that the car has missed its box and goes round again. Across: within
+## BOX_STOP_WIDE of the marks.
+const BOX_STOP_SHORT := 3.0
+const BOX_STOP_LONG := 2.0
+const BOX_STOP_WIDE := 2.6
+const BOX_STOP_SPEED := 1.0      ## m/s: stopped
+const BOX_OVERSHOOT_MAX := 12.0
+const BOX_OVERSHOOT_S := 1.0
+const BOX_OVERSHOOT_S_PER_M := 0.35
+## The pit guide line for a driver driving in themselves (guide_line): it
+## starts GUIDE_LEAD track metres before the route, and its speeds are
+## planned for a driver braking at GUIDE_DECEL (to the limit line) and
+## GUIDE_BOX_DECEL (onto the box), cornering at GUIDE_LATERAL_G.
+const GUIDE_LEAD := 320.0
+const GUIDE_DECEL := 9.0
+const GUIDE_BOX_DECEL := 4.0
+const GUIDE_LATERAL_G := 15.0
+const GUIDE_MAX_SPEED := 100.0
+const GUIDE_AHEAD := 900.0       ## m before the route the HUD starts counting down
+const GUIDE_NONE := -1.0e9       ## guide_progress: not heading into the pits
 const SPEEDING_PENALTY_S := 5.0
 const MISSED_STOP_PENALTY_S := 60.0
 const COMMIT_BEFORE_ENTRY := 320.0  ## m before the pit entry the car is driven in
@@ -106,6 +135,9 @@ var _box: PackedInt32Array = []
 var _prev_s: PackedFloat64Array = []
 var _lap_fuel: PackedFloat64Array = []
 var _sent: Array = []            ## host: last pit state seen per car (events, penalties)
+## Cars whose driver drives in and stops in the box themselves (set by the
+## machine that simulates the car; not part of the race state).
+var _self: PackedByteArray = []
 
 
 func _init(p_sim: RaceSim) -> void:
@@ -116,6 +148,7 @@ func _init(p_sim: RaceSim) -> void:
 	var n := sim.car_count()
 	for i in n:
 		_route_k.append(0)
+		_self.append(0)
 		_box.append(int(float(i) * t.pit_box_count / maxf(n, 1)) if enabled else 0)
 		_prev_s.append(sim.cars[i].track_s)
 		_lap_fuel.append(sim.cars[i].fuel_l)
@@ -181,11 +214,32 @@ func in_pit_lane(i: int) -> bool:
 func controls(i: int) -> bool:
 	var p: Dictionary = sim.entries[i].pit
 	match p["phase"]:
-		PHASE_APPROACH, PHASE_LIMIT, PHASE_SERVICE, PHASE_LEAVE:
+		PHASE_SERVICE:
 			return true
-		PHASE_ENTRY, PHASE_EXIT:
+		PHASE_LIMIT, PHASE_LEAVE:
+			return not self_drives(i)
+		PHASE_APPROACH, PHASE_ENTRY, PHASE_EXIT:
 			return p["auto"]
 	return false
+
+
+## The driver of car i drives into the pits and stops in the box themselves,
+## following the pit guide line, instead of the car being driven in. Set by
+## the machine that simulates the car, for a player at the wheel who wants
+## it (Settings > Gameplay). Turning it off mid-stop hands the rest of the
+## stop to the guide (e.g. an AI co-driver taking over).
+func set_self_drive(i: int, on: bool) -> void:
+	if i < 0 or i >= _self.size():
+		return
+	_self[i] = 1 if on else 0
+	var p: Dictionary = sim.entries[i].pit
+	if not on and p["phase"] != PHASE_NONE and p["phase"] != PHASE_EXIT:
+		p["auto"] = true
+
+
+## True while car i's driver is driving its pit stop themselves.
+func self_drives(i: int) -> bool:
+	return i >= 0 and i < _self.size() and _self[i] == 1 and not sim.entries[i].pit["auto"]
 
 
 # --- Plans (driver, pit crew, strategist or AI) -------------------------------
@@ -493,9 +547,9 @@ func _step_car(i: int, inp: CarInput) -> CarInput:
 			if sim.phase != RaceSim.Phase.RACING and sim.phase != RaceSim.Phase.CHEQUERED:
 				return _limited(i, inp)
 			if p["box"] and not e.finished and _near_commit(c.track_s):
-				_enter_route(i, PHASE_APPROACH, true)
+				_enter_route(i, PHASE_APPROACH, _self[i] == 0)
 			elif _entered_lane_by_hand(i):
-				_enter_route(i, PHASE_ENTRY, p["box"])
+				_enter_route(i, PHASE_ENTRY, p["box"] and _self[i] == 0)
 		PHASE_APPROACH:
 			if t.in_pit_lane(c.pos) and t.project_pit(c.pos)["d"] > 2.0:
 				p["phase"] = PHASE_ENTRY
@@ -515,7 +569,9 @@ func _step_car(i: int, inp: CarInput) -> CarInput:
 				p["phase"] = PHASE_NONE  # drove back out
 		PHASE_LIMIT:
 			var box_d := _box_d(i)
-			if _route_d(i) >= box_d - 1.2 and c.speed() < 1.5:
+			if self_drives(i):
+				_self_drive_box(i)
+			elif _route_d(i) >= box_d - 1.2 and c.speed() < 1.5:
 				var work := service_for(i, p["plan"])
 				p["work"] = work
 				p["service_total"] = work["total_s"]
@@ -541,9 +597,51 @@ func _step_car(i: int, inp: CarInput) -> CarInput:
 	return _limited(i, inp)
 
 
-## The pit limiter: no drive above the pit lane speed limit.
+## A driver stopping in their own box (self drive, PHASE_LIMIT): on the
+## marks, the stop starts; a little past them it starts but costs time; well
+## past them they've missed the box: the stop is off this lap (the box call
+## stays, so they come in again next lap). Past the end of the speed limit
+## they're on their way out.
+func _self_drive_box(i: int) -> void:
+	var c := sim.cars[i]
+	var p: Dictionary = sim.entries[i].pit
+	var m := box_marks(i, c.pos)
+	var along: float = m["along"]
+	if c.speed() < BOX_STOP_SPEED and absf(m["across"]) < BOX_STOP_WIDE and along > -BOX_STOP_SHORT \
+			and along < BOX_OVERSHOOT_MAX and not bool(p.get("missed_box", false)):
+		var work := service_for(i, p["plan"])
+		var extra := 0.0
+		if along > BOX_STOP_LONG:
+			extra = BOX_OVERSHOOT_S + BOX_OVERSHOOT_S_PER_M * (along - BOX_STOP_LONG)
+		work["overshoot_s"] = extra
+		work["total_s"] = float(work["total_s"]) + extra
+		p["work"] = work
+		p["service_total"] = work["total_s"]
+		p["service_left"] = work["total_s"]
+		p["phase"] = PHASE_SERVICE
+	elif along >= BOX_OVERSHOOT_MAX and absf(m["across"]) < 8.0:
+		p["missed_box"] = true
+	if p["phase"] == PHASE_LIMIT and _route_d(i) >= limit_end:
+		p["phase"] = PHASE_EXIT
+		p["limiter"] = false
+		p.erase("missed_box")
+
+
+## Where a point is against car i's box marks, in metres: along the lane
+## (+ = past the marks) and across it.
+func box_marks(i: int, pos: Vector2) -> Dictionary:
+	var box: Dictionary = sim.track.pit_box(box_index(i))
+	var fwd := Vector2.from_angle(box["heading"])
+	var rel := pos - (box["pos"] as Vector2)
+	return {"along": rel.dot(fwd), "across": rel.dot(Vector2(-fwd.y, fwd.x))}
+
+
+## The pit limiter: no drive above the pit lane speed limit (always on for a
+## driver driving themselves from the limit line to the end of the limit).
 func _limited(i: int, inp: CarInput) -> CarInput:
-	if sim.entries[i].pit["limiter"] and sim.cars[i].speed() > sim.track.pit_speed_limit - 0.3:
+	var p: Dictionary = sim.entries[i].pit
+	var on: bool = p["limiter"] or (p["phase"] in [PHASE_LIMIT, PHASE_LEAVE] and self_drives(i))
+	if on and sim.cars[i].speed() > sim.track.pit_speed_limit - 0.3:
 		var r := CarInput.new()
 		r.throttle = 0.0
 		r.brake = inp.brake
@@ -576,6 +674,7 @@ func _enter_route(i: int, new_phase: String, auto: bool) -> void:
 	var p: Dictionary = sim.entries[i].pit
 	p["phase"] = new_phase
 	p["auto"] = auto
+	p.erase("missed_box")
 	p["lane_time"] = sim.race_time
 	p["entry_lap"] = current_lap(i)
 	_route_k[i] = _nearest_route(sim.cars[i].pos, -1)
@@ -868,6 +967,129 @@ func _guide(i: int) -> CarInput:
 	if p["limiter"] and speed > sim.track.pit_speed_limit - 0.3:
 		inp.throttle = 0.0
 	return inp.quantized()
+
+
+# --- The pit guide line (drivers driving in themselves) ------------------------
+
+## The line a driver follows into the pits, to their box and out again, for
+## car i: GUIDE_LEAD metres along the track before the guided route, then the
+## route (easing to the pit side, down the lane past the boxes, back onto the
+## track), with the speed to be doing at each point: braking in time for the
+## pit limit line, the limit through the zone, braking onto the box (speed 0
+## there), the limit again to the end of the zone. Guide metres throughout
+## (route metres + GUIDE_LEAD). {} without a pit lane.
+## {points: PackedVector2Array, dist, speed: PackedFloat64Array, length,
+##  limit_start, limit_end, box_d, box_pos, box_heading, limit: m/s}
+func guide_line(i: int) -> Dictionary:
+	if not enabled:
+		return {}
+	var t := sim.track
+	var pts := PackedVector2Array()
+	var dist := PackedFloat64Array()
+	var lead := int(GUIDE_LEAD / ROUTE_STEP)
+	for k in lead:
+		var s := commit_s - GUIDE_LEAD + k * ROUTE_STEP
+		pts.append(t.position_at(fposmod(s, t.length), 0.0))
+		dist.append(k * ROUTE_STEP)
+	for k in route.size():
+		pts.append(route[k])
+		dist.append(GUIDE_LEAD + route_cum[k])
+	var box_d := GUIDE_LEAD + _box_d(i)
+	# Near the box the line swings over from the fast lane onto the box
+	# (the garage side), and back out after it.
+	for k in pts.size():
+		var into := smoothstep(box_d - 32.0, box_d - 8.0, dist[k]) * (1.0 - smoothstep(box_d + 6.0, box_d + 30.0, dist[k]))
+		if into > 0.0:
+			var lane_d := dist[k] - GUIDE_LEAD - lane_start
+			pts[k] = pts[k].lerp(t.pit_position_at(lane_d, t.pit_side * t.pit_width * 0.25), into)
+	var ls := GUIDE_LEAD + limit_start
+	var le := GUIDE_LEAD + limit_end
+	var vl := t.pit_speed_limit - 0.4
+	var m := pts.size()
+	var speed := PackedFloat64Array()
+	speed.resize(m)
+	for k in m:
+		var v := GUIDE_MAX_SPEED
+		if k >= 2 and k < m - 2:
+			v = minf(v, sqrt(GUIDE_LATERAL_G * _radius(pts[k - 2], pts[k], pts[k + 2])))
+		if dist[k] >= ls - 2.0 and dist[k] <= le:
+			v = minf(v, vl)
+		if dist[k] >= ls and dist[k] < box_d + 1.0:
+			v = minf(v, sqrt(2.0 * GUIDE_BOX_DECEL * maxf(box_d - dist[k], 0.0)))
+		speed[k] = v
+	# Braking in time, backwards from every slow point (not across the box:
+	# leaving it, the car pulls away from rest).
+	for j in m - 1:
+		var k := m - 2 - j
+		if dist[k] >= box_d - 1.0:
+			continue
+		var ds := dist[k + 1] - dist[k]
+		var dec := GUIDE_BOX_DECEL if dist[k] >= ls else GUIDE_DECEL
+		speed[k] = minf(speed[k], sqrt(speed[k + 1] * speed[k + 1] + 2.0 * dec * ds))
+	var box: Dictionary = t.pit_box(box_index(i))
+	return {"points": pts, "dist": dist, "speed": speed, "length": dist[m - 1], "limit_start": ls,
+		"limit_end": le, "box_d": box_d, "box_pos": box["pos"], "box_heading": box["heading"], "limit": t.pit_speed_limit}
+
+
+## Where car i is along its guide line (guide metres; negative before the
+## line starts), or GUIDE_NONE when it isn't heading into the pits: no box
+## call, or the pits are still more than GUIDE_AHEAD metres away. Doesn't
+## change anything (any machine, any car).
+func guide_progress(i: int) -> float:
+	if not enabled:
+		return GUIDE_NONE
+	var p: Dictionary = sim.entries[i].pit
+	var ph: String = p["phase"]
+	if ph == PHASE_NONE:
+		if not p["box"] or sim.entries[i].finished:
+			return GUIDE_NONE
+		var to_commit := fposmod(commit_s - sim.cars[i].track_s, sim.track.length)
+		if to_commit > sim.track.length - 80.0:
+			to_commit -= sim.track.length   # just past the commit point
+		return GUIDE_LEAD - to_commit if to_commit <= GUIDE_AHEAD else GUIDE_NONE
+	var keep := _route_k[i]
+	var d := _route_d(i)
+	_route_k[i] = keep
+	return GUIDE_LEAD + d
+
+
+## What a driver driving in themselves needs to know right now, for the HUD:
+## {stage: "approach" (to the limit line) / "box" (to the box) / "service" /
+##  "leave" (to the end of the limit) / "" (nothing), to_limit: metres to the
+##  limit line, to_box: metres to the box marks (negative = past them),
+##  to_end: metres to the end of the limit, limit: m/s, speed: m/s,
+##  brake_at: metres before the limit line / box where braking has to start
+##  (at GUIDE_DECEL / GUIDE_BOX_DECEL), across: metres off the box sideways,
+##  on_marks: stopped well enough here,
+##  missed: drove past the box}
+func guide_info(i: int) -> Dictionary:
+	var g := guide_progress(i)
+	if g <= GUIDE_NONE:
+		return {"stage": ""}
+	var p: Dictionary = sim.entries[i].pit
+	var c := sim.cars[i]
+	var v := c.speed()
+	var lim := sim.track.pit_speed_limit
+	var out := {"stage": "", "limit": lim, "speed": v, "missed": bool(p.get("missed_box", false))}
+	out["to_limit"] = GUIDE_LEAD + limit_start - g
+	out["to_end"] = GUIDE_LEAD + limit_end - g
+	var m := box_marks(i, c.pos)
+	out["to_box"] = -float(m["along"])
+	out["across"] = float(m["across"])
+	out["on_marks"] = float(m["along"]) > -BOX_STOP_SHORT and float(m["along"]) <= BOX_STOP_LONG \
+		and absf(m["across"]) < BOX_STOP_WIDE
+	match str(p["phase"]):
+		PHASE_NONE, PHASE_APPROACH, PHASE_ENTRY:
+			out["stage"] = "approach"
+			out["brake_at"] = maxf(v * v - lim * lim, 0.0) / (2.0 * GUIDE_DECEL)
+		PHASE_LIMIT:
+			out["stage"] = "leave" if out["missed"] else "box"
+			out["brake_at"] = v * v / (2.0 * GUIDE_BOX_DECEL)
+		PHASE_SERVICE:
+			out["stage"] = "service"
+		PHASE_LEAVE:
+			out["stage"] = "leave"
+	return out
 
 
 # --- Host: counting, penalties and events -------------------------------------------
