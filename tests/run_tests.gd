@@ -54,6 +54,7 @@ func _init() -> void:
 	test_active_pad()
 	test_hud_timing()
 	test_graphics_effects()
+	test_pit_lane_blend()
 	test_settings_and_units()
 	test_rebinding()
 	test_grid_limits()
@@ -2113,6 +2114,27 @@ func test_garage_saves() -> void:
 	check(not r.owns(bmw.id) and back > 0 and r.money == money_before + back, "selling a car refunds part of it")
 	for g in [path, path + ".bak", path + ".tmp"]:
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(g))
+
+
+## Pit lanes join the circuit without a step: where a lane leaves or rejoins
+## the track, the ground just beyond the track's edge on the pit side is at
+## the edge's height, and by the garages the lane keeps its own height.
+func test_pit_lane_blend() -> void:
+	print("pit lane blend")
+	for d in TrackCatalog.list_all():
+		var t := TrackCatalog.load_track(d["id"])
+		if not t.has_pit_lane() or not t.has_elevation():
+			continue
+		var worst := 0.0
+		for end_d in [6.0, 12.0, 20.0, t.pit_length - 20.0, t.pit_length - 12.0, t.pit_length - 6.0]:
+			var q := t.project(t.pit_position_at(end_d))
+			var edge: float = q["w_right"] if t.pit_side > 0.0 else q["w_left"]
+			var at_edge := t.height_at(q["s"], t.pit_side * edge)
+			var beyond := t.surface_height_at(t.position_at(q["s"], t.pit_side * (edge + 0.5)), q["idx"])
+			worst = maxf(worst, absf(beyond - at_edge))
+		var mid := (t.pit_limit_start + t.pit_limit_end) * 0.5
+		var own := absf(t.surface_height_at(t.pit_position_at(mid)) - t.pit_height_at(mid))
+		check(worst < 0.15 and own < 0.01, "%s: pit lane meets the track's edge (step %.2f m) and is level by the garages (%.2f m)" % [d["id"], worst, own])
 
 
 ## Graphics effects: run-off and gravel are drawn at the height cars are
