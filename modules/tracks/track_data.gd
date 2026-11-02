@@ -19,6 +19,9 @@ const _BARRIER_CODES := {"W": Barrier.WALL, "T": Barrier.TYRES, "A": Barrier.ARM
 const _RUNOFF_CODES := {"G": Surface.GRASS, "R": Surface.GRAVEL, "P": Surface.RUNOFF}
 
 var id: String = ""
+## What kind of racing the track is for: "circuit" (road racing), "rallycross"
+## (mixed tarmac and dirt, with a joker lap) or "derby" (demolition derby).
+var discipline: String = "circuit"
 var display_name: String = ""
 var short_name: String = ""
 var location: String = ""
@@ -107,7 +110,11 @@ static func from_dict(d: Dictionary) -> TrackData:
 	t.kerb_width = d.get("kerb_width_m", t.kerb_width)
 	t.default_environment = d.get("default_environment", {})
 	t.pit_lane = d.get("pit_lane")
+	t.discipline = str(d.get("discipline", "circuit"))
 	t._build()
+	t._load_dirt(d.get("dirt", []))
+	if d.get("joker") is Dictionary and (d["joker"] as Dictionary).get("path", []).size() >= 2:
+		t._build_joker(d["joker"])
 	t._load_elevation(d.get("elevation"), start)
 	t._load_barriers(d.get("barriers"), start)
 	if t.pit_lane is Dictionary and t.pit_lane.get("path", []).size() >= 2:
@@ -299,6 +306,12 @@ func surface_for(q: Dictionary) -> int:
 		return TrackData.Surface.TRACK
 	if q.has("pos") and in_pit_lane(q["pos"]):
 		return TrackData.Surface.TRACK
+	if q.has("pos") and has_joker() and _joker_bounds.grow(JOKER_VERGE_M).has_point(q["pos"]):
+		var jd: float = project_joker(q["pos"])["dist"] - joker_width * 0.5
+		if jd <= 0.0:
+			return TrackData.Surface.TRACK
+		if jd <= JOKER_VERGE_M and a > edge + kerb_width:
+			return TrackData.Surface.GRASS
 	if a <= edge + kerb_width:
 		return TrackData.Surface.KERB
 	if a <= edge + runoff:
@@ -338,6 +351,200 @@ func grid_slot(i: int) -> Dictionary:
 	var w := minf(width_left[index_at(s)], width_right[index_at(s)])
 	var offset := side * minf(3.0, w * 0.45)
 	return {"pos": position_at(s, offset), "heading": heading_at(s), "s": s}
+
+
+# --- Loose surface (rallycross dirt sections) --------------------------------
+
+## Stretches of the lap on a loose surface (gravel, dirt): [[s_from, s_to], ...]
+## in metres from the start line, race direction. A stretch may run over the
+## line (s_from > s_to).
+var dirt: Array = []
+## Per centre-line point: how loose the surface is there (0 tarmac .. 1 dirt),
+## eased over DIRT_BLEND_M where tarmac and dirt meet.
+var _dirt_pt: PackedFloat32Array = []
+const DIRT_BLEND_M := 4.0
+
+
+func _load_dirt(ranges) -> void:
+	if not (ranges is Array) or (ranges as Array).is_empty():
+		return
+	for r in ranges:
+		if r is Array and r.size() >= 2:
+			dirt.append([float(r[0]), float(r[1])])
+	_dirt_pt.resize(points.size())
+	for i in points.size():
+		_dirt_pt[i] = _dirt_range_value(cum_s[i], dirt, length)
+
+
+static func _dirt_range_value(s: float, ranges: Array, loop_len: float) -> float:
+	var best := 0.0
+	for r in ranges:
+		var a: float = r[0]
+		var b: float = r[1]
+		var inside: float
+		if loop_len > 0.0:
+			var span := fposmod(b - a, loop_len)
+			var into := fposmod(s - a, loop_len)
+			if into > span:
+				# outside: distance to the nearer end
+				inside = -minf(into - span, loop_len - into)
+			else:
+				inside = minf(into, span - into)
+		else:
+			inside = minf(s - a, b - s)
+		best = maxf(best, clampf(0.5 + inside / DIRT_BLEND_M, 0.0, 1.0))
+	return best
+
+
+func has_dirt() -> bool:
+	return not dirt.is_empty() or not joker_dirt.is_empty()
+
+
+## How loose the surface of the lap is at distance s: 0 = tarmac, 1 = dirt.
+func dirt_at(s: float) -> float:
+	if _dirt_pt.is_empty():
+		return 0.0
+	var a := _seg_at(s)
+	return lerpf(_dirt_pt[a[0]], _dirt_pt[a[1]], a[2])
+
+
+## How loose the surface is under a world position (on the lap or the joker).
+func dirt_at_pos(pos: Vector2, q: Dictionary = {}) -> float:
+	if has_joker() and in_joker(pos):
+		return joker_dirt_at(project_joker(pos)["d"])
+	if q.is_empty():
+		q = project(pos)
+	return dirt_at(q["s"])
+
+
+# --- Joker lap (rallycross) ----------------------------------------------------
+## A second route every car must take once a race (RaceSettings.joker_laps).
+## Like the pit lane it is a path from where it leaves the lap (entry) to
+## where it rejoins (exit); distances along it are "joker metres" (0 = entry).
+
+var joker_path: PackedVector2Array = []
+var joker_cum: PackedFloat64Array = []
+var joker_length: float = 0.0
+var joker_entry_s: float = 0.0
+var joker_exit_s: float = 0.0
+var joker_width: float = 10.0
+var joker_dirt: Array = []      ## [[d_from, d_to], ...] in joker metres
+var _joker_bounds := Rect2()
+## Grass verge beside the joker where it runs away from the lap.
+const JOKER_VERGE_M := 5.0
+
+
+func _build_joker(j: Dictionary) -> void:
+	for q in j["path"]:
+		joker_path.append(Vector2(q[0], q[1]))
+	joker_cum.resize(joker_path.size())
+	var s := 0.0
+	for i in joker_path.size():
+		if i > 0:
+			s += joker_path[i - 1].distance_to(joker_path[i])
+		joker_cum[i] = s
+	joker_length = s
+	joker_entry_s = float(j.get("entry_s", 0.0))
+	joker_exit_s = float(j.get("exit_s", 0.0))
+	joker_width = float(j.get("width_m", joker_width))
+	for r in j.get("dirt", []):
+		joker_dirt.append([float(r[0]), float(r[1])])
+	var lo := joker_path[0]
+	var hi := joker_path[0]
+	for q in joker_path:
+		lo = lo.min(q)
+		hi = hi.max(q)
+	_joker_bounds = Rect2(lo, hi - lo).grow(joker_width)
+
+
+func has_joker() -> bool:
+	return joker_path.size() >= 2
+
+
+## Nearest point on the joker: {d (joker metres), offset (+ right), dist}.
+func project_joker(pos: Vector2) -> Dictionary:
+	var best := {"d": 0.0, "offset": 0.0, "dist": INF}
+	for i in joker_path.size() - 1:
+		var a := joker_path[i]
+		var seg := joker_path[i + 1] - a
+		var l := seg.length()
+		if l < 0.0001:
+			continue
+		var dir := seg / l
+		var t := clampf((pos - a).dot(dir), 0.0, l)
+		var foot := a + dir * t
+		var dist := pos.distance_to(foot)
+		if dist < best["dist"]:
+			best = {"d": joker_cum[i] + t, "offset": (pos - foot).dot(Vector2(-dir.y, dir.x)), "dist": dist}
+	return best
+
+
+func in_joker(pos: Vector2) -> bool:
+	if not has_joker() or not _joker_bounds.has_point(pos):
+		return false
+	return project_joker(pos)["dist"] <= joker_width * 0.5
+
+
+## Whether a car at pos is driving the joker (for lap distance and the joker
+## count). Where the joker and the lap overlap (at its ends, or where they
+## cross) a car stays on the route it was on: was_in = on the joker last step.
+## q = project(pos) for the lap.
+func on_joker_route(pos: Vector2, q: Dictionary, was_in: bool) -> bool:
+	if not has_joker() or not _joker_bounds.has_point(pos):
+		return false
+	var jq := project_joker(pos)
+	if jq["dist"] > joker_width * 0.5:
+		return false
+	if was_in:
+		return true
+	var off: float = q["offset"]
+	var edge: float = q["w_right"] if off >= 0.0 else q["w_left"]
+	# Getting on to it: off the lap's tarmac, or at the joker's own start.
+	return absf(off) > edge or jq["d"] < joker_length * 0.25
+
+
+func joker_position_at(d: float, offset: float = 0.0) -> Vector2:
+	d = clampf(d, 0.0, joker_length)
+	var i := _joker_index(d)
+	var dir := (joker_path[i + 1] - joker_path[i]).normalized()
+	return joker_path[i] + dir * (d - joker_cum[i]) + Vector2(-dir.y, dir.x) * offset
+
+
+func joker_heading_at(d: float) -> float:
+	var i := _joker_index(d)
+	return (joker_path[i + 1] - joker_path[i]).angle()
+
+
+## How loose the joker's surface is d metres along it (0 tarmac .. 1 dirt).
+func joker_dirt_at(d: float) -> float:
+	return _dirt_range_value(d, joker_dirt, 0.0) if not joker_dirt.is_empty() else 0.0
+
+
+## The lap distance a car d metres along the joker counts as: the joker's
+## length is spread evenly over the stretch of lap it replaces.
+func joker_lap_s(d: float) -> float:
+	var span := fposmod(joker_exit_s - joker_entry_s, length)
+	return fposmod(joker_entry_s + span * clampf(d / maxf(joker_length, 0.001), 0.0, 1.0), length)
+
+
+## Lap distance the main track skips while a car is on the joker.
+func joker_spans(s: float) -> bool:
+	s = fposmod(s, length)
+	if joker_entry_s <= joker_exit_s:
+		return s >= joker_entry_s and s <= joker_exit_s
+	return s >= joker_entry_s or s <= joker_exit_s
+
+
+func _joker_index(d: float) -> int:
+	var lo := 0
+	var hi := joker_path.size() - 2
+	while lo < hi:
+		var mid := (lo + hi + 1) / 2
+		if joker_cum[mid] <= d:
+			lo = mid
+		else:
+			hi = mid - 1
+	return lo
 
 
 # --- Pit lane ---------------------------------------------------------------
@@ -507,7 +714,21 @@ func surface_height_at(pos: Vector2, hint: int = -1) -> float:
 		if out < PIT_VERGE_M:
 			var lane := pit_surface_height(pos, pp["d"], q)
 			h = lerpf(h, lane, 1.0 - smoothstep(1.5, PIT_VERGE_M, out))
+	# The joker: the height of the lap's nearest edge, so the two routes meet
+	# without a step, in a smooth verge like the pit lane's.
+	if has_joker() and _joker_bounds.grow(PIT_VERGE_M).has_point(pos):
+		var jp := project_joker(pos)
+		var jout: float = jp["dist"] - joker_width * 0.5
+		if jout < PIT_VERGE_M:
+			h = lerpf(h, joker_surface_height(q), 1.0 - smoothstep(1.5, PIT_VERGE_M, jout))
 	return h
+
+
+## Height of the joker's surface at a projected point (project(pos)).
+func joker_surface_height(q: Dictionary) -> float:
+	var off: float = q["offset"]
+	var edge: float = q["w_right"] if off >= 0.0 else q["w_left"]
+	return height_at(q["s"], clampf(off, -edge, edge))
 
 
 ## Height of the pit lane's surface at a point on (or beside) it, d pit metres

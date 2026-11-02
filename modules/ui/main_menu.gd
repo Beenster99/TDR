@@ -8,6 +8,7 @@ extends Control
 ##   --host / --join 127.0.0.1 [--port 7777] [--name Bob]            skip the menu
 ##   --single [--laps 1] [--ai 3] [--car id]                         skip to a race
 ##   --track id  --class GT3|Road|multi|open                         pick track / car class
+##   --race-type circuit|rallycross                                  race type (before --track)
 ##   --autodrive --ready --quit-after-race --time-scale 3            test bots
 ##   --resume-season id|latest  --menu-page season_new  --menu-shot out.png   (screenshots)
 ##   --season 2 [--qualifying driven|simulated|off] [--points f1]     a quick season of N rounds
@@ -28,6 +29,13 @@ var join_name_label: Label
 var status_label: Label
 var car_stepper: Stepper
 var class_stepper: Stepper
+## Race type (RaceSettings.discipline): circuit racing, rallycross ... It
+## narrows the track and class lists and hides settings that don't apply.
+var race_type_stepper: Stepper
+const RACE_TYPE_NAMES := {"circuit": "Circuit racing", "rallycross": "Rallycross", "derby": "Demolition derby"}
+## Settings that rallycross doesn't use (no pit stops, fuel, safety car,
+## shared cars or tyre choice), hidden while it's picked.
+var _circuit_only: Array[Control] = []
 var car_filter_stepper: Stepper   ## narrows the car list to one class (multi-class / open races)
 var track_stepper: Stepper
 var laps_stepper: Stepper
@@ -168,6 +176,12 @@ func _handle_cmdline() -> void:
 		return
 	laps_stepper.set_value(int(GameData.arg("laps", laps_stepper.value)))
 	ai_stepper.set_value(int(GameData.arg("ai", ai_stepper.value)))
+	if GameData.arg("race-type") and str(GameData.arg("race-type")) != _race_type():
+		race_type_stepper.set_value(str(GameData.arg("race-type")))
+		_on_race_type_changed(false)
+	elif GameData.arg("track") and str(_track_info(str(GameData.arg("track"))).get("discipline", "circuit")) != _race_type():
+		race_type_stepper.set_value(str(_track_info(str(GameData.arg("track")))["discipline"]))
+		_on_race_type_changed(false)
 	if GameData.arg("track") and _track_info(str(GameData.arg("track"))):
 		track_stepper.set_value(str(GameData.arg("track")))
 	if GameData.arg("class"):
@@ -446,6 +460,7 @@ func _build_ui() -> void:
 	upgrades_stepper = Stepper.choice("Car upgrades", [[RaceSettings.UPGRADES_ON, "On (R&D counts)"],
 		[RaceSettings.UPGRADES_BOP, "BoP (looks only)"], [RaceSettings.UPGRADES_STOCK, "Off (stock cars)"]],
 		RaceSettings.UPGRADES_ON)
+	_circuit_only.append_array([fuel_stepper, wear_stepper, stops_stepper, drivers_stepper, safety_car_stepper])
 	_settings_steppers = [laps_stepper, ai_stepper, difficulty_stepper, tod_stepper, clock_stepper, weather_stepper,
 		weather_change_stepper, grid_stepper, damage_stepper, safety_car_stepper, fuel_stepper, wear_stepper, stops_stepper,
 		drivers_stepper, upgrades_stepper, tuning_stepper]
@@ -560,6 +575,7 @@ func _build_ui() -> void:
 	badge.pressed.connect(func(): _show("profile"))
 	_refresh_badge()
 	_limit_grid()
+	_apply_race_type_rules()
 
 
 ## Race settings sit in two columns so the page fits on screen; D-pad moves between them.
@@ -601,9 +617,17 @@ func _card_box(card: PanelContainer) -> VBoxContainer:
 func _build_circuit_card() -> void:
 	_circuit_card = _card("CIRCUIT")
 	var box := _card_box(_circuit_card)
-	var track_opts := []
+	var types := []
 	for t in GameData.tracks:
-		track_opts.append([t["id"], t["name"]])
+		var dsc := str(t.get("discipline", "circuit"))
+		if not types.any(func(o): return o[0] == dsc):
+			types.append([dsc, RACE_TYPE_NAMES.get(dsc, dsc.capitalize())])
+	types.sort_custom(func(a, b): return RACE_TYPE_NAMES.keys().find(a[0]) < RACE_TYPE_NAMES.keys().find(b[0]))
+	race_type_stepper = Stepper.choice("Race type", types, "circuit")
+	race_type_stepper.value_changed.connect(func(_v): _on_race_type_changed())
+	race_type_stepper.visible = types.size() > 1
+	box.add_child(race_type_stepper)
+	var track_opts := _track_options("circuit")
 	var default_track: String = "mugello" if _track_info("mugello") else track_opts[0][0]
 	track_stepper = Stepper.choice("Track", track_opts, default_track)
 	track_stepper.value_changed.connect(func(_v): _push_settings(); _refresh_cards())
@@ -634,20 +658,14 @@ func _build_car_card() -> void:
 	var box := _card_box(_car_card)
 	# Class (host setting): placed with the race settings on the single race
 	# and lobby pages, at the top of this card elsewhere.
-	var class_opts := []
-	for c in CarCatalog.classes(GameData.cars):
-		class_opts.append([c, "%s  (%d cars)" % [c, CarCatalog.ids_in_class(GameData.cars, c).size()]])
-	class_opts.append([RaceSettings.CLASS_MULTI, "Multi-class (all cars)"])
-	class_opts.append(["", "Open (AI match the players)"])
+	var class_opts := _class_options("circuit")
 	var default_class: String = "GT3" if CarCatalog.ids_in_class(GameData.cars, "GT3").size() > 0 else class_opts[0][0]
 	class_stepper = Stepper.choice("Class", class_opts, default_class)
 	class_stepper.value_changed.connect(func(_v): _rebuild_car_options(); _limit_grid(); _push_settings())
 	box.add_child(class_stepper)
 	# With every class on the grid (multi-class / open) the car list is long:
 	# this narrows it to one class. Shown only then.
-	var filter_opts := [["", "All classes"]]
-	for c in CarCatalog.classes(GameData.cars):
-		filter_opts.append([c, "%s  (%d cars)" % [c, CarCatalog.ids_in_class(GameData.cars, c).size()]])
+	var filter_opts := _filter_options("circuit")
 	var want_filter = GameData.prefs.get("car_filter", "")
 	car_filter_stepper = Stepper.choice("Car class", filter_opts,
 		want_filter if filter_opts.any(func(o): return o[0] == want_filter) else "")
@@ -683,10 +701,88 @@ func _build_car_card() -> void:
 		["intermediate", "Intermediate"], ["wet", "Full wet"]], "auto")
 	tyre_stepper.value_changed.connect(func(v): if Net.is_online(): Net.update_me({"tyre": v}))
 	box.add_child(tyre_stepper)
+	_circuit_only.append(tyre_stepper)
 	setup_button = _button(box, "Car setup", _open_setup)
 	car_stepper.value_changed.connect(func(_v): _setup_changed())
 	track_stepper.value_changed.connect(func(_v): _setup_changed())
 	_rebuild_car_options()
+
+
+## Track picker entries for one race type.
+func _track_options(discipline: String) -> Array:
+	var opts := []
+	for t in GameData.tracks:
+		if str(t.get("discipline", "circuit")) == discipline:
+			opts.append([t["id"], t["name"]])
+	return opts
+
+
+## Class picker entries for one race type (multi-class and open only where
+## there is more than one class).
+func _class_options(discipline: String) -> Array:
+	var opts := []
+	var classes := CarCatalog.classes(GameData.cars, discipline)
+	for c in classes:
+		opts.append([c, "%s  (%d cars)" % [c, CarCatalog.ids_in_class(GameData.cars, c).size()]])
+	if classes.size() > 1:
+		opts.append([RaceSettings.CLASS_MULTI, "Multi-class (all cars)"])
+		opts.append(["", "Open (AI match the players)"])
+	return opts
+
+
+func _filter_options(discipline: String) -> Array:
+	var opts := [["", "All classes"]]
+	for c in CarCatalog.classes(GameData.cars, discipline):
+		opts.append([c, "%s  (%d cars)" % [c, CarCatalog.ids_in_class(GameData.cars, c).size()]])
+	return opts
+
+
+func _race_type() -> String:
+	return str(race_type_stepper.value) if race_type_stepper else "circuit"
+
+
+## A new race type: its tracks and classes, sensible race lengths, and only
+## the settings that apply (rallycross: no pit stops, fuel, safety car, tyre
+## choice or co-op).
+func _on_race_type_changed(push := true) -> void:
+	var dsc := _race_type()
+	var topts := _track_options(dsc)
+	if topts.is_empty():
+		return
+	track_stepper.options = topts
+	if not topts.any(func(o): return o[0] == track_stepper.value):
+		track_stepper.set_value(topts[0][0])
+	else:
+		track_stepper.set_value(track_stepper.value)
+	var copts := _class_options(dsc)
+	class_stepper.options = copts
+	if not copts.any(func(o): return o[0] == class_stepper.value):
+		class_stepper.set_value(copts[0][0])
+	else:
+		class_stepper.set_value(class_stepper.value)
+	car_filter_stepper.options = _filter_options(dsc)
+	car_filter_stepper.set_value("")
+	if push and not _building and (not Net.is_online() or Net.is_server()):
+		if dsc == RaceSettings.DISCIPLINE_RALLYCROSS:
+			laps_stepper.set_value(6)   # a World RX final: 6 laps, 6 cars
+			ai_stepper.set_value(5)
+		elif int(laps_stepper.value) == 6:
+			laps_stepper.set_value(3)
+	_apply_race_type_rules()
+	_rebuild_car_options()
+	_limit_grid()
+	_refresh_cards()
+	if push:
+		_push_settings()
+
+
+func _apply_race_type_rules() -> void:
+	var circuit := _race_type() == RaceSettings.DISCIPLINE_CIRCUIT
+	for c in _circuit_only:
+		c.visible = circuit
+	if crew_box:
+		crew_box.visible = circuit
+	_circuit_card.get_meta("heading").text = "CIRCUIT" if circuit else RACE_TYPE_NAMES.get(_race_type(), "CIRCUIT").to_upper()
 
 
 func _page(parent: Node, id: String) -> VBoxContainer:
@@ -726,6 +822,13 @@ func _show(id: String) -> void:
 	# In a season the season picks the class and each round's track.
 	class_stepper.visible = not id in SEASON_PAGES
 	track_stepper.visible = not id in SEASON_PAGES
+	# Seasons are circuit racing.
+	var season_page := id.begins_with("season")
+	race_type_stepper.visible = not season_page and race_type_stepper.options.size() > 1
+	if season_page and _race_type() != RaceSettings.DISCIPLINE_CIRCUIT:
+		race_type_stepper.set_value(RaceSettings.DISCIPLINE_CIRCUIT)
+	if id != "lobby":
+		race_type_stepper.disabled = false
 	help_label.visible = id == "main"
 	if id == "season_hub":
 		_refresh_hub()
@@ -845,6 +948,14 @@ func _refresh_cards() -> void:
 	var facts := ["%.2f km" % (float(t.get("length_m", 0.0)) / 1000.0), str(t.get("location", ""))]
 	if t.get("has_pit_lane", false):
 		facts.append("pit lane")
+	if str(t.get("discipline", "")) == RaceSettings.DISCIPLINE_RALLYCROSS:
+		var L := maxf(float(t.get("length_m", 1.0)), 1.0)
+		var loose := 0.0
+		for r in t.get("dirt", []):
+			loose += fposmod(float(r[1]) - float(r[0]), L)
+		facts.append("%d%% dirt" % roundi(loose / L * 100.0))
+		if float(t.get("joker_length_m", 0.0)) > 0.0:
+			facts.append("joker lap")
 	_track_facts.text = "  ·  ".join(facts)
 	_track_desc.text = str(t.get("description", ""))
 	var c: CarDefinition = GameData.cars.get(str(car_stepper.value))
@@ -886,9 +997,10 @@ func _rebuild_car_options() -> void:
 	var fixed: bool = cls != "" and cls != RaceSettings.CLASS_MULTI
 	car_filter_stepper.visible = not fixed
 	var filter: String = "" if fixed else str(car_filter_stepper.value)
-	var ids := CarCatalog.ids_in_class(GameData.cars, cls if fixed else filter)
+	var dsc := _race_type()
+	var ids := CarCatalog.ids_in_class(GameData.cars, cls if fixed else filter).filter(func(id): return GameData.cars[id].discipline == dsc)
 	if ids.is_empty():
-		ids = CarCatalog.ids_in_class(GameData.cars, cls if fixed else "")
+		ids = CarCatalog.ids_in_class(GameData.cars, cls if fixed else "").filter(func(id): return GameData.cars[id].discipline == dsc)
 	var opts := []
 	for id in ids:
 		var c: CarDefinition = GameData.cars[id]
@@ -940,6 +1052,13 @@ func _settings_from_ui() -> RaceSettings:
 	s.set_damage_level(str(damage_stepper.value))
 	s.upgrades_mode = str(upgrades_stepper.value)
 	s.tuning_enabled = bool(tuning_stepper.value)
+	s.discipline = _race_type()
+	if not s.allows_coop():   # rallycross: sprints, no stops, no shared cars
+		s.drivers_per_car = 1
+		s.mandatory_pit_stops = 0
+		s.fuel_enabled = false
+		s.safety_car_enabled = false
+		s.tyre_wear_enabled = false
 	return s
 
 
@@ -1107,7 +1226,7 @@ func _refresh_crews() -> void:
 ## player on each change); a setting the host just changed lights up, and the
 ## settings card says what it was.
 func _flash_host_changes() -> void:
-	var list: Array = [track_stepper, class_stepper]
+	var list: Array = [race_type_stepper, track_stepper, class_stepper]
 	list.append_array(_settings_steppers)
 	var changed := []
 	for st in list:
@@ -1325,10 +1444,14 @@ func _refresh_lobby() -> void:
 		s.disabled = not host or in_season
 	class_stepper.disabled = not host or in_season
 	track_stepper.disabled = not host or in_season
+	race_type_stepper.disabled = not host or in_season
 	lobby_season_label.visible = in_season
 	if in_season:
 		lobby_season_label.text = _season_info_text(Net.season_info)
 	if not host or in_season:
+		if race_type_stepper.value != Net.settings.discipline:
+			race_type_stepper.set_value(Net.settings.discipline)
+			_on_race_type_changed(false)
 		if _track_info(Net.settings.track_id):
 			track_stepper.set_value(Net.settings.track_id)
 		if class_stepper.value != Net.settings.car_class:
@@ -1824,7 +1947,7 @@ func _refresh_badge() -> void:
 ## The grid holds 25 cars of one class or 45 in a multi-class race; the AI
 ## stepper stops at that (minus you).
 func _limit_grid() -> void:
-	var most := RaceSettings.max_cars_for(str(class_stepper.value)) - 1
+	var most := RaceSettings.max_cars_for(str(class_stepper.value), _race_type()) - 1
 	ai_stepper.max_value = most
 	if int(ai_stepper.value) > most:
 		ai_stepper.set_value(most)

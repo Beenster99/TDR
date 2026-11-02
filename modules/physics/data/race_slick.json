@@ -20,5 +20,6 @@
   "aquaplaning": 0.35,
   "optimal_hot_psi": 27.5,
   "pressure_window_psi": 3.0,
-  "cool_speed_ms": 40.0
+  "cool_speed_ms": 40.0,
+  "dirt_grip": 0.6
 }

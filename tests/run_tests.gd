@@ -65,6 +65,7 @@ func _init() -> void:
 	test_grid_limits()
 	test_garage_saves()
 	test_online_contacts()
+	test_rallycross()
 	print("\n%s (%d failures, %.1fs)" % ["PASS" if failures == 0 else "FAIL", failures, (Time.get_ticks_msec() - t0) / 1000.0])
 	quit(1 if failures > 0 else 0)
 
@@ -258,7 +259,18 @@ func test_every_track() -> void:
 			check(false, "%s loads" % info["id"])
 			continue
 		var problems: Array[String] = []
-		if not t.has_pit_lane():
+		if t.discipline == "rallycross":
+			# Rallycross: no pit lane, but dirt sections and a joker lane
+			# that leaves and rejoins the lap.
+			if not t.has_dirt():
+				problems.append("no dirt")
+			if not t.has_joker():
+				problems.append("no joker lap")
+			elif t.joker_length < 60.0:
+				problems.append("joker only %.0f m" % t.joker_length)
+			elif not t.in_joker(t.joker_position_at(t.joker_length * 0.5)):
+				problems.append("joker midpoint not on the joker")
+		elif not t.has_pit_lane():
 			problems.append("no pit lane")
 		else:
 			var a := t.project(t.pit_path[0])
@@ -508,7 +520,11 @@ func _solo_lap(track: TrackData, d: Dictionary, setup: Dictionary = {}) -> Dicti
 	s.ai_count = 0
 	s.laps = 2
 	s.countdown_s = 0.5
-	var start := RaceFactory.plan(s, [{"name": "bot", "car_id": "porsche_911_gt3_r", "setup": setup}], d["cars"], [], track)
+	var car_id := "porsche_911_gt3_r"
+	if track.discipline == RaceSettings.DISCIPLINE_RALLYCROSS:
+		s.discipline = RaceSettings.DISCIPLINE_RALLYCROSS
+		car_id = "volkswagen_polo_r_supercar"
+	var start := RaceFactory.plan(s, [{"name": "bot", "car_id": car_id, "setup": setup}], d["cars"], [], track)
 	var sim := RaceFactory.build_sim(start, d["cars"], d["tyres"], track)
 	var ai := AIDriver.new(track, sim.defs[0], sim.compounds[0], {"skill": 0.95, "consistency": 1.0}, 1)
 	var offs := 0
@@ -2965,3 +2981,102 @@ func test_online_contacts() -> void:
 	check(p.is_player_driving(), "a person at the wheel is highlighted")
 	p.crew = [{"peer_id": RaceEntry.AI_PEER, "role": RaceEntry.ROLE_DRIVER}]
 	check(not p.is_player_driving(), "an AI co-driver is not")
+
+
+## Rallycross: RX tracks and cars only appear in rallycross, dirt is looser
+## than tarmac, the joker lap counts, a missed joker costs time, the AI take
+## theirs, and co-op is off.
+func test_rallycross() -> void:
+	print("rallycross")
+	var d := _data()
+	var list := TrackCatalog.list_all()
+	var rx_ids := TrackCatalog.ids_for(list, RaceSettings.DISCIPLINE_RALLYCROSS)
+	var circuit_ids := TrackCatalog.ids_for(list, RaceSettings.DISCIPLINE_CIRCUIT)
+	check(rx_ids.size() >= 5 and not rx_ids.has("spa") and circuit_ids.has("spa") and not circuit_ids.has("holjes"),
+		"%d rallycross tracks, kept apart from the circuits" % rx_ids.size())
+	var rx_classes := CarCatalog.classes(d["cars"], RaceSettings.DISCIPLINE_RALLYCROSS)
+	check(rx_classes == ["RX1"] and not CarCatalog.classes(d["cars"]).has("RX1")
+		and CarCatalog.ids_in_class(d["cars"], "RX1").size() >= 6, "RX1 class with %d cars, only in rallycross"
+		% CarCatalog.ids_in_class(d["cars"], "RX1").size())
+	check(CarSetup.TEMPLATES.has("RX1") and UpgradeCatalog.data().get("price_scale", {}).has("RX1"),
+		"RX1 setup template and upgrade prices")
+	var s := RaceSettings.new()
+	s.discipline = RaceSettings.DISCIPLINE_RALLYCROSS
+	s.track_id = "holjes"
+	s.ai_count = 20
+	s.laps = 4
+	check(not s.allows_coop() and RaceSettings.new().allows_coop(), "no co-op or shared cars in rallycross")
+	var track := TrackCatalog.load_track("holjes")
+	var start := RaceFactory.plan(s, [{"name": "P", "car_id": "porsche_911_gt3_r"}], d["cars"], d["drivers"], track)
+	var all_rx := true
+	for e in start["entries"]:
+		all_rx = all_rx and d["cars"][e["car_id"]].class_tag == "RX1"
+	check(all_rx and start["entries"].size() <= RaceSettings.MAX_CARS_RALLYCROSS,
+		"rallycross grid: %d cars, all RX1 (a player's circuit car is swapped)" % start["entries"].size())
+	# Dirt: looser grip than the tarmac.
+	# Test spots: 60 m of all dirt / all tarmac, clear of the joker.
+	var dirt_s := -1.0
+	var tar_s := -1.0
+	for k in track.point_count():
+		var ss := track.cum_s[k]
+		var near_joker := ss > track.joker_entry_s - 40.0 and ss < track.joker_exit_s + 20.0
+		var all_dirt := true
+		var all_tar := true
+		for m in range(0, 61, 5):
+			var v := track.dirt_at(fmod(ss + m, track.length))
+			all_dirt = all_dirt and v >= 0.99
+			all_tar = all_tar and v <= 0.01
+		if near_joker:
+			continue
+		if dirt_s < 0.0 and all_dirt:
+			dirt_s = ss
+		if tar_s < 0.0 and all_tar:
+			tar_s = ss
+	check(dirt_s >= 0.0 and tar_s >= 0.0, "Höljes has both dirt (at %.0f m) and tarmac (at %.0f m)" % [dirt_s, tar_s])
+	var def: CarDefinition = d["cars"]["volkswagen_polo_r_supercar"]
+	var tc: TyreCompound = d["tyres"][def.tyre_compound_id]
+	var env := SimEnvironment.from_dict({})
+	var stops := []
+	for at in [tar_s, dirt_s]:
+		var car := _car_at(track, at, 0.0)
+		car.vel = Vector2.from_angle(car.heading) * 25.0
+		var brk := CarInput.new()
+		brk.brake = 1.0
+		var t := 0
+		var seen_dirt := 0.0
+		while car.speed() > 2.0 and t < 600:
+			CarPhysics.step(car, brk, def, tc, env, track, 1.0 / 60.0, 0.0, [], 0)
+			seen_dirt = maxf(seen_dirt, car.dirt)
+			t += 1
+		stops.append(t)
+		if at == dirt_s:
+			check(seen_dirt > 0.9, "the car knows it is on dirt (%.2f)" % seen_dirt)
+	check(stops[1] > stops[0] * 1.1, "braking from 90 km/h takes longer on dirt (%d vs %d ticks)" % [stops[1], stops[0]])
+	# A race: every AI takes the joker once, which counts and is reported.
+	s.ai_count = 5
+	start = RaceFactory.plan(s, [], d["cars"], d["drivers"], track)
+	var sim := RaceFactory.build_sim(start, d["cars"], d["tyres"], track)
+	check(not sim.settings.safety_car_enabled and sim.settings.mandatory_pit_stops == 0 and not sim.settings.fuel_enabled,
+		"rallycross races: no safety car, pit stops or fuel")
+	# Car 0's joker runs are spoilt every tick, so it finishes without one.
+	var ai := AIDriver.for_all_ai(sim)
+	var events := 0
+	while sim.phase != RaceSim.Phase.FINISHED and sim.tick < 60 * 60 * 6:
+		var inputs := []
+		for i in sim.cars.size():
+			inputs.append(ai[i].get_input(sim, i))
+		if sim.cars[0].in_joker:
+			sim.entries[0].joker_from = 1e9
+		sim.step(inputs)
+		for ev in sim.events:
+			if ev.get("type", "") == "joker":
+				events += 1
+	var jokers_ok := 0
+	for i in range(1, sim.entries.size()):
+		if sim.entries[i].jokers == 1:
+			jokers_ok += 1
+	check(sim.phase == RaceSim.Phase.FINISHED and jokers_ok >= sim.entries.size() - 2 and events >= jokers_ok,
+		"AI race: %d of %d cars took their joker (%d joker events)" % [jokers_ok, sim.entries.size() - 1, events])
+	var e0: RaceEntry = sim.entries[0]
+	check(e0.jokers == 0 and e0.penalty_s >= RaceSettings.JOKER_MISSED_PENALTY_S,
+		"a missed joker costs %.0f s at the flag (got %.0f s)" % [RaceSettings.JOKER_MISSED_PENALTY_S, e0.penalty_s])
