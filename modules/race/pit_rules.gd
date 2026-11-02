@@ -58,12 +58,22 @@ const CREW_GIVE_UP := 1.6
 const CREW_FASTEST := 0.6
 const UNSAFE_RELEASE_PENALTY_S := 5.0
 const RELEASE_LOOK_BACK := 32.0  ## m behind the box a car coming down the lane makes a release unsafe
-## Crews nobody plays: AI teams work a little faster or slower each stop
-## (CREW_SPREAD either way) and now and then fumble a wheel (CREW_FUMBLE_S);
-## a player's crew they don't play works at the standard time.
-const CREW_SPREAD := 0.08
+## The crew (an AI crew, unless the player plays the stop): every stop is
+## worked out as a timeline of who does what, Le Mans style (see
+## crew_timeline). Each team's crew is a little better or worse than
+## average (CREW_TEAM_SPREAD), every job varies from stop to stop
+## (CREW_JOB_SPREAD), and now and then a wheel gunner fumbles a wheel
+## (CREW_FUMBLE_S). A player's own team has an average crew.
+const CREW_TEAM_SPREAD := 0.05
+const CREW_JOB_SPREAD := 0.04
 const CREW_FUMBLE_CHANCE := 0.06
 const CREW_FUMBLE_S := 1.5
+## STOP_BASE_S split over the stop: the air lance lifting the car, dropping
+## it, and the car controller releasing it.
+const LANCE_UP_S := 0.8
+const LANCE_DOWN_S := 0.8
+const RELEASE_S := 0.9
+const HOSE_S := 0.4              ## fuel hose on / off
 
 const PHASE_NONE := ""
 const PHASE_APPROACH := "approach"  ## being driven to the pit entry (box requested)
@@ -287,17 +297,90 @@ func release_clear(i: int) -> bool:
 	return true
 
 
-## How the crew nobody plays does this stop, as a share of the standard
-## time plus a fumble (seconds): AI teams vary from stop to stop (the same
-## every time for the same race), a player's own crew is standard.
-func crew_pace(i: int) -> Vector2:
+## A random number 0..1 that is the same every time for the same race,
+## car, stop and key.
+func _crew_rand(i: int, key: String) -> float:
+	var h := hash([sim.settings.seed, i, int(sim.entries[i].pit["stops"]), key])
+	return float(h & 0xFFFFFF) / float(0xFFFFFF)
+
+
+## How good car i's team crew is: -1 (slow) .. 1 (sharp); 0 for a player's team.
+func crew_skill(i: int) -> float:
 	var e := sim.entries[i]
 	if not e.is_ai:
-		return Vector2(1.0, 0.0)
-	var h := hash([sim.settings.seed, i, int(e.pit["stops"]), "crew"])
-	var r1 := float(h & 0xFFFF) / 65535.0
-	var r2 := float((h >> 16) & 0xFFFF) / 65535.0
-	return Vector2(1.0 + CREW_SPREAD * (2.0 * r1 - 1.0), CREW_FUMBLE_S if r2 < CREW_FUMBLE_CHANCE else 0.0)
+		return 0.0
+	var h := hash([sim.settings.seed, i, e.car_id, e.driver_name, "crew"])
+	return float(h & 0xFFFF) / 65535.0 * 2.0 - 1.0
+
+
+## One job's pace in car i's stop (1 = average), for this team.
+func _job_pace(i: int, team: float, job: String) -> float:
+	return team * (1.0 + CREW_JOB_SPREAD * (2.0 * _crew_rand(i, job) - 1.0))
+
+
+## Who does what in car i's stop, and when (seconds after the car stops):
+## the car controller brings it onto its marks, the refueller plugs in the
+## hose (with the fire extinguisher attendant and the cut-off valve
+## attendant beside it), a mechanic puts the air lance in and the car rises
+## on its air jacks, two mechanics change the tyres unaided, each with their
+## own wheel gun (one down the left side, front then rear, one down the
+## right), the cockpit helper swaps the drivers, mechanics do the wings and
+## the repairs, the air lance comes out, the car drops and the controller
+## sends it. Tyres and fuel go on at the same time (docs/PITS.md).
+## {up: [from, to], fuel: [hose on, fuel in, hose off] or [], guns: [[{wheel,
+##  off, on, fumble}], [...]] (left gunner, right gunner), setup: [from, to],
+##  repair: [from, to], driver: [from, to] or [], down: [from, to],
+##  release: seconds the car leaves, standard: the same stop at average pace,
+##  fumble: the wheel fumbled (-1 none)}
+func crew_timeline(i: int, work: Dictionary) -> Dictionary:
+	var team := 1.0 - CREW_TEAM_SPREAD * crew_skill(i)
+	var up := LANCE_UP_S * _job_pace(i, team, "lance")
+	var tl := {"up": [0.0, up]}
+	var block := up
+	# Fuel: the hose goes on while the car rises; the flow is fixed.
+	var fuel_s := float(work.get("fuel_s", 0.0))
+	tl["fuel"] = []
+	if fuel_s > 0.0:
+		var on := maxf(up - HOSE_S * _job_pace(i, team, "hose"), 0.1)
+		tl["fuel"] = [on, up, up + fuel_s]
+		block = maxf(block, up + fuel_s + HOSE_S * _job_pace(i, team, "hose_off") * 0.5)
+	# Tyres: two gunners, one each side, front first.
+	var wheels: Array = work.get("wheels", []) if str(work.get("tyre", "")) != "" else []
+	var tyre_s := float(work.get("tyre_s", 0.0))
+	var sides := [wheels.filter(func(w): return int(w) % 2 == 0), wheels.filter(func(w): return int(w) % 2 == 1)]
+	var per := maxi(sides[0].size(), sides[1].size())
+	var fumble := -1
+	if not wheels.is_empty() and _crew_rand(i, "fumble") < CREW_FUMBLE_CHANCE:
+		fumble = int(wheels[int(_crew_rand(i, "which") * wheels.size()) % wheels.size()])
+	var guns := []
+	for g in 2:
+		var t := up
+		var jobs := []
+		for w in sides[g]:
+			var d: float = tyre_s / maxf(per, 1) * _job_pace(i, team, "gun%d_%d" % [g, int(w)])
+			var extra := CREW_FUMBLE_S if int(w) == fumble else 0.0
+			jobs.append({"wheel": int(w), "off": t, "on": t + d + extra, "fumble": extra > 0.0})
+			t += d + extra
+		guns.append(jobs)
+		block = maxf(block, t)
+	tl["guns"] = guns
+	tl["fumble"] = fumble
+	var setup_s := float(work.get("setup_s", 0.0))
+	tl["setup"] = [up, up + setup_s * _job_pace(i, team, "setup")]
+	block = maxf(block, tl["setup"][1])
+	var repair_s := float(work.get("repair_s", 0.0))
+	tl["repair"] = [block, block + repair_s * _job_pace(i, team, "repair")]
+	var down0: float = tl["repair"][1]
+	var down1 := down0 + LANCE_DOWN_S * _job_pace(i, team, "lance_out")
+	tl["down"] = [down0, down1]
+	var release := down1 + RELEASE_S * _job_pace(i, team, "release")
+	tl["driver"] = []
+	if int(work.get("driver", -1)) >= 0:
+		tl["driver"] = [0.3, DRIVER_CHANGE_S - 0.3]
+		release = maxf(release, DRIVER_CHANGE_S)
+	tl["release"] = release
+	tl["standard"] = float(work.get("total_s", release))
+	return tl
 
 
 ## Car i's current value of each pit-adjustable setup key.
@@ -543,7 +626,7 @@ func _step_car(i: int, inp: CarInput) -> CarInput:
 
 ## Car i has stopped in its box: the crew start work. A stop the crew
 ## leader plays waits for their release; otherwise the crew take the
-## standard time (AI teams a little more or less, see crew_pace).
+## crew work through the stop at their own pace (crew_timeline).
 func _arrive(i: int) -> void:
 	var p: Dictionary = sim.entries[i].pit
 	var work := service_for(i, p["plan"])
@@ -552,6 +635,8 @@ func _arrive(i: int) -> void:
 	p["service_std"] = std
 	p["crew_release"] = false
 	var t := std
+	var tl := crew_timeline(i, work)
+	work["crew"] = tl
 	if bool(p.get("crew_game", false)):
 		# The leader is playing: wait for their release, or give up waiting.
 		t = std * CREW_GIVE_UP
@@ -559,10 +644,7 @@ func _arrive(i: int) -> void:
 		if int(work.get("driver", -1)) >= 0:
 			p["service_floor"] = maxf(float(p["service_floor"]), DRIVER_CHANGE_S)
 	else:
-		var pace := crew_pace(i)
-		t = std * pace.x + pace.y
-		if int(work.get("driver", -1)) >= 0:
-			t = maxf(t, DRIVER_CHANGE_S)
+		t = float(tl["release"])
 	p["service_total"] = t
 	p["service_left"] = t
 	p["phase"] = PHASE_SERVICE
@@ -648,7 +730,7 @@ func _finish_service(i: int) -> void:
 		p["window_stops"] = int(p["window_stops"]) + 1
 	var stationary := float(p["service_total"])
 	p["last_stop"] = {"lap": lap, "stationary_s": stationary, "standard_s": float(p.get("service_std", stationary)),
-		"played": bool(p.get("crew_game", false)), "tyre": tyre, "wheels": wheels if tyre != "" else [],
+		"played": bool(p.get("crew_game", false)), "fumble": int((work.get("crew", {}) as Dictionary).get("fumble", -1)), "tyre": tyre, "wheels": wheels if tyre != "" else [],
 		"fuel_l": work.get("fuel_l", 0.0), "repairs": work.get("repair_parts", []), "setup": work.get("setup", {}),
 		"driver": handed}
 	p["box"] = false
@@ -998,7 +1080,7 @@ func host_update(events: Array) -> void:
 			var last: Dictionary = p.get("last_stop", {})
 			events.append({"type": "pit_stop", "car": i, "stop": p["stops"], "lap": last.get("lap", current_lap(i)),
 				"stationary_s": last.get("stationary_s", 0.0), "standard_s": last.get("standard_s", 0.0),
-				"played": last.get("played", false), "tyre": last.get("tyre", ""), "wheels": last.get("wheels", []),
+				"played": last.get("played", false), "fumble": last.get("fumble", -1), "tyre": last.get("tyre", ""), "wheels": last.get("wheels", []),
 				"fuel_l": last.get("fuel_l", 0.0), "driver": last.get("driver", ""),
 				"in_window": int(p["window_stops"]) > int(was.get("window_stops", 0))})
 		if p["box"] != was.get("box", false) and p["box"]:

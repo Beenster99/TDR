@@ -883,15 +883,29 @@ func test_pit_crew_game() -> void:
 	var idle := []
 	for k in sim.car_count():
 		idle.append(CarInput.neutral())
-	# AI crews: the same for the same race, within the spread (or a fumble).
-	var paces := []
+	# The crew's timeline: Le Mans style, AI paced, the same for the same race.
+	var tw := pits.service_for(1, {"tyre": PitRules.TYRE_DRY, "wheels": "all", "fuel": 12.0, "repair": false})
+	var times := []
+	var fumbles := 0
 	for k in sim.car_count():
-		var pc := pits.crew_pace(k)
-		paces.append(pc)
-		check(pc == pits.crew_pace(k) and absf(pc.x - 1.0) <= PitRules.CREW_SPREAD + 1e-6 and (pc.y == 0.0 or pc.y == PitRules.CREW_FUMBLE_S),
-			"AI crew %d works at %.2f x standard%s" % [k, pc.x, " and fumbles" if pc.y > 0.0 else ""])
-	var differ := paces.any(func(v): return not is_equal_approx(v.x, paces[0].x))
-	check(differ, "AI crews differ from car to car")
+		var tl := pits.crew_timeline(k, tw)
+		times.append(float(tl["release"]))
+		check(str(tl) == str(pits.crew_timeline(k, tw)), "crew %d: the same timeline every time (%.2f s, standard %.2f s)" % [k, tl["release"], tl["standard"]])
+		var guns: Array = tl["guns"]
+		check(guns.size() == 2 and (guns[0] as Array).size() == 2 and (guns[1] as Array).size() == 2
+			and guns[0][0]["wheel"] == 0 and guns[0][1]["wheel"] == 2 and guns[1][0]["wheel"] == 1,
+			"two gunners, one down each side, front first")
+		check(float(guns[0][0]["off"]) >= float(tl["up"][1]) - 1e-6 and float(tl["down"][0]) >= float(guns[1][-1]["on"]) - 1e-6
+			and float(tl["release"]) > float(tl["down"][1]), "car up, tyres, car down, release, in that order")
+		var spread := PitRules.CREW_TEAM_SPREAD + PitRules.CREW_JOB_SPREAD + 0.01
+		var slack: float = PitRules.CREW_FUMBLE_S if tl["fumble"] >= 0 else 0.0
+		fumbles += 1 if tl["fumble"] >= 0 else 0
+		check(float(tl["release"]) > float(tl["standard"]) * (1.0 - spread) and float(tl["release"]) < float(tl["standard"]) * (1.0 + spread) + slack,
+			"crew %d within its spread of the standard" % k)
+	check(times.any(func(v): return not is_equal_approx(v, times[0])), "crews differ from car to car")
+	var dc := tw.duplicate()
+	dc["driver"] = 0
+	check(float(pits.crew_timeline(0, dc)["release"]) >= PitRules.DRIVER_CHANGE_S, "a driver change keeps the car in for 5 s")
 
 	# A played stop: the car waits for the release.
 	var i := 0
@@ -924,12 +938,10 @@ func test_pit_crew_game() -> void:
 		sim.step(idle)
 		ticks += 1
 	check(absf(float(p["last_stop"]["stationary_s"]) - std2 * PitRules.CREW_GIVE_UP) < 0.05, "an unplayed stop the leader started is slow (%.1f s)" % p["last_stop"]["stationary_s"])
-	# A player's crew nobody plays: standard time.
+	# A crew nobody plays: the AI crew's timeline sets the stop time.
 	p["phase"] = PitRules.PHASE_LIMIT
-	sim.entries[i].is_ai = false
 	pits._arrive(i)
-	check(is_equal_approx(float(p["service_left"]), float(p["service_std"])), "a player's crew not played works at the standard time")
-	sim.entries[i].is_ai = true
+	check(is_equal_approx(float(p["service_left"]), float(p["work"]["crew"]["release"])), "an AI-run stop lasts as long as its crew timeline")
 
 	# Unsafe release: a car coming down the lane right behind the box.
 	var j := 1
@@ -2369,7 +2381,11 @@ func test_graphics_effects() -> void:
 	crews.add_team(0, 4, Color.RED, def)
 	crews.fill_garages()
 	check(crews.crews.size() == t2.pit_box_count, "a crew in every garage (%d)" % crews.crews.size())
-	var work := {"tyre_s": 6.0, "fuel_s": 8.0, "repair_s": 0.0, "total_s": 10.0}
+	var work := {"tyre_s": 6.0, "fuel_s": 8.0, "repair_s": 0.0, "total_s": 10.0, "tyre": "race_slick", "wheels": [0, 1, 2, 3],
+		"crew": {"up": [0.0, 0.8], "fuel": [0.4, 0.8, 8.8], "setup": [0.8, 0.8], "repair": [8.8, 8.8], "driver": [],
+			"down": [8.8, 9.6], "release": 10.5, "fumble": -1,
+			"guns": [[{"wheel": 0, "off": 0.8, "on": 3.8}, {"wheel": 2, "off": 3.8, "on": 6.8}],
+				[{"wheel": 1, "off": 0.8, "on": 3.8}, {"wheel": 3, "off": 3.8, "on": 6.8}]]}}
 	crews.set_stop(0, PitCrews.Stop.COMING, 0.0, work)
 	for f in 120:
 		crews._process(1.0 / 30.0)
@@ -2379,8 +2395,15 @@ func test_graphics_effects() -> void:
 		if p.pos.distance_to(box) < 5.0:
 			near += 1
 	check(near >= 9, "crew on their marks round the box when the car comes in (%d)" % near)
-	crews.set_stop(0, PitCrews.Stop.SERVICE, 3.0, work)
-	check(crews.car_lift(0) > 0.05 and crews.wheels_off(0), "mid-stop: car on the jacks, wheels off")
+	crews.set_stop(0, PitCrews.Stop.SERVICE, 2.0, work)
+	check(crews.car_lift(0) > 0.05 and crews.wheels_off_mask(0) == 3, "mid-stop: car on its air jacks, both front wheels off (mask %d)" % crews.wheels_off_mask(0))
+	for f in 60:
+		crews._process(1.0 / 30.0)
+	var gl: Vector2 = crews.crews[4].people[PitCrews.GUN_L].pos
+	var gr: Vector2 = crews.crews[4].people[PitCrews.GUN_R].pos
+	check(gl.distance_to(gr) > 1.5 and gl.distance_to(box) < 4.0 and gr.distance_to(box) < 4.0, "the two tyre changers work either side of the car")
+	crews.set_stop(0, PitCrews.Stop.SERVICE, 5.0, work)
+	check(crews.wheels_off_mask(0) == 12, "then the rears (mask %d)" % crews.wheels_off_mask(0))
 	crews.set_stop(0, PitCrews.Stop.SERVICE, 9.8, work)
 	check(not crews.wheels_off(0), "end of the stop: wheels back on")
 	crews.set_stop(0, PitCrews.Stop.LEAVING, 10.0, work)

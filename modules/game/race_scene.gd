@@ -405,7 +405,9 @@ func _update_pit_crews() -> void:
 		elif p["box"] and (ph == PitRules.PHASE_ENTRY or ph == PitRules.PHASE_LIMIT):
 			state = PitCrews.Stop.COMING
 			if not _pit_work.has(i):
-				_pit_work[i] = pits.service_for(i, p["plan"])
+				var coming := pits.service_for(i, p["plan"])
+				coming["crew"] = pits.crew_timeline(i, coming)
+				_pit_work[i] = coming
 			work = _pit_work[i]
 		if state != PitCrews.Stop.COMING:
 			_pit_work.erase(i)
@@ -560,7 +562,13 @@ func _on_events(evs: Array) -> void:
 					hud.flash("Finished P%d" % e["position"], 4.0)
 			"pit_stop":
 				if e["car"] == session.local_car:
-					hud.flash("Pit stop %.1f s" % e["stationary_s"], 2.5)
+					var std := float(e.get("standard_s", 0.0))
+					var txt := "Pit stop %.1f s" % e["stationary_s"]
+					if std > 0.0 and not e.get("played", false):
+						txt += "  (%s%.1f s on a standard stop)" % ["+" if float(e["stationary_s"]) >= std else "-", absf(float(e["stationary_s"]) - std)]
+					if int(e.get("fumble", -1)) >= 0:
+						txt += "  The crew fumbled the %s" % RaceHud.wheels_text(["fl", "fr", "rl", "rr"][int(e["fumble"])])
+					hud.flash(txt, 3.5)
 			"safety_car":
 				var says := {"sc": "SAFETY CAR DEPLOYED", "vsc": "VIRTUAL SAFETY CAR", "vsc_ending": "VSC ENDING",
 					"lapped_may_overtake": "LAPPED CARS MAY OVERTAKE", "in_this_lap": "SAFETY CAR IN THIS LAP",

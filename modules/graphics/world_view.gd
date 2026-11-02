@@ -250,7 +250,7 @@ func _process(_delta: float) -> void:
 		for i in cars.size():
 			pit_crews.set_car_pose(i, cars[i].pos2, cars[i].heading)
 			cars[i].pit_lift = pit_crews.car_lift(i)
-			cars[i].wheels_hidden = pit_crews.wheels_off(i)
+			cars[i].wheels_off_mask = pit_crews.wheels_off_mask(i)
 
 
 # --- Sun, sky and post-processing -------------------------------------------------

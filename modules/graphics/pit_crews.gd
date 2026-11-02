@@ -2,14 +2,20 @@ class_name PitCrews
 extends Node3D
 ## The people of the pit lane. Every team in the race has a crew at its
 ## garage in team colours: they hang about in front of the garage, step out
-## to their marks when their car is called in, and do the stop for real:
-## the lollipop man waves the car in, front and rear jack men lift it, four
-## wheel gunners kneel at the wheels while two tyre men carry new tyres in
-## and old ones out, the fueller leans in with the hose for as long as the
-## fuel takes, mechanics work on the nose and tail for repairs, and the
-## lollipop goes up to send the car away. Between stops mechanics wander
-## between the garage and the apron, and a strategist sits on the pit wall.
-## Tyre stacks under blankets, trolleys and fuel rigs stand at each garage.
+## to their marks when their car is called in, and do the stop for real, the
+## Le Mans way, following the stop's crew timeline (PitRules.crew_timeline,
+## in work["crew"]): the car controller waves the car onto its marks with
+## the lollipop, the refueller plugs in the hose with the fire extinguisher
+## and cut-off valve attendants beside the rig, a mechanic puts the air
+## lance in and the car rises on its air jacks, two mechanics change the
+## tyres unaided (one down each side, front then rear: gun the nut off, swap
+## the wheel, gun the new one on), two technicians kneel by the old tyres to
+## check them, the cockpit helper opens the door for a driver change,
+## mechanics work on the nose and tail for repairs, the lance comes out, the
+## car drops and the lollipop turns green to send it away. Between stops
+## mechanics wander between the garage and the apron, and a strategist sits
+## on the pit wall. Tyre stacks under blankets, trolleys and fuel rigs stand
+## at each garage.
 ##
 ## Purely visual: the race scene tells it what each car's stop is doing
 ## (set_stop) and it never changes the race.
@@ -22,19 +28,22 @@ enum Stop { NONE, COMING, SERVICE, LEAVING }
 enum Pose { STAND, KNEEL, CROUCH, LEAN, SIGNAL, CARRY, SIT }
 
 ## Roles in the stop crew (index into a crew's members).
-const LOLLIPOP := 0
-const JACK_FRONT := 1
-const JACK_REAR := 2
-const GUN_FL := 3
-const GUN_FR := 4
-const GUN_RL := 5
-const GUN_RR := 6
-const TYRE_A := 7
-const TYRE_B := 8
-const FUEL := 9
-const WANDER_A := 10
+const LOLLIPOP := 0      ## the car controller
+const LANCE := 1         ## air lance: the car up on its air jacks and down again
+const GUN_L := 2         ## tyre changer down the left side (front left, then rear left)
+const GUN_R := 3         ## and down the right side
+const TECH_A := 4        ## tyre and brake technicians (check the old tyres)
+const TECH_B := 5
+const FUEL := 6          ## the refueller
+const EXTINGUISHER := 7  ## fire extinguisher attendant, beside the refueller
+const VALVE := 8         ## cut-off valve attendant, at the rig
+const COCKPIT := 9       ## cockpit helper (driver changes)
+const WANDER_A := 10     ## mechanics: repairs, or wandering between stops
 const WANDER_B := 11
 const CREW_SIZE := 12
+## Share of a wheel's time: gun the nut off, swap the wheel, gun the new one on.
+const NUT_OFF := 0.35
+const NEW_ON := 0.6
 
 var track: TrackData
 var tv: TrackView
@@ -57,7 +66,8 @@ class Person:
 	var leg_r: Node3D
 	var arm_l: Node3D
 	var arm_r: Node3D
-	var held: Node3D      ## tyre / gun / lollipop in the hands (may be null)
+	var held: Node3D      ## gun / lollipop / extinguisher in the hands (may be null)
+	var tyre: Node3D      ## a wheel carried in the arms (gunners), shown while carrying
 	var pos := Vector2.ZERO
 	var face := 0.0
 	var target := Vector2.ZERO
@@ -178,25 +188,38 @@ func set_stop(car: int, state: int, elapsed: float, work: Dictionary) -> void:
 		c.work["car"] = car
 
 
-## How much the car in this box is jacked up (metres), and whether its
-## wheels are off right now.
+## How high the car in this box is on its air jacks (metres).
 func car_lift(car: int) -> float:
 	var c := _crew_of(car)
 	if c == null or c.state != Stop.SERVICE:
 		return 0.0
-	var w := _windows(c)
+	var tl := _tl(c)
+	var up: Array = tl.get("up", [0.0, 0.0])
+	var down: Array = tl.get("down", [1e9, 1e9])
+	if not _lifts(c):
+		return 0.0
 	var e := c.elapsed
-	if e > w["jack_up"] and e < w["jack_down"]:
-		return 0.075 * clampf(minf((e - w["jack_up"]) / 0.25, (w["jack_down"] - e) / 0.25), 0.0, 1.0)
-	return 0.0
+	var rise := clampf((e - float(up[0])) / maxf(float(up[1]) - float(up[0]), 0.05), 0.0, 1.0)
+	var fall := clampf((float(down[1]) - e) / maxf(float(down[1]) - float(down[0]), 0.05), 0.0, 1.0)
+	return 0.075 * minf(rise, fall)
+
+
+## Which wheels are off the car right now: bits 1 front left, 2 front
+## right, 4 rear left, 8 rear right.
+func wheels_off_mask(car: int) -> int:
+	var c := _crew_of(car)
+	if c == null or c.state != Stop.SERVICE:
+		return 0
+	var mask := 0
+	for job in _jobs(c):
+		var d: float = float(job["on"]) - float(job["off"])
+		if c.elapsed > float(job["off"]) + d * NUT_OFF and c.elapsed < float(job["off"]) + d * NEW_ON:
+			mask |= 1 << int(job["wheel"])
+	return mask
 
 
 func wheels_off(car: int) -> bool:
-	var c := _crew_of(car)
-	if c == null or c.state != Stop.SERVICE:
-		return false
-	var w := _windows(c)
-	return c.elapsed > w["off"] and c.elapsed < w["on"]
+	return wheels_off_mask(car) != 0
 
 
 ## People are drawn only when the camera is this close (metres); crews far
@@ -219,21 +242,31 @@ func _crew_of(car: int) -> Crew:
 	return c
 
 
-## When each part of the stop happens (seconds from stopping).
-func _windows(c: Crew) -> Dictionary:
-	var tyre_s: float = c.work.get("tyre_s", 0.0)
-	var fuel_s: float = c.work.get("fuel_s", 0.0)
-	var repair_s: float = c.work.get("repair_s", 0.0)
-	var total: float = maxf(c.work.get("total_s", 0.0), 1.0)
-	var up := 0.35
-	var tyre_end := up + tyre_s
-	var rep_start := maxf(total - repair_s - 0.4, up)
-	var down := maxf(tyre_end, total - 0.5) if (tyre_s > 0.0 or repair_s > 0.0) else -1.0
-	return {"jack_up": up if (tyre_s > 0.0 or repair_s > 0.0) else 1e9, "jack_down": down,
-		"off": up + 0.3 + tyre_s * 0.22 if tyre_s > 0.0 else 1e9, "on": up + tyre_s * 0.7 if tyre_s > 0.0 else -1.0,
-		"tyre_end": tyre_end, "tyre_s": tyre_s,
-		"fuel_from": 0.6, "fuel_to": 0.6 + fuel_s, "rep_from": rep_start if repair_s > 0.0 else 1e9,
-		"rep_to": total - 0.4, "total": total}
+## The stop's crew timeline (PitRules.crew_timeline), {} before it's known.
+func _tl(c: Crew) -> Dictionary:
+	var tl = c.work.get("crew", {})
+	return tl if tl is Dictionary else {}
+
+
+## Every wheel job, both gunners: [{wheel, off, on, fumble, gun}].
+func _jobs(c: Crew) -> Array:
+	var out := []
+	var guns: Array = _tl(c).get("guns", [])
+	for g in guns.size():
+		for job in guns[g]:
+			var j: Dictionary = (job as Dictionary).duplicate()
+			j["gun"] = g
+			out.append(j)
+	return out
+
+
+## The car goes up on its jacks (tyres or repairs to do).
+func _lifts(c: Crew) -> bool:
+	return float(c.work.get("tyre_s", 0.0)) > 0.0 or float(c.work.get("repair_s", 0.0)) > 0.0
+
+
+func _in(e: float, span) -> bool:
+	return span is Array and (span as Array).size() >= 2 and e >= float(span[0]) and e <= float(span[-1])
 
 
 # --- Each frame ------------------------------------------------------------------
@@ -255,7 +288,7 @@ func _process(delta: float) -> void:
 
 ## Where everyone in a crew should be and what they're doing.
 func _plan(c: Crew) -> void:
-	var w := _windows(c)
+	var tl := _tl(c)
 	var e := c.elapsed
 	var active := c.state == Stop.COMING or c.state == Stop.SERVICE
 	for i in CREW_SIZE:
@@ -273,70 +306,99 @@ func _plan(c: Crew) -> void:
 				p.pose = Pose.SIGNAL
 			continue
 		p.speed = RUN_SPEED
-		var spot := _station(c, i, w)
+		var spot := _station(c, i, tl)
 		p.target = spot[0]
 		p.target_face = spot[1]
 		p.pose = spot[2]
 	# lollipop: red while working, green to go
 	if c.lolly:
-		var go: bool = c.state == Stop.LEAVING or (c.state == Stop.SERVICE and e > w["total"] - 0.6)
+		var go: bool = c.state == Stop.LEAVING or (c.state == Stop.SERVICE and e > float((tl.get("down", [1e9, 1e9]) as Array)[-1]))
 		(c.lolly.material_override as StandardMaterial3D).albedo_color = Color(0.1, 0.8, 0.2) if go else Color(0.85, 0.08, 0.06)
 
 
 ## A crew member's mark around the car in the box: [spot, facing, pose].
-func _station(c: Crew, i: int, w: Dictionary) -> Array:
+## The right side of the car (wheels 1 and 3) faces the garage.
+func _station(c: Crew, i: int, tl: Dictionary) -> Array:
 	var e := c.elapsed
 	var serving := c.state == Stop.SERVICE
-	var side := 1.0                 # garage side of the car
 	var tw := c.track_w * 0.5
-	var into := (c.dir.angle())     # facing along the lane
+	var into := c.dir.angle()       # facing along the lane
 	var to_car := (-c.out).angle()  # facing the car from the garage side
 	var from_out := c.out.angle()   # facing the car from the far side
-	var tyres: bool = float(w["tyre_s"]) > 0.0
-	var fuel_on: bool = serving and e > w["fuel_from"] and e < w["fuel_to"]
-	var repairing: bool = serving and e > w["rep_from"] and e < w["rep_to"]
+	var fuel: Array = tl.get("fuel", [])
+	var fuel_on: bool = serving and _in(e, fuel)
+	var repairing: bool = serving and _in(e, tl.get("repair", []))
+	var down: Array = tl.get("down", [1e9, 1e9])
 	match i:
 		LOLLIPOP:
 			return [_at(c, c.car_front + 2.2, 0.0), into + PI, Pose.SIGNAL]
-		JACK_FRONT:
-			if repairing:
-				return [_at(c, c.car_front + 0.55, -0.5), into + PI, Pose.CROUCH]
-			return [_at(c, c.car_front + 0.75, 0.0), into + PI, Pose.CROUCH if serving and e > w["jack_up"] - 0.2 and e < w["jack_down"] else Pose.STAND]
-		JACK_REAR:
-			if repairing:
-				return [_at(c, -c.car_rear - 0.55, 0.5), into, Pose.CROUCH]
-			return [_at(c, -c.car_rear - 0.75, 0.0), into, Pose.CROUCH if serving and e > w["jack_up"] - 0.2 and e < w["jack_down"] else Pose.STAND]
-		GUN_FL, GUN_FR, GUN_RL, GUN_RR:
-			var front := i == GUN_FL or i == GUN_FR
-			var s := side if (i == GUN_FR or i == GUN_RR) else -side
-			var x := c.axle_f if front else -c.axle_r
-			var mine: bool = tyres and (i - GUN_FL) in _wheels(c)
-			var working: bool = serving and mine and e < w["tyre_end"]
-			if not mine:
-				# no tyres this stop: stand clear by the garage
-				return [_at(c, x, side * (tw + 2.6)), to_car, Pose.STAND]
-			return [_at(c, x, s * (tw + 0.75)), to_car if s > 0.0 else from_out, Pose.KNEEL if working else Pose.STAND]
-		TYRE_A, TYRE_B:
-			var front := i == TYRE_A
-			var x := (c.axle_f if front else -c.axle_r) + (0.9 if front else -0.9)
-			var axle: Array = [0, 1] if front else [2, 3]
-			var any := false
-			for k in _wheels(c):
-				any = any or k in axle
-			if not tyres or not any:
-				return [_at(c, x, side * (tw + 3.2)), to_car, Pose.STAND]
-			var carrying: bool = serving and e > w["off"] - 0.6 and e < w["on"] + 0.6
-			return [_at(c, x, side * (tw + (1.15 if carrying else 1.6))), to_car, Pose.CARRY]
+		LANCE:
+			# plugs the air lance in at the back on the garage side, holds it, pulls it out
+			var spot := _at(c, -c.car_rear + 0.35, tw + 0.75)
+			if not _lifts(c):
+				return [_at(c, -c.car_rear - 0.6, tw + 2.4), to_car, Pose.STAND]
+			var up: Array = tl.get("up", [0.0, 0.0])
+			var plugging: bool = serving and (_in(e, [float(up[0]) - 0.3, up[1]]) or _in(e, down))
+			return [spot, to_car, Pose.CROUCH if plugging else Pose.STAND]
+		GUN_L, GUN_R:
+			var g := i - GUN_L
+			var s := 1.0 if g == 1 else -1.0
+			var face := to_car if s > 0.0 else from_out
+			var jobs: Array = (tl.get("guns", [[], []]) as Array)[g] if (tl.get("guns", []) as Array).size() > g else []
+			if jobs.is_empty():
+				return [_at(c, 0.6 if g == 0 else -0.6, tw + 2.8), to_car, Pose.STAND]
+			# the wheel being done now, or the next one, or the last one done
+			var job: Dictionary = jobs[0]
+			for j in jobs:
+				job = j
+				if e < float(j["on"]):
+					break
+			var x := c.axle_f if int(job["wheel"]) < 2 else -c.axle_r
+			var wheel_spot := _at(c, x, s * (tw + 0.75))
+			if not serving:
+				return [wheel_spot, face, Pose.STAND]
+			var d: float = float(job["on"]) - float(job["off"])
+			var f := (e - float(job["off"])) / maxf(d, 0.01)
+			if f < 0.0 or f > 1.0:
+				return [wheel_spot, face, Pose.STAND]
+			if f > NUT_OFF and f < NEW_ON:
+				# old wheel out, new one in (a fumble shows as a longer swap)
+				return [_at(c, x + 0.5, s * (tw + 1.35)), face, Pose.CARRY]
+			return [wheel_spot, face, Pose.KNEEL]
+		TECH_A, TECH_B:
+			# kneel by the old tyres the gunners have taken off, checking them
+			var front := i == TECH_A
+			var x := (c.axle_f if front else -c.axle_r) + 0.55
+			var checking := false
+			for job in _jobs(c):
+				if (int(job["wheel"]) < 2) == front and serving \
+						and e > float(job["off"]) + (float(job["on"]) - float(job["off"])) * NEW_ON:
+					checking = true
+			if checking:
+				return [_at(c, x + 0.6, tw + 1.4), to_car, Pose.CROUCH]
+			return [_at(c, x, tw + 3.0), to_car, Pose.STAND]
 		FUEL:
-			if c.work.get("fuel_s", 0.0) <= 0.0:
-				return [_at(c, -0.4, side * (tw + 3.4)), to_car, Pose.STAND]
-			return [_at(c, -0.6, side * (tw + 0.85)), to_car, Pose.LEAN if fuel_on else Pose.STAND]
+			if fuel.is_empty():
+				return [_at(c, -0.4, tw + 3.4), to_car, Pose.STAND]
+			return [_at(c, -0.6, tw + 0.85), to_car, Pose.LEAN if fuel_on else Pose.STAND]
+		EXTINGUISHER:
+			if fuel.is_empty():
+				return [_at(c, -1.4, tw + 3.6), to_car, Pose.STAND]
+			return [_at(c, -1.7, tw + 1.7), to_car + 0.4, Pose.STAND]
+		VALVE:
+			var by_rig := c.rig + c.dir * 0.6 - c.out * 0.5
+			return [by_rig, to_car, Pose.CROUCH if fuel_on else Pose.STAND]
+		COCKPIT:
+			var swap: Array = tl.get("driver", [])
+			if serving and _in(e, swap):
+				return [_at(c, 0.1, -(tw + 0.7)), from_out, Pose.LEAN]
+			return [_at(c, 1.4, tw + 3.2), to_car, Pose.STAND]
 		_:
 			# spare mechanics help with repairs, or watch from the garage
 			if repairing:
 				return [_at(c, c.car_front + 0.5 if i == WANDER_A else -c.car_rear - 0.5, -0.4 if i == WANDER_A else 0.6),
 					into + PI if i == WANDER_A else into, Pose.CROUCH]
-			return [_at(c, 2.0 if i == WANDER_A else -2.0, side * (tw + 3.6)), to_car, Pose.STAND]
+			return [_at(c, 2.0 if i == WANDER_A else -2.0, tw + 3.6), to_car, Pose.STAND]
 
 
 ## The wheels (0 front left .. 3 rear right) this stop changes.
@@ -429,21 +491,25 @@ func _move(p: Person, delta: float) -> void:
 	p.leg_r.rotation.z = lerpf(p.leg_r.rotation.z, leg_r, k)
 	p.arm_l.rotation.z = lerpf(p.arm_l.rotation.z, arm_l, k)
 	p.arm_r.rotation.z = lerpf(p.arm_r.rotation.z, arm_r, k)
-	if p.held and p.held.name == "Tyre":
-		p.held.visible = p.pose == Pose.CARRY
+	if p.tyre:
+		p.tyre.visible = p.pose == Pose.CARRY
 
 
 ## Old tyres on the ground while the wheels are off; the fuel hose.
 func _props(c: Crew) -> void:
-	var off := false
+	# Old tyres on the ground from when they come off until the car leaves.
+	var down_at := [false, false, false, false]
 	if c.state == Stop.SERVICE:
-		var w := _windows(c)
-		off = c.elapsed > w["off"] and c.elapsed < w["on"]
+		for job in _jobs(c):
+			if c.elapsed > float(job["off"]) + (float(job["on"]) - float(job["off"])) * NUT_OFF:
+				down_at[int(job["wheel"])] = true
 	# Ground tyres by corner: front +side, front -side, rear +side, rear -side.
 	var corner_wheel := [1, 0, 3, 2]
-	var wheels := _wheels(c)
+	var off := false
 	for k in c.ground_tyres.size():
-		(c.ground_tyres[k] as Node3D).visible = off and corner_wheel[k % 4] in wheels
+		var on_ground: bool = down_at[corner_wheel[k % 4]]
+		(c.ground_tyres[k] as Node3D).visible = on_ground
+		off = off or on_ground
 	if off:
 		var tw := c.track_w * 0.5
 		var k := 0
@@ -458,7 +524,7 @@ func _props(c: Crew) -> void:
 	var b := Vector3(hand.x, c.y + 1.0, hand.y)
 	var d := b - a
 	var len := d.length()
-	c.hose.visible = len > 0.3 and c.work.get("fuel_s", 0.0) > 0.0 and c.state != Stop.NONE
+	c.hose.visible = len > 0.3 and not (_tl(c).get("fuel", []) as Array).is_empty() and c.state != Stop.NONE
 	if c.hose.visible:
 		var xa := d / len
 		var ya := xa.cross(Vector3.UP).normalized()
@@ -587,11 +653,11 @@ func _build_crew(c: Crew) -> void:
 		p.next_wander = _rng.randf_range(0.0, 6.0)
 		c.people.append(p)
 		# what they hold
-		if i >= GUN_FL and i <= GUN_RR:
+		if i == GUN_L or i == GUN_R:
 			var gun := _part(p.arm_r, _box_mesh(Vector3(0.32, 0.12, 0.12)), _mat("gun", Color(0.75, 0.75, 0.78), 0.3, 0.6), Vector3(0.12, -0.66, -0.1))
 			gun.name = "Gun"
 			p.held = gun
-		elif i == TYRE_A or i == TYRE_B:
+			# they carry the wheels themselves (unaided, Le Mans rules)
 			var holder := Node3D.new()
 			holder.name = "Tyre"
 			holder.position = Vector3(0.42, 0.35, 0)
@@ -599,7 +665,12 @@ func _build_crew(c: Crew) -> void:
 			var t := _part(holder, _tyre_mesh(), _mat("rubber", Color(0.05, 0.05, 0.05), 0.85), Vector3.ZERO)
 			t.rotation.x = PI * 0.5
 			t.visibility_range_end = SHOW_DIST
-			p.held = holder
+			holder.visible = false
+			p.tyre = holder
+		elif i == EXTINGUISHER:
+			var ext := _part(p.arm_r, _box_mesh(Vector3(0.18, 0.5, 0.18)), _mat("extinguisher", Color(0.85, 0.08, 0.06), 0.4, 0.2), Vector3(0.1, -0.7, 0))
+			ext.visibility_range_end = SHOW_DIST
+			p.held = ext
 		elif i == LOLLIPOP:
 			var stick := _part(p.arm_l, _box_mesh(Vector3(0.04, 1.1, 0.04)), _mat("dark", Color.BLACK), Vector3(0, -1.1, 0))
 			stick.visibility_range_end = SHOW_DIST

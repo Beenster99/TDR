@@ -1,13 +1,33 @@
-# Pit crew mini-game and the rejoin band
+# Pit crew: the AI crew, the mini-game prototype and the rejoin band
+
+## The AI crew (first pass, on for everyone)
+
+Every stop is played out top-down by the team's AI crew, the Le Mans way,
+and the stop time is whatever that crew's timeline comes to
+(`PitRules.crew_timeline`, kept in the stop's `work["crew"]` and drawn by
+`PitCrews`): the car controller (lollipop), the refueller with the fire
+extinguisher and cut-off valve attendants, a mechanic on the air lance (the
+car rises on its air jacks), two tyre changers working unaided, one down
+each side, front then rear (nut off, wheel swap, nut on), two technicians
+checking the old tyres, the cockpit helper for driver changes, mechanics
+for repairs, then the lance out, the car down and the release. Tyres and
+fuel still go on at the same time.
+
+Each team's crew is up to 5% quicker or slower than average (`crew_skill`;
+a player's team is average), every job varies 4% from stop to stop, and 6%
+of stops fumble a wheel (+1.5 s). The same race (seed) gives the same stops.
+The HUD tells the driver the stop time against a standard stop, and any fumble.
+
+## The player mini-game (prototype, off by default)
 
 The player leads their own pit crew at each stop, and how well they play
 decides how long the car sits in the box. Rules in the race module
-(`PitRules.crew_input`, `release_clear`, `crew_pace`), the game itself in the
+(`PitRules.crew_input`, `release_clear`, `crew_timeline`), the game itself in the
 ui module (`PitCrewGame`), the rejoin band in graphics (`RejoinMarker`, through
 `WorldView.set_rejoin`) and the HUD.
 
-Settings > Gameplay > **Pit crew mini-game** (on by default). Off, a player's
-crew works at the standard time (docs/PITS.md).
+Settings > Gameplay > **Pit crew mini-game (prototype)**, off by default.
+Off, the AI crew do the stop. The 2-player co-op version is being designed.
 
 ## Who plays
 
@@ -58,8 +78,6 @@ drop; nobody presses: 0.9 s). Pressing on red is an **unsafe release**:
 - Standard = the stop time in docs/PITS.md. A sharp stop is about 20-25%
   quicker (a two-tyre + fuel stop: 5.1 s instead of 6.25 s in the test); an
   untouched one about 30% slower.
-- AI crews vary from stop to stop: 0.92-1.08x standard, and 6% of stops
-  fumble a wheel (+1.5 s). The same race (seed) gives the same stops.
 - `last_stop` and the `pit_stop` event carry `standard_s` and `played`.
 - Multiplayer: the calls go through `RaceSession.request_pit` like any pit
   call, so a co-op pit crew plays for a car simulated on the driver's

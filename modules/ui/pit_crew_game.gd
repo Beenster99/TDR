@@ -123,7 +123,7 @@ func enabled() -> bool:
 	if not is_inside_tree():
 		return false
 	var gd := get_node_or_null("/root/GameData")
-	return gd == null or bool(gd.prefs.get(PREF, true))
+	return gd != null and bool(gd.prefs.get(PREF, false))
 
 
 ## The car this player leads the crew of (-1 = none): their own car when
