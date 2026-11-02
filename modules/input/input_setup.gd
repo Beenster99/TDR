@@ -32,6 +32,12 @@ const KEYS := {
 	"shift_up": [KEY_SHIFT, KEY_PERIOD],      # manual gearbox (Settings > Gameplay)
 	"shift_down": [KEY_CTRL, KEY_COMMA],
 	"hud_tower": [KEY_H],      # race HUD: timing tower on/off (also Settings > Gameplay)
+	# Pit crew mini-game (a wheel gunner in the box): run about, hold the gun.
+	"crew_up": [KEY_W, KEY_UP],
+	"crew_down": [KEY_S, KEY_DOWN],
+	"crew_left": [KEY_A, KEY_LEFT],
+	"crew_right": [KEY_D, KEY_RIGHT],
+	"crew_gun": [KEY_SPACE, KEY_ENTER],
 }
 ## Gamepad: analog triggers + left stick. Buttons use the Xbox layout names
 ## (Godot maps PlayStation/Nintendo pads to the same positions).
@@ -42,6 +48,11 @@ const PAD_AXES := {
 	"steer_right": [JOY_AXIS_LEFT_X, 1.0],
 	"zoom_in": [JOY_AXIS_RIGHT_Y, -1.0],
 	"zoom_out": [JOY_AXIS_RIGHT_Y, 1.0],
+	"crew_up": [JOY_AXIS_LEFT_Y, -1.0],
+	"crew_down": [JOY_AXIS_LEFT_Y, 1.0],
+	"crew_left": [JOY_AXIS_LEFT_X, -1.0],
+	"crew_right": [JOY_AXIS_LEFT_X, 1.0],
+	"crew_gun": [JOY_AXIS_TRIGGER_RIGHT, 1.0],
 }
 const PAD_BUTTONS := {
 	"accelerate": [JOY_BUTTON_A],          # for pads without analog triggers
@@ -60,6 +71,7 @@ const PAD_BUTTONS := {
 	"crew_tab": [JOY_BUTTON_Y],
 	"shift_up": [JOY_BUTTON_A],     # manual gearbox: A up, X down (pedals stay on the triggers)
 	"shift_down": [JOY_BUTTON_X],
+	"crew_gun": [JOY_BUTTON_A],
 }
 const STICK_DEADZONE := 0.12
 const TRIGGER_DEADZONE := 0.05
@@ -72,7 +84,7 @@ const REBINDABLE := [
 	["pit_box", "Box this lap"], ["pit_limiter", "Pit limiter"], ["pit_tyres", "Next tyres"], ["pit_fuel", "Next fuel"],
 	["pit_wheels", "Which tyres to change"], ["pit_driver", "Driver change"],
 	["strategy_screen", "Pit wall"], ["crew_tab", "Pit wall: switch tab"], ["team_radio", "Team radio"],
-	["hud_tower", "Timing tower"], ["restart_race", "Restart race"], ["back_to_menu", "Pause / menu"],
+	["crew_gun", "Pit crew: wheel gun"], ["hud_tower", "Timing tower"], ["restart_race", "Restart race"], ["back_to_menu", "Pause / menu"],
 ]
 ## Bindings shown (and changeable) per action: keyboard 1 and 2, controller 1 and 2.
 const SLOTS := 2

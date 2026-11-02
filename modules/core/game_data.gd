@@ -182,8 +182,8 @@ func _register_defaults() -> void:
 		"Shows the ideal line through each corner.")
 	register_setting("gameplay", "manual_gears", "Gears", [[false, "Automatic"], [true, "Manual"]], false,
 		"Manual: change gear yourself with the shift buttons.")
-	register_setting("gameplay", "pit_crew_game", "Pit crew mini-game (prototype)", [[false, "Off: the AI crew do the stop"], [true, "On"]], false,
-		"Prototype: lead the crew yourself at your stops: call them to their stations in the pit lane, work the wheel guns, cut the fuel and release the car (throttle and brake). Played well, stops are quicker. Off, your AI crew do the stop at their own pace.")
+	register_setting("gameplay", "pit_crew_game", "Pit crew mini-game: be a wheel gunner", [[false, "Off: the AI crew do the stop"], [true, "On"]], false,
+		"At your stops you're one of the two wheel gunners in the box: run to each wheel (stick / WASD), hold the gun (RT / A / Space) to undo the nut, then hold it again and let go in the green. The driver guns the left side, a co-op team mate the right. Off, your AI crew do the stop at their own pace.")
 	register_setting("gameplay", "hud_timing_tower", "Timing tower", [[true, "Show"], [false, "Hide"]], true,
 		"The column on the left of the race screen: position, make, driver, last lap and gap to the car ahead.")
 	register_setting("gameplay", "units", "Units of measure", [["metric", "Metric (km/h, °C, km, litres)"],

@@ -88,9 +88,9 @@ func _ready() -> void:
 	driver_radio = TeamRadio.new()
 	layer.add_child(driver_radio)
 	driver_radio.setup(session, session.local_car, true)
-	crew_game = PitCrewGame.new()   # after the consoles, so it hears the pedals first
+	crew_game = PitCrewGame.new()   # after the consoles, so it hears its buttons first
 	layer.add_child(crew_game)
-	crew_game.setup(session)
+	crew_game.setup(session, world.pit_crews)
 	crew_game.autoplay = bool(GameData.arg("crew-autoplay", false))
 	_apply_role()
 	if GameData.arg("pit-wall"):
@@ -278,6 +278,10 @@ var _zoom_target := 0.2
 var _zoom_before_full := 0.2
 var _autodrive_throttle := 0.0
 var _zoom := 0.2
+## The pit crew mini-game's close view of the box: metres across the
+## view's short side, and how far the camera has moved to it (0..1).
+const BOX_VIEW_M := 15.0
+var _box_mix := 0.0
 var _track_rect := Rect2()
 
 
@@ -360,7 +364,14 @@ func _process(delta: float) -> void:
 	if speed < 3.0:
 		offset *= speed / 3.0
 	var follow := target + offset
-	var centre_mix := smoothstep(0.85, 1.0, _zoom)
+	# A player gunning a wheel (PitCrewGame): close in on the box, north up.
+	_box_mix = move_toward(_box_mix, 1.0 if crew_game.is_active() else 0.0, delta * 2.5)
+	if _box_mix > 0.0:
+		var k := smoothstep(0.0, 1.0, _box_mix)
+		var box_z := minf(_view_rect().size.x, _view_rect().size.y) / BOX_VIEW_M
+		z = exp(lerpf(log(z), log(box_z), k))
+		follow = follow.lerp(car_views[crew_game.car].pos2 if crew_game.car >= 0 else target, k)
+	var centre_mix := smoothstep(0.85, 1.0, _zoom) * (1.0 - _box_mix)
 	# Put the view's centre (not the window's) on the target.
 	var shift := (_view_rect().get_center() - vs * 0.5) / z
 	camera.position = follow.lerp(_track_rect.get_center(), centre_mix) - shift
@@ -376,7 +387,7 @@ func _process(delta: float) -> void:
 	if world.driving_line:
 		world.driving_line.visible = world.driving_line.enabled and session.local_car >= 0
 	race_audio.update(delta, camera.position, local_input.last_throttle if autodrive == null else _autodrive_throttle, _zoom)
-	var rot := rotate_camera and _zoom < 0.5
+	var rot := rotate_camera and _zoom < 0.5 and _box_mix <= 0.0
 	camera.ignore_rotation = not rot
 	if rot:
 		camera.rotation = heading + PI * 0.5

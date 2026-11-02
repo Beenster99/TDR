@@ -868,9 +868,9 @@ func test_pit_setup_changes() -> void:
 	check(not (sim2.entries[0].pit["plan"] as Dictionary).has("setup"), "no pit setup changes when the host fixes setups")
 
 
-## The pit crew mini-game: a played stop waits for the leader's release
-## (no quicker than CREW_FASTEST, gives up at CREW_GIVE_UP), fuel cut short,
-## unsafe releases, AI crews' pace, where a stop rejoins, and the game itself.
+## The pit crew mini-game ("Two guns"): AI crews' pace, a stop that waits
+## for its player gunners (or gives up on them at CREW_GIVE_UP), where a stop
+## rejoins, and the game itself.
 func test_pit_crew_game() -> void:
 	print("pit crew game")
 	var d := _data()
@@ -910,70 +910,60 @@ func test_pit_crew_game() -> void:
 	dc["driver"] = 0
 	check(float(pits.crew_timeline(0, dc)["release"]) >= PitRules.DRIVER_CHANGE_S, "a driver change keeps the car in for 5 s")
 
-	# A played stop: the car waits for the release.
+	# Players as the wheel gunners (co-op "Two guns"): the car waits for them.
 	var i := 0
 	var p: Dictionary = sim.entries[i].pit
 	sim.cars[i].fuel_l = 20.0
 	pits.set_plan(i, {"tyre": PitRules.TYRE_DRY, "wheels": "all", "fuel": 30.0, "repair": false})
-	pits.set_plan(i, {"crew": {"play": true}})
-	check(bool(p["crew_game"]), "the crew leader's call to play reaches the pit state")
+	pits.set_plan(i, {"crew": {"side": 0, "play": true}})
+	check(int(p["crew_play"]) == 1, "the left gunner's call to play reaches the pit state")
 	pits._arrive(i)
 	var std := float(p["service_std"])
-	check(is_equal_approx(std, PitRules.STOP_BASE_S + maxf(PitRules.TYRE_CHANGE_S, 10.0)), "standard time for tyres + 30 L (%.1f s)" % std)
-	check(is_equal_approx(float(p["service_left"]), std * PitRules.CREW_GIVE_UP), "a played stop waits up to %.1f x standard" % PitRules.CREW_GIVE_UP)
-	var ticks := 0
-	pits.set_plan(i, {"crew": {"release": true, "fuel_l": 18.0}})   # far too early: held to the floor
-	while p["phase"] == PitRules.PHASE_SERVICE and ticks < 60 * 30:
-		sim.step(idle)
-		ticks += 1
-	var stopped := float(p["last_stop"]["stationary_s"])
-	check(absf(stopped - std * PitRules.CREW_FASTEST) < 0.05, "a release can't beat %.0f%% of standard (%.2f s)" % [PitRules.CREW_FASTEST * 100.0, stopped])
-	check(absf(sim.cars[i].fuel_l - 38.0) < 0.5, "fuel cut at 18 L puts in 18 L (%.1f L in the tank)" % sim.cars[i].fuel_l)
-	check(is_equal_approx(float(p["last_stop"]["standard_s"]), std) and bool(p["last_stop"]["played"]) and not bool(p["crew_game"]),
-		"the stop logs its standard time and that it was played, then resets")
-	# Nobody releases: the crew give up waiting.
+	check(is_equal_approx(std, PitRules.STOP_BASE_S + 10.0 + PitRules.HOSE_S * 0.5 + PitRules.TYRE_CHANGE_S), "standard: 30 L, then four tyres (%.1f s)" % std)
+	check(is_equal_approx(float(p["service_left"]), std * PitRules.CREW_GIVE_UP), "the crew wait for the player up to %.1f x standard" % PitRules.CREW_GIVE_UP)
+	var tl0: Dictionary = p["work"]["crew"]
+	check(is_inf(float(tl0["release"])) and (tl0["guns"][0] as Array).size() == 2 and bool(tl0["guns"][0][0]["player"])
+		and not is_inf(float(tl0["guns"][1][1]["on"])), "the AI guns the right side; the left waits for the player")
+	var gf := float(tl0["guns_from"])
+	pits.set_plan(i, {"crew": {"side": 0, "wheel": 0, "nut": "off"}})
+	check(is_equal_approx(float(p["crew_jobs"][0][0]["off"]), gf), "a nut can't come off before the fuel is in (%.2f s)" % gf)
+	pits.set_plan(i, {"crew": {"side": 0, "wheel": 1, "nut": "off"}})
+	pits.set_plan(i, {"crew": {"side": 1, "wheel": 3, "nut": "off"}})
+	check((p["crew_jobs"][0] as Array).size() == 1 and (p["crew_jobs"][1] as Array).is_empty(), "the other side's wheels and the AI's side can't be played")
+	var at := func(secs: float) -> void:
+		var guard := 0
+		while float(p["service_total"]) - float(p["service_left"]) < secs and p["phase"] == PitRules.PHASE_SERVICE and guard < 60 * 40:
+			sim.step(idle)
+			guard += 1
+	at.call(gf + 1.5)
+	pits.set_plan(i, {"crew": {"side": 0, "wheel": 0, "nut": "on"}})
+	at.call(gf + 2.3)
+	pits.set_plan(i, {"crew": {"side": 0, "wheel": 2, "nut": "off"}})
+	check(is_inf(float(p["work"]["crew"]["release"])) and p["phase"] == PitRules.PHASE_SERVICE, "one wheel still to do: the car waits")
+	at.call(gf + 3.8)
+	pits.set_plan(i, {"crew": {"side": 0, "wheel": 2, "nut": "on"}})
+	var tl1: Dictionary = p["work"]["crew"]
+	var left_done := float(p["crew_jobs"][0][1]["on"])
+	check(not is_inf(float(tl1["release"])) and float(tl1["down"][0]) >= maxf(left_done, float(tl1["guns"][1][1]["on"])) - 1e-6,
+		"both sides done: the car drops (%.2f s), released at %.2f s" % [tl1["down"][0], tl1["release"]])
+	at.call(999.0)
+	var ls0: Dictionary = p["last_stop"]
+	check(bool(ls0["played"]) and absf(float(ls0["stationary_s"]) - float(tl1["release"])) < 0.05 and int(p["crew_play"]) == 0
+		and (p["crew_jobs"][0] as Array).is_empty(), "the stop takes the players' time (%.2f s vs standard %.2f s), then resets" % [ls0["stationary_s"], ls0["standard_s"]])
+	# A player who never finishes: the crew give up waiting.
 	p["phase"] = PitRules.PHASE_LIMIT
-	pits.set_plan(i, {"crew": {"play": true}})
+	pits.set_plan(i, {"crew": {"side": 1, "play": true}})
 	pits._arrive(i)
 	var std2 := float(p["service_std"])
-	ticks = 0
-	while p["phase"] == PitRules.PHASE_SERVICE and ticks < 60 * 40:
-		sim.step(idle)
-		ticks += 1
-	check(absf(float(p["last_stop"]["stationary_s"]) - std2 * PitRules.CREW_GIVE_UP) < 0.05, "an unplayed stop the leader started is slow (%.1f s)" % p["last_stop"]["stationary_s"])
+	at.call(999.0)
+	check(absf(float(p["last_stop"]["stationary_s"]) - std2 * PitRules.CREW_GIVE_UP) < 0.05, "a gunner who never finishes: the crew send it at %.1f s" % p["last_stop"]["stationary_s"])
 	# A crew nobody plays: the AI crew's timeline sets the stop time.
 	p["phase"] = PitRules.PHASE_LIMIT
 	pits._arrive(i)
 	check(is_equal_approx(float(p["service_left"]), float(p["work"]["crew"]["release"])), "an AI-run stop lasts as long as its crew timeline")
-
-	# Unsafe release: a car coming down the lane right behind the box.
-	var j := 1
-	var t := sim.track
-	p["phase"] = PitRules.PHASE_LIMIT
-	pits.set_plan(i, {"crew": {"play": true}})
-	pits._arrive(i)
-	var box: Dictionary = t.pit_box(pits.box_index(i))
-	sim.cars[i].pos = box["pos"]
-	var other := sim.entries[j].pit
-	other["phase"] = PitRules.PHASE_LIMIT
-	other["auto"] = true
-	var bd := float(box["d"]) - 12.0
-	sim.cars[j].pos = t.pit_position_at(bd, -t.pit_side * 1.5)
-	sim.cars[j].heading = t.pit_heading_at(bd)
-	sim.cars[j].vel = Vector2.from_angle(sim.cars[j].heading) * 15.0
-	pits._route_k[j] = pits._nearest_route(sim.cars[j].pos, -1)
-	check(not pits.release_clear(i), "a car coming down the lane: not clear to release")
-	var pen0 := sim.entries[i].penalty_s
-	pits.set_plan(i, {"crew": {"release": true}})
-	var evs := []
-	pits.host_update(evs)
-	check(int(p["unsafe"]) == 1 and is_equal_approx(sim.entries[i].penalty_s - pen0, PitRules.UNSAFE_RELEASE_PENALTY_S),
-		"unsafe release: +%d s" % int(PitRules.UNSAFE_RELEASE_PENALTY_S))
-	other["phase"] = PitRules.PHASE_NONE
-	check(pits.release_clear(i), "lane clear again")
 	p["phase"] = PitRules.PHASE_NONE
-	p["crew_game"] = false
-	p["crew_release"] = false
+	var t := sim.track
+
 
 	# Where a stop rejoins.
 	var sim2: RaceSim = _race(st, d)["sim"]
@@ -999,94 +989,99 @@ func test_pit_crew_game() -> void:
 	check(absf(int(rj["position"]) - (none + 1)) <= 2, "rejoin position matches the field (P%d vs P%d)" % [rj["position"], none + 1])
 	check(RaceHud.rejoin_text(sim2, rj).begins_with("Rejoin P"), "HUD rejoin line: %s" % RaceHud.rejoin_text(sim2, rj))
 
-	# The game itself (no window: stepped by hand).
+	# The game itself (no window, no 3D: stepped by hand).
 	var sess := FakeSession.new()
 	var sim3: RaceSim = _race(st, d)["sim"]
 	sim3.phase = RaceSim.Phase.RACING
 	sess.sim = sim3
-	sess.local_peer = 1
 	sess.local_car = 0
-	sess.team_car = 0
-	sess.local_role = RaceEntry.ROLE_DRIVER
-	var game: PitCrewGame = PitCrewGame.new()
-	game.session = sess
-	game.enabled_override = true
-	check(PitCrewGame.led_car(sess) == 0, "the driver leads their own crew")
-	sess.local_role = RaceEntry.ROLE_STRATEGIST
+	sess.team_car = -1
+	sess.local_role = ""
+	check(PitCrewGame.gunner_for(sess) == [0, 0], "a driver on their own is the left gunner")
 	sess.local_car = -1
-	check(PitCrewGame.led_car(sess) == -1, "the strategist doesn't")
+	sess.team_car = 0
+	sess.local_role = RaceEntry.ROLE_STRATEGIST
+	check(PitCrewGame.gunner_for(sess) == [-1, -1], "the strategist doesn't gun")
 	sess.local_role = RaceEntry.ROLE_PIT_WALL
-	check(PitCrewGame.led_car(sess) == 0, "the pit wall (pit crew) does")
-	sess.local_role = RaceEntry.ROLE_DRIVER
+	check(PitCrewGame.gunner_for(sess) == [0, 0], "the pit wall with the AI driving: the left gunner")
+	sim3.entries[0].crew = [{"peer_id": 1, "role": RaceEntry.ROLE_DRIVER}, {"peer_id": 2, "role": RaceEntry.ROLE_PIT_WALL}]
+	check(PitCrewGame.gunner_for(sess) == [0, 1], "the pit wall with a team mate driving: the right gunner")
 	sess.local_car = 0
+	sess.local_role = RaceEntry.ROLE_DRIVER
+	check(PitCrewGame.gunner_for(sess) == [0, 0], "the driver in a co-op crew: the left gunner")
+	var mate := FakeSession.new()
+	mate.sim = sim3
+	mate.local_car = -1
+	mate.team_car = 0
+	mate.local_role = RaceEntry.ROLE_PIT_WALL
 	var p3: Dictionary = sim3.entries[0].pit
+	var box3: Dictionary = sim3.track.pit_box(sim3.pits.box_index(0))
+	sim3.cars[0].pos = box3["pos"]
 	sim3.cars[0].fuel_l = 20.0
-	sim3.pits.set_plan(0, {"box": true, "tyre": PitRules.TYRE_DRY, "wheels": "front", "fuel": 9.0, "repair": false})
+	sim3.pits.set_plan(0, {"box": true, "tyre": PitRules.TYRE_DRY, "wheels": "all", "fuel": 9.0, "repair": false})
 	p3["phase"] = PitRules.PHASE_APPROACH
+	var games := []
+	for s in [sess, mate]:
+		var g: PitCrewGame = PitCrewGame.new()
+		g.session = s
+		g.enabled_override = true
+		g.autoplay = true
+		games.append(g)
 	var dt := 1.0 / 60.0
-	game.step(dt)
-	check(game.stage == PitCrewGame.Stage.PREP and bool(p3["crew_game"]) and game.stations.size() == 4,
-		"boxing: crew to stations (jacks, two tyres, fuel rig) (%d)" % game.stations.size())
-	# Hit every ring as it closes.
-	var guard := 0
-	while game.station_k < game.stations.size() and guard < 2000:
-		guard += 1
-		var hit := game.clock - game.station_t0 >= PitCrewGame.RING_S - 0.01
-		game.step(dt, hit)
-	check(game.stations.all(func(s): return s["result"] == "perfect" or s["result"] == "good") and game.prep_delay <= 0.0,
-		"all crew ready in time (delay %.2f s)" % game.prep_delay)
+	for g in games:
+		g.step(dt)
+	check(games[0].stage == PitCrewGame.Stage.READY and games[1].stage == PitCrewGame.Stage.READY and int(p3["crew_play"]) == 3
+		and games[0].my_wheels == [0, 2] and games[1].my_wheels == [1, 3], "boxing: both gunners get ready, one each side")
+	for k in 90:
+		for g in games:
+			g.step(dt)
+	check(games[0].pos.distance_to(games[0].wheel_spot(0)[0]) < PitCrewGame.REACH, "the left gunner runs to the front left")
 	p3["phase"] = PitRules.PHASE_LIMIT
 	sim3.pits._arrive(0)
-	game.step(dt)
-	check(game.stage == PitCrewGame.Stage.BOX, "in the box the game moves on")
-	# Wheel guns at the sweet spot, fuel at the line, release on green.
-	guard = 0
-	while p3["phase"] == PitRules.PHASE_SERVICE and guard < 60 * 20:
+	for g in games:
+		g.step(dt)
+	check(games[0].stage == PitCrewGame.Stage.BOX and games[1].stage == PitCrewGame.Stage.BOX, "in the box the gunners go to work")
+	# Before the fuel's in, the gun does nothing.
+	var g0: PitCrewGame = games[0]
+	g0.autoplay = false
+	g0.step(dt, Vector2.ZERO, true)
+	check(g0.job == PitCrewGame.Job.NONE and g0.clock < g0.guns_from, "no tyres while the fuel goes in")
+	g0.autoplay = true
+	var guard := 0
+	while p3["phase"] == PitRules.PHASE_SERVICE and guard < 60 * 30:
 		guard += 1
-		var gun := false
-		var fuel := false
-		if game.tyres_done_at < 0.0 and game.clock >= game.wheel_t0 and game.gauge() >= PitCrewGame.GUN_LOOSE + 0.02:
-			gun = true
-		var b := game.block_start()
-		if game.fuel_done_at < 0.0 and game.clock >= b + game.fuel_target / PitRules.FUEL_FLOW_LPS:
-			fuel = true
-		if game.release_ready_at >= 0.0 and game.clock >= game.release_ready_at + 0.2:
-			gun = true
-		game.step(dt, gun, fuel)
-		sess.sim.step(idle)
-	game.step(dt)
+		for g in games:
+			g.step(dt)
+		sim3.step(idle)
+	for g in games:
+		g.step(dt)
 	var ls: Dictionary = p3["last_stop"]
-	check(ls.get("played", false) and float(ls["stationary_s"]) < float(ls["standard_s"]) * 0.92,
-		"a sharp stop beats the standard (%.2f s vs %.2f s)" % [ls.get("stationary_s", 0.0), ls.get("standard_s", 0.0)])
-	check(game.wheel_results.size() == 2 and game.wheel_results.all(func(r): return r == "perfect") and absf(sim3.cars[0].fuel_l - 29.0) < 0.6,
-		"both wheel guns perfect, fuel to the line (%s, %.1f L)" % [game.wheel_results, sim3.cars[0].fuel_l])
-	check(game.stage == PitCrewGame.Stage.DONE and not game.result.get("pending", true)
-		and PitCrewGame.grade(float(game.result["stationary_s"]), float(game.result["standard_s"])) != "", "the result is shown: %s" %
-		PitCrewGame.grade(float(game.result.get("stationary_s", 0.0)), float(game.result.get("standard_s", 1.0))))
-	# A loose wheel goes again.
-	var g2: PitCrewGame = PitCrewGame.new()
-	g2.session = sess
-	g2.enabled_override = true
-	g2.car = 0
-	g2.stage = PitCrewGame.Stage.BOX
-	g2.wheels = [0]
-	g2.wheel_std = 2.0
-	g2.wheel_t0 = 0.0
-	g2.tyres_done_at = -1.0
-	g2.fuel_done_at = 0.0
-	g2.release_ready_at = -1.0
-	g2.clock = 0.5
-	g2._step_box(true, false)
-	check(g2.loose == 1 and g2.wheel_results.is_empty() and g2.wheel_t0 > 0.5, "too early on the wheel gun: loose wheel, go again")
-	game.free()
-	g2.free()
+	check(ls.get("played", false) and float(ls["stationary_s"]) < float(ls["standard_s"]) * 0.95,
+		"two sharp gunners beat the standard stop (%.2f s vs %.2f s)" % [ls.get("stationary_s", 0.0), ls.get("standard_s", 0.0)])
+	check(games.all(func(g): return g.done.size() == 2 and g.done.values().all(func(r): return r == "perfect") and g.loose == 0),
+		"all four wheel guns perfect")
+	check(games[0].stage == PitCrewGame.Stage.DONE and not games[0].result.get("pending", true)
+		and PitCrewGame.grade(float(games[0].result["stationary_s"]), float(games[0].result["standard_s"])) != "", "the result is shown: %s" %
+		PitCrewGame.grade(float(games[0].result.get("stationary_s", 0.0)), float(games[0].result.get("standard_s", 1.0))))
+	# Let go of the gun too early: a loose nut, go again.
+	g0.stage = PitCrewGame.Stage.BOX
+	g0.car = 0
+	g0.job = PitCrewGame.Job.GUN
+	g0.job_wheel = 0
+	g0.done = {}
+	g0.clock = 1.0
+	g0.job_t0 = 0.8
+	g0._gun_was = true
+	g0._step_box(dt, Vector2.ZERO, false)
+	check(g0.loose == 1 and g0.job == PitCrewGame.Job.LOOSE and not g0.done.has(0), "too early off the wheel gun: loose nut, go again")
+	for g in games:
+		g.free()
 
 
 ## Stands in for a RaceSession (which needs the game's autoloads) in the pit
 ## crew game test: pit calls go straight to the sim.
 class FakeSession:
 	var sim: RaceSim
-	var local_peer := 1
 	var local_car := 0
 	var team_car := 0
 	var local_role := RaceEntry.ROLE_DRIVER

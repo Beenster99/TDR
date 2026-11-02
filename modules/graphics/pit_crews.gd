@@ -105,6 +105,8 @@ class Crew:
 	var track_w := 1.7
 	var axle_f := 1.4
 	var axle_r := 1.4
+	## A player is this gunner (by side, 0 left / 1 right): [pos, face, pose] or null.
+	var player: Array = [null, null]
 
 
 func setup(p_tv: TrackView) -> void:
@@ -212,14 +214,68 @@ func wheels_off_mask(car: int) -> int:
 		return 0
 	var mask := 0
 	for job in _jobs(c):
-		var d: float = float(job["on"]) - float(job["off"])
-		if c.elapsed > float(job["off"]) + d * NUT_OFF and c.elapsed < float(job["off"]) + d * NEW_ON:
+		var sw := _swap(job)
+		if c.elapsed > sw.x and c.elapsed < sw.y:
 			mask |= 1 << int(job["wheel"])
 	return mask
 
 
+## When a wheel job's old wheel comes off and the new one goes on: a
+## player's as they did it (nut off .. fit), the AI's as shares of the job.
+static func _swap(job: Dictionary) -> Vector2:
+	if job.has("fit"):
+		return Vector2(float(job["off"]), float(job["fit"]))
+	var d: float = float(job["on"]) - float(job["off"])
+	return Vector2(float(job["off"]) + d * NUT_OFF, float(job["off"]) + d * NEW_ON)
+
+
 func wheels_off(car: int) -> bool:
 	return wheels_off_mask(car) != 0
+
+
+# --- A player as one of the wheel gunners (ui PitCrewGame) ----------------------
+
+## Car's crew (by its box), whether or not it's stopping now.
+func _crew_for(car: int) -> Crew:
+	return crews.get(_car_box.get(car, -1)) if _car_box.has(car) else null
+
+
+## A player is car's gunner on one side (0 left, 1 right) and is here: draw
+## them there (pos: ground metres, face: radians, pose: Pose). pos = null:
+## the AI gunner takes over again.
+func drive_gunner(car: int, side: int, pos, face := 0.0, pose := Pose.STAND) -> void:
+	var c := _crew_for(car)
+	if c == null or side < 0 or side > 1:
+		return
+	c.player[side] = null if pos == null else [pos, face, pose]
+
+
+## Where the gunner kneels to work on a wheel (0 front left .. 3 rear right)
+## of car, round where it is now in its box: [spot, facing]. [] without a crew.
+func wheel_spot(car: int, wheel: int) -> Array:
+	var c := _crew_for(car)
+	if c == null:
+		return []
+	var s := 1.0 if wheel % 2 == 1 else -1.0
+	var x := c.axle_f if wheel < 2 else -c.axle_r
+	return [_at(c, x, s * (c.track_w * 0.5 + 0.75)), (-c.out).angle() if s > 0.0 else c.out.angle()]
+
+
+## Where a side's gunner waits for the car (in front of the front wheel, out of its way).
+func gunner_wait_spot(car: int, side: int) -> Vector2:
+	var c := _crew_for(car)
+	if c == null:
+		return Vector2.ZERO
+	var s := 1.0 if side == 1 else -1.0
+	return _at(c, c.axle_f + 1.3, s * (c.track_w * 0.5 + 1.0))
+
+
+## The box car stops in: {pos, dir (along the lane), out (towards the garage)}.
+func box_frame(car: int) -> Dictionary:
+	var c := _crew_for(car)
+	if c == null:
+		return {}
+	return {"pos": c.pos, "dir": c.dir, "out": c.out}
 
 
 ## People are drawn only when the camera is this close (metres); crews far
@@ -307,6 +363,9 @@ func _plan(c: Crew) -> void:
 			continue
 		p.speed = RUN_SPEED
 		var spot := _station(c, i, tl)
+		if (i == GUN_L or i == GUN_R) and c.player[i - GUN_L] != null:
+			spot = c.player[i - GUN_L]
+			p.speed = RUN_SPEED * 3.0   # keeps right with the player's stick
 		p.target = spot[0]
 		p.target_face = spot[1]
 		p.pose = spot[2]
@@ -357,11 +416,13 @@ func _station(c: Crew, i: int, tl: Dictionary) -> Array:
 			var wheel_spot := _at(c, x, s * (tw + 0.75))
 			if not serving:
 				return [wheel_spot, face, Pose.STAND]
-			var d: float = float(job["on"]) - float(job["off"])
-			var f := (e - float(job["off"])) / maxf(d, 0.01)
-			if f < 0.0 or f > 1.0:
+			var sw := _swap(job)
+			if job.get("player", false) and e < float(job["on"]):
+				# a player on another machine: we only hear when each nut is done
+				return [_at(c, x + 0.5, s * (tw + 1.35)), face, Pose.CARRY] if e > sw.x and e < sw.y else [wheel_spot, face, Pose.KNEEL]
+			if e < float(job["off"]) or e > float(job["on"]):
 				return [wheel_spot, face, Pose.STAND]
-			if f > NUT_OFF and f < NEW_ON:
+			if e > sw.x and e < sw.y:
 				# old wheel out, new one in (a fumble shows as a longer swap)
 				return [_at(c, x + 0.5, s * (tw + 1.35)), face, Pose.CARRY]
 			return [wheel_spot, face, Pose.KNEEL]
@@ -371,8 +432,7 @@ func _station(c: Crew, i: int, tl: Dictionary) -> Array:
 			var x := (c.axle_f if front else -c.axle_r) + 0.55
 			var checking := false
 			for job in _jobs(c):
-				if (int(job["wheel"]) < 2) == front and serving \
-						and e > float(job["off"]) + (float(job["on"]) - float(job["off"])) * NEW_ON:
+				if (int(job["wheel"]) < 2) == front and serving and e > _swap(job).y:
 					checking = true
 			if checking:
 				return [_at(c, x + 0.6, tw + 1.4), to_car, Pose.CROUCH]
@@ -501,7 +561,7 @@ func _props(c: Crew) -> void:
 	var down_at := [false, false, false, false]
 	if c.state == Stop.SERVICE:
 		for job in _jobs(c):
-			if c.elapsed > float(job["off"]) + (float(job["on"]) - float(job["off"])) * NUT_OFF:
+			if c.elapsed > _swap(job).x:
 				down_at[int(job["wheel"])] = true
 	# Ground tyres by corner: front +side, front -side, rear +side, rear -side.
 	var corner_wheel := [1, 0, 3, 2]

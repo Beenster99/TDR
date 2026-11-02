@@ -1,7 +1,8 @@
 extends Node
 ## Screenshots of the race effects in a real race (needs a GPU or xvfb +
 ## mesa vulkan). Scenarios:
-##   pit   - you box on lap 1; shot mid-stop (crew at work, car on jacks)
+##   pit   - you box on lap 1; shot mid-stop (crew at work, car on jacks;
+##           with --crew-autoplay you're the left wheel gunner)
 ##   lane  - you box on lap 1; shot <seconds> after the box call (pit crew
 ##           game: crew to stations, and the rejoin band)
 ##   after - you box on lap 1; shot <seconds> after the stop (its result)
@@ -40,6 +41,8 @@ func _ready() -> void:
 	var start := RaceFactory.plan(s, [{"name": "You", "car_id": "bmw_m4_gt3"}], GameData.cars, GameData.drivers)
 	session = RaceSession.create(RaceSession.Mode.OFFLINE, start, 0)
 	GameData.active_session = session
+	if GameData.arg("crew-autoplay"):
+		GameData.prefs["pit_crew_game"] = true   # you're the left wheel gunner (played by the autoplay)
 	scene = load("res://modules/game/race.tscn").instantiate()
 	add_child(scene)
 	get_tree().create_timer(600.0).timeout.connect(func(): print("[fx] gave up"); get_tree().quit(1))
