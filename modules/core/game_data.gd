@@ -18,6 +18,9 @@ var drivers: Array = []                 ## AI drivers (ai module)
 ## Session the race scene should run (offline, server or client). A
 ## RaceSession from the multiplayer module; untyped so core doesn't depend on it.
 var active_session = null
+## The championship being played, if any: a Season from the season module
+## (untyped, like active_session). The menu, lobby and race scene share it.
+var season = null
 ## This player's own choices, kept between races.
 ##   driving_help: 2 = full (traction control, ABS, stability), 1 = TC + ABS, 0 = off
 ##   zoom: camera zoom level the player last used (0 = close, 1 = whole track)

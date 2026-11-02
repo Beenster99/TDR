@@ -39,6 +39,10 @@ var pit_window_open_lap: int = 0
 var pit_window_close_lap: int = 0
 var finish_timeout_s: float = 90.0 ## after the leader finishes
 var countdown_s: float = 4.0
+## "race" or "qualifying" (a timed session: classified by best lap, see RaceSim).
+var session_type: String = "race"
+const SESSION_RACE := "race"
+const SESSION_QUALIFYING := "qualifying"
 
 
 func to_dict() -> Dictionary:
@@ -50,7 +54,7 @@ func to_dict() -> Dictionary:
 		"mandatory_pit_stops": mandatory_pit_stops, "finish_timeout_s": finish_timeout_s,
 		"tyre_wear_rate": tyre_wear_rate, "pit_window_open_lap": pit_window_open_lap,
 		"pit_window_close_lap": pit_window_close_lap,
-		"countdown_s": countdown_s,
+		"countdown_s": countdown_s, "session_type": session_type,
 	}
 
 
@@ -66,6 +70,10 @@ func effective_damage_level() -> String:
 	if damage_level == "off" and damage_enabled:
 		return "full"
 	return damage_level
+
+
+func is_qualifying() -> bool:
+	return session_type == SESSION_QUALIFYING
 
 
 static func from_dict(d: Dictionary) -> RaceSettings:

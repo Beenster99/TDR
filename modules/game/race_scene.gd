@@ -241,7 +241,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		pass
 	elif event.is_action_pressed("camera_toggle"):
 		rotate_camera = not rotate_camera
-	elif event.is_action_pressed("restart_race") and session.mode == RaceSession.Mode.OFFLINE:
+	elif event.is_action_pressed("restart_race") and session.mode == RaceSession.Mode.OFFLINE \
+			and not session.start_data.has("season"):  # no do-overs in a championship
 		_restart()
 	elif event.is_action_pressed("back_to_menu") and not _results_shown and not pit_wall.visible:
 		_back_to_menu()
@@ -286,7 +287,11 @@ func _on_events(evs: Array) -> void:
 	for e in evs:
 		match e["type"]:
 			"countdown": pass
-			"green": hud.flash("GO!", 1.5)
+			"green":
+				if session.sim.settings.is_qualifying():
+					hud.flash("QUALIFYING: %d laps, your best lap sets your grid slot" % session.sim.settings.laps, 3.5)
+				else:
+					hud.flash("GO!", 1.5)
 			"lap":
 				if e["car"] == session.local_car:
 					hud.flash("Lap %d  %s" % [e["lap"], RaceHud.fmt_time(e["time"])], 2.5)
@@ -311,6 +316,9 @@ func _on_events(evs: Array) -> void:
 func _on_race_finished() -> void:
 	var sim := session.sim
 	_save_race_data()
+	var season_info: Dictionary = session.start_data.get("season", {})
+	var season_pts := _season_session_done(season_info) if not season_info.is_empty() else {}
+	var quali := sim.settings.is_qualifying()
 	var lines := []
 	for p in sim.running_order.size():
 		var i := sim.running_order[p]
@@ -320,8 +328,20 @@ func _on_race_finished() -> void:
 			extra += "  stops %d" % int(e.pit.get("stops", 0))
 		if e.penalty_s > 0.0:
 			extra += "  +%d s pen" % int(e.penalty_s)
+		if quali:
+			lines.append("P%-2d %-18s %-16s best %s" % [p + 1, e.driver_name, sim.defs[i].display_name,
+				RaceHud.fmt_time(e.best_lap) if e.best_lap > 0.0 else "no time"])
+			continue
+		if not season_info.is_empty():
+			var got: int = season_pts.get(SeasonResults.key_for(e.is_ai, e.driver_name), 0)
+			extra += "  +%d pts" % got if got > 0 else ""
 		lines.append("P%-2d %-18s %-16s %s  best %s%s" % [p + 1, e.driver_name, sim.defs[i].display_name,
 			"DNF" if e.dnf else RaceHud.fmt_time(e.finish_time + e.penalty_s), RaceHud.fmt_time(e.best_lap), extra])
+	var title := "RESULTS"
+	if not season_info.is_empty():
+		title = "%s  ·  %s  ·  round %d of %d" % ["QUALIFYING" if quali else "RESULTS", season_info.get("name", "Season"),
+			int(season_info["round"]) + 1, int(season_info["rounds"])]
+		lines.append_array(_season_standings_lines(season_info))
 	if DisplayServer.get_name() == "headless" or GameData.arg("quit-after-race"):
 		print("[results]\n" + "\n".join(lines))
 		var heard := []
@@ -329,13 +349,81 @@ func _on_race_finished() -> void:
 			heard.append("%s=%d" % [sim.entries[i].driver_name, session.timelines[i].received])
 		if not heard.is_empty():
 			print("[net] car states received: " + ", ".join(heard))
-	if GameData.arg("quit-after-race"):
-		get_tree().create_timer(2.0).timeout.connect(func(): get_tree().quit())
+	var final_session := not season_info.is_empty() and not quali \
+		and int(season_info.get("round", 0)) + 1 >= int(season_info.get("rounds", 0))
+	if GameData.arg("quit-after-race") or (GameData.arg("quit-after-season") and final_session):
+		# Bound to the tree, not this scene: a client may leave the race scene
+		# (host gone) before the timer fires.
+		get_tree().create_timer(2.0).timeout.connect(get_tree().quit)
 		return
 	if session.mode == RaceSession.Mode.SERVER and Net.dedicated:
-		get_tree().create_timer(10.0).timeout.connect(func(): Net.end_race())
+		get_tree().create_timer(3.0 if GameData.arg("quit-after-season") else 10.0).timeout.connect(func(): Net.end_race())
 		return
-	_show_results(lines)
+	if GameData.arg("quit-after-season") and session.mode == RaceSession.Mode.OFFLINE:
+		_back_to_menu.call_deferred()  # the menu starts the next session
+		return
+	if GameData.arg("quit-after-season") and session.mode == RaceSession.Mode.CLIENT:
+		return  # wait for the host to bring everyone back to the lobby
+	_show_results(lines, title)
+
+
+## A season session (qualifying or race) just ended. The host / offline
+## player records it in the season (GameData.season), saves the season and
+## the session's race log, and online shares the new standings and the next
+## round's settings with the lobby. Every machine works out the points the
+## same way, and tells _on_season_round_done about its own car.
+## Returns the points per driver key (race only).
+func _season_session_done(info: Dictionary) -> Dictionary:
+	var sim := session.sim
+	var result := SeasonResults.from_race(sim, session.telemetry)
+	var s = GameData.season
+	var recorded := {}
+	if session.is_authority() and s is Season and s.id == info.get("id", ""):
+		recorded = s.record(result, int(info.get("round", -1)))
+		if not recorded.is_empty():
+			SeasonStore.save(s)
+			SeasonStore.save_session_log(s.id, int(info["round"]), result["session"], result["log"])
+			if session.mode == RaceSession.Mode.SERVER:
+				Net.set_settings(s.settings_for_next())
+				Net.set_season_info(s.summary())
+			if DisplayServer.get_name() == "headless":
+				print("[season] %s round %d %s recorded, next: %s" % [s.name, int(info["round"]) + 1, result["session"],
+					"finished" if s.is_complete() else "round %d %s" % [s.round_index + 1, s.next_session()]])
+	if sim.settings.is_qualifying():
+		return {}
+	var pts: Dictionary = recorded.get("points", {})
+	if pts.is_empty():
+		pts = Season.race_points(PointsSystem.from_dict(info.get("points", {})), result["classification"],
+			result["fastest_key"], info.get("pole_key", ""))
+	if session.local_car >= 0:
+		var me := sim.entries[session.local_car]
+		_on_season_round_done({"season_id": info.get("id", ""), "round": int(info.get("round", 0)),
+			"rounds": int(info.get("rounds", 0)), "is_final_round": int(info.get("round", 0)) + 1 >= int(info.get("rounds", 0)),
+			"my_position": me.position, "dnf": me.dnf and not me.finished, "field_size": sim.car_count(),
+			"points_earned": int(pts.get(SeasonResults.key_for(me.is_ai, me.driver_name), 0))})
+	return pts
+
+
+## A season race ended for this player (on their own machine, online too):
+## {season_id, round, rounds, is_final_round, my_position, dnf, field_size,
+## points_earned}. Prize money (business module) is paid from here.
+func _on_season_round_done(_result: Dictionary) -> void:
+	pass
+
+
+## The championship after this session (host / offline only; clients see it in the lobby).
+func _season_standings_lines(info: Dictionary) -> Array:
+	var s = GameData.season
+	if not (s is Season and s.id == info.get("id", "")):
+		return []
+	var out := ["", "CHAMPIONSHIP" + ("  ·  FINAL" if s.is_complete() else "")]
+	var k := 0
+	for d in s.driver_standings().slice(0, 10):
+		k += 1
+		out.append("%2d %-18s %-20s %4d pts" % [k, d["name"].left(18), d["team"].left(20), d["points"]])
+	if s.is_complete() and not s.champion().is_empty():
+		out.append("%s is the champion!" % s.champion()["name"])
+	return out
 
 
 ## Every race's data (lap log, sectors, gaps, feed, weather) is kept as JSON
@@ -363,14 +451,14 @@ func _build_results() -> PanelContainer:
 	return p
 
 
-func _show_results(lines: Array) -> void:
+func _show_results(lines: Array, title := "RESULTS") -> void:
 	_results_shown = true
 	for c in results.get_children():
 		c.queue_free()
 	var v := VBoxContainer.new()
 	results.add_child(v)
 	var t := Label.new()
-	t.text = "RESULTS"
+	t.text = title
 	t.add_theme_font_size_override("font_size", 30)
 	v.add_child(t)
 	var body := Label.new()
@@ -378,7 +466,9 @@ func _show_results(lines: Array) -> void:
 	body.add_theme_font_override("font", SystemFont.new())
 	v.add_child(body)
 	var first: Button = null
-	if session.mode == RaceSession.Mode.OFFLINE:
+	if session.mode == RaceSession.Mode.OFFLINE and session.start_data.has("season"):
+		first = _results_button(v, "Continue season", _back_to_menu)
+	elif session.mode == RaceSession.Mode.OFFLINE:
 		first = _results_button(v, "Race again", _restart)
 		_results_button(v, "Main menu", _back_to_menu)
 	elif session.mode == RaceSession.Mode.SERVER:
