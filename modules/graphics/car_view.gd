@@ -19,7 +19,7 @@ const SMALL_PARTS := ["mirror_l", "mirror_r", "interior", "diffuser"]
 const DECAL_ATLAS := preload("res://modules/graphics/textures/decals.png")
 const DIGITS := preload("res://modules/graphics/textures/digits.png")
 ## Classes that race in sponsor stickers (road cars and the safety car stay clean).
-const STICKER_CLASSES := ["GT3", "Hypercar", "LMP2"]
+const STICKER_CLASSES := ["GT3", "Hypercar", "LMP2", "RX1"]
 
 static var _scenes := {}
 static var _liveries := {}
@@ -42,6 +42,17 @@ var ground_normal: Callable = func(_p: Vector2, _hint: int) -> Vector3: return V
 ## road the car is kept on top of it, so it never vanishes into the ground.
 var terrain: Callable = func(_p: Vector2, _hint: int) -> float: return -INF
 var _lift := 0.0
+## How loose the surface under a point is, 0 tarmac .. 1 dirt (set by
+## WorldView from the track; rallycross dirt stretches and the joker).
+var dirt_at: Callable = func(_p: Vector2) -> float: return 0.0
+var _dirt := 0.0
+var _dirt_tick := 0.0
+## Rallycross: a dust cloud rolling up behind the car on dry dirt, and stones
+## or mud thrown back off the tyres (mud and brown spray when it's wet).
+var _dust: GPUParticles3D
+var _dust_mat: ParticleProcessMaterial
+var _roost: GPUParticles3D
+var _roost_mat: ParticleProcessMaterial
 ## Shared effects (set by WorldView; null = none).
 var marks: SkidMarks
 var debris: Debris
@@ -176,6 +187,7 @@ func _build(livery: Dictionary) -> void:
 	_add_spray()
 	_add_smoke()
 	_add_tyre_smoke()
+	_add_dirt_effects()
 	_mark_key = get_instance_id() * 8
 	for k in _parts:
 		var n: Node3D = _parts[k][0]
@@ -824,6 +836,128 @@ func _add_tyre_smoke() -> void:
 		_smoke_mat.append(pm)
 
 
+## Dust and roost for dirt (rallycross). Built for every car but cost
+## nothing until a car drives on dirt.
+func _add_dirt_effects() -> void:
+	var b := def.wheelbase - def.cg_to_front
+	# Dust: big, slow, lingering clouds, left hanging in the air behind.
+	_dust = GPUParticles3D.new()
+	_dust.name = "DirtDust"
+	_dust.amount = 90
+	_dust.lifetime = 4.5
+	_dust.emitting = false
+	_dust.local_coords = false
+	var pm := ParticleProcessMaterial.new()
+	pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	pm.emission_box_extents = Vector3(0.4, 0.15, def.track_width * 0.5 + 0.2)
+	pm.direction = Vector3(-1, 0.6, 0)
+	pm.spread = 55.0
+	pm.initial_velocity_min = 1.0
+	pm.initial_velocity_max = 3.5
+	pm.gravity = Vector3(0, 0.25, 0)
+	pm.damping_min = 0.8
+	pm.damping_max = 1.6
+	pm.scale_min = 2.4
+	pm.scale_max = 4.2
+	pm.angle_min = -180.0
+	pm.angle_max = 180.0
+	var curve := CurveTexture.new()
+	var cv := Curve.new()
+	cv.add_point(Vector2(0, 0.3))
+	cv.add_point(Vector2(0.3, 0.75))
+	cv.add_point(Vector2(1, 1.0))
+	curve.curve = cv
+	pm.scale_curve = curve
+	var ga := Gradient.new()
+	ga.set_color(0, Color(1, 1, 1, 0.0))
+	ga.add_point(0.06, Color(1, 1, 1, 0.5))
+	ga.add_point(0.5, Color(1, 1, 1, 0.3))
+	ga.set_color(ga.get_point_count() - 1, Color(1, 1, 1, 0.0))
+	var gt := GradientTexture1D.new()
+	gt.gradient = ga
+	pm.color_ramp = gt
+	pm.color = Color(0.66, 0.55, 0.4)
+	_dust.process_material = pm
+	_dust_mat = pm
+	var q := QuadMesh.new()
+	q.size = Vector2(1.6, 1.6)
+	var m := StandardMaterial3D.new()
+	m.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+	m.billboard_keep_scale = true
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.vertex_color_use_as_albedo = true
+	m.albedo_texture = _puff_texture()
+	m.roughness = 1.0
+	q.material = m
+	_dust.draw_pass_1 = q
+	_dust.position = Vector3(-b - 0.4, 0.35, 0)
+	_dust.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_dust.visibility_aabb = AABB(Vector3(-60, -4, -60), Vector3(120, 24, 120))
+	add_child(_dust)
+	# Roost: stones or clods of mud flung back off the tyres, falling fast.
+	_roost = GPUParticles3D.new()
+	_roost.name = "DirtRoost"
+	_roost.amount = 70
+	_roost.lifetime = 0.8
+	_roost.emitting = false
+	_roost.local_coords = false
+	var rm := ParticleProcessMaterial.new()
+	rm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	rm.emission_box_extents = Vector3(0.15, 0.05, def.track_width * 0.5)
+	rm.direction = Vector3(-1, 0.55, 0)
+	rm.spread = 22.0
+	rm.initial_velocity_min = 4.0
+	rm.initial_velocity_max = 10.0
+	rm.gravity = Vector3(0, -9.8, 0)
+	rm.scale_min = 0.6
+	rm.scale_max = 1.6
+	rm.angle_min = -180.0
+	rm.angle_max = 180.0
+	rm.color = Color(0.3, 0.23, 0.16)
+	_roost.process_material = rm
+	_roost_mat = rm
+	var bm := BoxMesh.new()
+	bm.size = Vector3(0.09, 0.07, 0.08)
+	var mm := StandardMaterial3D.new()
+	mm.vertex_color_use_as_albedo = true
+	mm.roughness = 0.95
+	bm.material = mm
+	_roost.draw_pass_1 = bm
+	_roost.position = Vector3(-b - 0.3, 0.2, 0)
+	_roost.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_roost.visibility_aabb = AABB(Vector3(-20, -4, -20), Vector3(40, 10, 40))
+	add_child(_roost)
+
+
+## Dust on dry dirt, mud when it's wet: how much from speed, wheelspin and
+## sliding. Called every frame from _process.
+func _update_dirt(delta: float, wet: float) -> void:
+	_dirt_tick -= delta
+	if _dirt_tick <= 0.0:
+		_dirt_tick = 0.1
+		_dirt = float(dirt_at.call(pos2))
+	if _dirt <= 0.02:
+		if _dust.emitting:
+			_dust.emitting = false
+			_roost.emitting = false
+		return
+	var spd := state.speed()
+	var slide := maxf(tyre_slide[2], tyre_slide[0])
+	var spin := 1.0 if state.wheelspin else 0.0
+	var go := smoothstep(3.0, 30.0, spd)
+	var muddy := clampf(wet * 1.5, 0.0, 1.0)
+	# Dust needs dry earth; wet dirt throws mud instead.
+	var dust := _dirt * (1.0 - muddy) * clampf(go * 0.75 + slide * 0.5 + spin * 0.3, 0.0, 1.0)
+	_dust.emitting = dust > 0.04
+	_dust.amount_ratio = clampf(dust, 0.0, 1.0)
+	_dust_mat.color = Color(0.68, 0.57, 0.42).lerp(Color(0.5, 0.42, 0.32), muddy)
+	var roost := _dirt * clampf(smoothstep(5.0, 20.0, spd) * 0.35 + slide * 0.7 + spin * 0.8, 0.0, 1.0) * (0.6 + 0.6 * muddy)
+	_roost.emitting = roost > 0.05
+	_roost.amount_ratio = clampf(roost, 0.0, 1.0)
+	_roost_mat.color = Color(0.4, 0.33, 0.25).lerp(Color(0.2, 0.15, 0.1), muddy)
+	_roost_mat.initial_velocity_max = 7.0 + 8.0 * spin + 0.12 * spd
+
+
 static var _puff: Texture2D
 
 
@@ -879,6 +1013,8 @@ func _update_tyres(_delta: float) -> void:
 	var dry := 1.0 - clampf(wet * 1.4, 0.0, 1.0)
 	var smoke_k := [front, rear]
 	var col := Color(0.86, 0.86, 0.88) if not off_road else (Color(0.55, 0.45, 0.32) if state.surface == TrackData.Surface.GRAVEL else Color(0.42, 0.36, 0.24))
+	if _dirt > 0.3 and not off_road:
+		col = Color(0.62, 0.52, 0.38)   # sliding on dirt: brown, not white
 	for axle in 2:
 		var k: float = smoke_k[axle] * (dry if not off_road else maxf(dry, 0.25))
 		_tyre_smoke[axle].emitting = k > 0.05
@@ -886,7 +1022,8 @@ func _update_tyres(_delta: float) -> void:
 		_smoke_mat[axle].color = col
 	if marks == null:
 		return
-	var kind := SkidMarks.Kind.EARTH if state.surface == TrackData.Surface.GRASS else SkidMarks.Kind.RUBBER
+	var on_dirt := _dirt > 0.5 and not off_road
+	var kind := SkidMarks.Kind.EARTH if state.surface == TrackData.Surface.GRASS or on_dirt else SkidMarks.Kind.RUBBER
 	var lays := state.surface != TrackData.Surface.GRAVEL and state.surface != TrackData.Surface.BARRIER
 	for w in _wheels:
 		var hub: Node3D = w[0]
@@ -1045,6 +1182,7 @@ func _process(delta: float) -> void:
 	_spray.emitting = spray > 0.03
 	_spray.amount_ratio = spray
 	_update_tyres(delta)
+	_update_dirt(delta, wet)
 	_damage_tick -= delta
 	if _damage_tick <= 0.0:
 		_damage_tick = 0.2

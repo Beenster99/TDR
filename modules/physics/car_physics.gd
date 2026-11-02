@@ -88,6 +88,9 @@ const SURFACE_ROLL := {
 ## Gravel digs in hard at speed (SURFACE_ROLL) but a car that has stopped in
 ## it can crawl out: below GRAVEL_CRAWL_SPEED the drag eases to
 ## GRAVEL_CRAWL_ROLL, back up to the full drag by GRAVEL_DIG_SPEED (m/s).
+## Loose rallycross surface: rolling drag on dirt (the grip comes from the
+## tyre: TyreCompound.dirt_grip).
+const DIRT_ROLL := 0.012
 const GRAVEL_CRAWL_ROLL := 0.1
 const GRAVEL_CRAWL_SPEED := 5.0
 const GRAVEL_DIG_SPEED := 18.0
@@ -109,6 +112,23 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 	s.surface = track.surface_for(q)
 	var surf_mu: float = SURFACE_GRIP[s.surface]
 	var surf_roll: float = SURFACE_ROLL[s.surface]
+	# Rallycross: loose stretches of the lap and the joker. On the joker the
+	# lap distance comes from how far along the joker the car is, so lap and
+	# sector timing carry on smoothly while it's away from the lap.
+	s.dirt = 0.0
+	if track.has_joker() and track.on_joker_route(s.pos, q, s.in_joker):
+		var jd: float = track.project_joker(s.pos)["d"]
+		s.track_s = track.joker_lap_s(jd)
+		s.in_joker = true
+		s.dirt = track.joker_dirt_at(jd)
+	else:
+		s.in_joker = false
+		if s.surface <= TrackData.Surface.KERB:
+			s.dirt = track.dirt_at(q["s"])
+	if s.dirt > 0.0:
+		var loose := tc.dirt_grip if s.surface == TrackData.Surface.TRACK else 1.0
+		surf_mu *= lerpf(1.0, loose, s.dirt)
+		surf_roll += DIRT_ROLL * s.dirt
 	if s.surface == TrackData.Surface.GRAVEL:
 		surf_roll = lerpf(GRAVEL_CRAWL_ROLL, surf_roll, smoothstep(GRAVEL_CRAWL_SPEED, GRAVEL_DIG_SPEED, s.vel.length()))
 	# Slopes, banking and crests (all zero on a flat track).

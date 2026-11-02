@@ -63,6 +63,22 @@ const TEMPLATES := {
 		"plank_mm": 28.0, "roll_deg_per_g": 0.75, "camber_gain": 0.5,
 		"camber_opt_front": -2.4, "camber_opt_rear": -1.7,
 	},
+	"RX1": {
+		# Rallycross supercars: long-travel suspension riding high for dirt,
+		# bumps and jumps; a rear wing but little downforce.
+		"wings": true,
+		"wing_front": [5, 0, 10, 1], "wing_rear": [5, 0, 10, 1],
+		"ride_front": [110, 90, 140, 1], "ride_rear": [115, 95, 145, 1],
+		"spring_front": [90, 50, 150, 5], "spring_rear": [85, 45, 145, 5],
+		"damper_front": [5, 1, 10, 1], "damper_rear": [5, 1, 10, 1],
+		"arb_front": [5, 1, 10, 1], "arb_rear": [5, 1, 10, 1],
+		"camber_front": [-2.2, -3.5, -0.5, 0.1], "camber_rear": [-1.6, -3.0, -0.5, 0.1],
+		"toe_front": [0.0, -0.30, 0.20, 0.02], "toe_rear": [0.1, -0.10, 0.40, 0.02],
+		"diff_power": [0.6, 0.1, 0.95, 0.05], "diff_coast": [0.35, 0.1, 0.9, 0.05],
+		"pressure_front": [0.0, -5.0, 5.0, 0.5], "pressure_rear": [0.0, -5.0, 5.0, 0.5],
+		"plank_mm": 70.0, "roll_deg_per_g": 1.8, "camber_gain": 0.45,
+		"camber_opt_front": -1.6, "camber_opt_rear": -1.2,
+	},
 	"Road": {
 		"wings": false,
 		"wing_front": [5, 5, 5, 1], "wing_rear": [5, 5, 5, 1],
