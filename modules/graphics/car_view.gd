@@ -41,6 +41,13 @@ var _head_light: SpotLight3D
 var _spray: GPUParticles3D
 var _pitch := 0.0
 var _roll := 0.0
+var _parts := {}                 ## part name -> [node, rest transform]
+var _smoke: GPUParticles3D
+var _damage_tick := 0.0
+
+## CarDamage.visual_parts() name -> model part name.
+const DAMAGE_PARTS := {"splitter": "splitter", "front_bumper": "bumper_front", "rear_wing": "wing_rear",
+	"diffuser": "diffuser", "rear_bumper": "bumper_rear", "mirror_left": "mirror_l", "mirror_right": "mirror_r"}
 
 
 ## livery: {"pattern", "primary", "secondary", "accent"} (all optional);
@@ -111,12 +118,15 @@ func _build(livery: Dictionary) -> void:
 			_wheels.append([c, spin, str(c.name).begins_with("wheel_f"), def.wheel_radius])
 		else:
 			_sprung.add_child(c)
+			if c is Node3D:
+				_parts[str(c.name)] = [c, (c as Node3D).transform]
 	model.free()
 	_style(self)
 	_add_number()
 	_add_contact_shadow()
 	_add_headlight()
 	_add_spray()
+	_add_smoke()
 
 
 func _instantiate_model() -> Node3D:
@@ -339,6 +349,63 @@ func _add_spray() -> void:
 	add_child(_spray)
 
 
+func _add_smoke() -> void:
+	_smoke = GPUParticles3D.new()
+	_smoke.amount = 40
+	_smoke.lifetime = 2.2
+	_smoke.emitting = false
+	_smoke.local_coords = false
+	var pm := ParticleProcessMaterial.new()
+	pm.direction = Vector3(-1, 0.6, 0)
+	pm.spread = 25.0
+	pm.initial_velocity_min = 1.0
+	pm.initial_velocity_max = 3.0
+	pm.gravity = Vector3(0, 0.8, 0)
+	pm.scale_min = 1.0
+	pm.scale_max = 3.0
+	var ga := Gradient.new()
+	ga.set_color(0, Color(0.25, 0.25, 0.26, 0.55))
+	ga.set_color(1, Color(0.5, 0.5, 0.52, 0.0))
+	var gt := GradientTexture1D.new()
+	gt.gradient = ga
+	pm.color_ramp = gt
+	_smoke.process_material = pm
+	_smoke.draw_pass_1 = _spray.draw_pass_1
+	_smoke.position = Vector3(-(def.wheelbase - def.cg_to_front) - 0.3, 0.7, 0)
+	_smoke.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(_smoke)
+
+
+## Damage from CarDamage.visual_parts(): scuffed, darkened paint where the
+## car was hit; parts sag above 0.6 and fall off above 0.85; a punctured
+## wheel rides on its rim; a damaged engine smokes.
+func _apply_damage() -> void:
+	var d := CarDamage.visual_parts(state)
+	var front: float = d.get("front_bumper", 0.0)
+	_paint.set_shader_parameter("damage", Vector4(front, d.get("rear_bumper", 0.0), d.get("side_left", 0.0), d.get("side_right", 0.0)))
+	for key in DAMAGE_PARTS:
+		var part: Array = _parts.get(DAMAGE_PARTS[key], [])
+		if part.is_empty():
+			continue
+		var node: Node3D = part[0]
+		var rest: Transform3D = part[1]
+		var v: float = d.get(key, 0.0)
+		node.visible = v < 0.85
+		if v > 0.6:
+			var k := (v - 0.6) / 0.25
+			var sag := Transform3D(Basis(Vector3.FORWARD, 0.08 * k) * Basis(Vector3.UP, 0.05 * k), Vector3(0, -0.04 * k, 0))
+			node.transform = sag * rest
+		else:
+			node.transform = rest
+	for w in _wheels:
+		var hub: Node3D = w[0]
+		var flat: float = d.get(str(hub.name), 0.0)
+		hub.position.y = def.wheel_radius - 0.09 * flat
+	var smoke: float = d.get("smoke", 0.0)
+	_smoke.emitting = smoke > 0.02
+	_smoke.amount_ratio = smoke
+
+
 func _find(n: Node, want: String) -> Node:
 	if n.name == want:
 		return n
@@ -391,3 +458,7 @@ func _process(delta: float) -> void:
 	var spray := clampf(wet * 1.3, 0.0, 1.0) * clampf((state.speed() - 8.0) / 50.0, 0.0, 1.0)
 	_spray.emitting = spray > 0.03
 	_spray.amount_ratio = spray
+	_damage_tick -= delta
+	if _damage_tick <= 0.0:
+		_damage_tick = 0.2
+		_apply_damage()

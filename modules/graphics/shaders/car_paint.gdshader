@@ -16,7 +16,8 @@ uniform float metallic_flake = 0.35;
 uniform float roughness_paint = 0.26;
 uniform sampler2D livery_tex : source_color, hint_default_transparent, filter_linear_mipmap_anisotropic;
 uniform bool use_livery_tex = false;
-uniform float dirt = 0.0;         // 0 clean .. 1 filthy (later: race distance / rain)
+uniform float dirt = 0.0;
+uniform vec4 damage = vec4(0.0);  // front, rear, left, right bodywork damage 0..1         // 0 clean .. 1 filthy (later: race distance / rain)
 
 varying vec3 lp;
 
@@ -67,9 +68,15 @@ void fragment() {
 	// a little road grime low down and towards the back
 	float grime = dirt * (1.0 - smoothstep(0.15, 0.5, lp.y)) * 0.6;
 	c = mix(c, vec3(0.12, 0.11, 0.1), grime);
+	// damage: scuffs and scorched carbon showing through where it was hit
+	float zone = damage.x * smoothstep(0.75, 0.95, 1.0 - t) + damage.y * smoothstep(0.75, 0.95, t)
+		+ damage.z * smoothstep(0.6, 0.9, -y) + damage.w * smoothstep(0.6, 0.9, y);
+	float scratch = fract(sin(dot(floor(lp.xz * vec2(9.0, 23.0) + lp.y * 7.0), vec2(12.9898, 78.233))) * 43758.5453);
+	float hurt = clamp(zone * 1.4, 0.0, 1.0) * step(0.55 - zone * 0.4, scratch);
+	c = mix(c, vec3(0.04), hurt * 0.85);
 	ALBEDO = c;
-	METALLIC = metallic_flake;
-	ROUGHNESS = mix(roughness_paint, 0.7, grime);
-	CLEARCOAT = 1.0 - grime;
+	METALLIC = mix(metallic_flake, 0.1, hurt);
+	ROUGHNESS = mix(mix(roughness_paint, 0.7, grime), 0.6, hurt);
+	CLEARCOAT = (1.0 - grime) * (1.0 - hurt);
 	CLEARCOAT_ROUGHNESS = 0.08;
 }
