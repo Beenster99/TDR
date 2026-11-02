@@ -44,6 +44,8 @@ func _init() -> void:
 	test_race_control_rules()
 	test_safety_car_race()
 	test_safety_car_off()
+	test_points_systems()
+	test_seasons()
 	print("\n%s (%d failures, %.1fs)" % ["PASS" if failures == 0 else "FAIL", failures, (Time.get_ticks_msec() - t0) / 1000.0])
 	quit(1 if failures > 0 else 0)
 
@@ -1464,6 +1466,142 @@ func test_weather_forecast() -> void:
 	print("       " + f.summary())
 
 
+## Points presets, custom lists and bonus points.
+func test_points_systems() -> void:
+	print("points")
+	var f1 := PointsSystem.from_preset("f1")
+	check(f1.for_position(1, 20) == 25 and f1.for_position(10, 20) == 1 and f1.for_position(11, 20) == 0, "F1 preset: 25 for a win, 1 for tenth, none for eleventh")
+	var all := PointsSystem.from_preset("everyone")
+	check(all.for_position(1, 12) == 12 and all.for_position(12, 12) == 1, "everyone scores: last place gets 1")
+	var custom := PointsSystem.from_preset("custom", PointsSystem.parse_list("30, 20 ;10 x 5"))
+	check(custom.points == [30, 20, 10, 5], "custom points list parsed (%s)" % [custom.points])
+	f1.pole_points = 1
+	f1.fastest_lap_points = 1
+	var cls := [{"key": "ai:A", "position": 1}, {"key": "ai:B", "position": 2}, {"key": "ai:C", "position": 3, "dnf": true}]
+	var pts := Season.race_points(f1, cls, "ai:B", "ai:A")
+	check(pts["ai:A"] == 26 and pts["ai:B"] == 19 and pts["ai:C"] == 0, "pole and fastest lap bonuses, nothing for a DNF (%s)" % [pts])
+	check(PointsSystem.from_dict(f1.to_dict()).to_dict() == f1.to_dict(), "points system round trip")
+
+
+## Runs a planned session with every car AI-driven. Returns {sim, tel}.
+func _run_session(start: Dictionary, d: Dictionary, max_s := 900.0) -> Dictionary:
+	var sim := RaceFactory.build_sim(start, d["cars"], d["tyres"], d["track"])
+	var ai := AIDriver.for_all_ai(sim)
+	var tel := RaceTelemetry.create(sim)
+	while sim.phase != RaceSim.Phase.FINISHED and sim.tick < int(max_s * 60):
+		var inputs := []
+		for i in sim.car_count():
+			inputs.append(ai[i].get_input(sim, i))
+		sim.step(inputs)
+		tel.observe(sim)
+		tel.on_events(sim.events)
+	return {"sim": sim, "tel": tel}
+
+
+## A whole (short) championship: fixed field, driven qualifying sets the
+## grid, points and standings, saving and loading, and the season after.
+func test_seasons() -> void:
+	print("seasons")
+	var d := _data()
+	var base := RaceSettings.new()
+	base.car_class = "GT3"
+	base.ai_count = 6
+	base.laps = 1
+	var rounds := [{"track_id": "spielberg", "laps": 1, "weather": "dry", "time_of_day_h": 14.0},
+		{"track_id": "spielberg", "laps": 1, "weather": "overcast", "time_of_day_h": 17.0}]
+	var pts := PointsSystem.from_preset("f1")
+	pts.pole_points = 1
+	pts.fastest_lap_points = 1
+	var season := Season.create("Test Cup", base, rounds, pts, Season.QUALI_DRIVEN, d["drivers"], d["cars"], "", 4242)
+	check(season.roster.size() == 6 and season.reserves.size() == d["drivers"].size() - 6, "field of 6 AI drivers, the rest are reserves")
+	var team_cars := {}
+	var same_car := true
+	for r in season.roster:
+		if team_cars.has(r["team"]) and team_cars[r["team"]] != r["car_id"]:
+			same_car = false
+		team_cars[r["team"]] = r["car_id"]
+		same_car = same_car and d["cars"][r["car_id"]].class_tag == "GT3"
+	check(team_cars.size() == 3 and same_car, "three teams of two, team-mates share a GT3 car")
+	# Round 1: qualifying, then the race from that grid.
+	check(season.next_session() == Season.SESSION_QUALIFYING, "driven qualifying comes first")
+	var q_start := season.plan_next([], d["cars"], 11)
+	check(q_start["season"]["session"] == "qualifying" and q_start["settings"]["laps"] == Season.QUALI_LAPS, "qualifying session planned (%d laps)" % Season.QUALI_LAPS)
+	var q := _run_session(q_start, d)
+	var q_sim: RaceSim = q["sim"]
+	var ordered := true
+	var prev := 0.0
+	for i in q_sim.running_order:
+		var bl: float = q_sim.entries[i].best_lap
+		if bl > 0.0 and bl < prev:
+			ordered = false
+		if bl > 0.0:
+			prev = bl
+	check(q_sim.phase == RaceSim.Phase.FINISHED and ordered, "qualifying ends and is classified by best lap")
+	var q_rec := season.record(SeasonResults.from_race(q_sim, q["tel"]), 0)
+	check(q_rec.get("grid", []).size() == 6 and season.next_session() == Season.SESSION_RACE, "qualifying sets the grid")
+	check(season.record(SeasonResults.from_race(q_sim, q["tel"]), 0).is_empty(), "the same session can't be recorded twice")
+	var r_start := season.plan_next([], d["cars"], 12)
+	var grid_keys := []
+	for e in r_start["entries"]:
+		grid_keys.append(SeasonResults.key_for(e["is_ai"], e["driver_name"]))
+	check(grid_keys == q_rec["grid"], "race grid is the qualifying order")
+	var car_kept := true
+	for e in r_start["entries"]:
+		for r in season.roster:
+			if r["name"] == e["driver_name"] and r["car_id"] != e["car_id"]:
+				car_kept = false
+	check(car_kept, "every AI driver races their team's car")
+	var r := _run_session(r_start, d)
+	var result := SeasonResults.from_race(r["sim"], r["tel"])
+	var rec := season.record(result, 0)
+	var total := 0
+	for k in rec["points"]:
+		total += rec["points"][k]
+	var expect := 25 + 18 + 15 + 12 + 10 + 8 + 1  # top six, plus pole
+	for row in result["classification"]:
+		if row["dnf"]:
+			expect -= pts.for_position(row["position"], 6)
+		elif row["key"] == result["fastest_key"]:
+			expect += 1
+	check(total == expect and season.round_index == 1, "points handed out for round 1 (%d)" % total)
+	var st := season.driver_standings()
+	check(st.size() == 6 and st[0]["points"] >= st[5]["points"] and st[0]["results"].size() == 1, "driver standings in order")
+	var teams := season.team_standings()
+	var team_total := 0
+	for t in teams:
+		team_total += t["points"]
+	check(teams.size() == 3 and team_total == total, "team standings add up their drivers' points")
+	# Simulated qualifying for round 2 (switch modes mid-season for the test).
+	season.qualifying = Season.QUALI_SIMULATED
+	var s1 := season.plan_next([{"name": "Me", "car_id": "bmw_m4_gt3"}], d["cars"], 77)
+	season.pending_quali = {}
+	var s2 := season.plan_next([{"name": "Me", "car_id": "bmw_m4_gt3"}], d["cars"], 77)
+	check(s1["entries"] == s2["entries"] and season.humans.has("Me"), "simulated qualifying gives the same grid for the same seed; a player can join between rounds")
+	# Save, load, carry on.
+	var dir := "user://test_seasons"
+	SeasonStore.save(season, dir)
+	var back := SeasonStore.load_season(season.id, dir)
+	check(back != null and back.driver_standings() == season.driver_standings() and back.round_index == 1, "season saves and loads with its standings")
+	check(SeasonStore.list(dir).size() >= 1, "saved seasons are listed")
+	var log_path := SeasonStore.save_session_log(season.id, 0, "race", result["log"], dir)
+	check(log_path != "" and FileAccess.file_exists(log_path), "the race log is kept beside the season")
+	SeasonStore.delete(season.id, dir)
+	check(not FileAccess.file_exists(SeasonStore.path_for(season.id).replace(SeasonStore.DIR, dir)), "a season can be deleted")
+	# The season after: a year older, same teams and cars, driver market news.
+	back.round_index = back.rounds.size()
+	check(not back.champion().is_empty(), "a champion once every round is done")
+	var nxt := back.next_season(999)
+	var older := true
+	for nd in nxt.roster:
+		for od in back.roster + back.reserves:
+			if od["name"] == nd["name"] and int(nd["age"]) != int(od["age"]) + 1:
+				older = false
+	var cars_kept := true
+	for nd in nxt.roster:
+		cars_kept = cars_kept and nd["car_id"] == team_cars.get(nd["team"], "")
+	check(nxt.number == 2 and nxt.roster.size() == 6 and older and cars_kept and not nxt.news.is_empty(),
+		"next season: everyone a year older, 6 seats filled in the same team cars (%s)" % " ".join(nxt.news))
+	check(nxt.results.is_empty() and nxt.humans.has("Me"), "next season starts fresh with the same players")
 ## Wave 4 business: upgrades change the car through overrides, money buys
 ## and sells them, the profile saves, prizes pay by position, and the host's
 ## upgrades option (on / bop / stock) holds in the race plan.

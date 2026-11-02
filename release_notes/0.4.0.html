@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Top Down Racer Release Notes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<style>
+/* Same layout as the Torque Shed release notes, every release: masthead, at a glance,
+   one entry per feature (rail on the left: area, day, part of the game), then Try it / Known limits / Coming next. */
+:root {
+  --paper: #efede7; --sheet: #ffffff; --ink: #1b1d20; --muted: #5b6168; --rule: #d5d2c9;
+  --accent: #c0341d; --link: #1d6b8a;
+  --display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --body: "Literata", Georgia, "Times New Roman", serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #121417; --sheet: #1b1e22; --ink: #e5e6e8; --muted: #9ca3aa; --rule: #2d3238;
+    --accent: #ff7552; --link: #6cc3e0; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #121417; --sheet: #1b1e22; --ink: #e5e6e8; --muted: #9ca3aa; --rule: #2d3238;
+  --accent: #ff7552; --link: #6cc3e0; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--paper); color: var(--ink); font-family: var(--body); font-size: 17px; line-height: 1.6; margin: 0;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.wrap { max-width: 1060px; margin: 0 auto; padding-block: 40px 72px; }
+h1, h2, h3 { font-family: var(--display); font-weight: 700; line-height: 1.05; text-wrap: balance; margin: 0; letter-spacing: 0.01em; }
+a { color: var(--link); text-underline-offset: 3px; }
+header.top { display: grid; gap: 18px; padding-bottom: 28px; border-bottom: 2px solid var(--ink); }
+.kicker { font-family: var(--mono); font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px 18px; }
+h1 { font-size: clamp(46px, 8vw, 84px); text-transform: uppercase; }
+h1 span { color: var(--accent); }
+.lede { max-width: 64ch; font-size: 19px; margin: 0; }
+.cta { display: flex; flex-wrap: wrap; gap: 10px; }
+.play { font-family: var(--display); font-size: 19px; letter-spacing: 0.04em; text-transform: uppercase; padding: 8px 16px; border: 2px solid var(--ink); color: var(--ink); background: var(--sheet); overflow-wrap: anywhere; }
+.play.main { background: var(--accent); border-color: var(--accent); color: #fff; }
+.glance { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); margin-block: 28px 8px; }
+.glance div { background: var(--sheet); padding: 14px 16px; min-width: 0; }
+.glance b { display: block; font-family: var(--display); font-size: 21px; letter-spacing: 0.02em; text-transform: uppercase; }
+.glance p { margin: 4px 0 0; font-size: 15px; color: var(--muted); }
+.log { margin-top: 44px; display: grid; }
+.entry { display: grid; grid-template-columns: 118px minmax(0, 1fr); gap: 28px; padding-block: 34px; border-top: 1px solid var(--rule); }
+.rail .m { font-family: var(--display); font-size: 40px; color: var(--accent); line-height: 1; text-transform: uppercase; }
+.rail .d { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-top: 6px; letter-spacing: 0.04em; }
+.rail .area { font-family: var(--mono); font-size: 11px; color: var(--link); margin-top: 10px; letter-spacing: 0.06em; text-transform: uppercase; }
+.body { min-width: 0; }
+.body h2 { font-size: clamp(28px, 4vw, 38px); text-transform: uppercase; }
+.body .sum { margin: 8px 0 14px; max-width: 66ch; }
+.body ul { margin: 0 0 18px; padding-left: 1.2em; max-width: 68ch; }
+.body li { margin-block: 3px; }
+.body li::marker { color: var(--accent); }
+.after { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 28px; margin-top: 40px; padding-top: 30px; border-top: 2px solid var(--ink); }
+.after h3 { font-size: 26px; text-transform: uppercase; margin-bottom: 8px; }
+.after ul { margin: 0; padding-left: 1.1em; }
+.after li { margin-block: 4px; }
+.after li::marker { color: var(--link); }
+footer { margin-top: 44px; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+@media (max-width: 720px) {
+  .entry { grid-template-columns: 1fr; gap: 10px; }
+  .rail { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  .rail .d, .rail .area { margin-top: 0; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="kicker"><span>Release notes</span><span>2 Nov 2026</span><span>v0.4.0</span><span>Wave 4: progression</span></div>
+    <h1>Top Down <span>Racer</span></h1>
+    <p class="lede">Reasons to keep racing. Build a championship from any of the 22 circuits, qualify for your grid, and fight for the driver and team titles against AI drivers who keep their teams, cars and personalities all season, alone or with the same group of friends online. Every race pays into your team budget, which buys upgrades you can see on the car, and every car can be set up for each track.</p>
+    <div class="cta">
+      <span class="play main">Download TopDownRacer-v0.4.0-windows.zip</span>
+    </div>
+    <section class="glance" aria-label="At a glance">
+      <div><b>Seasons</b><p>Your own calendar: each round its own track, laps, weather and start time. Saved after every session.</p></div>
+      <div><b>Points</b><p>F1, older F1, MotoGP, IndyCar, everyone scores, or your own list. Optional pole and fastest-lap points.</p></div>
+      <div><b>Qualifying</b><p>A 3-lap session where your best lap sets your grid slot, or a quick worked-out grid.</p></div>
+      <div><b>Careers</b><p>Between seasons drivers improve, fade, retire, get dropped and get signed. Rookies arrive.</p></div>
+      <div><b>Garage</b><p>Six upgrade areas with three levels each, visible on the car, plus a livery editor.</p></div>
+      <div><b>Car setups</b><p>21 settings per car, saved for each track, with a Recommended button.</p></div>
+    </section>
+  </header>
+
+  <main class="log">
+
+    <article class="entry" id="seasons">
+      <div class="rail"><div class="m">Season</div><div class="d">2 Nov</div><div class="area">Championships</div></div>
+      <div class="body">
+        <h2>Seasons and championships</h2>
+        <p class="sum">Main menu, Season / championship. Name it, pick the rules, build the calendar, and the season hub takes you round by round. It saves itself after every session, so you can stop and carry on another day.</p>
+        <ul>
+          <li>Calendar: pick a track, laps, weather, start time and weather changes, then Add round. Or fill it in one go with a random 6-round calendar or every track. The race settings below (class, AI drivers, difficulty, fuel, tyre wear, damage, safety car, mandatory stops, upgrades, setups) apply to every round.</li>
+          <li>Points: F1 (25-18-15...), F1 2003-09, F1 1991-2002, MotoGP, IndyCar, "everyone scores", or type your own list. Pole and fastest lap can each be worth a bonus point.</li>
+          <li>Whole teams race: each AI team enters its two best drivers in the same car model, and they keep that team, car and their traits for the whole season.</li>
+          <li>The hub shows the next round, the driver and team standings (ties broken by countback), and the calendar with each round's winner. Results screens show the points each driver scored and the championship after the race.</li>
+          <li>Season races pay prize money into your team budget, a quarter more than a single race of the same length. There's no restart in a championship race.</li>
+          <li>Every session's full race data (laps, sectors, gaps, radio and weather) is kept beside the season.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="qualifying">
+      <div class="rail"><div class="m">Quali</div><div class="d">2 Nov</div><div class="area">Race rules</div></div>
+      <div class="body">
+        <h2>Qualifying</h2>
+        <p class="sum">Each season picks how the grid is set: Driven, Quick, or Off.</p>
+        <ul>
+          <li>Driven: a 3-lap session before every race. Your best lap sets your grid slot, and the timing screen orders the cars by best lap.</li>
+          <li>Quick: no session. The grid is worked out from each car's speed, each driver's pace (and wet skill in the rain) and a little luck, less for consistent drivers.</li>
+          <li>Off: the Grid order setting decides, as in a single race.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="online">
+      <div class="rail"><div class="m">Online</div><div class="d">2 Nov</div><div class="area">Multiplayer</div></div>
+      <div class="body">
+        <h2>Online seasons with the same group</h2>
+        <p class="sum">From the season hub, Host online season. Friends join the usual way, and the lobby shows the season, the next round and the top of both standings.</p>
+        <ul>
+          <li>The season sets each round's track and rules, so the host can't change them in the lobby.</li>
+          <li>Players are matched to the season by their name, so the same group can carry on another night: the host resumes the season and hosts again. Your name now stays the same between races.</li>
+          <li>Each player's prize money goes into their own team on their own PC.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="careers">
+      <div class="rail"><div class="m">Market</div><div class="d">2 Nov</div><div class="area">AI drivers</div></div>
+      <div class="body">
+        <h2>The season after: careers and the driver market</h2>
+        <p class="sum">When the last round is done the hub names the champion and offers Start next season: the same calendar, rules and players, with every AI driver a year older.</p>
+        <ul>
+          <li>Young drivers grow towards their potential, drivers over 33 slowly lose a little, and drivers reaching 39 retire.</li>
+          <li>A team whose driver finished in the bottom third of the championship may drop them. Open seats go to the best free agent, or to a rookie aged 18 to 20 with high potential.</li>
+          <li>The hub's driver market news lists every move.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="garage">
+      <div class="rail"><div class="m">Garage</div><div class="d">2 Nov</div><div class="area">Business</div></div>
+      <div class="body">
+        <h2>Garage and car upgrades</h2>
+        <p class="sum">New Garage (main menu or lobby): your car turns on a stand in 3D while you work on it. Fully controller-friendly.</p>
+        <ul>
+          <li>Six upgrade areas, each with 3 levels: Engine (up to +13% power), Aero (up to +30% downforce, a bit more drag), Brakes (up to +20%), Suspension (more grip, sits lower), Weight (up to 7% lighter), Tyres (up to +8% grip).</li>
+          <li>You see upgrades on the car: deeper splitter, sport or race rear wing, canards, red or gold calipers, new rim colours, wider tyres, lower ride height. Everyone online sees them.</li>
+          <li>Livery editor: 7 patterns and 3 colours from a 16-colour palette, saved per car. Other players see your paint online.</li>
+          <li>Team budget: start with 150,000 cr. Every race pays prize money by finishing position (longer races pay more). Selling an upgrade back refunds half. Upgrades stay on the car between races and seasons.</li>
+          <li>New host option "Car upgrades": On (your R&amp;D counts), Balanced (upgrades are looks only and every car in a class gets the same power-to-weight and downforce), or Off (stock cars).</li>
+          <li>Your upgrades and money are saved on your own PC.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="setups">
+      <div class="rail"><div class="m">Setup</div><div class="d">2 Nov</div><div class="area">Physics</div></div>
+      <div class="body">
+        <h2>Car setups for every track</h2>
+        <p class="sum">A setup screen with 21 settings, each explained in plain words, and a Recommended button. Setups are saved per car, per track.</p>
+        <ul>
+          <li>Ride height, springs, dampers, anti-roll bars, camber, toe, differential, tyre pressures and more all change how the car drives.</li>
+          <li>The AI uses a good setup at every track.</li>
+          <li>New host switch "Car setups": Free (everyone races their own setup) or Fixed (everyone races the default).</li>
+          <li>Slicks now reach their temperature window (92 to 105 C, up from 60 to 70 C at the front), and AI laps are about 8% quicker.</li>
+        </ul>
+      </div>
+    </article>
+
+  </main>
+
+  <section class="after">
+    <div>
+      <h3>Try it</h3>
+      <ul>
+        <li>Unzip the folder and double-click TopDownRacer.exe, as before.</li>
+        <li>Season / championship, New season, Random calendar (6 rounds), F1 points, Driven qualifying, then Start season.</li>
+        <li>Spend your prize money in the Garage between rounds, and try the Recommended setup at a new track.</li>
+        <li>Online, everyone in the lobby needs v0.4.0, and keep the same player name each time you race a season together.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Known limits</h3>
+      <ul>
+        <li>Multi-class seasons have one overall championship, not one per class.</li>
+        <li>Your own team has one car. Team-mates arrive with co-op in wave 5.</li>
+        <li>A dedicated server can run a season only from the command line.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Coming next</h3>
+      <ul>
+        <li>Wave 5: co-op, where 2 or 3 players share a car as driver, pit crew and strategist, in races and in seasons.</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>Build of main with wave 4: car upgrades and garage (PR #18), per-track setups (PR #19), seasons and championships.</footer>
+</div>
+</body>
+</html>

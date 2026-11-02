@@ -9,6 +9,8 @@ extends RefCounted
 ## humans: [{ "name": String, "car_id": String, "tyre": String, "crew": [{peer_id, name, role}],
 ##           "setup": Dictionary (CarDefinition overrides: upgrades, tuning), "livery": Dictionary }]
 ## tyre: "auto" (match the start weather), "dry", "intermediate" or "wet".
+## drivers: the AI to draw from, as in drivers.json. A driver with a "car_id"
+## (a season's fixed field) drives that car if the race's class allows it.
 ## track: the race's track (loaded from settings.track_id when not given),
 ## used to pick the AI's setups.
 static func plan(settings: RaceSettings, humans: Array, cars: Dictionary, drivers: Array,
@@ -49,8 +51,11 @@ static func plan(settings: RaceSettings, humans: Array, cars: Dictionary, driver
 			var d: Dictionary = pool.pop_at(rng.randi_range(0, pool.size() - 1))
 			e.driver_name = d.get("name", "AI")
 			e.traits = d.get("traits", {})
+			e.car_id = d.get("car_id", "")  # a season's AI keep their team's car
 		var in_class: Array = CarCatalog.ids_in_class(cars, ai_classes[k % ai_classes.size()])
-		e.car_id = in_class[rng.randi_range(0, in_class.size() - 1)]
+		var pick: String = in_class[rng.randi_range(0, in_class.size() - 1)]
+		if not cars.has(e.car_id) or (fixed_class and not e.car_id in class_ids):
+			e.car_id = pick
 		_fit_tyres(e, "auto", start_weather)
 		entries.append(e.describe())
 	if settings.tuning_enabled and settings.ai_count > 0:

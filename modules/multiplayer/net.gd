@@ -19,7 +19,7 @@ signal internet_status_changed
 const DEFAULT_PORT := 24690
 const MAX_PEERS := 16
 ## Bump whenever a message changes shape; mismatched games are told at the lobby.
-const PROTOCOL_VERSION := 10  # 4: track elevation, 5: damage in car states, 6: barrier types and run-off surfaces, 7: race control in the race state, 8: pit stops, 9: car upgrades, liveries and upgrades_mode, 10: car setups (tuning)
+const PROTOCOL_VERSION := 11  # 4: track elevation, 5: damage in car states, 6: barrier types and run-off surfaces, 7: race control in the race state, 8: pit stops, 9: car upgrades, liveries and upgrades_mode, 10: car setups (tuning), 11: seasons (season_info in the lobby)
 const COMPRESSION := ENetConnection.COMPRESS_ZSTD
 ## How long a player's game may go silent before they're taken to have left (ms).
 const TIMEOUT_MS := 15000
@@ -42,6 +42,13 @@ var players: Dictionary = {}
 var settings := RaceSettings.new()
 var session: RaceSession = null
 var in_race := false
+## Season mode: a summary the host shares with everyone in the lobby
+## (Season.summary(): name, round, next track, standings). Empty = single race.
+var season_info: Dictionary = {}
+## Host: how to plan the next race, when not a plain single race. Called as
+## planner.call(settings, humans) -> start data (a season plans its own field
+## and grid). Unset = RaceFactory.plan with every AI driver.
+var start_planner: Callable
 
 
 func _ready() -> void:
@@ -140,6 +147,8 @@ func leave() -> void:
 	session = null
 	in_race = false
 	dedicated = false
+	season_info = {}
+	start_planner = Callable()
 
 
 # --- Reaching the host over the internet (UPnP, as in Torque Shed) ----------
@@ -324,16 +333,17 @@ func _kick(reason: String) -> void:
 
 
 @rpc("authority", "reliable")
-func _sync_lobby(p_players: Dictionary, p_settings: Dictionary) -> void:
+func _sync_lobby(p_players: Dictionary, p_settings: Dictionary, p_season: Dictionary) -> void:
 	players = p_players
 	settings = RaceSettings.from_dict(p_settings)
+	season_info = p_season
 	lobby_changed.emit()
 
 
 func _broadcast_lobby() -> void:
 	if not is_server():
 		return
-	_sync_lobby.rpc(players, settings.to_dict())
+	_sync_lobby.rpc(players, settings.to_dict(), season_info)
 	lobby_changed.emit()
 
 
@@ -380,6 +390,13 @@ func set_settings(new_settings: RaceSettings) -> void:
 		_broadcast_lobby()
 
 
+## Host only: the season everyone is playing ({} = single races).
+func set_season_info(info: Dictionary) -> void:
+	if is_server():
+		season_info = info
+		_broadcast_lobby()
+
+
 func all_ready() -> bool:
 	## The listen-server host starts the race, so only joiners must be ready.
 	var count := 0
@@ -410,7 +427,8 @@ func start_race() -> void:
 			humans.append(teams[key])
 		teams[key]["crew"].append({"peer_id": id, "name": p["name"], "role": p.get("role", RaceEntry.ROLE_DRIVER)})
 	settings.seed = randi()
-	var start_data := RaceFactory.plan(settings, humans, GameData.cars, GameData.drivers)
+	var start_data: Dictionary = start_planner.call(settings, humans) if start_planner.is_valid() \
+		else RaceFactory.plan(settings, humans, GameData.cars, GameData.drivers)
 	_begin_race.rpc(start_data)
 	_begin_race(start_data)
 

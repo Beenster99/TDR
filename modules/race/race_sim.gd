@@ -301,9 +301,19 @@ func _update_positions() -> void:
 	var order: Array[int] = []
 	for i in cars.size():
 		order.append(i)
+	var quali := settings.is_qualifying()
 	order.sort_custom(func(x: int, y: int) -> bool:
 		var ex := entries[x]
 		var ey := entries[y]
+		if quali:
+			# Qualifying: best lap decides; no time yet = behind everyone with one.
+			if (ex.best_lap > 0.0) != (ey.best_lap > 0.0):
+				return ex.best_lap > 0.0
+			if ex.best_lap > 0.0 and ex.best_lap != ey.best_lap:
+				return ex.best_lap < ey.best_lap
+			if ex.dnf != ey.dnf:
+				return ey.dnf
+			return ex.distance > ey.distance if ex.distance != ey.distance else x < y
 		if ex.finished != ey.finished:
 			return ex.finished
 		if ex.finished:

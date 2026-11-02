@@ -1,0 +1,25 @@
+{
+  "id": "season",
+  "name": "Seasons",
+  "version": "1.0.0",
+  "status": "active",
+  "summary": "Single races and championships: a calendar of rounds (track, laps, weather and start time each), points systems (presets and custom, pole and fastest-lap bonuses), qualifying (off, simulated or driven), driver and team standings, saved seasons that carry on across sessions and online with the same group, AI drivers who keep their team, car and traits all season, and careers between seasons (development, retirements, hires, fires and rookies).",
+  "depends": {
+    "core": "1",
+    "cars": "1",
+    "physics": "1",
+    "race": "1",
+    "ai": "1",
+    "telemetry": "1"
+  },
+  "api": [
+    "Season",
+    "PointsSystem",
+    "SeasonResults",
+    "SeasonStore"
+  ],
+  "internal": [
+    "SeasonCareers"
+  ],
+  "notes": "Plain data, no nodes. The host (or the offline player) owns the season; it plans each session with Season.plan_next() and records it with Season.record(SeasonResults.from_race(sim, telemetry)). Saved as JSON in user://seasons/ by SeasonStore, with each session's race log beside it. Prize money is the business module's: the game module pays it out when a season race ends."
+}
