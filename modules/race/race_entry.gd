@@ -26,6 +26,10 @@ var finished: bool = false
 var finish_time: float = 0.0
 var dnf: bool = false
 var position: int = 0
+## Time penalties (seconds) added to the race time in the classification.
+var penalty_s: float = 0.0
+## Pit lane and stops (see PitRules.new_state): phase, plan, stops, tyres...
+var pit: Dictionary = {}
 
 
 func to_dict() -> Dictionary:
@@ -35,13 +39,18 @@ func to_dict() -> Dictionary:
 		"last_sector_times": last_sector_times.duplicate(), "next_sector": next_sector,
 		"sector_start_time": sector_start_time, "distance": distance,
 		"finished": finished, "finish_time": finish_time, "dnf": dnf, "position": position,
+		"penalty_s": penalty_s, "pit": pit.duplicate(true),
 	}
 
 
 func from_dict(d: Dictionary) -> void:
 	for k in d:
 		var v = d[k]
-		set(k, v.duplicate() if v is PackedFloat64Array else v)
+		if v is Dictionary:
+			v = v.duplicate(true)
+		elif v is PackedFloat64Array:
+			v = v.duplicate()
+		set(k, v)
 
 
 func describe() -> Dictionary:

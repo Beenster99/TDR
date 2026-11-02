@@ -85,6 +85,8 @@ var _held_up := 0.0
 var _hot_said := false
 var _wet_said := false
 var _plan_said := false
+## When to pit and what for (see AIPitStrategy).
+var pit_strategy: AIPitStrategy
 
 
 ## An AI driver for car i of a race, using that entry's traits and the
@@ -113,6 +115,7 @@ func _init(track: TrackData, def: CarDefinition, compound: TyreCompound, p_trait
 	traits = p_traits
 	profile = DriverTraits.from_dict(p_traits).with_difficulty(difficulty)
 	rng.seed = seed
+	pit_strategy = AIPitStrategy.new(profile, seed * 7 + 3)
 	_build_line(track)
 	_setup_car(def, compound)
 	_build_speed_profile()
@@ -274,6 +277,13 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 	var def := sim.defs[me]
 	var inp := CarInput.new()
 	var n := line.size()
+	pit_strategy.update(sim, me)
+	if sim.pit_controls(me):
+		# The pit lane guide drives; pick the line up again afterwards.
+		idx = -1
+		_block = -1
+		stuck_time = 0.0
+		return inp
 	idx = _nearest(car.pos)
 	var speed := car.speed()
 	var fwd := car.forward()

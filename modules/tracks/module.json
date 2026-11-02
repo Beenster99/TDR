@@ -1,7 +1,7 @@
 {
   "id": "tracks",
   "name": "Tracks",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "status": "active",
   "summary": "Circuit layouts: centre line, widths, racing line, sectors, surfaces (track, kerb, grass, barrier), grid slots. Track files are JSON in data/, made by tools/build_tracks.py from tools/tracks.json.",
   "depends": {

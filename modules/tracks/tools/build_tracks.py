@@ -27,6 +27,9 @@ import xml.etree.ElementTree as ET
 
 import numpy as np
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from pit_limit_zone import limit_zone  # noqa: E402
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(os.path.dirname(HERE), "data")
 TUM_URL = "https://raw.githubusercontent.com/TUMFTM/racetrack-database/master/{kind}/{name}.csv"
@@ -499,8 +502,9 @@ def build(cfg, cache):
         "exit_s": round(float(cum[idx[-1]]), 1),
         "width_m": cfg.get("pit_width_m", 12.0),
         "speed_limit_kph": cfg.get("pit_speed_kph", 60),
-        "limit_start_m": round(min(70.0, plen * 0.15), 1),
-        "limit_end_m": round(max(plen - 70.0, plen * 0.85), 1),
+        # Speed limit around the garages by the start/finish line (see pit_limit_zone.py).
+        "limit_start_m": limit_zone(pit_g.tolist(), centre_g[0].tolist())[0],
+        "limit_end_m": limit_zone(pit_g.tolist(), centre_g[0].tolist())[1],
         "box_count": cfg.get("pit_boxes", 30),
     }
     straddles = pit_lane["entry_s"] > pit_lane["exit_s"]

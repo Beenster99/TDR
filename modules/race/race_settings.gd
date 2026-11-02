@@ -26,9 +26,14 @@ var fuel_enabled: bool = false     ## sim burns fuel when true
 var fuel_rate: float = 1.0         ## consumption multiplier
 var start_fuel_l: float = -1.0     ## -1 = full tank
 var tyre_wear_enabled: bool = false
+var tyre_wear_rate: float = 1.0    ## wear multiplier when tyre wear is on
 var damage_enabled: bool = false
 var safety_car_enabled: bool = false
-var mandatory_pit_stops: int = 0
+var mandatory_pit_stops: int = 0   ## stops each car must make inside the pit window
+## Pit window (laps, inclusive) in which mandatory stops count. 0 = automatic:
+## from about a fifth of the race in to a fifth before the end.
+var pit_window_open_lap: int = 0
+var pit_window_close_lap: int = 0
 var finish_timeout_s: float = 90.0 ## after the leader finishes
 var countdown_s: float = 4.0
 
@@ -40,6 +45,8 @@ func to_dict() -> Dictionary:
 		"start_fuel_l": start_fuel_l, "tyre_wear_enabled": tyre_wear_enabled,
 		"damage_enabled": damage_enabled, "safety_car_enabled": safety_car_enabled,
 		"mandatory_pit_stops": mandatory_pit_stops, "finish_timeout_s": finish_timeout_s,
+		"tyre_wear_rate": tyre_wear_rate, "pit_window_open_lap": pit_window_open_lap,
+		"pit_window_close_lap": pit_window_close_lap,
 		"countdown_s": countdown_s,
 	}
 
