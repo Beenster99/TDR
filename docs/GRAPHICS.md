@@ -20,7 +20,7 @@ occlusion and glow. The camera always shows this full 3D scene at every zoom
   and the start gantry. Placement comes from the track's shape and is the
   same every time for the same track.
 - `Scenery` replaces the made-up trackside with the real one on tracks that
-  have `data/scenery/<id>.json` (Silverstone so far): every building at its
+  have `data/scenery/<id>.json` (every circuit placed on the map, all but Albert Park): every building at its
   real size and height, the named grandstands (seats facing the circuit,
   roofs on the big ones), road and foot bridges, trees and hedges where they
   really stand, and a painted ground map under it all (fields with
@@ -168,7 +168,9 @@ data only, so it can ship in the game:
   each tree and hedge found where it stands (the surface minus an estimate of
   the bare ground). Deep inside big woods the estimate fails, so those are
   filled with trees. Without LIDAR, heights come from OpenStreetMap
-  (`height`, `building:levels`) or defaults and woods are filled evenly.
+  (`height`, `building:levels`) or defaults and woods are filled evenly:
+  a 7.5 m grid within 250 m of the circuit, bigger trees on a 12 m grid
+  further out (keeps forest tracks like Spa near 150,000 trees).
 - Satellite imagery (Google Maps and the like) is **not** used: its terms
   forbid copying it. It's fine as a reference when checking a result.
 
