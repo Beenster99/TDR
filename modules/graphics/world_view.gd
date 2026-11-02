@@ -15,6 +15,8 @@ var track_view: TrackView
 var trackside: Trackside
 var cars: Array[CarView] = []
 var safety_car: CarView           ## made on first use
+var driving_line: DrivingLineView ## the driving line aid (add_driving_aids)
+var brake_boards: BrakeBoards
 var _sc_state: CarState
 var camera: Camera3D
 var sun: DirectionalLight3D
@@ -47,6 +49,26 @@ func setup(p_track: TrackData, p_env: SimEnvironment = null) -> void:
 		add_child(rain)
 		rain.setup(env)
 	_apply_conditions()
+
+
+## Driving aids from Settings > Gameplay: the driving line (show_line) with
+## braking colours (show_brake), plus the brake marker boards, which are
+## always there. line: DrivingLine for the player's car. Call once after setup.
+func add_driving_aids(line: DrivingLine, show_line: bool, show_brake: bool) -> void:
+	brake_boards = BrakeBoards.new()
+	brake_boards.name = "BrakeBoards"
+	add_child(brake_boards)
+	brake_boards.setup(line, track_view)
+	driving_line = DrivingLineView.new()
+	driving_line.name = "DrivingLineAid"
+	add_child(driving_line)
+	driving_line.setup(line, track_view, show_line, show_brake)
+
+
+## Every frame: the player's car for the driving line colours.
+func update_driving_line(pos: Vector2, speed: float) -> void:
+	if driving_line:
+		driving_line.update(pos, speed)
 
 
 ## Adds a car. number = race number on the roof (0 = none); livery

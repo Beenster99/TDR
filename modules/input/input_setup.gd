@@ -22,6 +22,8 @@ const KEYS := {
 	"pit_fuel": [KEY_F],
 	"team_radio": [KEY_V],     # radio / pings between the driver and the pit wall (co-op)
 	"crew_tab": [KEY_C],       # pit wall roles: switch between pit crew and strategy
+	"shift_up": [KEY_SHIFT, KEY_PERIOD],      # manual gearbox (Settings > Gameplay)
+	"shift_down": [KEY_CTRL, KEY_COMMA],
 	"hud_tower": [KEY_H],      # race HUD: timing tower on/off (also Settings > Gameplay)
 }
 ## Gamepad: analog triggers + left stick. Buttons use the Xbox layout names
@@ -49,6 +51,8 @@ const PAD_BUTTONS := {
 	"pit_tyres": [JOY_BUTTON_B],  # B closes the pit wall when it's open
 	"team_radio": [JOY_BUTTON_BACK],
 	"crew_tab": [JOY_BUTTON_Y],
+	"shift_up": [JOY_BUTTON_A],     # manual gearbox: A up, X down (pedals stay on the triggers)
+	"shift_down": [JOY_BUTTON_X],
 }
 const STICK_DEADZONE := 0.12
 const TRIGGER_DEADZONE := 0.05
