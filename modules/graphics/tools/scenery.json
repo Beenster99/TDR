@@ -1,6 +1,49 @@
 {
   "_doc": "Tracks with real trackside scenery (build_scenery.py). lidar: ea_england = Environment Agency 1 m surface model (England only) for real heights and tree positions; leave it out elsewhere (OpenStreetMap only).",
   "tracks": {
-    "silverstone": {"lidar": "ea_england"}
+    "silverstone": {
+      "lidar": "ea_england"
+    },
+    "austin": {},
+    "bahrain": {},
+    "brands_hatch": {
+      "lidar": "ea_england"
+    },
+    "budapest": {},
+    "cadwell_park": {
+      "lidar": "ea_england"
+    },
+    "catalunya": {},
+    "donington": {
+      "lidar": "ea_england"
+    },
+    "hockenheim": {},
+    "imola": {},
+    "interlagos": {},
+    "knockhill": {},
+    "mallory_park": {
+      "lidar": "ea_england"
+    },
+    "mexico_city": {},
+    "montreal": {},
+    "monza": {},
+    "mugello": {},
+    "nurburgring": {},
+    "oulton_park": {
+      "lidar": "ea_england"
+    },
+    "sepang": {},
+    "shanghai": {},
+    "snetterton": {
+      "lidar": "ea_england"
+    },
+    "spa": {},
+    "spielberg": {},
+    "suzuka": {},
+    "thruxton": {
+      "lidar": "ea_england"
+    },
+    "yas_marina": {},
+    "zandvoort": {}
   }
 }
