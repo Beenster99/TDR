@@ -214,12 +214,48 @@ func _unhandled_input(event: InputEvent) -> void:
 			_set_zoom(_zoom_target + ZOOM_WHEEL_STEP)
 	elif event.is_action_pressed("zoom_full"):
 		_toggle_full_track()
+	elif session.local_car >= 0 and _pit_input(event):
+		pass
 	elif event.is_action_pressed("camera_toggle"):
 		rotate_camera = not rotate_camera
 	elif event.is_action_pressed("restart_race") and session.mode == RaceSession.Mode.OFFLINE:
 		_restart()
 	elif event.is_action_pressed("back_to_menu") and not _results_shown:
 		_back_to_menu()
+
+
+## Pit calls for the car this player drives (see PitRules / RaceSession.request_pit).
+const FUEL_STEPS := [-1.0, 0.0, 10.0, 20.0, 30.0, 50.0, 80.0]
+
+
+func _pit_input(event: InputEvent) -> bool:
+	var me := session.local_car
+	var pits := session.sim.pits
+	if not pits.enabled:
+		return false
+	var p: Dictionary = session.sim.entries[me].pit
+	var plan: Dictionary = p["plan"]
+	if event.is_action_pressed("pit_box"):
+		var box: bool = not p["box"]
+		session.request_pit(me, {"box": box})
+		hud.flash("BOX THIS LAP" if box else "Pit call cancelled", 1.5)
+	elif event.is_action_pressed("pit_limiter"):
+		var on: bool = not p["limiter"]
+		session.request_pit(me, {"limiter": on})
+		hud.flash("Pit limiter ON" if on else "Pit limiter off", 1.2)
+	elif event.is_action_pressed("pit_tyres"):
+		var choices := PitRules.TYRE_CHOICES
+		var next: String = choices[(choices.find(str(plan["tyre"])) + 1) % choices.size()]
+		session.request_pit(me, {"tyre": next})
+		hud.flash("Next stop tyres: " + RaceHud.tyre_plan_text(session.sim, me, next), 1.5)
+	elif event.is_action_pressed("pit_fuel"):
+		var k := FUEL_STEPS.find(float(plan["fuel"]))
+		var next: float = FUEL_STEPS[(k + 1) % FUEL_STEPS.size()]
+		session.request_pit(me, {"fuel": next})
+		hud.flash("Next stop fuel: " + RaceHud.fuel_plan_text(next), 1.5)
+	else:
+		return false
+	return true
 
 
 func _on_events(evs: Array) -> void:
@@ -235,6 +271,12 @@ func _on_events(evs: Array) -> void:
 			"finished":
 				if e["car"] == session.local_car:
 					hud.flash("Finished P%d" % e["position"], 4.0)
+			"pit_stop":
+				if e["car"] == session.local_car:
+					hud.flash("Pit stop %.1f s" % e["stationary_s"], 2.5)
+			"penalty":
+				if e["car"] == session.local_car:
+					hud.flash("+%d s penalty: %s" % [int(e["seconds"]), e["reason"]], 4.0)
 
 
 func _on_race_finished() -> void:
@@ -243,8 +285,13 @@ func _on_race_finished() -> void:
 	for p in sim.running_order.size():
 		var i := sim.running_order[p]
 		var e := sim.entries[i]
-		lines.append("P%-2d %-18s %-16s %s  best %s" % [p + 1, e.driver_name, sim.defs[i].display_name,
-			"DNF" if e.dnf else RaceHud.fmt_time(e.finish_time), RaceHud.fmt_time(e.best_lap)])
+		var extra := ""
+		if sim.pits.enabled and (sim.settings.mandatory_pit_stops > 0 or int(e.pit.get("stops", 0)) > 0):
+			extra += "  stops %d" % int(e.pit.get("stops", 0))
+		if e.penalty_s > 0.0:
+			extra += "  +%d s pen" % int(e.penalty_s)
+		lines.append("P%-2d %-18s %-16s %s  best %s%s" % [p + 1, e.driver_name, sim.defs[i].display_name,
+			"DNF" if e.dnf else RaceHud.fmt_time(e.finish_time + e.penalty_s), RaceHud.fmt_time(e.best_lap), extra])
 	if DisplayServer.get_name() == "headless" or GameData.arg("quit-after-race"):
 		print("[results]\n" + "\n".join(lines))
 		var heard := []

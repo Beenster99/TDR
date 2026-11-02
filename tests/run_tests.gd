@@ -19,6 +19,7 @@ func _init() -> void:
 	test_wet_grip()
 	test_race_settings_and_grid()
 	test_elevation()
+	test_pit_rules()
 	var replay := test_ai_race_completes()
 	test_deterministic_replay(replay)
 	test_snapshot_restore(replay)
@@ -340,9 +341,16 @@ func test_ai_race_completes() -> Dictionary:
 	print("race")
 	var d := _data()
 	var settings := RaceSettings.new()
-	settings.laps = 2
+	settings.laps = 3
 	settings.ai_count = 8
 	settings.seed = 777
+	# Wave 3: fuel, tyre wear and one mandatory stop, so the replay and
+	# snapshot tests below cover pit stops too.
+	settings.fuel_enabled = true
+	settings.fuel_rate = 2.0
+	settings.tyre_wear_enabled = true
+	settings.tyre_wear_rate = 2.0
+	settings.mandatory_pit_stops = 1
 	var race := _race(settings, d)
 	var sim: RaceSim = race["sim"]
 	var ai: Dictionary = race["ai"]
@@ -352,17 +360,38 @@ func test_ai_race_completes() -> Dictionary:
 	var max_ticks := 60 * 60 * 8
 	var mid_snapshot := {}
 	var mid_tick := 60 * 45
+	var stops := []
+	var pit_calls := []
+	var penalties := []
+	var mid_pit_taken := false
 	while sim.phase != RaceSim.Phase.FINISHED and sim.tick < max_ticks:
 		if sim.tick == mid_tick:
 			mid_snapshot = sim.snapshot()
 		var inputs := []
+		var calls_before := _pit_calls(sim)
 		for i in sim.car_count():
 			inputs.append(ai[i].get_input(sim, i))
+		# Pit calls are inputs too (the AI's strategy, or a player's button).
+		var calls := _pit_calls(sim)
+		var changed := {}
+		for i in sim.car_count():
+			if calls[i] != calls_before[i]:
+				changed[i] = calls[i]
 		recorded.append(inputs)
+		pit_calls.append(changed)
 		sim.step(inputs)
 		for e in sim.events:
 			if e["type"] == "collision":
 				collisions += 1
+			elif e["type"] == "pit_stop":
+				stops.append(e)
+			elif e["type"] == "penalty":
+				penalties.append(e)
+		# Take the mid-race snapshot while a car is stopped in its box.
+		if not mid_pit_taken and sim.tick > mid_tick and sim.pit_phase(sim.running_order[0]) == PitRules.PHASE_SERVICE:
+			mid_pit_taken = true
+			mid_tick = sim.tick
+			mid_snapshot = sim.snapshot()
 	check(sim.phase == RaceSim.Phase.FINISHED, "race finishes (tick %d, %.0f s race time)" % [sim.tick, sim.race_time])
 	var finishers := 0
 	for i in sim.running_order:
@@ -370,9 +399,31 @@ func test_ai_race_completes() -> Dictionary:
 		var c := sim.cars[i]
 		if e.finished:
 			finishers += 1
-		print("       P%d %-15s %-18s laps %d best %s  tyres %s fuel %.1f" % [e.position, e.driver_name,
-			sim.defs[i].display_name, e.laps_done, _laptime(e.best_lap), _fmt(c.tyre_temp), c.fuel_l])
+		print("       P%d %-15s %-18s laps %d best %s  tyres %s fuel %.1f  stop lap %s" % [e.position, e.driver_name,
+			sim.defs[i].display_name, e.laps_done, _laptime(e.best_lap), _fmt(c.tyre_temp), c.fuel_l,
+			e.pit["last_stop"].get("lap", "-")])
 	check(finishers == sim.car_count(), "all %d cars finish (%d)" % [sim.car_count(), finishers])
+	var in_window := 0
+	for i in sim.car_count():
+		if int(sim.entries[i].pit["window_stops"]) == 1:
+			in_window += 1
+	check(in_window == sim.car_count(), "every AI makes the mandatory stop inside the window (%d/%d, laps %d-%d)" % [
+		in_window, sim.car_count(), sim.pits.window_open, sim.pits.window_close])
+	check(penalties.is_empty(), "no penalties for AI drivers (%s)" % str(penalties))
+	var times := []
+	for st in stops:
+		times.append(snappedf(st["stationary_s"], 0.1))
+	check(not stops.is_empty() and times.min() >= PitRules.STOP_BASE_S and times.max() < 40.0, "pit stops take %s s" % str(times))
+	check(mid_pit_taken, "snapshot taken during a pit stop (tick %d)" % mid_tick)
+	var worn := 0
+	var measured := 0
+	for i in sim.car_count():
+		if sim.cars[i].tyre_wear[0] > 0.005:
+			worn += 1
+		if float(sim.entries[i].pit["fuel_per_lap"]) > 0.5:
+			measured += 1
+	check(worn == sim.car_count(), "tyres wear (%d/%d)" % [worn, sim.car_count()])
+	check(measured == sim.car_count(), "fuel use per lap is measured (%d/%d)" % [measured, sim.car_count()])
 	var t_start := lerpf(sim.env.ambient_c, sim.env.track_c, 0.4)
 	var warm := 0
 	var left_hotter := 0
@@ -388,8 +439,22 @@ func test_ai_race_completes() -> Dictionary:
 			best = minf(best, e.best_lap)
 	check(best > 75.0 and best < 130.0, "plausible best lap %s (real GT cars ~1:35-1:45)" % _laptime(best))
 	print("       %d car-to-car contacts" % collisions)
-	return {"inputs": recorded, "start_hash": start_hash, "end_hash": sim.state_hash(),
+	return {"inputs": recorded, "pit_calls": pit_calls, "start_hash": start_hash, "end_hash": sim.state_hash(),
 		"settings": settings, "mid": mid_snapshot, "mid_tick": mid_tick}
+
+
+func _pit_calls(sim: RaceSim) -> Array:
+	var out := []
+	for e in sim.entries:
+		var plan: Dictionary = e.pit["plan"].duplicate()
+		plan["box"] = e.pit["box"]
+		out.append(plan)
+	return out
+
+
+func _replay_pit_calls(sim: RaceSim, calls: Dictionary) -> void:
+	for i in calls:
+		sim.pits.set_plan(i, calls[i])
 
 
 func _laptime(t: float) -> String:
@@ -403,13 +468,105 @@ func _fresh_sim(settings: RaceSettings) -> RaceSim:
 	return _race(settings, d)["sim"]
 
 
+## Wave 3: pit window, stop times, limiter, speeding and missed-stop
+## penalties, classification with penalties, and pit state in multiplayer.
+func test_pit_rules() -> void:
+	print("pits")
+	var d := _data()
+	var st := RaceSettings.new()
+	st.laps = 10
+	st.ai_count = 3
+	st.mandatory_pit_stops = 1
+	st.fuel_enabled = true
+	st.damage_enabled = true
+	var sim: RaceSim = _race(st, d)["sim"]
+	var pits := sim.pits
+	check(pits.enabled and pits.window_open == 3 and pits.window_close == 8, "automatic pit window for 10 laps is laps 3-8 (%d-%d)" % [pits.window_open, pits.window_close])
+	var t := sim.track
+	check(t.pit_limit_end - t.pit_limit_start < 460.0, "pit speed limit zone is real-sized (%.0f m)" % (t.pit_limit_end - t.pit_limit_start))
+	var c := sim.cars[0]
+	c.fuel_l = 5.0
+	c.damage_aero = 0.5
+	var w := pits.service_for(0, {"tyre": PitRules.TYRE_INTER, "fuel": 30.0, "repair": true})
+	check(w["tyre"] == "intermediate" and is_equal_approx(w["fuel_l"], 30.0), "plan: inters and 30 L")
+	check(is_equal_approx(w["total_s"], PitRules.STOP_BASE_S + 10.0 + float(w["repair_s"])) and float(w["repair_s"]) > 0.0,
+		"stop time = base + slower of tyres/fuel + repairs (%.1f s)" % w["total_s"])
+	var keep := pits.service_for(0, {"tyre": PitRules.TYRE_KEEP, "fuel": 0.0, "repair": false})
+	check(keep["tyre"] == "" and is_equal_approx(keep["total_s"], PitRules.STOP_BASE_S), "a stop with nothing to do is just the base time")
+	var auto_fuel := pits.service_for(0, {"tyre": PitRules.TYRE_AUTO, "fuel": PitRules.FUEL_AUTO, "repair": false})
+	check(auto_fuel["fuel_l"] > 0.0 and auto_fuel["fuel_l"] <= sim.defs[0].fuel_capacity_l - 5.0, "auto fuel fills for the rest of the race (%.0f L)" % auto_fuel["fuel_l"])
+	check(CarPhysics.wear_grip_factor(1.0) < 0.75 and is_equal_approx(CarPhysics.wear_grip_factor(0.0), 1.0), "worn tyres lose grip")
+
+	# A car driven into the lane by hand too fast: speeding penalty at the limit line.
+	sim.phase = RaceSim.Phase.RACING
+	var i := 1
+	var car := sim.cars[i]
+	var d0 := t.pit_limit_start - 15.0
+	car.pos = t.pit_position_at(d0)
+	car.heading = t.pit_heading_at(d0)
+	car.vel = Vector2.from_angle(car.heading) * 30.0
+	var q := t.project(car.pos)
+	car.track_idx = q["idx"]
+	car.track_s = q["s"]
+	var fast := CarInput.new()
+	fast.throttle = 1.0
+	var pens := []
+	for k in 60 * 3:
+		var ins := [CarInput.neutral(), CarInput.neutral(), CarInput.neutral()]
+		ins[i] = fast
+		sim.step(ins)
+		for ev in sim.events:
+			if ev["type"] == "penalty":
+				pens.append(ev)
+	check(sim.in_pit_lane(i), "driving into the pit lane by hand is noticed (%s)" % sim.pit_phase(i))
+	check(pens.size() == 1 and sim.entries[i].penalty_s == PitRules.SPEEDING_PENALTY_S, "speeding in the pit lane: +%d s" % int(PitRules.SPEEDING_PENALTY_S))
+	check(sim.pit_controls(i) and car.speed() <= t.pit_speed_limit + 0.5, "past the limit line the car is guided at the limit (%.1f m/s)" % car.speed())
+	# The limiter caps a driver's speed.
+	sim.pits.set_limiter(2, true)
+	sim.cars[2].vel = Vector2.from_angle(sim.cars[2].heading) * (t.pit_speed_limit + 5.0)
+	var limited: CarInput = sim.pits.pre_step([null, null, fast])[2]
+	check(limited.throttle == 0.0, "pit limiter cuts the throttle above the limit")
+
+	# Missed mandatory stop: penalty when the car finishes, and the classification counts it.
+	var e2 := sim.entries[2]
+	pits.on_finished(2)
+	check(e2.penalty_s == PitRules.MISSED_STOP_PENALTY_S, "missed mandatory stop: +%d s" % int(PitRules.MISSED_STOP_PENALTY_S))
+	for k in 3:
+		sim.entries[k].finished = true
+		sim.entries[k].laps_done = 10
+	sim.entries[0].finish_time = 1000.0
+	sim.entries[1].finish_time = 1001.0
+	sim.entries[2].finish_time = 990.0
+	sim._update_positions()
+	check(sim.running_order[0] == 0 and sim.running_order[2] == 2, "classification adds penalties (order %s)" % str(sim.running_order))
+
+	# Multiplayer: a client keeps its own car's pit state when the host's race
+	# state arrives, and takes everyone else's (including their tyres).
+	var host: RaceSim = _race(st, d)["sim"]
+	var client: RaceSim = _race(st, d)["sim"]
+	client.follower = true
+	for k in 3:
+		client.external[k] = 0 if k == 1 else 1
+	host.entries[0].pit["compound"] = "intermediate"
+	host.entries[0].pit["stops"] = 1
+	host.entries[1].pit["box"] = false
+	client.entries[1].pit["box"] = true
+	client.apply_race_state(host.race_state())
+	check(client.entries[1].pit["box"], "client keeps its own car's pit call")
+	check(client.entries[0].pit["stops"] == 1 and client.compounds[0].id == "intermediate", "client sees other cars' stops and tyres")
+	var e := RaceEntry.new()
+	e.from_dict(host.entries[0].to_dict())
+	check(e.pit["compound"] == "intermediate" and e.pit["plan"] is Dictionary, "pit state survives the network round trip")
+
+
 ## Server-authoritative core property: same settings + same inputs => same state.
 func test_deterministic_replay(rep: Dictionary) -> void:
 	print("determinism")
 	var sim := _fresh_sim(rep["settings"])
 	check(sim.state_hash() == rep["start_hash"], "identical initial state")
-	for inputs in rep["inputs"]:
-		sim.step(inputs)
+	for k in rep["inputs"].size():
+		_replay_pit_calls(sim, rep["pit_calls"][k])
+		sim.step(rep["inputs"][k])
 	check(sim.state_hash() == rep["end_hash"], "replaying recorded inputs reproduces the race exactly")
 
 
@@ -420,6 +577,7 @@ func test_snapshot_restore(rep: Dictionary) -> void:
 	sim.apply_snapshot(rep["mid"])
 	var inputs: Array = rep["inputs"]
 	for k in range(rep["mid_tick"], inputs.size()):
+		_replay_pit_calls(sim, rep["pit_calls"][k])
 		sim.step(inputs[k])
 	check(sim.state_hash() == rep["end_hash"], "snapshot restore + replay matches the original race")
 

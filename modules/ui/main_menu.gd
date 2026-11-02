@@ -29,6 +29,9 @@ var weather_stepper: Stepper
 var weather_change_stepper: Stepper
 var grid_stepper: Stepper
 var difficulty_stepper: Stepper
+var fuel_stepper: Stepper
+var wear_stepper: Stepper
+var stops_stepper: Stepper
 var lobby_list: VBoxContainer
 var lobby_title: Label
 var join_info_label: Label
@@ -86,6 +89,12 @@ func _handle_cmdline() -> void:
 		weather_change_stepper.set_value(true)
 	if GameData.arg("grid"):
 		grid_stepper.set_value(str(GameData.arg("grid")))
+	if GameData.arg("fuel"):
+		fuel_stepper.set_value(float(GameData.arg("fuel")))
+	if GameData.arg("tyre-wear"):
+		wear_stepper.set_value(float(GameData.arg("tyre-wear")))
+	if GameData.arg("pit-stops"):
+		stops_stepper.set_value(int(GameData.arg("pit-stops")))
 	if GameData.arg("tyres"):
 		tyre_stepper.set_value(str(GameData.arg("tyres")))
 	if GameData.arg("car") and GameData.cars.has(GameData.arg("car")):
@@ -218,8 +227,12 @@ func _build_ui() -> void:
 	weather_change_stepper = Stepper.choice("Weather changes", [[false, "No, stays the same"], [true, "Yes, can change"]], false)
 	grid_stepper = Stepper.choice("Grid order", [["standard", "AI ahead, players behind"], ["random", "Random"],
 		["reversed", "Reversed (fastest at back)"]], "standard")
+	var rates := [[0.0, "Off"], [1.0, "Real"], [2.0, "2x"], [3.0, "3x"], [5.0, "5x"]]
+	fuel_stepper = Stepper.choice("Fuel use", rates, 0.0)
+	wear_stepper = Stepper.choice("Tyre wear", rates, 0.0)
+	stops_stepper = Stepper.numeric("Mandatory pit stops", 0, 3, 1, 0)
 	_settings_steppers = [laps_stepper, ai_stepper, difficulty_stepper, tod_stepper, clock_stepper, weather_stepper,
-		weather_change_stepper, grid_stepper]
+		weather_change_stepper, grid_stepper, fuel_stepper, wear_stepper, stops_stepper]
 
 	var single := _page(root, "single")
 	var single_settings := _settings_grid()
@@ -261,7 +274,7 @@ func _build_ui() -> void:
 	status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	root.add_child(status_label)
 	var help := Label.new()
-	help.text = "Drive: W/S/A/D or arrows  ·  Pad: RT throttle, LT brake, left stick steer\nZoom (hold): Q/E or mouse wheel, Z whole track  ·  Pad: LB/RB or right stick, R3 whole track  ·  C/Y camera  ·  R/Back restart  ·  Esc/Start menu"
+	help.text = "Drive: W/S/A/D or arrows  ·  Pad: RT throttle, LT brake, left stick steer\nZoom (hold): Q/E or mouse wheel, Z whole track  ·  Pad: LB/RB or right stick, R3 whole track  ·  C/Y camera  ·  R/Back restart  ·  Esc/Start menu\nPits: P/B box this lap, L/L3 pit limiter, T/D-pad right tyres, F/D-pad left fuel"
 	help.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	help.modulate = Color(1, 1, 1, 0.45)
 	help.add_theme_font_size_override("font_size", 13)
@@ -364,6 +377,11 @@ func _settings_from_ui() -> RaceSettings:
 	s.environment = {"time_of_day_h": float(tod_stepper.value), "time_scale": float(clock_stepper.value),
 		"weather": str(weather_stepper.value), "weather_changes": bool(weather_change_stepper.value)}
 	s.grid_order = str(grid_stepper.value)
+	s.fuel_rate = float(fuel_stepper.value)
+	s.fuel_enabled = s.fuel_rate > 0.0
+	s.tyre_wear_rate = float(wear_stepper.value)
+	s.tyre_wear_enabled = s.tyre_wear_rate > 0.0
+	s.mandatory_pit_stops = int(stops_stepper.value)
 	return s
 
 
@@ -478,6 +496,9 @@ func _refresh_lobby() -> void:
 		weather_stepper.set_value(str(env.get("weather", "dry")))
 		weather_change_stepper.set_value(bool(env.get("weather_changes", false)))
 		grid_stepper.set_value(Net.settings.grid_order)
+		fuel_stepper.set_value(Net.settings.fuel_rate if Net.settings.fuel_enabled else 0.0)
+		wear_stepper.set_value(Net.settings.tyre_wear_rate if Net.settings.tyre_wear_enabled else 0.0)
+		stops_stepper.set_value(Net.settings.mandatory_pit_stops)
 	join_info_label.visible = host and not Net.dedicated
 	if join_info_label.visible:
 		join_info_label.text = Net.join_instructions()

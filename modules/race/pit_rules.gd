@@ -28,8 +28,10 @@ const SPEEDING_PENALTY_S := 5.0
 const MISSED_STOP_PENALTY_S := 60.0
 const COMMIT_BEFORE_ENTRY := 320.0  ## m before the pit entry the car is driven in
 const ROUTE_STEP := 3.0
+const MANUAL_ENTRY_MARGIN := 3.0 ## m beyond the track edge that counts as taking the pit lane
 const LANE_END_SKIP := 12.0      ## m of the lane's ends the guide cuts
-const BRAKE_DECEL := 7.0         ## m/s^2 the guide plans to brake at
+const BRAKE_DECEL := 6.0         ## m/s^2 the guide plans to brake at
+const ROUTE_GRIP := 1.4          ## tyre grip the route's speeds are planned for
 const BOX_DECEL := 3.5
 const LATERAL_G := 10.0          ## m/s^2 the guide plans to corner at
 const ROUTE_MAX_SPEED := 75.0
@@ -295,13 +297,13 @@ func _step_car(i: int, inp: CarInput) -> CarInput:
 				p["phase"] = PHASE_ENTRY
 				p["lane_time"] = sim.race_time
 				p["entry_lap"] = current_lap(i)
-			elif _route_d(i) > lane_start + 40.0 or _off_route(i, 40.0):
+			elif _route_d(i) > limit_start or _off_route(i, 40.0):
 				p["phase"] = PHASE_NONE  # missed it: try again next lap
 	match p["phase"]:
 		PHASE_ENTRY:
 			var d := _route_d(i)
 			if d >= limit_start:
-				if c.speed() > t.pit_speed_limit + LIMIT_TOLERANCE:
+				if not p["auto"] and c.speed() > t.pit_speed_limit + LIMIT_TOLERANCE:
 					p["speeding"] = int(p["speeding"]) + 1
 				p["phase"] = PHASE_LIMIT
 				p["limiter"] = true
@@ -357,13 +359,13 @@ func _entered_lane_by_hand(i: int) -> bool:
 	if not t.in_pit_lane(c.pos):
 		return false
 	var q := t.project_pit(c.pos)
-	if q["d"] < 3.0 or q["d"] > t.pit_limit_start:
+	if q["d"] < 10.0 or q["d"] > t.pit_limit_start - 5.0:
 		return false
-	# Off the race track itself, on the pit side, and heading down the lane.
+	# Clearly off the race track itself, on the pit side, heading down the lane.
 	var edge := t.width_right[c.track_idx] if t.pit_side > 0.0 else t.width_left[c.track_idx]
-	if c.lateral_offset * t.pit_side < edge:
+	if c.lateral_offset * t.pit_side < edge + MANUAL_ENTRY_MARGIN:
 		return false
-	return c.vel.dot(Vector2.from_angle(t.pit_heading_at(q["d"]))) > 1.0
+	return c.vel.dot(Vector2.from_angle(t.pit_heading_at(q["d"]))) > 0.9 * c.speed()
 
 
 func _enter_route(i: int, new_phase: String, auto: bool) -> void:
@@ -524,6 +526,8 @@ func _nearest_route(pos: Vector2, hint: int) -> int:
 func _route_d(i: int) -> float:
 	var c := sim.cars[i]
 	var k := _nearest_route(c.pos, _route_k[i])
+	if c.pos.distance_squared_to(route[k]) > 30.0 * 30.0:
+		k = _nearest_route(c.pos, -1)  # lost (e.g. the car changed hands mid-lane)
 	_route_k[i] = k
 	if k < route.size() - 1:
 		var seg := route[k + 1] - route[k]
@@ -571,7 +575,14 @@ func _guide(i: int) -> CarInput:
 	var inp := CarInput.new()
 	var d := _route_d(i)
 	var speed := c.speed()
+	# The route's speeds are planned for a grippy race car in the dry: scale
+	# them by this car's grip now (road tyres, rain, worn tyres).
+	var tc := sim.compounds[i]
+	var grip := tc.peak_mu * minf(def.front_grip, def.rear_grip) * sim.env.grip_factor(tc, 0.0, speed) \
+		* CarPhysics.wear_grip_factor((c.tyre_wear[0] + c.tyre_wear[1] + c.tyre_wear[2] + c.tyre_wear[3]) * 0.25)
 	var v_target := _route_speed_at(d)
+	if v_target > sim.track.pit_speed_limit:
+		v_target = maxf(v_target * clampf(sqrt(grip / ROUTE_GRIP), 0.5, 1.05), sim.track.pit_speed_limit - 0.4)
 	var target_d := d + clampf(speed * 0.55, 7.0, 28.0)
 	var aim := _route_point(target_d)
 	var box_d := _box_d(i)
@@ -619,7 +630,7 @@ func _guide(i: int) -> CarInput:
 		if absf(c.slip_angle_rear) > 0.1:
 			inp.throttle *= 0.25
 	elif dv < -0.8:
-		inp.brake = clampf(-dv * 0.1, 0.0, 0.85) * clampf(1.0 - 2.0 * absf(inp.steer), 0.25, 1.0)
+		inp.brake = clampf(-dv * 0.15, 0.0, 1.0) * clampf(1.0 - 1.5 * absf(inp.steer), 0.3, 1.0)
 		if absf(c.slip_angle_rear) > 0.1:
 			inp.brake *= 0.3
 	if p["limiter"] and speed > sim.track.pit_speed_limit - 0.3:

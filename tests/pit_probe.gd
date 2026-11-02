@@ -16,9 +16,9 @@ func _init() -> void:
 	s.tyre_wear_rate = wr
 	if args.size() > 5:
 		s.environment = {"weather": args[5], "weather_changes": true}
-	s.ai_count = 6
-	s.car_class = "GT3"
-	s.seed = 7
+	s.ai_count = 8
+	s.car_class = ""
+	s.seed = 777
 	var start := RaceFactory.plan(s, [], cars, DriverCatalog.load_all())
 	var sim := RaceFactory.build_sim(start, cars, TyreCatalog.load_all())
 	var ai := AIDriver.for_all_ai(sim)
@@ -28,9 +28,18 @@ func _init() -> void:
 		var inputs := []
 		for i in sim.car_count():
 			inputs.append(ai[i].get_input(sim, i))
+		var before := []
+		for i in sim.car_count():
+			before.append([sim.pit_phase(i), sim.entries[i].pit["box"]])
 		sim.step(inputs)
+		if OS.has_environment("PIT_TRACE"):
+			for i in sim.car_count():
+				var now := [sim.pit_phase(i), sim.entries[i].pit["box"]]
+				if now != before[i]:
+					print("    t %.1f car %d %s -> %s  s=%.0f route_d=%.0f off=%.1f v=%.1f" % [sim.race_time, i, before[i], now, sim.cars[i].track_s,
+						sim.pits._route_d(i), sim.cars[i].pos.distance_to(sim.pits.route[sim.pits._route_k[i]]), sim.cars[i].speed()])
 		for ev in sim.events:
-			if str(ev["type"]).begins_with("pit") or ev["type"] in ["penalty", "radio"] and (ev.get("topic", "pit") == "pit"):
+			if str(ev["type"]).begins_with("pit_") or ev["type"] == "penalty":
 				print("%7.1f %-12s %-16s %s" % [sim.race_time, ev["type"], sim.entries[ev["car"]].driver_name, ev])
 	for p in sim.running_order.size():
 		var i := sim.running_order[p]
