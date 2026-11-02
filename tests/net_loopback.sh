@@ -36,6 +36,8 @@ done
 # Each client must have seen the other player's car (relayed through the host).
 grep -q "Bob=[1-9]" "$LOG/alice.log" || { echo "alice never saw Bob's car"; ok=1; }
 grep -q "Alice=[1-9]" "$LOG/bob.log" || { echo "bob never saw Alice's car"; ok=1; }
+# Clocks synced with the host, so remote cars are drawn where they are now.
+for f in alice bob; do grep -q "^\[net\] clock synced true .*, \([1-9][0-9]*\) of \1 remote cars placed in the present" "$LOG/$f.log" || { echo "$f did not place remote cars in the present"; ok=1; }; done
 # Each client built the pit wall's race data (gaps from the host, feed items as events).
 for f in alice bob; do grep -q "^\[race data\] saved" "$LOG/$f.log" || { echo "$f saved no race data"; ok=1; }; done
 # Alice's upgrades reached every machine through the lobby.

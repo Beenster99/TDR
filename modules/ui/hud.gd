@@ -2,6 +2,12 @@ class_name RaceHud
 extends Control
 ## Race HUD drawn immediate-mode: timing, standings, tyre temps, speed/gear,
 ## minimap and countdown. Reads the session's sim every frame.
+##
+## Every item (ITEMS) can be moved, resized, hidden and brought back by the
+## driver in the HUD layout editor (HudEditor: F2 in a race, or Settings >
+## Gameplay > Edit HUD layout), saved in GameData.prefs["hud_layout"]
+## (HudLayout). Each item draws itself from (0, 0) in its own box; the HUD
+## places and scales that box.
 
 var session: RaceSession
 var message := ""
@@ -29,12 +35,43 @@ var _gap_sample := Vector2(-1, -1)
 var _gap_trend := Vector2.ZERO
 var _gap_sample_t := -99.0
 
+## The HUD items, in drawing order (later ones draw on top): [id, name].
+const ITEMS := [
+	["map", "Track map"],
+	["tower", "Timing tower"],
+	["standings", "Compact standings"],
+	["timing", "Position and lap times"],
+	["pit", "Pit panel"],
+	["damage", "Damage"],
+	["tyres", "Tyres and conditions"],
+	["sectors", "Sectors and gaps"],
+	["speed", "Speed, gear and revs"],
+	["hint", "Pit wall hint"],
+	["lights", "Start lights"],
+	["flags", "Flags and race control"],
+	["radio", "Team radio"],
+	["messages", "Messages"],
+]
+## Items about the player's own car (a placeholder when spectating).
+const CAR_ITEMS := ["timing", "pit", "damage", "tyres", "sectors", "speed"]
+## Where the player put each item, how big, shown or not.
+var layout := HudLayout.new()
+## True while the HUD layout editor is open: every item that's switched on is
+## drawn, with sample content when there's nothing to show right now.
+var editing := false
+var editor: HudEditor = null
+## Settings preview: the HUD runs its own (all-AI) race session.
+var drives_session := false
+## The editor was closed (saved: true, or cancelled).
+signal edit_finished(saved: bool)
+
 
 func setup(p_session: RaceSession) -> void:
 	session = p_session
 	font = ThemeDB.fallback_font
 	set_anchors_preset(PRESET_FULL_RECT)
 	mouse_filter = MOUSE_FILTER_IGNORE
+	layout = HudLayout.from_value(_prefs().get(HudLayout.PREF, {}))
 	_build_minimap()
 
 
@@ -49,16 +86,173 @@ func show_tower() -> bool:
 	return bool(_prefs().get(PREF_TOWER, true))
 
 
+func set_show_tower(on: bool) -> void:
+	var gd := get_node_or_null("/root/GameData")
+	if gd == null:
+		return
+	gd.prefs[PREF_TOWER] = on
+	if gd.has_method("save_prefs"):
+		gd.call("save_prefs")
+
+
 func _unhandled_input(event: InputEvent) -> void:
+	if editing:
+		return
 	if event.is_action_pressed("hud_tower"):
-		var gd := get_node_or_null("/root/GameData")
-		if gd == null:
+		if get_node_or_null("/root/GameData") == null:
 			return
-		gd.prefs[PREF_TOWER] = not show_tower()
-		if gd.has_method("save_prefs"):
-			gd.call("save_prefs")
+		set_show_tower(not show_tower())
 		flash("Timing tower " + ("on" if show_tower() else "off"), 1.2)
 
+
+## Opens the HUD layout editor over the race.
+func open_editor() -> void:
+	if editing or session == null:
+		return
+	editing = true
+	editor = HudEditor.new()
+	add_child(editor)
+	editor.setup(self)
+	editor.closed.connect(func(saved: bool):
+		editing = false
+		editor = null
+		edit_finished.emit(saved))
+
+
+# --- Layout: which items show, where and how big ---------------------------------
+
+static func item_name(id: String) -> String:
+	for it in ITEMS:
+		if it[0] == id:
+			return it[1]
+	return id
+
+
+## Switched on by the player (the tower follows its own pref; the compact
+## standings only show while the tower is off).
+func item_on(id: String) -> bool:
+	if id == "tower":
+		return show_tower()
+	return layout.is_on(id)
+
+
+func set_item_on(id: String, on: bool) -> void:
+	if id == "tower":
+		set_show_tower(on)
+		return
+	layout.set_on(id, on)
+	if id == "standings" and on:
+		set_show_tower(false)
+
+
+## Drawn now: switched on, and (outside the editor) something to show.
+func item_shown(id: String) -> bool:
+	if session == null or not item_on(id):
+		return false
+	if id == "standings" and show_tower():
+		return false
+	if editing:
+		return true
+	var sim := session.sim
+	var me := session.local_car
+	if id in CAR_ITEMS and me < 0:
+		return false
+	match id:
+		"pit": return sim.pits.enabled and _pit_panel_height(me) > 0.0
+		"damage": return sim.damage_level != CarDamage.Level.OFF
+		"flags": return _flag_lines(me)[0] != "" or _flag_lines(me)[1] != ""
+		"radio": return radio_time > 0.0 and not radio_msg.is_empty()
+		"messages": return message_time > 0.0
+		"lights": return sim.phase == RaceSim.Phase.COUNTDOWN
+	return true
+
+
+## An item's size at 100 %, in HUD units (1600 x 900 screen).
+func item_size(id: String) -> Vector2:
+	var sim := session.sim
+	var me := session.local_car
+	match id:
+		"map":
+			var scale_f: float = get_meta("mm_scale", 1.0)
+			return _mm_rect.size * scale_f + Vector2(20, 20)
+		"tower": return Vector2(TOWER_W, _tower_height())
+		"standings": return Vector2(330, 34 + _standings_rows() * 22)
+		"timing": return Vector2(300, 150)
+		"pit":
+			var h := _pit_panel_height(me) if me >= 0 and sim.pits.enabled else 0.0
+			return Vector2(300, maxf(h, 136.0) if editing else h)
+		"damage": return Vector2(300, 116)
+		"tyres": return Vector2(300, 186)
+		"sectors": return Vector2(_sectors_width(), 82)
+		"speed": return Vector2(250, 120)
+		"hint": return Vector2(260, 20)
+		"lights": return Vector2(224, 44)
+		"flags": return Vector2(520, 58)
+		"radio": return Vector2(_radio_width(), 44)
+		"messages": return Vector2(1000, 50)
+	return Vector2.ZERO
+
+
+## The designed spot (top-left corner, 100 %) of an item on a `vp` screen.
+## Items the player hasn't moved keep following each other as before: the
+## timing panel sits beside the tower, the map under the compact standings.
+func default_pos(id: String, sz: Vector2, vp: Vector2) -> Vector2:
+	var lx := 10.0
+	if id in ["timing", "pit", "damage"] and item_shown("tower") and not layout.has_pos("tower"):
+		lx = item_rect("tower").end.x + 10.0
+	match id:
+		"map":
+			var y := 10.0
+			if item_shown("standings") and not layout.has_pos("standings"):
+				y = item_rect("standings").end.y + 10.0
+			return Vector2(vp.x - sz.x - 10.0, y)
+		"tower": return Vector2(10, 10)
+		"standings": return Vector2(vp.x - 340, 10)
+		"timing": return Vector2(lx, 10)
+		"pit": return Vector2(lx, 170)
+		"damage": return Vector2(lx, vp.y - 322)
+		"tyres": return Vector2(10, vp.y - 196)
+		"sectors": return Vector2((vp.x - sz.x) * 0.5, vp.y - 110)
+		"speed": return Vector2(vp.x - 260, vp.y - 130)
+		"hint": return Vector2((vp.x - sz.x) * 0.5, vp.y - 28)
+		"lights": return Vector2((vp.x - sz.x) * 0.5, 48)
+		"flags": return Vector2((vp.x - sz.x) * 0.5, 96)
+		"radio": return Vector2((vp.x - sz.x) * 0.5, 196)
+		"messages": return Vector2((vp.x - sz.x) * 0.5, 115)
+	return Vector2.ZERO
+
+
+## Where an item is on screen now (scaled), or an empty rect.
+func item_rect(id: String) -> Rect2:
+	var sz := item_size(id)
+	if sz.x <= 0.0 or sz.y <= 0.0:
+		return Rect2()
+	var vp := size
+	var s := layout.scale_of(id)
+	var frac := layout.pos(id) if layout.has_pos(id) else HudLayout.frac_of(default_pos(id, sz, vp), sz, vp)
+	return Rect2(HudLayout.place(frac, sz * s, vp), sz * s)
+
+
+## Puts an item's (scaled) top-left corner at `top_left`.
+func move_item(id: String, top_left: Vector2) -> void:
+	var r := item_rect(id)
+	if r.size == Vector2.ZERO:
+		return
+	layout.set_pos(id, HudLayout.frac_of(top_left, r.size, size))
+
+
+## Resizes an item, keeping the point `keep` (0..1 across its box) still.
+func scale_item(id: String, s: float, keep := Vector2(0.5, 0.5)) -> void:
+	var r := item_rect(id)
+	if r.size == Vector2.ZERO:
+		return
+	var pin := r.position + r.size * keep
+	layout.set_scale(id, s)
+	var nsz := item_size(id) * layout.scale_of(id)
+	layout.set_pos(id, HudLayout.frac_of(pin - nsz * keep, nsz, size))
+
+
+# --- Messages and drawing -------------------------------------------------------
 
 ## Team radio from the pit wall (co-op): shown as a banner for a few seconds.
 var radio_msg: Dictionary = {}
@@ -83,6 +277,9 @@ func _process(delta: float) -> void:
 	queue_redraw()
 
 
+func _physics_process(_delta: float) -> void:
+	if drives_session and session != null:
+		session.tick(null)
 ## Flashes a warning when the player's car gets hurt (works the same online,
 ## where the player's own car is simulated on their machine).
 func _watch_damage() -> void:
@@ -129,59 +326,101 @@ func _panel(r: Rect2) -> void:
 	draw_rect(r, Color(0, 0, 0, 0.45))
 
 
+
+
 func _draw() -> void:
 	if session == null:
 		return
-	var sim := session.sim
-	var vp := size
 	var me := session.local_car
-	# --- Countdown / messages
+	for it in ITEMS:
+		var id: String = it[0]
+		if not item_shown(id):
+			continue
+		var r := item_rect(id)
+		if r.size == Vector2.ZERO:
+			continue
+		var s := layout.scale_of(id)
+		draw_set_transform(r.position, 0.0, Vector2(s, s))
+		_draw_item(id, me, r.size / s)
+	draw_set_transform(Vector2.ZERO)
+	if me < 0 and not editing:
+		_text(Vector2(20, 40), "SPECTATING", 22)
+
+
+## Draws one item from (0, 0) in its own box of `sz` (100 % units).
+func _draw_item(id: String, me: int, sz: Vector2) -> void:
+	var sim := session.sim
+	if id in CAR_ITEMS and me < 0:
+		_placeholder(sz, item_name(id), "your car's " + item_name(id).to_lower())
+		return
+	match id:
+		"map": _draw_minimap(Vector2(10, 10))
+		"tower": _draw_tower(me)
+		"standings": _draw_standings(me)
+		"timing": _draw_timing(me)
+		"pit":
+			if sim.pits.enabled:
+				_draw_pit_panel(me)
+			else:
+				_placeholder(sz, "Pit panel", "shows in races with pit stops")
+		"damage":
+			if sim.damage_level != CarDamage.Level.OFF:
+				_draw_damage(sim.cars[me], sim.damage_level == CarDamage.Level.FULL)
+			else:
+				_placeholder(sz, "Damage", "shows in races with damage on")
+		"tyres": _draw_tyres(me)
+		"sectors": _draw_sectors_and_gaps(me)
+		"speed": _draw_speed(me)
+		"hint": _text(Vector2(0, 14), "P / D-pad →  Pit wall", 13, Color(1, 1, 1, 0.45), HORIZONTAL_ALIGNMENT_CENTER, sz.x)
+		"lights": _draw_lights()
+		"flags": _draw_race_control(me)
+		"radio": _draw_radio()
+		"messages":
+			var txt := message if message_time > 0.0 else "Lap 3  1:42.315"
+			_text(Vector2(0, 38), txt, 40, Color(1, 0.9, 0.3), HORIZONTAL_ALIGNMENT_CENTER, sz.x)
+
+
+## Editor stand-in for an item with nothing to show right now.
+func _placeholder(sz: Vector2, title: String, note: String) -> void:
+	_panel(Rect2(Vector2.ZERO, sz))
+	_text(Vector2(0, sz.y * 0.5 - 2), title.to_upper(), 15, Color(1, 1, 1, 0.8), HORIZONTAL_ALIGNMENT_CENTER, sz.x)
+	_text(Vector2(0, sz.y * 0.5 + 18), "(" + note + ")", 12, Color(1, 1, 1, 0.5), HORIZONTAL_ALIGNMENT_CENTER, sz.x)
+
+
+## Start lights: four reds lighting up through the countdown.
+func _draw_lights() -> void:
+	var sim := session.sim
+	var lit := 2
 	if sim.phase == RaceSim.Phase.COUNTDOWN:
 		var remaining := sim.settings.countdown_s - sim.phase_time
-		var lit := clampi(int(sim.settings.countdown_s - remaining) + 1, 0, 4)
-		for k in 4:
-			var c := Vector2(vp.x * 0.5 - 90 + k * 60, 70)
-			draw_circle(c, 22, Color(0.1, 0.1, 0.1, 0.8))
-			draw_circle(c, 18, Color(0.9, 0.1, 0.1) if k < lit else Color(0.25, 0.05, 0.05))
-	if message_time > 0.0:
-		_text(Vector2(0, 150), message, 40, Color(1, 0.9, 0.3), HORIZONTAL_ALIGNMENT_CENTER, vp.x)
-	_draw_race_control(vp, me)
-	if radio_time > 0.0 and not radio_msg.is_empty():
-		_draw_radio(vp)
+		lit = clampi(int(sim.settings.countdown_s - remaining) + 1, 0, 4)
+	for k in 4:
+		var c := Vector2(22 + k * 60, 22)
+		draw_circle(c, 22, Color(0.1, 0.1, 0.1, 0.8))
+		draw_circle(c, 18, Color(0.9, 0.1, 0.1) if k < lit else Color(0.25, 0.05, 0.05))
 
-	# --- Standings: timing tower on the left, or the compact list top right
-	var tower := show_tower()
-	var rows := 0
-	if tower:
-		_draw_tower(vp, me)
-	else:
-		rows = _draw_standings(vp, me)
-	_draw_minimap(Vector2(vp.x - 230, 50 + rows * 22 + 10 if rows > 0 else 20))
 
-	_text(Vector2(0, vp.y - 14), "P / D-pad →  Pit wall", 13, Color(1, 1, 1, 0.45), HORIZONTAL_ALIGNMENT_CENTER, vp.x)
-	if me < 0:
-		_text(Vector2(20, 40), "SPECTATING", 22)
-		return
+## Position, lap, current / last / best lap time.
+func _draw_timing(me: int) -> void:
+	var sim := session.sim
 	var e := sim.entries[me]
-	var c := sim.cars[me]
-	# --- Timing (top left, beside the tower when it's on)
-	var lx := TOWER_W + 20.0 if tower else 10.0
-	_panel(Rect2(lx, 10, 300, 150))
-	_text(Vector2(lx + 14, 48), "P%d / %d" % [e.position, sim.car_count()], 34)
+	_panel(Rect2(0, 0, 300, 150))
+	_text(Vector2(14, 38), "P%d / %d" % [e.position, sim.car_count()], 34)
 	var lap_now := mini(e.laps_done + 1, sim.settings.laps)
-	_text(Vector2(lx + 160, 48), "LAP %d/%d" % [lap_now, sim.settings.laps], 20)
+	_text(Vector2(160, 38), "LAP %d/%d" % [lap_now, sim.settings.laps], 20)
 	var cur := sim.race_time - e.lap_start_time if e.started_lap and not e.finished else 0.0
-	_text(Vector2(lx + 14, 82), "Time  " + fmt_time(cur), 18)
-	_text(Vector2(lx + 14, 106), "Last  " + fmt_time(e.lap_times[-1] if e.lap_times.size() > 0 else 0.0), 18, Color(1, 1, 1, 0.8))
-	_text(Vector2(lx + 14, 130), "Best  " + fmt_time(e.best_lap), 18, Color(0.6, 1, 0.6))
+	_text(Vector2(14, 72), "Time  " + fmt_time(cur), 18)
+	_text(Vector2(14, 96), "Last  " + fmt_time(e.lap_times[-1] if e.lap_times.size() > 0 else 0.0), 18, Color(1, 1, 1, 0.8))
+	_text(Vector2(14, 120), "Best  " + fmt_time(e.best_lap), 18, Color(0.6, 1, 0.6))
 	if e.penalty_s > 0.0:
-		_text(Vector2(lx + 160, 82), "+%d s penalty" % int(e.penalty_s), 16, Color(1, 0.55, 0.3))
+		_text(Vector2(160, 72), "+%d s penalty" % int(e.penalty_s), 16, Color(1, 0.55, 0.3))
 
-	# --- Sectors and the gaps ahead / behind (bottom centre)
-	_draw_sectors_and_gaps(vp, me)
 
-	# --- Speed / gear / rpm (bottom right)
-	var br := Vector2(vp.x - 260, vp.y - 130)
+## Speed, gear and the rev bar.
+func _draw_speed(me: int) -> void:
+	var sim := session.sim
+	var c := sim.cars[me]
+	var br := Vector2.ZERO
 	_panel(Rect2(br, Vector2(250, 120)))
 	_text(br + Vector2(14, 56), "%3d" % int(Units.speed_value(c.speed())), 48)
 	_text(br + Vector2(120, 56), Units.speed_unit(), 16, Color(1, 1, 1, 0.7))
@@ -194,8 +433,12 @@ func _draw() -> void:
 	if c.surface >= TrackData.Surface.GRASS:
 		_text(br + Vector2(120, 110), "OFF TRACK", 14, Color(1, 0.5, 0.3))
 
-	# --- Tyres + conditions (bottom left)
-	var bl := Vector2(10, vp.y - 196)
+
+## Tyre temperatures and wear, time of day, weather, grip and fuel.
+func _draw_tyres(me: int) -> void:
+	var sim := session.sim
+	var c := sim.cars[me]
+	var bl := Vector2.ZERO
 	_panel(Rect2(bl, Vector2(300, 186)))
 	var tc := sim.compounds[me]
 	_text(bl + Vector2(14, 24), "TYRES  " + tc.display_name.to_upper(), 14, Color(1, 1, 1, 0.7))
@@ -225,14 +468,26 @@ func _draw() -> void:
 		var fl := sim.pits.fuel_laps(me)
 		_text(bl + Vector2(146, 160), "Fuel %s  %s" % [Units.fuel(c.fuel_l), "(%.1f laps)" % fl if fl < 99.0 else ""], 15,
 			Color(1, 0.5, 0.3) if fl < 1.5 else Color.WHITE)
-	if sim.pits.enabled:
-		_draw_pit_panel(Vector2(lx, 170), me)
-	if sim.damage_level != CarDamage.Level.OFF:
-		_draw_damage(Vector2(lx, vp.y - 196 - 126), c, sim.damage_level == CarDamage.Level.FULL)
 
+
+## The pit panel's height (0: nothing to show).
+func _pit_panel_height(me: int) -> float:
+	if me < 0:
+		return 0.0
+	var sim := session.sim
+	var e := sim.entries[me]
+	var p: Dictionary = e.pit
+	var busy: bool = p["phase"] != PitRules.PHASE_NONE or p["box"] or p["limiter"]
+	var h := 114 if sim.settings.mandatory_pit_stops > 0 or busy or sim.settings.fuel_enabled or sim.settings.tyre_wear_enabled else 0
+	if e.crew.size() > 1:
+		h = 136
+	if editing:
+		h = maxi(h, 114)
+	return h + (22.0 if e.penalty_s > 0.0 else 0.0)
 
 ## Pit panel (left, under the timing): pit call, limiter, plan, stops, stop time.
-func _draw_pit_panel(o: Vector2, me: int) -> void:
+func _draw_pit_panel(me: int) -> void:
+	var o := Vector2.ZERO
 	var sim := session.sim
 	var pits := sim.pits
 	var e := sim.entries[me]
@@ -240,14 +495,12 @@ func _draw_pit_panel(o: Vector2, me: int) -> void:
 	var plan: Dictionary = p["plan"]
 	var phase: String = p["phase"]
 	var need := sim.settings.mandatory_pit_stops
-	var busy: bool = phase != PitRules.PHASE_NONE or p["box"] or p["limiter"]
-	var h := 114 if need > 0 or busy or sim.settings.fuel_enabled or sim.settings.tyre_wear_enabled else 0
 	var mates := e.crew.size() > 1
-	if mates:
-		h = 136
-	if h == 0 and e.penalty_s <= 0.0:
+	var full := _pit_panel_height(me)
+	var h := full - (22.0 if e.penalty_s > 0.0 else 0.0)
+	if full <= 0.0:
 		return
-	_panel(Rect2(o, Vector2(300, h + (22 if e.penalty_s > 0.0 else 0))))
+	_panel(Rect2(o, Vector2(300, full)))
 	var y := o.y + 22
 	if h > 0:
 		var head := "PIT"
@@ -326,13 +579,26 @@ static func rejoin_colour(rj: Dictionary) -> Color:
 	return Color(0.4, 1.0, 0.5)
 
 
-func _draw_radio(vp: Vector2) -> void:
-	var who := str(radio_msg.get("from", "Pit wall"))
-	var role := str(radio_msg.get("role", "")).replace("_", " ")
-	var line := "%s%s: %s" % [who, (" (%s)" % role) if role != "" else "", radio_msg.get("text", "")]
-	var w := minf(font.get_string_size(line, HORIZONTAL_ALIGNMENT_LEFT, -1, 22).x + 120, vp.x - 40)
-	var r := Rect2((vp.x - w) * 0.5, 196, w, 44)
-	var a := clampf(radio_time / 0.5, 0.0, 1.0)
+## Sample radio call shown in the HUD layout editor.
+const SAMPLE_RADIO := {"from": "Pit wall", "role": "strategist", "text": "Box this lap, box box"}
+
+
+func _radio_line() -> String:
+	var msg := radio_msg if radio_time > 0.0 and not radio_msg.is_empty() else SAMPLE_RADIO
+	var who := str(msg.get("from", "Pit wall"))
+	var role := str(msg.get("role", "")).replace("_", " ")
+	return "%s%s: %s" % [who, (" (%s)" % role) if role != "" else "", msg.get("text", "")]
+
+
+func _radio_width() -> float:
+	return minf(font.get_string_size(_radio_line(), HORIZONTAL_ALIGNMENT_LEFT, -1, 22).x + 120, size.x - 40)
+
+
+func _draw_radio() -> void:
+	var line := _radio_line()
+	var w := _radio_width()
+	var r := Rect2(0, 0, w, 44)
+	var a := clampf(radio_time / 0.5, 0.0, 1.0) if radio_time > 0.0 else 1.0
 	draw_rect(r, Color(0.02, 0.04, 0.08, 0.8 * a))
 	draw_rect(r, Color(1, 0.88, 0.35, 0.8 * a), false, 2.0)
 	_text(r.position + Vector2(14, 30), "RADIO", 16, Color(1, 0.88, 0.35, a))
@@ -404,7 +670,8 @@ static func fuel_plan_text(fuel: float) -> String:
 
 ## Damage panel: a top view of the car with each zone coloured by how bent
 ## it is, flat tyres in red, and (full damage) each system's state.
-func _draw_damage(o: Vector2, c: CarState, full: bool) -> void:
+func _draw_damage(c: CarState, full: bool) -> void:
+	var o := Vector2.ZERO
 	_panel(Rect2(o, Vector2(300, 116)))
 	_text(o + Vector2(14, 22), "DAMAGE", 14, Color(1, 1, 1, 0.7))
 	var car := Rect2(o + Vector2(36, 32), Vector2(40, 74))  # nose at the top
@@ -474,9 +741,10 @@ func _temp_colour(t: float, tc: TyreCompound) -> Color:
 	return Color(0.3, 0.9, 0.4).lerp(Color(1.0, 0.3, 0.2), clampf(x, 0.0, 1.0))
 
 
-## Flag board (top centre): yellow flags, VSC, safety car, restart, and what
-## the player has to do (keep the delta, give a place back...).
-func _draw_race_control(vp: Vector2, me: int) -> void:
+## [title, line, colour] for the flag board (top centre): yellow flags, VSC,
+## safety car, restart, and what the player has to do (keep the delta, give a
+## place back...). Title and line are "" when there's nothing to show.
+func _flag_lines(me: int) -> Array:
 	var sim := session.sim
 	var rc := sim.race_control
 	var state := rc.neutralisation()
@@ -496,13 +764,24 @@ func _draw_race_control(vp: Vector2, me: int) -> void:
 		"yellow":
 			if me >= 0 and rc.yellow_at(sim.cars[me].track_s):
 				title = "YELLOW FLAG"
-	if title == "" and line == "":
-		return
+	return [title, line, col]
+
+
+func _draw_race_control(me: int) -> void:
+	var rc := session.sim.race_control
+	var fl := _flag_lines(me)
+	var title: String = fl[0]
+	var line: String = fl[1]
+	var col: Color = fl[2]
+	var sample := title == "" and line == ""
+	if sample:   # layout editor
+		title = "YELLOW FLAG"
+		line = "Race control: slow down, no overtaking"
 	var w := 520.0
-	var r := Rect2(vp.x * 0.5 - w * 0.5, 96, w, 58 if line != "" and title != "" else 34)
+	var r := Rect2(0, 0, w, 58 if line != "" and title != "" else 34)
 	if title != "":
 		draw_rect(r, Color(0, 0, 0, 0.6))
-		var flash := int(Time.get_ticks_msec() / 400) % 2 == 0 or state == "sc"
+		var flash := int(Time.get_ticks_msec() / 400) % 2 == 0 or rc.neutralisation() == "sc" or sample
 		draw_rect(Rect2(r.position, Vector2(w, 34)), col if flash else col.darkened(0.35))
 		_text(r.position + Vector2(0, 25), title, 22, Color.BLACK, HORIZONTAL_ALIGNMENT_CENTER, w)
 	if line != "" and line.to_upper() != title:
@@ -580,13 +859,16 @@ func _draw_minimap(origin: Vector2) -> void:
 
 
 ## The compact standings list (top right), used when the timing tower is off.
-## Returns how many rows it drew.
-func _draw_standings(vp: Vector2, me: int) -> int:
+func _standings_rows() -> int:
+	return mini(session.sim.running_order.size(), 16)
+
+
+func _draw_standings(me: int) -> void:
 	var sim := session.sim
-	var x0 := vp.x - 330
-	var rows := mini(sim.running_order.size(), 16)
-	_panel(Rect2(x0 - 10, 10, 330, 34 + rows * 22))
-	_text(Vector2(x0, 32), "LAP %d / %d" % [_leader_lap(), sim.settings.laps], 16, Color(1, 1, 1, 0.8))
+	var x0 := 10.0
+	var rows := _standings_rows()
+	_panel(Rect2(0, 0, 330, 34 + rows * 22))
+	_text(Vector2(x0, 22), "LAP %d / %d" % [_leader_lap(), sim.settings.laps], 16, Color(1, 1, 1, 0.8))
 	for p in rows:
 		var i := sim.running_order[p]
 		var e := sim.entries[i]
@@ -595,14 +877,13 @@ func _draw_standings(vp: Vector2, me: int) -> int:
 		if right == "" and p > 0:
 			var gap := sim.entries[sim.running_order[0]].distance - e.distance
 			right = "+%.0f m" % gap if gap < sim.track.length else "+%d lap" % int(gap / sim.track.length)
-		draw_rect(Rect2(x0, 42 + p * 22, 8, 14), sim.defs[i].colour)
-		_text(Vector2(x0 + 14, 55 + p * 22), "%2d  %s" % [p + 1, e.at_wheel().left(18)], 15, col)
+		draw_rect(Rect2(x0, 32 + p * 22, 8, 14), sim.defs[i].colour)
+		_text(Vector2(x0 + 14, 45 + p * 22), "%2d  %s" % [p + 1, e.at_wheel().left(18)], 15, col)
 		if sim.pits.enabled and int(e.pit.get("stops", 0)) > 0:
-			_text(Vector2(x0 + 172, 55 + p * 22), str(e.pit["stops"]), 12, Color(1, 1, 1, 0.55))
+			_text(Vector2(x0 + 172, 45 + p * 22), str(e.pit["stops"]), 12, Color(1, 1, 1, 0.55))
 		if e.penalty_s > 0.0:
-			_text(Vector2(x0 + 140, 55 + p * 22), "+%ds" % int(e.penalty_s), 13, Color(1, 0.55, 0.3))
-		_text(Vector2(x0 + 200, 55 + p * 22), right, 15, col, HORIZONTAL_ALIGNMENT_RIGHT, 110)
-	return rows
+			_text(Vector2(x0 + 140, 45 + p * 22), "+%ds" % int(e.penalty_s), 13, Color(1, 0.55, 0.3))
+		_text(Vector2(x0 + 200, 45 + p * 22), right, 15, col, HORIZONTAL_ALIGNMENT_RIGHT, 110)
 
 
 ## PIT / FIN / DNF for a car, or "" while it's racing.
@@ -638,16 +919,26 @@ static func tower_rows(order_size: int, my_pos: int, max_rows: int) -> Array[int
 
 ## Timing tower (left column): position, manufacturer badge, driver, last lap
 ## and the gap to the car ahead. The player's row is highlighted.
-func _draw_tower(vp: Vector2, me: int) -> void:
+## How many rows the tower has room for (keeping clear of the tyre panel).
+func _tower_max_rows() -> int:
+	return maxi(int((size.y / layout.scale_of("tower") - 206.0 - 84.0) / TOWER_ROW), 6)
+
+
+func _tower_height() -> float:
+	var n := session.sim.running_order.size()
+	var rows := mini(n, _tower_max_rows())
+	return 62.0 + rows * TOWER_ROW + (6.0 if rows < n else 0.0)
+
+
+func _draw_tower(me: int) -> void:
 	var sim := session.sim
 	var tel := session.telemetry
 	var n := sim.running_order.size()
-	var max_rows := maxi(int((vp.y - 206.0 - 84.0) / TOWER_ROW), 6)  # keep clear of the tyre panel
 	var my_pos := sim.running_order.find(me)
-	var shown := tower_rows(n, maxi(my_pos, 0), max_rows)
-	var x := 10.0
-	var top := 10.0
-	var h := 62.0 + shown.size() * TOWER_ROW + (6.0 if shown.size() < n else 0.0)
+	var shown := tower_rows(n, maxi(my_pos, 0), _tower_max_rows())
+	var x := 0.0
+	var top := 0.0
+	var h := _tower_height()
 	_panel(Rect2(x, top, TOWER_W, h))
 	_text(Vector2(x + 12, top + 26), "LAP %d / %d" % [_leader_lap(), sim.settings.laps], 18, Color.WHITE)
 	_text(Vector2(x + 12, top + 26), "%d CARS" % n, 14, Color(1, 1, 1, 0.55), HORIZONTAL_ALIGNMENT_RIGHT, TOWER_W - 24)
@@ -711,14 +1002,23 @@ func _interval_text(ahead: int, behind: int, secs: float) -> String:
 ## Bottom centre: this lap's sector times (purple = fastest of anyone, green =
 ## personal best, yellow = slower; white is the sector being driven now),
 ## flanked by the gap to the car ahead (left) and behind (right).
-func _draw_sectors_and_gaps(vp: Vector2, me: int) -> void:
+const SECTOR_BOX_W := 108.0
+const GAP_W := 210.0
+
+
+func _sectors_width() -> float:
+	var n := session.sim.track.sectors.size()
+	return GAP_W * 2.0 + n * SECTOR_BOX_W + (n - 1) * 6.0 + 24.0
+
+
+func _draw_sectors_and_gaps(me: int) -> void:
 	var sim := session.sim
 	var e := sim.entries[me]
 	var n := sim.track.sectors.size()
-	var box_w := 108.0
-	var gap_w := 210.0
-	var w := gap_w * 2.0 + n * box_w + (n - 1) * 6.0 + 24.0
-	var r := Rect2(vp.x * 0.5 - w * 0.5, vp.y - 110, w, 82)
+	var box_w := SECTOR_BOX_W
+	var gap_w := GAP_W
+	var w := _sectors_width()
+	var r := Rect2(0, 0, w, 82)
 	_panel(r)
 	# Sectors
 	var since_line := sim.race_time - e.sector_start_time

@@ -11,6 +11,7 @@
   "track_width_m": 1.6,
   "length_m": 4.57,
   "width_m": 1.85,
+  "body_offset_m": 0.21,
   "inertia_factor": 1.0,
   "engine": {
     "idle_rpm": 1000,

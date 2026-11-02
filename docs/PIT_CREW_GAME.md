@@ -86,7 +86,7 @@ north up) and goes back when the car leaves.
 - Multiplayer: all through `RaceSession.request_pit` like any pit call, and
   the timeline is part of the pit state everyone gets. Another machine draws
   a remote gunner from their reported wheels (kneeling until a nut is done,
-  carrying the wheel during the swap). Protocol 14.
+  carrying the wheel during the swap). Protocol 15.
 
 Next, from the co-op ideas doc: the driver brakes onto the marks themselves,
 both gunners on one screen, then a player as the refueller.

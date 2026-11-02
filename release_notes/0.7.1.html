@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Top Down Racer Release Notes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<style>
+/* Same layout as the Torque Shed release notes, every release: masthead, at a glance,
+   one entry per feature (rail on the left: area, day, part of the game), then Try it / Known limits / Coming next. */
+:root {
+  --paper: #efede7; --sheet: #ffffff; --ink: #1b1d20; --muted: #5b6168; --rule: #d5d2c9;
+  --accent: #c0341d; --link: #1d6b8a;
+  --display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --body: "Literata", Georgia, "Times New Roman", serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #121417; --sheet: #1b1e22; --ink: #e5e6e8; --muted: #9ca3aa; --rule: #2d3238;
+    --accent: #ff7552; --link: #6cc3e0; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #121417; --sheet: #1b1e22; --ink: #e5e6e8; --muted: #9ca3aa; --rule: #2d3238;
+  --accent: #ff7552; --link: #6cc3e0; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--paper); color: var(--ink); font-family: var(--body); font-size: 17px; line-height: 1.6; margin: 0;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.wrap { max-width: 1060px; margin: 0 auto; padding-block: 40px 72px; }
+h1, h2, h3 { font-family: var(--display); font-weight: 700; line-height: 1.05; text-wrap: balance; margin: 0; letter-spacing: 0.01em; }
+a { color: var(--link); text-underline-offset: 3px; }
+header.top { display: grid; gap: 18px; padding-bottom: 28px; border-bottom: 2px solid var(--ink); }
+.kicker { font-family: var(--mono); font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px 18px; }
+h1 { font-size: clamp(46px, 8vw, 84px); text-transform: uppercase; }
+h1 span { color: var(--accent); }
+.lede { max-width: 64ch; font-size: 19px; margin: 0; }
+.cta { display: flex; flex-wrap: wrap; gap: 10px; }
+.play { font-family: var(--display); font-size: 19px; letter-spacing: 0.04em; text-transform: uppercase; padding: 8px 16px; border: 2px solid var(--ink); color: var(--ink); background: var(--sheet); overflow-wrap: anywhere; }
+.play.main { background: var(--accent); border-color: var(--accent); color: #fff; }
+.glance { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); margin-block: 28px 8px; }
+.glance div { background: var(--sheet); padding: 14px 16px; min-width: 0; }
+.glance b { display: block; font-family: var(--display); font-size: 21px; letter-spacing: 0.02em; text-transform: uppercase; }
+.glance p { margin: 4px 0 0; font-size: 15px; color: var(--muted); }
+.log { margin-top: 44px; display: grid; }
+.entry { display: grid; grid-template-columns: 118px minmax(0, 1fr); gap: 28px; padding-block: 34px; border-top: 1px solid var(--rule); }
+.rail .m { font-family: var(--display); font-size: 40px; color: var(--accent); line-height: 1; text-transform: uppercase; }
+.rail .d { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-top: 6px; letter-spacing: 0.04em; }
+.rail .area { font-family: var(--mono); font-size: 11px; color: var(--link); margin-top: 10px; letter-spacing: 0.06em; text-transform: uppercase; }
+.body { min-width: 0; }
+.body h2 { font-size: clamp(28px, 4vw, 38px); text-transform: uppercase; }
+.body .sum { margin: 8px 0 14px; max-width: 66ch; }
+.body ul { margin: 0 0 18px; padding-left: 1.2em; max-width: 68ch; }
+.body li { margin-block: 3px; }
+.body li::marker { color: var(--accent); }
+.after { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 28px; margin-top: 40px; padding-top: 30px; border-top: 2px solid var(--ink); }
+.after h3 { font-size: 26px; text-transform: uppercase; margin-bottom: 8px; }
+.after ul { margin: 0; padding-left: 1.1em; }
+.after li { margin-block: 4px; }
+.after li::marker { color: var(--link); }
+footer { margin-top: 44px; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+@media (max-width: 720px) {
+  .entry { grid-template-columns: 1fr; gap: 10px; }
+  .rail { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  .rail .d, .rail .area { margin-top: 0; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="kicker"><span>Release notes</span><span>2 Nov 2026</span><span>v0.7.1</span><span>Online racing fixes</span></div>
+    <h1>Top Down <span>Racer</span></h1>
+    <p class="lede">This release fixes online racing. Every player's screen now shows every car in the same place, so door to door on yours is door to door on theirs, and impacts happen only when the cars really touch. Each car's paint is now the same on every machine. Your own car and other players' cars get a soft outline. Pit lanes now join the track smoothly.</p>
+    <div class="cta">
+      <span class="play main">Download TopDownRacer-v0.7.1-windows.zip</span>
+    </div>
+    <section class="glance" aria-label="At a glance">
+      <div><b>Cars where they are</b><p>Each player's game now shows every car where it really is, instead of 1 to 2 car lengths behind.</p></div>
+      <div><b>Real hit boxes</b><p>Contact happens when the bodywork touches, not 25 cm early.</p></div>
+      <div><b>Same paint</b><p>The host and every guest see the same colours on every car.</p></div>
+      <div><b>Highlights</b><p>A gold outline marks your car and a fainter blue one marks other players' cars.</p></div>
+      <div><b>Pit lanes</b><p>The lane eases into the track where it leaves and rejoins.</p></div>
+    </section>
+  </header>
+
+  <main class="log">
+
+    <article class="entry" id="netcode">
+      <div class="rail"><div class="m">Online</div><div class="d">2 Nov</div><div class="area">Netcode</div></div>
+      <div class="body">
+        <h2>No more phantom impacts</h2>
+        <p class="sum">Until now, each game drew the other players' cars where they had been about a tenth of a second ago, plus the ping. At racing speed that is one or two car lengths. You could be door to door on the host's screen while your guest saw a car length between you, and you could hit a car where it used to be.</p>
+        <ul>
+          <li>Guests now sync their clock with the host's twice a second, so every game agrees on when each car's position was sent.</li>
+          <li>Each game then places every other car where it is right now, using its speed, steering and braking. Small corrections are smoothed out over a few frames, so cars don't jump.</li>
+          <li>In testing, two screens showed the same car within a centimetre of each other, where before they could be up to 14 m apart.</li>
+          <li>Cars were also drawn a little behind their true positions, more for faster cars. They now move smoothly at their real speed.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="hitboxes">
+      <div class="rail"><div class="m">Contact</div><div class="d">2 Nov</div><div class="area">Race rules</div></div>
+      <div class="body">
+        <h2>Hit boxes match the cars</h2>
+        <p class="sum">Each car is now its real outline seen from above: a box with rounded corners, the car's length and width, centred on its bodywork.</p>
+        <ul>
+          <li>The old shape was centred on the car's centre of gravity. On mid-engined cars like the 296, 720S and 911 GT3 R it stuck out about 25 cm behind the rear bumper, so a car behind made contact too early.</li>
+          <li>The front corners now hit as well. The old shape rounded them off.</li>
+          <li>Each car's position was measured from its own 3D model.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="paint">
+      <div class="rail"><div class="m">Paint</div><div class="d">2 Nov</div><div class="area">Graphics</div></div>
+      <div class="body">
+        <h2>Same cars and colours for everyone, and player highlights</h2>
+        <p class="sum">When two cars of the same model were in a race, each game painted the copies its own way, so the host and the guests saw different colours. The whole field is now painted the same on every machine.</p>
+        <ul>
+          <li>Your own scheme from the garage always wins. When a model appears more than once, the players' cars keep its normal livery first and the others get their own colours.</li>
+          <li>Your car (or your team's car while you're on the pit wall) has a soft, slowly glowing gold outline on the ground. Cars driven by other people have a fainter blue one, and AI cars have none.</li>
+          <li>The outlines get thicker when you zoom out, so you can spot players across the whole track.</li>
+          <li>Turn either outline off in Settings &gt; Gameplay: Highlight my car, Highlight other players.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="pitlanes">
+      <div class="rail"><div class="m">Tracks</div><div class="d">2 Nov</div><div class="area">Pit lanes</div></div>
+      <div class="body">
+        <h2>Pit lanes blend into the circuit</h2>
+        <p class="sum">Where the pit lane leaves and rejoins the track, its surface now eases to the track's height. Before, it could be up to 3.7 m off.</p>
+        <ul>
+          <li>The lane is no longer drawn over the track, and a strip of tarmac fills narrow gaps between them.</li>
+          <li>The pit lane has painted edge lines, and white hatching where it splits from the track.</li>
+        </ul>
+      </div>
+    </article>
+
+  </main>
+
+  <section class="after">
+    <div>
+      <h3>Try it</h3>
+      <ul>
+        <li>Unzip the folder and double-click TopDownRacer.exe, as before.</li>
+        <li>Online, everyone needs v0.7.1. Older games are turned away at the lobby.</li>
+        <li>Race side by side with a friend and compare screens: you should both see the same gap.</li>
+        <li>Both pick the same car and check the colours match on both screens.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Known limits</h3>
+      <ul>
+        <li>Over a slow or patchy connection, a car that steers sharply can be a little off for a moment before it is corrected.</li>
+        <li>Each player's game still works out its own car's contacts, so a hard hit can feel slightly different on each side.</li>
+        <li>AI drivers ease off at about 280 km/h on long straights.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Coming next</h3>
+      <ul>
+        <li>More from your feedback list: overlay editor, strategist plan view and pit-stop queue with radio.</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>Build of main with PRs #38 and #41: pit lanes blend into the circuit; online sync, hit boxes, liveries and player highlights.</footer>
+</div>
+</body>
+</html>
