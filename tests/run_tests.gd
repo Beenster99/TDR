@@ -53,6 +53,7 @@ func _init() -> void:
 	test_driving_aids()
 	test_active_pad()
 	test_hud_timing()
+	test_hud_layout()
 	test_graphics_effects()
 	test_settings_and_units()
 	test_rebinding()
@@ -2324,6 +2325,42 @@ func test_driving_aids() -> void:
 	g.assist_track = 2
 	c2.deserialize(g.serialize())
 	check(c2.manual_gears and c2.assist_track == 2, "manual gearbox and track assist survive a snapshot")
+## HUD layout editor: items keep their spot on any screen shape, resizes are
+## clamped, hidden items come back, and the saved form round-trips.
+func test_hud_layout() -> void:
+	print("hud layout:")
+	var l := HudLayout.new()
+	check(l.is_on("map") and l.scale_of("map") == 1.0 and not l.has_pos("map"), "a new layout is as designed")
+	var vp := Vector2(1600, 900)
+	var sz := Vector2(250, 120)
+	var tl := Vector2(1340, 770)
+	var f := HudLayout.frac_of(tl, sz, vp)
+	check(HudLayout.place(f, sz, vp).distance_to(tl) < 0.01, "place() undoes frac_of()")
+	var wide := HudLayout.place(Vector2(1, 1), sz, Vector2(2560, 1080))
+	check(wide.is_equal_approx(Vector2(2310, 960)), "an item on the bottom-right edge stays there on an ultrawide screen")
+	l.set_pos("speed", f)
+	l.set_scale("speed", 5.0)
+	check(l.scale_of("speed") == HudLayout.MAX_SCALE, "size is capped")
+	l.set_scale("speed", 0.1)
+	check(l.scale_of("speed") == HudLayout.MIN_SCALE, "size has a floor")
+	l.set_on("hint", false)
+	check(not l.is_on("hint"), "items can be hidden")
+	var back := HudLayout.from_value(l.to_value())
+	check(not back.is_on("hint") and back.has_pos("speed") and back.scale_of("speed") == HudLayout.MIN_SCALE, "the saved layout round-trips")
+	back.reset("hint")
+	check(not back.is_on("hint"), "reset keeps an item hidden")
+	back.set_on("hint", true)
+	back.reset("speed")
+	check(back.to_value().is_empty(), "shown again and reset: nothing left to save")
+	check(HudLayout.from_value("junk").items.is_empty(), "a broken saved layout is ignored")
+	var ids := {}
+	for it in RaceHud.ITEMS:
+		ids[it[0]] = true
+	for id in RaceHud.CAR_ITEMS:
+		check(ids.has(id), "car item %s is a HUD item" % id)
+	check(InputMap.has_action("hud_edit") or InputSetup.KEYS.has("hud_edit"), "F2 opens the HUD layout editor")
+
+
 ## Race HUD: the timing tower fits big grids (top three plus a window round
 ## the player), every car gets a manufacturer badge, names stay short.
 func test_hud_timing() -> void:
