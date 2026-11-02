@@ -16,8 +16,8 @@ const LANE_ROAD_SPEED := 35.0  ## m/s on the entry/exit roads outside the limit
 const BOX_IN_OUT_S := 3.0      ## braking into the box and pulling away
 const NO_LANE_LOSS_S := 25.0   ## a track without pit lane data
 
-## Seconds stood in the box: each car's planned pit work (tyres, fuel,
-## repairs) from the race's PitRules, set per car during analyse().
+## Seconds stood in the box for a typical stop (a tyre change). Each car's
+## own loss uses its planned pit work (tyres, fuel, repairs) instead.
 var stop_time_s: float = 8.0
 var has_lane := false
 var lane_time: float = 0.0     ## seconds from pit entry to exit, excluding the stop
@@ -53,10 +53,11 @@ func span_time(c: CarTelemetry, track_length: float) -> float:
 	return span_m / 50.0
 
 
-func loss_for(c: CarTelemetry, track_length: float) -> float:
+func loss_for(c: CarTelemetry, track_length: float, stop_s: float = -1.0) -> float:
+	var stop := stop_s if stop_s >= 0.0 else stop_time_s
 	if not has_lane:
-		return NO_LANE_LOSS_S + stop_time_s
-	return maxf(lane_time + stop_time_s - span_time(c, track_length), stop_time_s)
+		return NO_LANE_LOSS_S + stop
+	return maxf(lane_time + stop - span_time(c, track_length), stop)
 
 
 ## Fills cars[i].pit for every running car.
@@ -72,9 +73,10 @@ func analyse(cars: Array, sim: RaceSim) -> void:
 			c.pit = {}
 			continue
 		# Time stood still: the car's own planned stop (tyres, fuel, repairs).
+		var stop := stop_time_s
 		if sim.pits != null and sim.pits.enabled:
-			stop_time_s = sim.pits.service_for(i, e.pit["plan"])["total_s"]
-		var loss := loss_for(c, sim.track.length)
+			stop = sim.pits.service_for(i, e.pit["plan"])["total_s"]
+		var loss := loss_for(c, sim.track.length, stop)
 		# Time gaps to every running car behind, nearest first.
 		var lost := 0
 		var ahead_after := -1.0

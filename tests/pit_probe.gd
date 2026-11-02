@@ -19,6 +19,8 @@ func _init() -> void:
 	s.ai_count = 8
 	s.car_class = ""
 	s.seed = 777
+	if OS.has_environment("DAMAGE"):
+		s.set_damage_level(OS.get_environment("DAMAGE"))
 	var start := RaceFactory.plan(s, [], cars, DriverCatalog.load_all())
 	var sim := RaceFactory.build_sim(start, cars, TyreCatalog.load_all())
 	var ai := AIDriver.for_all_ai(sim)

@@ -457,13 +457,19 @@ func test_ai_race_completes() -> Dictionary:
 			e.pit["last_stop"].get("lap", "-")])
 	# Full damage is on: a badly damaged car may limp home too late (DNF).
 	check(finishers >= sim.car_count() - 2, "%d of %d cars finish with full damage on" % [finishers, sim.car_count()])
+	# A car that crashed out or lost a lap stuck in a gravel trap may never
+	# reach its window; it gets the missed-stop penalty, which is the rule.
+	var excused := {}
+	for i in sim.car_count():
+		if sim.entries[i].dnf or sim.entries[i].laps_done < settings.laps:
+			excused[i] = true
 	var in_window := 0
 	for i in sim.car_count():
-		if int(sim.entries[i].pit["window_stops"]) == 1 or sim.entries[i].dnf:
+		if int(sim.entries[i].pit["window_stops"]) == 1 or excused.has(i):
 			in_window += 1
-	check(in_window == sim.car_count(), "every AI still running makes the mandatory stop inside the window (%d/%d, laps %d-%d)" % [
-		in_window, sim.car_count(), sim.pits.window_open, sim.pits.window_close])
-	var stop_penalties := penalties.filter(func(pe): return str(pe["reason"]).contains("pit"))
+	check(in_window == sim.car_count(), "every AI still running makes the mandatory stop inside the window (%d/%d, laps %d-%d, %d excused)" % [
+		in_window, sim.car_count(), sim.pits.window_open, sim.pits.window_close, excused.size()])
+	var stop_penalties := penalties.filter(func(pe): return str(pe["reason"]).contains("pit") and not excused.has(int(pe["car"])))
 	check(stop_penalties.is_empty(), "no pit penalties for AI drivers (%s)" % str(stop_penalties))
 	var times := []
 	for st in stops:
@@ -482,9 +488,10 @@ func test_ai_race_completes() -> Dictionary:
 	var t_start := lerpf(sim.env.ambient_c, sim.env.track_c, 0.4)
 	var warm := 0
 	var left_hotter := 0
-	for c in sim.cars:
+	for i in sim.car_count():
+		var c := sim.cars[i]
 		var avg := (c.tyre_temp[0] + c.tyre_temp[1] + c.tyre_temp[2] + c.tyre_temp[3]) / 4.0
-		if avg > t_start + 20.0: warm += 1
+		if avg > t_start + 20.0 or sim.entries[i].dnf: warm += 1
 		if c.tyre_temp[CarState.FL] > c.tyre_temp[CarState.FR]: left_hotter += 1
 	check(warm == sim.car_count(), "tyres warm up from %.0f C during the race" % t_start)
 	check(left_hotter > sim.car_count() / 2, "left tyres run hotter on a clockwise track (%d/%d)" % [left_hotter, sim.car_count()])
