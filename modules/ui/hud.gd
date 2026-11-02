@@ -115,7 +115,9 @@ func _draw() -> void:
 		var e := sim.entries[i]
 		var col := Color(1, 0.9, 0.3) if i == me else (Color(0.75, 0.85, 1) if not e.is_ai else Color.WHITE)
 		var right := ""
-		if e.finished:
+		if sim.in_pit_lane(i) and not e.finished:
+			right = "PIT"
+		elif e.finished:
 			right = "FIN"
 		elif e.dnf:
 			right = "DNF"
@@ -125,8 +127,10 @@ func _draw() -> void:
 		var dot := sim.defs[i].colour
 		draw_rect(Rect2(x0, 42 + p * 22, 8, 14), dot)
 		_text(Vector2(x0 + 14, 55 + p * 22), "%2d  %s" % [p + 1, e.driver_name.left(18)], 15, col)
+		if sim.pits.enabled and int(e.pit.get("stops", 0)) > 0:
+			_text(Vector2(x0 + 172, 55 + p * 22), str(e.pit["stops"]), 12, Color(1, 1, 1, 0.55))
 		if e.penalty_s > 0.0:
-			_text(Vector2(x0 + 150, 55 + p * 22), "+%ds" % int(e.penalty_s), 13, Color(1, 0.55, 0.3))
+			_text(Vector2(x0 + 140, 55 + p * 22), "+%ds" % int(e.penalty_s), 13, Color(1, 0.55, 0.3))
 		_text(Vector2(x0 + 200, 55 + p * 22), right, 15, col, HORIZONTAL_ALIGNMENT_RIGHT, 110)
 
 	# --- Minimap
@@ -177,6 +181,8 @@ func _draw() -> void:
 		var r := Rect2(bl + pos[k], Vector2(48, 48))
 		draw_rect(r, _temp_colour(t, tc))
 		_text(r.position + Vector2(0, 30), "%d°" % int(t), 16, Color.BLACK, HORIZONTAL_ALIGNMENT_CENTER, 48)
+		if sim.settings.tyre_wear_enabled:
+			_text(r.position + Vector2(0, 46), "%d%%" % roundi((1.0 - c.tyre_wear[k]) * 100.0), 11, Color(0, 0, 0, 0.75), HORIZONTAL_ALIGNMENT_CENTER, 48)
 	var env := sim.env
 	var h := env.time_of_day_h
 	_text(bl + Vector2(146, 50), "%02d:%02d  %s" % [int(h), int(fmod(h, 1.0) * 60.0), SimEnvironment.weather_name(env.weather)], 15)
@@ -192,9 +198,86 @@ func _draw() -> void:
 	var grip := avg / 4.0 * env.grip_factor(tc, off_line, c.speed())
 	_text(bl + Vector2(146, 138), "Grip %d%%" % int(grip * 100.0), 15, Color(0.6, 1, 0.6) if grip > 0.85 else Color(1, 0.7, 0.4))
 	if sim.settings.fuel_enabled:
-		_text(bl + Vector2(146, 160), "Fuel %.1f L" % c.fuel_l, 15)
+		var fl := sim.pits.fuel_laps(me)
+		_text(bl + Vector2(146, 160), "Fuel %.1f L  %s" % [c.fuel_l, "(%.1f laps)" % fl if fl < 99.0 else ""], 15,
+			Color(1, 0.5, 0.3) if fl < 1.5 else Color.WHITE)
+	if sim.pits.enabled:
+		_draw_pit_panel(Vector2(10, 170), me)
 	if sim.damage_level != CarDamage.Level.OFF:
 		_draw_damage(Vector2(10, vp.y - 196 - 126), c, sim.damage_level == CarDamage.Level.FULL)
+
+
+## Pit panel (left, under the timing): pit call, limiter, plan, stops, stop time.
+func _draw_pit_panel(o: Vector2, me: int) -> void:
+	var sim := session.sim
+	var pits := sim.pits
+	var e := sim.entries[me]
+	var p: Dictionary = e.pit
+	var plan: Dictionary = p["plan"]
+	var phase: String = p["phase"]
+	var need := sim.settings.mandatory_pit_stops
+	var busy: bool = phase != PitRules.PHASE_NONE or p["box"] or p["limiter"]
+	var h := 114 if need > 0 or busy or sim.settings.fuel_enabled or sim.settings.tyre_wear_enabled else 0
+	if h == 0 and e.penalty_s <= 0.0:
+		return
+	_panel(Rect2(o, Vector2(300, h + (22 if e.penalty_s > 0.0 else 0))))
+	var y := o.y + 22
+	if h > 0:
+		var head := "PIT"
+		var hc := Color(1, 1, 1, 0.7)
+		match phase:
+			PitRules.PHASE_APPROACH: head = "BOXING: CAR DRIVING TO THE PITS"
+			PitRules.PHASE_ENTRY: head = "PIT LANE: %d KM/H LIMIT" % roundi(sim.track.pit_speed_limit * 3.6)
+			PitRules.PHASE_LIMIT: head = "PIT LANE, TO YOUR BOX"
+			PitRules.PHASE_SERVICE: head = "PIT STOP  %.1f s" % float(p["service_left"])
+			PitRules.PHASE_LEAVE, PitRules.PHASE_EXIT: head = "PIT EXIT"
+			_:
+				if p["box"]:
+					head = "BOX THIS LAP"
+		if phase != PitRules.PHASE_NONE or p["box"]:
+			hc = Color(1, 0.85, 0.2)
+		_text(Vector2(o.x + 14, y), head, 15, hc)
+		if p["limiter"]:
+			_text(Vector2(o.x + 214, y), "LIMITER", 15, Color(0.4, 0.9, 1))
+		y += 22
+		if need > 0:
+			var done := int(p["window_stops"])
+			_text(Vector2(o.x + 14, y), "Stops %d/%d  window laps %d-%d" % [done, need, pits.window_open, pits.window_close], 14,
+				Color(0.6, 1, 0.6) if done >= need else Color.WHITE)
+		else:
+			_text(Vector2(o.x + 14, y), "Stops %d" % int(p["stops"]), 14)
+		y += 22
+		var fuel_txt := ""
+		if sim.settings.fuel_enabled:
+			fuel_txt = "  fuel " + fuel_plan_text(float(plan["fuel"]))
+		_text(Vector2(o.x + 14, y), "Next: tyres %s%s" % [tyre_plan_text(sim, me, str(plan["tyre"])), fuel_txt], 14, Color(1, 1, 1, 0.85))
+		y += 22
+		var work := pits.service_for(me, plan)
+		_text(Vector2(o.x + 14, y), "Stop about %.0f s%s" % [work["total_s"], "  + repairs" if float(work["repair_s"]) > 0.0 else ""], 14, Color(1, 1, 1, 0.7))
+		y += 22
+	if e.penalty_s > 0.0:
+		_text(Vector2(o.x + 14, y), "Penalties +%d s" % int(e.penalty_s), 14, Color(1, 0.5, 0.3))
+
+
+static func tyre_plan_text(sim: RaceSim, car: int, choice: String) -> String:
+	match choice:
+		PitRules.TYRE_AUTO:
+			var id := sim.pits.compound_for_conditions(car)
+			return "auto (%s)" % (sim.tyre_defs[id].display_name if sim.tyre_defs.has(id) else id)
+		PitRules.TYRE_KEEP:
+			return "no change"
+		PitRules.TYRE_DRY:
+			var dry := sim.dry_compound[car]
+			return sim.tyre_defs[dry].display_name if sim.tyre_defs.has(dry) else "dry"
+	return sim.tyre_defs[choice].display_name if sim.tyre_defs.has(choice) else choice
+
+
+static func fuel_plan_text(fuel: float) -> String:
+	if fuel < 0.0:
+		return "to the end"
+	if fuel == 0.0:
+		return "none"
+	return "+%d L" % int(fuel)
 
 
 ## Damage panel: a top view of the car with each zone coloured by how bent

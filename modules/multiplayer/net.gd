@@ -19,7 +19,7 @@ signal internet_status_changed
 const DEFAULT_PORT := 24690
 const MAX_PEERS := 16
 ## Bump whenever a message changes shape; mismatched games are told at the lobby.
-const PROTOCOL_VERSION := 7  # 4: track elevation, 5: damage in car states, 6: barrier types and run-off surfaces, 7: race control in the race state
+const PROTOCOL_VERSION := 8  # 4: track elevation, 5: damage in car states, 6: barrier types and run-off surfaces, 7: race control in the race state, 8: pit stops
 const COMPRESSION := ENetConnection.COMPRESS_ZSTD
 ## How long a player's game may go silent before they're taken to have left (ms).
 const TIMEOUT_MS := 15000
@@ -465,3 +465,26 @@ func broadcast_events(evs: Array) -> void:
 func _rpc_events(evs: Array) -> void:
 	if session:
 		session.on_remote_events(evs)
+
+
+## Pit stops: the owner of a car tells the host its pit state when it changes.
+func send_pit_state(car: int, state: Dictionary) -> void:
+	_rpc_pit_state.rpc_id(1, car, state)
+
+
+@rpc("any_peer", "reliable", "call_remote", 4)
+func _rpc_pit_state(car: int, state: Dictionary) -> void:
+	if session and is_server():
+		session.on_pit_state(multiplayer.get_remote_sender_id(), car, state)
+
+
+## A crew member (driver, pit crew, strategist) changes a car's pit plan, the
+## box call or the limiter. Goes to the host, which passes it to the car's owner.
+func send_pit_request(to_peer: int, car: int, changes: Dictionary) -> void:
+	_rpc_pit_request.rpc_id(to_peer, car, changes)
+
+
+@rpc("any_peer", "reliable", "call_remote", 4)
+func _rpc_pit_request(car: int, changes: Dictionary) -> void:
+	if session:
+		session.on_pit_request(multiplayer.get_remote_sender_id(), car, changes)

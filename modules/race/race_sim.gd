@@ -20,6 +20,11 @@ var defs: Array[CarDefinition] = []
 var compounds: Array[TyreCompound] = []
 var cars: Array[CarState] = []
 var entries: Array[RaceEntry] = []
+## Every tyre compound by id (pit stops fit new ones), and each car's own dry compound.
+var tyre_defs: Dictionary = {}
+var dry_compound: Array[String] = []
+## Pit lane, pit stops, fuel strategy rules, mandatory stops (PitRules).
+var pits: PitRules
 
 var tick: int = 0
 var phase: int = Phase.COUNTDOWN
@@ -70,17 +75,23 @@ func _init(p_settings: RaceSettings, p_track: TrackData, p_entries: Array[RaceEn
 	env.bind_track(track)
 	damage_level = CarDamage.level_from(settings.effective_damage_level())
 	entries = p_entries
+	self.tyre_defs = tyre_defs
 	for i in entries.size():
 		var e := entries[i]
 		var base: CarDefinition = car_defs[e.car_id]
 		var def := base.with_overrides(e.setup) if not e.setup.is_empty() else base
 		defs.append(def)
-		compounds.append(tyre_defs.get(def.tyre_compound_id, tyre_defs.values()[0]))
+		dry_compound.append(base.tyre_compound_id)
+		var compound: TyreCompound = tyre_defs.get(def.tyre_compound_id, tyre_defs.values()[0])
+		compounds.append(compound)
 		cars.append(_make_car_on_grid(i, def))
 		running_order.append(i)
 		external.append(0)
 		_incident_cooldown.append(0.0)
 		_seen_damage.append([0.0, 0, false, false])
+		if e.pit.is_empty():
+			e.pit = PitRules.new_state(compound.id)
+	pits = PitRules.new(self)
 	race_control = RaceControl.new(self)
 	_update_positions()
 
@@ -154,6 +165,8 @@ func step(inputs: Array) -> void:
 
 	var sub_dt := TICK_DT / SUBSTEPS
 	var fuel_rate := settings.fuel_rate if settings.fuel_enabled else 0.0
+	var wear_rate := settings.tyre_wear_rate if settings.tyre_wear_enabled else 0.0
+	inputs = pits.pre_step(inputs)
 	var prev_s := PackedFloat64Array()
 	for c in cars:
 		prev_s.append(c.track_s)
@@ -165,7 +178,7 @@ func step(inputs: Array) -> void:
 			if external[i] or race_control.recovered[i]:
 				continue
 			var inp: CarInput = inputs[i] if i < inputs.size() and inputs[i] != null else CarInput.neutral()
-			CarPhysics.step(cars[i], inp, defs[i], compounds[i], env, track, sub_dt, fuel_rate, events, i)
+			CarPhysics.step(cars[i], inp, defs[i], compounds[i], env, track, sub_dt, fuel_rate, events, i, wear_rate)
 		_resolve_collisions()
 	_apply_damage()
 
@@ -173,9 +186,27 @@ func step(inputs: Array) -> void:
 		return
 	for i in cars.size():
 		_update_progress(i, prev_s[i])
+	pits.host_update(events)
 	_update_positions()
 	race_control.step(TICK_DT, prev_s)
 	_check_race_end()
+
+
+# --- Pit lane and penalties (other modules read these) ------------------------
+
+## True while car i is in the pit lane (entry to exit).
+func in_pit_lane(i: int) -> bool:
+	return pits.in_pit_lane(i)
+
+
+## Car i's pit phase: "" (on track), "approach", "entry", "limit", "service", "leave", "exit".
+func pit_phase(i: int) -> String:
+	return pits.phase(i)
+
+
+## True while the pit guide drives car i (AI drivers stand by).
+func pit_controls(i: int) -> bool:
+	return pits.controls(i)
 
 
 func _refresh_track_position(c: CarState) -> void:
@@ -250,6 +281,7 @@ func _update_progress(i: int, prev_s: float) -> void:
 	if e.laps_done >= settings.laps or phase == Phase.CHEQUERED:
 		e.finished = true
 		e.finish_time = t_cross
+		pits.on_finished(i)
 		finish_order.append(i)
 		events.append({"type": "finished", "car": i, "position": finish_order.size(), "time": t_cross})
 		if phase == Phase.RACING:
@@ -268,11 +300,13 @@ func _update_positions() -> void:
 		if ex.finished != ey.finished:
 			return ex.finished
 		if ex.finished:
-			# Classification: laps, then race time including penalties.
+			# Classified on laps, then race time plus penalties.
 			if ex.laps_done != ey.laps_done:
 				return ex.laps_done > ey.laps_done
-			if ex.finish_time + ex.penalty_s != ey.finish_time + ey.penalty_s:
-				return ex.finish_time + ex.penalty_s < ey.finish_time + ey.penalty_s
+			var tx := ex.finish_time + ex.penalty_s
+			var ty := ey.finish_time + ey.penalty_s
+			if tx != ty:
+				return tx < ty
 			return finish_order.find(x) < finish_order.find(y)
 		if ex.dnf != ey.dnf:
 			return ey.dnf
@@ -530,7 +564,7 @@ func snapshot() -> Dictionary:
 	return {
 		"tick": tick, "phase": phase, "phase_time": phase_time, "race_time": race_time,
 		"leader_finish_time": leader_finish_time, "finish_order": finish_order.duplicate(),
-		"env": env.to_dict(), "cars": car_data, "entries": entry_data,
+		"env": env.to_dict(), "cars": car_data, "entries": entry_data, "pits": pits.to_dict(),
 		"race_control": race_control.to_dict(true),
 	}
 
@@ -546,6 +580,9 @@ func apply_snapshot(snap: Dictionary) -> void:
 	for i in cars.size():
 		cars[i].deserialize(snap["cars"][i])
 		entries[i].from_dict(snap["entries"][i])
+		pits.apply_remote(i, entries[i].pit)
+	if snap.has("pits"):
+		pits.from_dict(snap["pits"])
 	if snap.has("race_control"):
 		race_control.apply_dict(snap["race_control"])
 	_update_positions()
@@ -570,7 +607,13 @@ func apply_race_state(st: Dictionary) -> void:
 	finish_order.assign(st["finish_order"])
 	env.apply_dict(st["env"])
 	for i in mini(entries.size(), st["entries"].size()):
+		# A car's pit state belongs to the machine that simulates it.
+		var own_pit: Dictionary = entries[i].pit
 		entries[i].from_dict(st["entries"][i])
+		if not external[i]:
+			entries[i].pit = own_pit
+		else:
+			pits.apply_remote(i, entries[i].pit)
 	if st.has("race_control"):
 		race_control.apply_dict(st["race_control"])
 	_update_positions()

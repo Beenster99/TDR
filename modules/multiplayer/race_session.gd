@@ -37,6 +37,7 @@ var inputs: Array[CarInput] = []
 var timelines: Dictionary = {}        ## car index -> NetTimeline (remote cars)
 var net = null                        ## Net autoload (null offline)
 var _finished_emitted := false
+var _pit_sent: Dictionary = {}        ## car -> pit state signature last sent to the host
 var _last_race_tick := -1
 
 
@@ -51,6 +52,8 @@ static func create(p_mode: int, p_start_data: Dictionary, p_local_peer: int, p_n
 		s.ai = AIDriver.for_all_ai(s.sim)
 	s.sim.follower = p_mode == Mode.CLIENT
 	s.telemetry = RaceTelemetry.create(s.sim, p_mode != Mode.CLIENT)
+	for i in s.ai:
+		s.ai[i].pit_strategy.telemetry = s.telemetry
 	for i in s.sim.car_count():
 		s.inputs.append(CarInput.neutral())
 		var e := s.sim.entries[i]
@@ -110,6 +113,8 @@ func tick(local_input: CarInput) -> void:
 			net.broadcast_race_state(var_to_bytes(_race_state()))
 	if net and sim.tick % SEND_EVERY == 0:
 		_send_my_cars(now)
+	if net and mode == Mode.CLIENT:
+		_send_my_pit_states()
 	_check_finished()
 
 
@@ -121,6 +126,60 @@ func _send_my_cars(now: float) -> void:
 			sim.cars[i].pack_net(data)
 	if not data.is_empty():
 		net.send_car_states(now, data)
+
+
+## Client: tell the host about pit state changes of the cars simulated here.
+func _send_my_pit_states() -> void:
+	for i in sim.car_count():
+		if not owns(i):
+			continue
+		var sig := PitRules.signature(sim.entries[i].pit)
+		if _pit_sent.get(i, "") != sig:
+			_pit_sent[i] = sig
+			net.send_pit_state(i, sim.entries[i].pit)
+
+
+# --- Pit wall: anyone in a car's crew can call it in or change the plan ----------
+
+## Change car's pit plan: {box, tyre, fuel, repair} (see PitRules.set_plan) or
+## {limiter: bool}. Works from any machine whose player is in the car's crew
+## (the driver, or a co-op pit crew / strategist): it reaches the machine that
+## simulates the car through the host.
+func request_pit(car: int, changes: Dictionary) -> void:
+	if car < 0 or car >= sim.car_count():
+		return
+	if owns(car):
+		_apply_pit_request(car, changes)
+	elif net:
+		net.send_pit_request(owners[car] if is_authority() else HOST_PEER, car, changes)
+
+
+func _apply_pit_request(car: int, changes: Dictionary) -> void:
+	if changes.has("limiter"):
+		sim.pits.set_limiter(car, bool(changes["limiter"]))
+	sim.pits.set_plan(car, changes)
+
+
+func on_pit_request(sender: int, car: int, changes: Dictionary) -> void:
+	if car < 0 or car >= sim.car_count():
+		return
+	if is_authority():
+		# Only the car's own crew (or its owner) may call its stops.
+		if sender != owners[car] and not sim.entries[car].has_peer(sender):
+			return
+		if owns(car):
+			_apply_pit_request(car, changes)
+		elif net:
+			net.send_pit_request(owners[car], car, changes)
+	elif sender == HOST_PEER and owns(car):
+		_apply_pit_request(car, changes)
+
+
+## Host: a car's owner reports its pit state.
+func on_pit_state(sender: int, car: int, state: Dictionary) -> void:
+	if not is_authority() or car < 0 or car >= sim.car_count() or owners[car] != sender:
+		return
+	sim.pits.apply_remote(car, state)
 
 
 func _check_finished() -> void:
@@ -196,5 +255,6 @@ func on_peer_left(peer_id: int) -> void:
 		else:
 			owners[i] = local_peer
 			ai[i] = AIDriver.for_car(sim, i)
+			ai[i].pit_strategy.telemetry = telemetry
 			e.driver_name += " (AI)"
 	_apply_ownership()

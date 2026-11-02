@@ -8,7 +8,7 @@ set -u
 GODOT="${GODOT:-godot}"
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PORT="${PORT:-24791}"
-LOG="$(mktemp -d)"
+LOG="${LOG_DIR:-$(mktemp -d)}"
 COMMON=(--headless --path "$DIR")
 "$GODOT" "${COMMON[@]}" -- --server --port "$PORT" --laps 1 --ai 2 --min-players 2 --quit-after-race ${SERVER_ARGS:-} >"$LOG/server.log" 2>&1 &
 S=$!

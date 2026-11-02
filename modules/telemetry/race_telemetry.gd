@@ -44,6 +44,7 @@ var _loops: Array = []            ## per car: loop index -> crossing time
 var _prev_d := PackedFloat64Array()
 var _prev_t: float = 0.0
 var _laps_seen := PackedInt32Array()
+var _in_pits_at := PackedFloat64Array()  ## per car: race time last seen in the pit lane
 var _last_tick := -1
 var _cool: Dictionary = {}        ## feed cooldowns: key -> race time last said
 var _prev_pos := PackedInt32Array()
@@ -101,8 +102,13 @@ func observe(sim: RaceSim) -> Array:
 		return []
 	_last_tick = sim.tick
 	var out := []
+	if _in_pits_at.size() != sim.car_count():
+		_in_pits_at.resize(sim.car_count())
+		_in_pits_at.fill(-1.0)
 	for i in sim.car_count():
 		_names[i] = sim.entries[i].driver_name
+		if sim.in_pit_lane(i):
+			_in_pits_at[i] = sim.race_time
 	if sim.phase == RaceSim.Phase.COUNTDOWN:
 		for i in sim.car_count():
 			_prev_d[i] = sim.entries[i].distance
@@ -260,6 +266,8 @@ func _on_loop(i: int, k: int, t: float) -> void:
 	var t_entry = _loops[i].get(k - span)
 	if t_entry == null:
 		return
+	if i < _in_pits_at.size() and _in_pits_at[i] >= float(t_entry):
+		return  # it went through the pit lane: not a time on track
 	var c := cars[i]
 	c.span_times.append(t - float(t_entry))
 	if c.span_times.size() > MAX_SPAN_SAMPLES:

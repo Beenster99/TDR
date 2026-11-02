@@ -30,6 +30,10 @@ const PUNCTURE_ROLL := 0.06
 const KERB_WEAR_SPEED := 30.0   ## m/s: kerbs below this do no harm
 const KERB_WEAR := 0.004        ## suspension damage per second at +30 m/s over
 const KERB_PUNCTURE := 0.03     ## chance per second of a flat, sliding fast over a kerb
+## Tyre wear: grip lost on a fully worn tyre (falls off faster near the end),
+## and the wear from just rolling, as if this much slip power (kW) at 50 m/s.
+const WEAR_GRIP_LOSS := 0.32
+const WEAR_BASE_KW := 2.0
 
 const SURFACE_GRIP := {
 	TrackData.Surface.TRACK: 1.0,
@@ -49,8 +53,10 @@ const SURFACE_ROLL := {
 }
 
 
+## wear_rate: tyre wear multiplier (0 = tyres never wear, 1 = normal).
 static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
-		env: SimEnvironment, track: TrackData, dt: float, fuel_rate: float, events: Array, car_index: int) -> void:
+		env: SimEnvironment, track: TrackData, dt: float, fuel_rate: float, events: Array, car_index: int,
+		wear_rate: float = 0.0) -> void:
 	# --- Where are we on track? ------------------------------------------
 	var q := track.project(s.pos, s.track_idx)
 	s.track_idx = q["idx"]
@@ -119,7 +125,7 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 	var surface_grip := env.grip_factor(tc, off_line, speed) * surf_mu
 	var cap := PackedFloat64Array([0.0, 0.0, 0.0, 0.0])
 	for i in 4:
-		var mu := tc.peak_mu * tc.temp_grip_factor(s.tyre_temp[i]) * surface_grip
+		var mu := tc.peak_mu * tc.temp_grip_factor(s.tyre_temp[i]) * surface_grip * wear_grip_factor(s.tyre_wear[i])
 		mu *= 1.0 - tc.load_sensitivity * (fz[i] / fz_nominal - 1.0)
 		if i >= 2:
 			mu *= d.rear_grip * (1.0 - 0.3 * s.damage_suspension)
@@ -341,6 +347,17 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 		var cool := tc.cool_to_air * (1.0 + speed / 25.0) * (t - env.ambient_c) + tc.cool_to_track * (t - env.track_c)
 		cool += tc.cool_to_water * env.wetness_at(off_line) * (1.0 + speed / 40.0) * (t - env.ambient_c)
 		s.tyre_temp[i] = t + (heat - cool) * dt
+		if wear_rate > 0.0:
+			# Wear follows the sliding work, and grows fast on a tyre run
+			# hotter than its window (e.g. wets on a drying track).
+			var over := maxf(t - tc.optimal_temp_c - tc.temp_window_c * 0.5, 0.0) / tc.temp_window_c
+			var w := tc.wear_rate * wear_rate * (p_kw + WEAR_BASE_KW * speed / 50.0) * (1.0 + 3.0 * over) * dt / 1000.0
+			s.tyre_wear[i] = minf(s.tyre_wear[i] + w, 1.0)
+
+
+## Grip left on a tyre with this much wear (0 = new .. 1 = worn out).
+static func wear_grip_factor(wear: float) -> float:
+	return 1.0 - WEAR_GRIP_LOSS * pow(clampf(wear, 0.0, 1.0), 1.6)
 
 
 ## Steering help: adds counter-steer when the rear slides, and at speed keeps
