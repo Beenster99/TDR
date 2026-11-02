@@ -45,6 +45,8 @@ func _init() -> void:
 	test_weather_forecast()
 	test_race_control_rules()
 	test_safety_car_race()
+	test_car_recovery()
+	test_gravel_escape()
 	test_safety_car_off()
 	test_points_systems()
 	test_seasons()
@@ -1416,6 +1418,166 @@ func test_safety_car_race() -> void:
 		_retire_like(late, k >= r["victim_tick"], r["victim"])
 		late.step(inputs[k])
 	check(late.state_hash() == r["end_hash"], "snapshot restore under the safety car matches the original race")
+
+
+## Recovery vehicles: a car that crashed into the wall is craned over it, a
+## car stopped anywhere else is towed out by a tractor, under the safety car,
+## which only goes in once the car is clear.
+func test_car_recovery() -> void:
+	print("car recovery")
+	var track := TrackCatalog.load_track("spielberg")
+	var s0 := 1200.0
+	var i0 := track.index_at(s0)
+	var wall_off := -(track.width_left[i0] + track.runoff - 1.0)
+	for spot in [["crane", wall_off], ["tractor", -(track.width_left[i0] + 12.0)], ["tractor", 1.0]]:
+		var off: float = spot[1]
+		var pos := track.position_at(s0, off)
+		var job := CarRecovery.plan(track, 3, pos, track.heading_at(s0) + 1.2, s0, off, 4.6)
+		var phases: Array = [job["phase"]]
+		var top := 0.0
+		var t := 0.0
+		var clear_at := INF
+		while not job["done"] and t < 200.0:
+			CarRecovery.step(job, 1.0 / 60.0)
+			t += 1.0 / 60.0
+			if phases[phases.size() - 1] != job["phase"]:
+				phases.append(job["phase"])
+			top = maxf(top, job["hoist"])
+			if clear_at == INF and CarRecovery.car_clear(job):
+				clear_at = t
+		var q := track.project(job["car_pos"], i0)
+		var bo := track.width_left[track.index_at(q["s"])] + track.runoff
+		var label := "%s for a car %.0f m off the centre line" % [spot[0], off]
+		check(job["kind"] == spot[0], "%s: right vehicle sent (%s)" % [label, job["kind"]])
+		var want: Array = ["drive_in", "reach", "lift", "swing", "lower", "drive_out", "done"] if spot[0] == "crane" \
+			else ["drive_in", "hook", "drive_out", "done"]
+		check(phases == want, "%s: %s" % [label, " > ".join(phases)])
+		check(t < 70.0 and clear_at < t + 0.01, "%s: car clear in %.0f s, done in %.0f s" % [label, clear_at, t])
+		check(absf(q["offset"]) > bo, "%s: car taken behind the barrier (%.0f m out, barrier at %.0f m)" % [label, absf(q["offset"]), bo])
+		if spot[0] == "crane":
+			check(top >= CarRecovery.LIFT_HEIGHT - 0.01, "crane lifts the car %.1f m, over the barrier" % top)
+	# In a race: a car crashes into the wall and retires.
+	var settings := RaceSettings.new()
+	settings.laps = 4
+	settings.ai_count = 7
+	settings.seed = 777
+	var race := _race(settings, _data())
+	var sim: RaceSim = race["sim"]
+	var ai: Dictionary = race["ai"]
+	var victim := -1
+	var ev := {}
+	var sc_reason := ""
+	var hoisted := 0.0
+	var moved := 0.0
+	var recovered_at := INF
+	var in_lap_at := INF
+	var start_pos := Vector2.ZERO
+	while sim.phase != RaceSim.Phase.FINISHED and sim.tick < 60 * 60 * 15:
+		var inputs := []
+		for i in sim.car_count():
+			inputs.append(ai[i].get_input(sim, i))
+		if victim < 0 and sim.phase == RaceSim.Phase.RACING and sim.race_time >= 40.0:
+			victim = sim.running_order[sim.car_count() / 2]
+			var c := sim.cars[victim]
+			var k := track.index_at(c.track_s)
+			# Into the wall on the outside, stopped and out of the race.
+			c.pos = track.position_at(c.track_s, -(track.width_left[k] + track.runoff - 1.0))
+			c.vel = Vector2.ZERO
+			c.track_idx = -1
+			sim.entries[victim].dnf = true
+			start_pos = c.pos
+		if victim >= 0 and not sim.race_control.out_of_play(victim):
+			inputs[victim] = CarInput.neutral()
+		sim.step(inputs)
+		for e in sim.events:
+			var key: String = e["type"] + ":" + str(e.get("state", e.get("flag", "")))
+			ev[key] = ev.get(key, 0) + 1
+			if key == "safety_car:sc" and sc_reason == "":
+				sc_reason = e["reason"]
+			if key == "flag:recovery":
+				ev["kind"] = e["kind"]
+			if key == "flag:recovered" and int(e["car"]) == victim:
+				recovered_at = sim.race_time
+			if key == "safety_car:in_this_lap" and in_lap_at == INF:
+				in_lap_at = sim.race_time
+		if victim >= 0:
+			var job := sim.race_control.recovery_for(victim)
+			if not job.is_empty():
+				hoisted = maxf(hoisted, job["hoist"])
+				check_views(sim)
+			moved = maxf(moved, sim.cars[victim].pos.distance_to(start_pos))
+	check(ev.get("kind", "") == "crane", "a crane is sent for the car in the wall")
+	check(sc_reason == "Recovery vehicle on track", "the safety car comes out for it (%s)" % sc_reason)
+	check(hoisted > 4.0 and moved > 20.0, "the crane lifts the car %.1f m and takes it away (%.0f m)" % [hoisted, moved])
+	check(recovered_at < INF and sim.race_control.recovered[victim] == 1, "car recovered at %.0f s" % recovered_at)
+	check(in_lap_at > recovered_at - 30.0, "safety car only comes in once the car is clear (in this lap at %.0f s)" % in_lap_at)
+	check(ev.has("safety_car:green") and sim.phase == RaceSim.Phase.FINISHED, "green flag again and the race finishes")
+	# Clients get the recovery vehicles with the race state.
+	var st := sim.race_control.to_dict()
+	check(st.has("recoveries") and st.has("carried"), "recovery vehicles go out with the race state")
+
+
+var _views_ok := true
+
+func check_views(sim: RaceSim) -> void:
+	for v in sim.race_control.recovery_vehicles():
+		if not (v.has("pos") and v.has("heading") and v.has("hoist") and v.has("reach")):
+			if _views_ok:
+				check(false, "recovery_vehicles() gives position, heading, hoist and reach")
+			_views_ok = false
+
+
+## Gravel: a car stopped in the middle of a gravel trap can drive out, but a
+## car running into one at speed still loses a lot.
+func test_gravel_escape() -> void:
+	print("gravel")
+	var cars := CarCatalog.load_all()
+	var tyres := TyreCatalog.load_all()
+	var track := TrackCatalog.load_track("spa")
+	var k := -1
+	for i in track.point_count():
+		if track.runoff_left[i] == TrackData.Surface.GRAVEL and track.runoff_left[(i + 6) % track.point_count()] == TrackData.Surface.GRAVEL \
+				and track.runoff_left[(i - 6 + track.point_count()) % track.point_count()] == TrackData.Surface.GRAVEL:
+			k = i
+			break
+	check(k >= 0, "Spa has a gravel trap")
+	if k < 0:
+		return
+	var s0 := track.cum_s[k]
+	var edge := track.width_left[k] + track.kerb_width
+	var d: CarDefinition = cars["bmw_m4_gt3"]
+	var tc: TyreCompound = tyres[d.tyre_compound_id]
+	var env := SimEnvironment.new()
+	env.bind_track(track)
+	var along := track.heading_at(s0)
+	var c := CarState.new()
+	c.pos = track.position_at(s0, -(edge + track.runoff * 0.5))
+	c.heading = along + PI * 0.25
+	c.tyre_temp = PackedFloat64Array([80.0, 80.0, 80.0, 80.0])
+	c.assist_tc = true
+	var t := 0.0
+	var out_at := INF
+	var ev := []
+	while t < 20.0:
+		var inp := CarInput.new()
+		inp.throttle = 1.0
+		CarPhysics.step(c, inp, d, tc, env, track, 1.0 / 240.0, 0.0, ev, 0)
+		t += 1.0 / 240.0
+		if c.surface == TrackData.Surface.TRACK or c.surface == TrackData.Surface.KERB:
+			out_at = t
+			break
+	check(out_at < 10.0, "a GT3 stopped in the middle of a gravel trap drives out in %.1f s" % out_at)
+	# Into the gravel at 40 m/s, off the throttle: still a big loss.
+	c = CarState.new()
+	c.pos = track.position_at(s0, -(edge + track.runoff * 0.5))
+	c.heading = along
+	c.vel = Vector2.from_angle(along) * 40.0
+	c.tyre_temp = PackedFloat64Array([80.0, 80.0, 80.0, 80.0])
+	t = 0.0
+	while t < 2.0:
+		CarPhysics.step(c, CarInput.new(), d, tc, env, track, 1.0 / 240.0, 0.0, ev, 0)
+		t += 1.0 / 240.0
+	check(c.speed() < 34.0, "running into gravel at 144 km/h: down to %.0f km/h after 2 s" % (c.speed() * 3.6))
 
 
 ## Replays the test's retirement (the stopped car is marked retired once still).

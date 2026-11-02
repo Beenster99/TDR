@@ -74,7 +74,7 @@ const SURFACE_GRIP := {
 	TrackData.Surface.KERB: 0.92,
 	TrackData.Surface.GRASS: 0.55,
 	TrackData.Surface.BARRIER: 0.5,
-	TrackData.Surface.GRAVEL: 0.45,
+	TrackData.Surface.GRAVEL: 0.55,
 	TrackData.Surface.RUNOFF: 0.95,
 }
 const SURFACE_ROLL := {
@@ -85,6 +85,12 @@ const SURFACE_ROLL := {
 	TrackData.Surface.GRAVEL: 0.3,    # a gravel trap digs in and stops the car
 	TrackData.Surface.RUNOFF: 0.0,
 }
+## Gravel digs in hard at speed (SURFACE_ROLL) but a car that has stopped in
+## it can crawl out: below GRAVEL_CRAWL_SPEED the drag eases to
+## GRAVEL_CRAWL_ROLL, back up to the full drag by GRAVEL_DIG_SPEED (m/s).
+const GRAVEL_CRAWL_ROLL := 0.1
+const GRAVEL_CRAWL_SPEED := 5.0
+const GRAVEL_DIG_SPEED := 18.0
 
 
 ## wear_rate: tyre wear multiplier (0 = tyres never wear, 1 = normal).
@@ -103,6 +109,8 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 	s.surface = track.surface_for(q)
 	var surf_mu: float = SURFACE_GRIP[s.surface]
 	var surf_roll: float = SURFACE_ROLL[s.surface]
+	if s.surface == TrackData.Surface.GRAVEL:
+		surf_roll = lerpf(GRAVEL_CRAWL_ROLL, surf_roll, smoothstep(GRAVEL_CRAWL_SPEED, GRAVEL_DIG_SPEED, s.vel.length()))
 	# Slopes, banking and crests (all zero on a flat track).
 	var slope := track.surface_gradient(q)          # uphill vector, rise per metre
 	var slope_cos := 1.0 / sqrt(1.0 + slope.length_squared())

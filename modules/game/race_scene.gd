@@ -478,10 +478,16 @@ func _process(delta: float) -> void:
 	camera.position = follow.lerp(_track_rect.get_center(), centre_mix) - shift
 	camera.position_smoothing_enabled = centre_mix < 0.01
 	camera.zoom = Vector2(z, z)
-	for i in car_views.size():
-		car_views[i].visible = not session.sim.race_control.recovered[i]
-	_update_pit_crews()
 	var rc := session.sim.race_control
+	var recovering := rc.recovery_vehicles()
+	world.set_recovery_vehicles(recovering)
+	for i in car_views.size():
+		car_views[i].visible = not rc.recovered[i]
+		car_views[i].hoist = 0.0
+	for v in recovering:
+		if v["kind"] == "crane" and int(v["car"]) < car_views.size():
+			car_views[int(v["car"])].hoist = v["hoist"]
+	_update_pit_crews()
 	world.set_safety_car(rc.sc_visible, rc.sc_pos, rc.sc_heading, rc.sc_speed, rc.sc_lights)
 	world.update_driving_line(car.pos, speed)
 	_update_pit_guide(delta)
