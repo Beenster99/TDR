@@ -60,6 +60,11 @@ const TYRE_DRY := "dry"      ## the car's own dry compound
 const TYRE_INTER := "intermediate"
 const TYRE_WET := "full_wet"
 const TYRE_CHOICES := [TYRE_AUTO, TYRE_DRY, TYRE_INTER, TYRE_WET, TYRE_KEEP]
+## Setup changes the crew can make during a stop (plan "setup": {key: value},
+## absolute CarSetup values). Only when the host allows car setups.
+const PIT_SETUP_KEYS := ["wing_front", "wing_rear", "pressure_front", "pressure_rear"]
+const WING_CHANGE_S := 2.5       ## per wing adjusted (done while the tyres are changed)
+const PRESSURE_ONLY_S := 4.0     ## re-setting pressures without changing tyres
 ## Fuel in a pit plan: litres to add, or one of these.
 const FUEL_AUTO := -1.0      ## enough to finish
 const FUEL_NONE := 0.0
@@ -163,7 +168,8 @@ func controls(i: int) -> bool:
 
 ## Changes car i's pit plan and/or box flag. Only takes effect on the machine
 ## that simulates the car: RaceSession routes requests from elsewhere there.
-## changes: any of {box: bool, tyre: String, fuel: float, repair: bool}
+## changes: any of {box: bool, tyre: String, fuel: float, repair: bool,
+## setup: {key: value} for PIT_SETUP_KEYS (merged; an empty dict clears it)}
 func set_plan(i: int, changes: Dictionary) -> void:
 	var p: Dictionary = sim.entries[i].pit
 	var plan: Dictionary = p["plan"]
@@ -175,6 +181,28 @@ func set_plan(i: int, changes: Dictionary) -> void:
 		plan["fuel"] = maxf(float(changes["fuel"]), FUEL_AUTO)
 	if changes.has("repair"):
 		plan["repair"] = bool(changes["repair"])
+	if changes.has("setup") and changes["setup"] is Dictionary and sim.settings.tuning_enabled:
+		var want: Dictionary = changes["setup"]
+		var cur: Dictionary = plan.get("setup", {}).duplicate()
+		if want.is_empty():
+			cur = {}
+		var def := sim.defs[i]
+		for k in want:
+			if k in PIT_SETUP_KEYS and CarSetup.adjustable(def, k):
+				cur.merge(CarSetup.sanitize(def, {k: want[k]}), true)
+		if cur.is_empty():
+			plan.erase("setup")
+		else:
+			plan["setup"] = cur
+
+
+## Car i's current value of each pit-adjustable setup key.
+func current_setup(i: int) -> Dictionary:
+	var full := CarSetup.complete(sim.defs[i], sim.defs[i].tuning)
+	var out := {}
+	for k in PIT_SETUP_KEYS:
+		out[k] = full[k]
+	return out
 
 
 func set_limiter(i: int, on: bool) -> void:
@@ -244,9 +272,23 @@ func service_for(i: int, plan: Dictionary) -> Dictionary:
 		repair_s = CarDamage.repair_time(c, [])
 	var tyre_s := TYRE_CHANGE_S if tyre != "" else 0.0
 	var fuel_s := fuel / FUEL_FLOW_LPS
-	var total := STOP_BASE_S + maxf(tyre_s, fuel_s) + repair_s
+	# Setup changes: only what differs from the car now.
+	var setup := {}
+	var setup_s := 0.0
+	var want: Dictionary = plan.get("setup", {})
+	if not want.is_empty() and sim.settings.tuning_enabled:
+		var now := current_setup(i)
+		for k in want:
+			if now.has(k) and absf(float(want[k]) - float(now[k])) > 1e-4:
+				setup[k] = float(want[k])
+		for k in ["wing_front", "wing_rear"]:
+			if setup.has(k):
+				setup_s += WING_CHANGE_S
+		if tyre == "" and (setup.has("pressure_front") or setup.has("pressure_rear")):
+			setup_s += PRESSURE_ONLY_S
+	var total := STOP_BASE_S + maxf(maxf(tyre_s, fuel_s), setup_s) + repair_s
 	return {"tyre": tyre, "fuel_l": fuel, "repair_parts": parts, "tyre_s": tyre_s,
-		"fuel_s": fuel_s, "repair_s": repair_s, "total_s": total}
+		"fuel_s": fuel_s, "repair_s": repair_s, "setup": setup, "setup_s": setup_s, "total_s": total}
 
 
 ## Time a stop costs against staying out (lane at the limit + stop), seconds.
@@ -397,13 +439,17 @@ func _finish_service(i: int) -> void:
 	_lap_fuel[i] = c.fuel_l
 	if not (work.get("repair_parts", []) as Array).is_empty():
 		CarDamage.repair(c, work["repair_parts"])
+	var setup: Dictionary = work.get("setup", {})
+	if not setup.is_empty():
+		sim.change_setup(i, setup)
+		(p["plan"] as Dictionary).erase("setup")
 	# A stop counts in the lap the car came into the pits.
 	var lap := int(p["entry_lap"]) if int(p["entry_lap"]) > 0 else current_lap(i)
 	p["stops"] = int(p["stops"]) + 1
 	if in_window(lap):
 		p["window_stops"] = int(p["window_stops"]) + 1
 	p["last_stop"] = {"lap": lap, "stationary_s": p["service_total"], "tyre": tyre,
-		"fuel_l": work.get("fuel_l", 0.0), "repairs": work.get("repair_parts", [])}
+		"fuel_l": work.get("fuel_l", 0.0), "repairs": work.get("repair_parts", []), "setup": work.get("setup", {})}
 	p["box"] = false
 	p["work"] = {}
 

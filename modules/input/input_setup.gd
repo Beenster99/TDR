@@ -20,6 +20,8 @@ const KEYS := {
 	"pit_limiter": [KEY_L],
 	"pit_tyres": [KEY_T],
 	"pit_fuel": [KEY_F],
+	"team_radio": [KEY_V],     # radio / pings between the driver and the pit wall (co-op)
+	"crew_tab": [KEY_C],       # pit wall roles: switch between pit crew and strategy
 }
 ## Gamepad: analog triggers + left stick. Buttons use the Xbox layout names
 ## (Godot maps PlayStation/Nintendo pads to the same positions).
@@ -44,6 +46,8 @@ const PAD_BUTTONS := {
 	"pit_box": [JOY_BUTTON_DPAD_LEFT],
 	"pit_limiter": [JOY_BUTTON_LEFT_STICK],
 	"pit_tyres": [JOY_BUTTON_B],  # B closes the pit wall when it's open
+	"team_radio": [JOY_BUTTON_BACK],
+	"crew_tab": [JOY_BUTTON_Y],
 }
 const STICK_DEADZONE := 0.12
 const TRIGGER_DEADZONE := 0.05

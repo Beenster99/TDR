@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Top Down Racer Release Notes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<style>
+/* Same layout as the Torque Shed release notes, every release: masthead, at a glance,
+   one entry per feature (rail on the left: area, day, part of the game), then Try it / Known limits / Coming next. */
+:root {
+  --paper: #efede7; --sheet: #ffffff; --ink: #1b1d20; --muted: #5b6168; --rule: #d5d2c9;
+  --accent: #c0341d; --link: #1d6b8a;
+  --display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --body: "Literata", Georgia, "Times New Roman", serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #121417; --sheet: #1b1e22; --ink: #e5e6e8; --muted: #9ca3aa; --rule: #2d3238;
+    --accent: #ff7552; --link: #6cc3e0; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #121417; --sheet: #1b1e22; --ink: #e5e6e8; --muted: #9ca3aa; --rule: #2d3238;
+  --accent: #ff7552; --link: #6cc3e0; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--paper); color: var(--ink); font-family: var(--body); font-size: 17px; line-height: 1.6; margin: 0;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.wrap { max-width: 1060px; margin: 0 auto; padding-block: 40px 72px; }
+h1, h2, h3 { font-family: var(--display); font-weight: 700; line-height: 1.05; text-wrap: balance; margin: 0; letter-spacing: 0.01em; }
+a { color: var(--link); text-underline-offset: 3px; }
+header.top { display: grid; gap: 18px; padding-bottom: 28px; border-bottom: 2px solid var(--ink); }
+.kicker { font-family: var(--mono); font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px 18px; }
+h1 { font-size: clamp(46px, 8vw, 84px); text-transform: uppercase; }
+h1 span { color: var(--accent); }
+.lede { max-width: 64ch; font-size: 19px; margin: 0; }
+.cta { display: flex; flex-wrap: wrap; gap: 10px; }
+.play { font-family: var(--display); font-size: 19px; letter-spacing: 0.04em; text-transform: uppercase; padding: 8px 16px; border: 2px solid var(--ink); color: var(--ink); background: var(--sheet); overflow-wrap: anywhere; }
+.play.main { background: var(--accent); border-color: var(--accent); color: #fff; }
+.glance { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); margin-block: 28px 8px; }
+.glance div { background: var(--sheet); padding: 14px 16px; min-width: 0; }
+.glance b { display: block; font-family: var(--display); font-size: 21px; letter-spacing: 0.02em; text-transform: uppercase; }
+.glance p { margin: 4px 0 0; font-size: 15px; color: var(--muted); }
+.log { margin-top: 44px; display: grid; }
+.entry { display: grid; grid-template-columns: 118px minmax(0, 1fr); gap: 28px; padding-block: 34px; border-top: 1px solid var(--rule); }
+.rail .m { font-family: var(--display); font-size: 40px; color: var(--accent); line-height: 1; text-transform: uppercase; }
+.rail .d { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-top: 6px; letter-spacing: 0.04em; }
+.rail .area { font-family: var(--mono); font-size: 11px; color: var(--link); margin-top: 10px; letter-spacing: 0.06em; text-transform: uppercase; }
+.body { min-width: 0; }
+.body h2 { font-size: clamp(28px, 4vw, 38px); text-transform: uppercase; }
+.body .sum { margin: 8px 0 14px; max-width: 66ch; }
+.body ul { margin: 0 0 18px; padding-left: 1.2em; max-width: 68ch; }
+.body li { margin-block: 3px; }
+.body li::marker { color: var(--accent); }
+.after { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 28px; margin-top: 40px; padding-top: 30px; border-top: 2px solid var(--ink); }
+.after h3 { font-size: 26px; text-transform: uppercase; margin-bottom: 8px; }
+.after ul { margin: 0; padding-left: 1.1em; }
+.after li { margin-block: 4px; }
+.after li::marker { color: var(--link); }
+footer { margin-top: 44px; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+@media (max-width: 720px) {
+  .entry { grid-template-columns: 1fr; gap: 10px; }
+  .rail { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  .rail .d, .rail .area { margin-top: 0; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="kicker"><span>Release notes</span><span>2 Nov 2026</span><span>v0.5.0</span><span>Wave 5: co-op</span></div>
+    <h1>Top Down <span>Racer</span></h1>
+    <p class="lede">Race as a team. Two or three friends now share one car online: one drives, the others run the pit wall. The pit crew calls the stops and prepares them, the strategist reads the race, and everyone talks to the driver on the team radio. Swap seats at a pit stop and the car carries on exactly where it was.</p>
+    <div class="cta">
+      <span class="play main">Download TopDownRacer-v0.5.0-windows.zip</span>
+    </div>
+    <section class="glance" aria-label="At a glance">
+      <div><b>Car shares</b><p>2 or 3 players in one car, picked in the lobby. With two, pit crew and strategist are one role.</p></div>
+      <div><b>Driver changes</b><p>Swap the driver at a pit stop. The new driver takes over the very same car: fuel, tyres, damage.</p></div>
+      <div><b>Pit crew</b><p>Box calls, tyres, fuel, repairs, and wing and tyre pressure changes during the stop.</p></div>
+      <div><b>Strategist</b><p>Gaps and pace against the cars around, the pit window, weather, rivals' strategies.</p></div>
+      <div><b>Team radio</b><p>Ready-made calls both ways: "Box this lap", "Rain coming", "Tyres are gone".</p></div>
+      <div><b>Whole track</b><p>The pit wall watches the full 3D race, zoomed out to every car, with a controller at 4K.</p></div>
+    </section>
+  </header>
+
+  <main class="log">
+
+    <article class="entry" id="shares">
+      <div class="rail"><div class="m">Crews</div><div class="d">2 Nov</div><div class="area">Multiplayer</div></div>
+      <div class="body">
+        <h2>Share a car with friends</h2>
+        <p class="sum">In the lobby every player has a car share and a role. Put two or three players in the same car share and they race one car together.</p>
+        <ul>
+          <li>Roles: driver, pit crew and strategist. With two players in a car the second one is the pit wall: pit crew and strategist in one.</li>
+          <li>The host can set anyone's share and role, players set their own. Picking a role someone else holds swaps it with them.</li>
+          <li>Only the driver steers. Everyone in the crew can make pit calls.</li>
+          <li>If the driver leaves mid-race, the next crew member takes the wheel; if nobody is left, the AI brings the car home.</li>
+          <li>Works in single races and in online seasons.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="swaps">
+      <div class="rail"><div class="m">Swap</div><div class="d">2 Nov</div><div class="area">Multiplayer</div></div>
+      <div class="body">
+        <h2>Driver changes at a pit stop</h2>
+        <p class="sum">From the pit wall, choose "Swap roles with" and the driver. The change waits for the next stop, and the screen says so until then.</p>
+        <ul>
+          <li>The change happens with the car stopped in its box (the stop lasts at least 5 seconds), or at once on the grid before the start.</li>
+          <li>The new driver takes over the very same car: fuel, tyre temperatures and wear, damage and pit state all move across.</li>
+          <li>Each player's screen changes over by itself: the new driver gets the HUD and the controls, the old one the pit wall.</li>
+          <li>Pit crew and strategist can swap with each other at any time.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="pitcrew">
+      <div class="rail"><div class="m">Crew</div><div class="d">2 Nov</div><div class="area">Pit wall</div></div>
+      <div class="body">
+        <h2>The pit crew</h2>
+        <p class="sum">The race stays on screen in 3D, zoomed out to the whole track, with the timing on the left and the pit crew panel on the right.</p>
+        <ul>
+          <li>Call the stop: box this lap or stay out. The driver hears it on the radio too.</li>
+          <li>Prepare it: tyres (auto for the weather, dry, intermediates, full wets or no change), fuel (to the end, none, or 5 L steps) and repairs.</li>
+          <li>New: change the front splitter, rear wing and tyre pressures during the stop, when the host allows car setups. Wing changes take 2.5 s each and fresh pressures without new tyres 4 s; with new tyres they fit inside the tyre change.</li>
+          <li>See what the stop will take, the time lost in all, and where a stop now would rejoin.</li>
+          <li>Watch the car: each tyre's temperature, wear and punctures, fuel against the laps to go, and damage to aero, suspension, engine and gearbox.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="strategist">
+      <div class="rail"><div class="m">Strategy</div><div class="d">2 Nov</div><div class="area">Pit wall</div></div>
+      <div class="body">
+        <h2>The strategist</h2>
+        <p class="sum">Built on the pit wall race data from v0.2.2, laid out round the live race.</p>
+        <ul>
+          <li>The cars just ahead and behind: the gap, and whether you're closing or losing on the last-5-lap average.</li>
+          <li>The pit window: time lost by stopping now, the rejoin position, clear air or traffic, the gap needed for a free stop, mandatory stops left, fuel against laps to go.</li>
+          <li>The next weather change with its time and confidence.</li>
+          <li>Rivals: their tyres and how old they are, stops, pace and their latest strategy call. Pick one to watch and it's ringed on the track.</li>
+          <li>Full pit wall (P) opens the full-screen screen with the weather radar and every car's sector times.</li>
+          <li>With the combined role, Y (or C) switches between pit crew and strategy.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="radio">
+      <div class="rail"><div class="m">Radio</div><div class="d">2 Nov</div><div class="area">Pit wall</div></div>
+      <div class="body">
+        <h2>Team radio</h2>
+        <p class="sum">X or Back on the pad, V on the keyboard, opens a list of calls. Pick one and the rest of the crew hears it with a chime.</p>
+        <ul>
+          <li>Pit wall to driver: box this lap, stay out, push, look after the tyres, save fuel, defend, gap for a free stop, rain coming, driver change at this stop.</li>
+          <li>Driver to pit wall: copy, box this lap?, tyres are gone, I have damage, track getting wet, negative, stuck in traffic, how's the fuel?</li>
+          <li>The driver sees calls as a banner on the HUD; the pit wall keeps a log along the bottom with the latest race control call.</li>
+        </ul>
+      </div>
+    </article>
+
+  </main>
+
+  <section class="after">
+    <div>
+      <h3>Try it</h3>
+      <ul>
+        <li>Unzip the folder and double-click TopDownRacer.exe, as before.</li>
+        <li>Host online race, then put a friend in your car share as pit wall, and set 1 mandatory pit stop. Swap seats at the stop.</li>
+        <li>Pit wall controls: D-pad to choose and change, A to act, Y to switch tab, X to radio, right stick to zoom, R3 for the whole track.</li>
+        <li>Online, everyone needs v0.5.0.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Known limits</h3>
+      <ul>
+        <li>A car share races the car of its first player, with that player's setup and livery.</li>
+        <li>Radio is ready-made calls only, no voice chat.</li>
+        <li>The AI doesn't change its wings or pressures at stops.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Coming next</h3>
+      <ul>
+        <li>That's the end of the five planned waves. Next is up to you: tell us what to build.</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>Build of main with wave 5: co-op crews and driver changes (PR #22), pit crew and strategist roles.</footer>
+</div>
+</body>
+</html>

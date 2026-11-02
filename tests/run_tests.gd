@@ -34,6 +34,7 @@ func _init() -> void:
 	test_elevation()
 	test_barriers()
 	test_pit_rules()
+	test_pit_setup_changes()
 	test_car_setups()
 	test_upgrades()
 	var replay := test_ai_race_completes()
@@ -757,6 +758,69 @@ func test_pit_rules() -> void:
 	var e := RaceEntry.new()
 	e.from_dict(host.entries[0].to_dict())
 	check(e.pit["compound"] == "intermediate" and e.pit["plan"] is Dictionary, "pit state survives the network round trip")
+
+
+## Co-op pit crew: wing and tyre pressure changes made during a stop.
+func test_pit_setup_changes() -> void:
+	print("pit setup changes")
+	var d := _data()
+	var st := RaceSettings.new()
+	st.laps = 6
+	st.ai_count = 3
+	st.car_class = "GT3"
+	st.tuning_enabled = true
+	var sim: RaceSim = _race(st, d)["sim"]
+	var pits := sim.pits
+	var i := 0
+	for k in sim.car_count():
+		if CarSetup.adjustable(sim.defs[k], "wing_rear"):
+			i = k
+			break
+	var def := sim.defs[i]
+	var now := pits.current_setup(i)
+	check(now.size() == PitRules.PIT_SETUP_KEYS.size(), "current pit-adjustable setup has every key")
+	var rw := CarSetup.range_of(def, "wing_rear")
+	var wing_dir := 1.0 if float(now["wing_rear"]) + 2.0 * float(rw[3]) <= float(rw[2]) else -1.0
+	var want_wing := float(now["wing_rear"]) + wing_dir * 2.0 * float(rw[3])
+	var want_psi := float(now["pressure_front"]) - 0.5
+	pits.set_plan(i, {"setup": {"wing_rear": want_wing, "pressure_front": want_psi, "ride_front": 10.0}})
+	var plan: Dictionary = sim.entries[i].pit["plan"]
+	check(plan.has("setup") and not (plan["setup"] as Dictionary).has("ride_front"), "only wings and tyre pressures can change at a stop")
+	var keep := plan.duplicate(true)
+	keep["tyre"] = PitRules.TYRE_KEEP
+	keep["fuel"] = 0.0
+	keep["repair"] = false
+	var w := pits.service_for(i, keep)
+	var wing_changes := (plan["setup"] as Dictionary).has("wing_rear") and want_wing != float(now["wing_rear"])
+	var expect_s := (PitRules.WING_CHANGE_S if wing_changes else 0.0) + PitRules.PRESSURE_ONLY_S
+	check(is_equal_approx(float(w["setup_s"]), expect_s) and is_equal_approx(float(w["total_s"]), PitRules.STOP_BASE_S + expect_s),
+		"setup work takes time: %.1f s (no new tyres, so pressures cost extra)" % w["setup_s"])
+	var with_tyres := keep.duplicate(true)
+	with_tyres["tyre"] = PitRules.TYRE_DRY
+	var w2 := pits.service_for(i, with_tyres)
+	check(is_equal_approx(float(w2["total_s"]), PitRules.STOP_BASE_S + PitRules.TYRE_CHANGE_S), "with new tyres the setup work fits inside the tyre change")
+	var drag0 := def.cda
+	var p: Dictionary = sim.entries[i].pit
+	p["work"] = w
+	p["service_total"] = w["total_s"]
+	pits._finish_service(i)
+	var after := pits.current_setup(i)
+	check(is_equal_approx(float(after["pressure_front"]), want_psi), "tyre pressure changed in the stop (%.1f)" % after["pressure_front"])
+	check(wing_changes and (is_equal_approx(float(after["wing_rear"]), want_wing) and (sim.defs[i].cda - drag0) * wing_dir > 0.0),
+		"rear wing changed in the stop, and with it the drag (%.3f -> %.3f)" % [drag0, sim.defs[i].cda])
+	check(not (p["plan"] as Dictionary).has("setup") and (p["last_stop"]["setup"] as Dictionary).size() >= 1, "the change is done and logged")
+	check(pits.service_for(i, with_tyres)["setup"].is_empty(), "nothing left to change afterwards")
+	pits.set_plan(i, {"setup": {"wing_front": 1.0}})
+	pits.set_plan(i, {"setup": {}})
+	check(not (sim.entries[i].pit["plan"] as Dictionary).has("setup"), "an empty setup cancels the changes")
+	# Fixed setups (host option): no changes in the pits either.
+	var st2 := RaceSettings.new()
+	st2.laps = 6
+	st2.ai_count = 2
+	st2.tuning_enabled = false
+	var sim2: RaceSim = _race(st2, d)["sim"]
+	sim2.pits.set_plan(0, {"setup": {"pressure_front": -1.0}})
+	check(not (sim2.entries[0].pit["plan"] as Dictionary).has("setup"), "no pit setup changes when the host fixes setups")
 
 
 ## Server-authoritative core property: same settings + same inputs => same state.

@@ -1,9 +1,9 @@
 {
   "id": "ui",
   "name": "UI",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "status": "active",
-  "summary": "Screens and overlays: main menu, lobby, race settings, the in-race HUD, and controller-friendly widgets (Stepper), and the pit wall (StrategistScreen: timing, gaps, pit windows, weather radar, team radio feed).",
+  "summary": "Screens and overlays: main menu, lobby, race settings, the in-race HUD, and controller-friendly widgets (Stepper), and the pit wall (StrategistScreen: timing, gaps, pit windows, weather radar, team radio feed). Co-op pit wall roles (CrewConsole: pit crew and strategist panels around the zoomed-out 3D race, combined for 2 players) and quick team radio calls (TeamRadio).",
   "depends": {
     "core": "1",
     "cars": "1",
@@ -23,7 +23,9 @@
     "StrategistScreen",
     "GarageScreen",
     "SetupScreen",
-    "SetupStore"
+    "SetupStore",
+    "CrewConsole",
+    "TeamRadio"
   ],
   "internal": [],
   "notes": "Main menu scene: main_menu.tscn. SetupScreen: the controller-friendly car setup screen; SetupStore saves setups per car per track in user://setups/."

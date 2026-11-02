@@ -31,7 +31,10 @@ Command line: `--fuel 2 --tyre-wear 2 --pit-stops 1`.
    button, or (co-op, wave 5) a pit crew / strategist via
    `RaceSession.request_pit(car, changes)`. The plan says what to do:
    `tyre` (`auto` = suit the weather, `dry`, `intermediate`, `full_wet`,
-   `keep`), `fuel` (litres, -1 = enough to finish, 0 = none) and `repair`.
+   `keep`), `fuel` (litres, -1 = enough to finish, 0 = none), `repair`, and
+   (co-op pit crew, when the host allows car setups) `setup`: new values for
+   the front splitter, rear wing and tyre pressures, applied in the box (see
+   docs/PIT_WALL_ROLES.md).
 2. **Driving in.** With a box call, the car is driven in automatically from
    about 300 m before the pit entry (the pit guide follows a route along the
    pit side of the track, then the lane). A player can also drive into the
