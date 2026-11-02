@@ -300,6 +300,10 @@ func _draw_pit_panel(o: Vector2, me: int) -> void:
 func _draw_radio(vp: Vector2) -> void:
 	var who := str(radio_msg.get("from", "Pit wall"))
 	var role := str(radio_msg.get("role", "")).replace("_", " ")
+	var lines: Array = radio_msg.get("lines", [])
+	if lines.size() > 1:
+		_draw_radio_plan(vp, who, role, lines)
+		return
 	var line := "%s%s: %s" % [who, (" (%s)" % role) if role != "" else "", radio_msg.get("text", "")]
 	var w := minf(font.get_string_size(line, HORIZONTAL_ALIGNMENT_LEFT, -1, 22).x + 120, vp.x - 40)
 	var r := Rect2((vp.x - w) * 0.5, 196, w, 44)
@@ -308,6 +312,28 @@ func _draw_radio(vp: Vector2) -> void:
 	draw_rect(r, Color(1, 0.88, 0.35, 0.8 * a), false, 2.0)
 	_text(r.position + Vector2(14, 30), "RADIO", 16, Color(1, 0.88, 0.35, a))
 	_text(r.position + Vector2(84, 30), line, 22, Color(1, 1, 1, a), HORIZONTAL_ALIGNMENT_LEFT, w - 96)
+
+
+## A pit stop plan from the strategist: a box with one line per job.
+func _draw_radio_plan(vp: Vector2, who: String, role: String, lines: Array) -> void:
+	var fs := 20
+	var w := 560.0
+	for ln in lines:
+		w = maxf(w, font.get_string_size(str(ln), HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x + 60)
+	w = minf(w, vp.x - 40)
+	var h := 52.0 + lines.size() * 28.0
+	var r := Rect2((vp.x - w) * 0.5, 196, w, h)
+	var a := clampf(radio_time / 0.5, 0.0, 1.0)
+	draw_rect(r, Color(0.02, 0.04, 0.08, 0.86 * a))
+	draw_rect(r, Color(1, 0.88, 0.35, 0.8 * a), false, 2.0)
+	_text(r.position + Vector2(16, 28), "RADIO  ·  PIT STOP PLAN", 16, Color(1, 0.88, 0.35, a))
+	_text(r.position + Vector2(w - 16, 28), "%s%s" % [who, (" (%s)" % role) if role != "" else ""], 15,
+		Color(1, 1, 1, 0.7 * a), HORIZONTAL_ALIGNMENT_RIGHT, w * 0.5)
+	for k in lines.size():
+		var y := r.position.y + 62 + k * 28
+		var col := Color(1, 0.88, 0.35, a) if k == 0 else Color(1, 1, 1, a)
+		_text(Vector2(r.position.x + 20, y), str(lines[k]) if k == 0 else "•  " + str(lines[k]), fs, col,
+			HORIZONTAL_ALIGNMENT_LEFT, w - 40)
 
 
 static func _crew_name(e: RaceEntry, peer_id: int) -> String:

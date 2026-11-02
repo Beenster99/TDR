@@ -68,6 +68,10 @@ var ride_front: float = 60.0
 var ride_rear: float = 70.0
 var bottoming: float = 0.0
 var tyre_psi: PackedFloat64Array = [27.5, 27.5, 27.5, 27.5]
+## Cold pressure set per tyre on top of the setup's front/rear pressure
+## (psi), from a pit stop that set the four tyres differently. Comes from
+## the car's pit state (RaceEntry.pit["psi_trim"]), so it isn't serialised.
+var psi_trim: PackedFloat64Array = [0.0, 0.0, 0.0, 0.0]
 
 
 func speed() -> float:
