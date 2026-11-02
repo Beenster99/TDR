@@ -48,6 +48,7 @@ func _init() -> void:
 	test_points_systems()
 	test_seasons()
 	test_coop_roles()
+	test_hud_timing()
 	print("\n%s (%d failures, %.1fs)" % ["PASS" if failures == 0 else "FAIL", failures, (Time.get_ticks_msec() - t0) / 1000.0])
 	quit(1 if failures > 0 else 0)
 
@@ -1805,3 +1806,29 @@ func test_coop_roles() -> void:
 	sim.cars[0].tyre_wear[2] = 0.4
 	other.cars[0].deserialize(sim.cars[0].serialize())
 	check(is_equal_approx(other.cars[0].fuel_l, 12.5) and is_equal_approx(other.cars[0].tyre_wear[2], 0.4), "fuel and tyre wear move with the car")
+
+
+## Race HUD: the timing tower fits big grids (top three plus a window round
+## the player), every car gets a manufacturer badge, names stay short.
+func test_hud_timing() -> void:
+	print("hud timing:")
+	var all := RaceHud.tower_rows(20, 5, 25)
+	check(all.size() == 20 and all[0] == 0 and all[19] == 19, "small grid: tower shows every car")
+	var big := RaceHud.tower_rows(45, 30, 25)
+	check(big.size() == 25 and big.slice(0, 3) == [0, 1, 2] and big.has(30), "45 cars: top three plus a window round P31")
+	var last := RaceHud.tower_rows(45, 44, 25)
+	check(last.size() == 25 and last[-1] == 44, "45 cars: last place still on the tower")
+	var cars := CarCatalog.load_all()
+	var ok := true
+	for id in cars:
+		var b := RaceHud.badge_for(cars[id])
+		if str(b[0]) == "" or str(b[0]).length() > 4:
+			ok = false
+			printerr("    bad badge for ", id, ": ", b)
+	check(ok, "every car has a manufacturer badge")
+	for id in cars:
+		if cars[id].display_name.begins_with("BMW"):
+			check(RaceHud.badge_for(cars[id])[0] == "BMW", "BMW badge reads BMW")
+			break
+	check(RaceHud.short_name("Driver 727") == "Driver 727" and RaceHud.short_name("Alessandro Bellini-Rossi") == "A. Bellini-Ross", "driver names fit the tower")
+	check(RaceHud.fmt_sector(32.4567) == "32.457" and RaceHud.fmt_sector(0.0) == "--.---", "sector times format")

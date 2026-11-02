@@ -22,6 +22,7 @@ const KEYS := {
 	"pit_fuel": [KEY_F],
 	"team_radio": [KEY_V],     # radio / pings between the driver and the pit wall (co-op)
 	"crew_tab": [KEY_C],       # pit wall roles: switch between pit crew and strategy
+	"hud_tower": [KEY_H],      # race HUD: timing tower on/off (also Settings > Gameplay)
 }
 ## Gamepad: analog triggers + left stick. Buttons use the Xbox layout names
 ## (Godot maps PlayStation/Nintendo pads to the same positions).
