@@ -17,11 +17,19 @@ RES="${RES:-1600x900}"
 KEEP="${KEEP:-8}"
 # name | race options (film-from = race seconds to skip to)
 CLIPS=(
-  "spa_golden|--track spa --class GT3 --ai 18 --weather dry --time 18 --zoom 0.1 --film-from 35"
+  "spa_golden|--track spa --class GT3 --ai 18 --weather dry --time 18 --zoom 0.13 --film-from 35"
   "mugello_day|--track mugello --class GT3 --ai 18 --weather dry --time 14 --zoom 0.05 --rotate-camera --film-from 30"
   "monza_multiclass|--track monza --class multi --ai 26 --weather overcast --time 12 --zoom 0.14 --film-from 25"
   "silverstone_rain|--track silverstone --class GT3 --ai 18 --weather light_rain --time 13 --zoom 0.08 --film-from 40"
 )
+# Film without the driving aids on screen, in a window of exactly RES.
+cat >"$WORK/film_settings.cfg" <<'CFG'
+[prefs]
+display_mode="windowed"
+aid_racing_line=false
+aid_braking_zones=false
+show_fps=false
+CFG
 PARTS=()
 for c in "${CLIPS[@]}"; do
   IFS='|' read -r name opts <<<"$c"
@@ -30,7 +38,8 @@ for c in "${CLIPS[@]}"; do
     # Generous frame budget: loading + fast-forward + the clip itself.
     # shellcheck disable=SC2086
     "$GODOT" --path "$DIR" --resolution "$RES" --write-movie "$WORK/$name.avi" --fixed-fps $FPS \
-      --quit-after $(( (KEEP + 8) * FPS + 260 )) -- --single --autodrive --laps 5 --no-hud $opts >"$WORK/$name.log" 2>&1 || true
+      --quit-after $(( (KEEP + 2) * FPS + 220 )) -- --single --autodrive --laps 5 --no-hud \
+      --settings "$WORK/film_settings.cfg" $opts >"$WORK/$name.log" 2>&1 || true
     start=$(grep -o "rolling at frame [0-9]*" "$WORK/$name.log" | grep -o "[0-9]*$" || echo 200)
     ss=$(python3 -c "print(round(($start + 15) / $FPS, 3))")
     ffmpeg -y -loglevel error -ss "$ss" -t "$KEEP" -i "$WORK/$name.avi" -an -vf "fps=$FPS,format=yuv420p" \

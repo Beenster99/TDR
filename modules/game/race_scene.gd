@@ -204,6 +204,13 @@ func _default_offline_session() -> RaceSession:
 
 
 func _physics_process(delta: float) -> void:
+	for _k in _film_extra_ticks():
+		_tick_once(delta)
+	_tick_once(delta)
+	_after_tick()
+
+
+func _tick_once(delta: float) -> void:
 	var inp: CarInput = null
 	if session.local_car >= 0:
 		if autodrive:
@@ -212,6 +219,9 @@ func _physics_process(delta: float) -> void:
 		else:
 			inp = local_input.read(delta, session.sim.cars[session.local_car].speed())
 	session.tick(inp)
+
+
+func _after_tick() -> void:
 	# Testing: --request-swap asks for a driver change (this player takes the
 	# wheel at the next stop) once the race is green.
 	if GameData.arg("request-swap") and not _forced.has("swap") and session.team_car >= 0 \
@@ -280,25 +290,24 @@ func _set_zoom(z: float) -> void:
 	GameData.prefs["zoom"] = _zoom_target
 
 
-## Filming: --film-from 40 fast-forwards the race to 40 s, then plays it at
-## normal speed and prints the frame filming starts on.
+## Filming: --film-from 40 fast-forwards the race to 40 s (offline only:
+## extra sim ticks per physics frame), then plays it at normal speed and
+## prints the frame filming starts on.
 var _film_rolling := false
 
 
-func _film_fast_forward() -> void:
-	if _film_rolling or not GameData.arg("film-from"):
-		return
-	if session.sim.race_time < float(GameData.arg("film-from")):
-		Engine.time_scale = 8.0
-		Engine.max_physics_steps_per_frame = 40
-	else:
-		Engine.time_scale = 1.0
-		_film_rolling = true
-		print("[film] rolling at frame %d" % Engine.get_frames_drawn())
+func _film_extra_ticks() -> int:
+	if _film_rolling or not GameData.arg("film-from") or session.mode != RaceSession.Mode.OFFLINE:
+		return 0
+	if session.sim.race_time + session.sim.phase_time * float(session.sim.phase == RaceSim.Phase.COUNTDOWN) \
+			< float(GameData.arg("film-from")):
+		return 9
+	_film_rolling = true
+	print("[film] rolling at frame %d" % Engine.get_frames_drawn())
+	return 0
 
 
 func _process(delta: float) -> void:
-	_film_fast_forward()
 	var focus := session.local_car if session.local_car >= 0 else session.team_car
 	if focus < 0:
 		focus = session.team_car if session.team_car >= 0 else session.sim.running_order[0]
