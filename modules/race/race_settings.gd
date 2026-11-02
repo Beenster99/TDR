@@ -27,7 +27,10 @@ var fuel_rate: float = 1.0         ## consumption multiplier
 var start_fuel_l: float = -1.0     ## -1 = full tank
 var tyre_wear_enabled: bool = false
 var tyre_wear_rate: float = 1.0    ## wear multiplier when tyre wear is on
-var damage_enabled: bool = false
+var damage_enabled: bool = false  ## true unless damage_level is "off"
+## Damage (CarDamage): "off", "visual" (bodywork bends, car drives as new)
+## or "full" (aero, suspension, alignment, engine, gearbox, punctures).
+var damage_level: String = "off"
 var safety_car_enabled: bool = false
 var mandatory_pit_stops: int = 0   ## stops each car must make inside the pit window
 ## Pit window (laps, inclusive) in which mandatory stops count. 0 = automatic:
@@ -43,12 +46,26 @@ func to_dict() -> Dictionary:
 		"track_id": track_id, "car_class": car_class, "laps": laps, "ai_count": ai_count, "seed": seed,
 		"environment": environment, "grid_order": grid_order, "ai_difficulty": ai_difficulty, "fuel_enabled": fuel_enabled, "fuel_rate": fuel_rate,
 		"start_fuel_l": start_fuel_l, "tyre_wear_enabled": tyre_wear_enabled,
-		"damage_enabled": damage_enabled, "safety_car_enabled": safety_car_enabled,
+		"damage_enabled": damage_enabled, "damage_level": damage_level, "safety_car_enabled": safety_car_enabled,
 		"mandatory_pit_stops": mandatory_pit_stops, "finish_timeout_s": finish_timeout_s,
 		"tyre_wear_rate": tyre_wear_rate, "pit_window_open_lap": pit_window_open_lap,
 		"pit_window_close_lap": pit_window_close_lap,
 		"countdown_s": countdown_s,
 	}
+
+
+## Sets damage_level and keeps damage_enabled in step with it.
+func set_damage_level(level: String) -> void:
+	damage_level = level if level in ["off", "visual", "full"] else "off"
+	damage_enabled = damage_level != "off"
+
+
+## The damage level the sim uses. Older settings that only set
+## damage_enabled = true mean full damage.
+func effective_damage_level() -> String:
+	if damage_level == "off" and damage_enabled:
+		return "full"
+	return damage_level
 
 
 static func from_dict(d: Dictionary) -> RaceSettings:

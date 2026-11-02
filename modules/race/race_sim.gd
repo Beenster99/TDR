@@ -43,6 +43,20 @@ var follower := false
 ## Events raised during the most recent step (HUD, audio, replication, and
 ## later damage / safety car logic all consume these).
 var events: Array = []
+## CarDamage.Level for this race (from settings.damage_level).
+var damage_level: int = CarDamage.Level.OFF
+## Hits at or above this delta-v (m/s) are reported as incidents (the
+## safety car / race control listens), whatever the damage level.
+const INCIDENT_DV := 5.0
+const INCIDENT_COOLDOWN_S := 1.0
+var _incident_cooldown := PackedFloat64Array()
+## Damage last seen per car [body total, punctures bitmask, engine failed,
+## gearbox failed], to report what changed on cars simulated elsewhere.
+var _seen_damage: Array = []
+## Events posted from outside the sim between steps (AI radio calls and
+## strategy lines, later pit-wall commands). They join `events` at the start
+## of the next step, so they are replicated like every other event.
+var _posted: Array = []
 
 
 ## entries: RaceEntry per car, in grid order (index 0 = pole).
@@ -57,6 +71,7 @@ func _init(p_settings: RaceSettings, p_track: TrackData, p_entries: Array[RaceEn
 		track_env["climate"] = climate
 	env = SimEnvironment.create(track_env, settings.environment, settings.seed)
 	env.bind_track(track)
+	damage_level = CarDamage.level_from(settings.effective_damage_level())
 	entries = p_entries
 	self.tyre_defs = tyre_defs
 	for i in entries.size():
@@ -70,6 +85,8 @@ func _init(p_settings: RaceSettings, p_track: TrackData, p_entries: Array[RaceEn
 		cars.append(_make_car_on_grid(i, def))
 		running_order.append(i)
 		external.append(0)
+		_incident_cooldown.append(0.0)
+		_seen_damage.append([0.0, 0, false, false])
 		if e.pit.is_empty():
 			e.pit = PitRules.new_state(compound.id)
 	pits = PitRules.new(self)
@@ -83,6 +100,7 @@ func _make_car_on_grid(slot: int, def: CarDefinition) -> CarState:
 	c.heading = g["heading"]
 	c.gear = 1
 	c.rpm = def.idle_rpm
+	c.damage_level = damage_level
 	c.fuel_l = def.fuel_capacity_l if settings.start_fuel_l < 0.0 else minf(settings.start_fuel_l, def.fuel_capacity_l)
 	# Tyres start between air and track temperature (no blankets).
 	var t0 := lerpf(env.ambient_c, env.track_c, 0.4)
@@ -94,6 +112,14 @@ func _make_car_on_grid(slot: int, def: CarDefinition) -> CarState:
 	return c
 
 
+## Queue an event (a Dictionary with at least "type") for the next step.
+## Used by AI drivers for radio calls and strategy, e.g.
+## {"type": "radio", "car": 3, "topic": "tyres", "text": "Rears are overheating"}.
+func post_event(ev: Dictionary) -> void:
+	if _posted.size() < 64:
+		_posted.append(ev)
+
+
 func car_count() -> int:
 	return cars.size()
 
@@ -101,6 +127,9 @@ func car_count() -> int:
 ## Advance one tick. inputs[i] drives cars[i]; missing/null = neutral.
 func step(inputs: Array) -> void:
 	events.clear()
+	if not _posted.is_empty():
+		events.append_array(_posted)
+		_posted.clear()
 	tick += 1
 	phase_time += TICK_DT
 	var moving := 0
@@ -146,6 +175,7 @@ func step(inputs: Array) -> void:
 			var inp: CarInput = inputs[i] if i < inputs.size() and inputs[i] != null else CarInput.neutral()
 			CarPhysics.step(cars[i], inp, defs[i], compounds[i], env, track, sub_dt, fuel_rate, events, i, wear_rate)
 		_resolve_collisions()
+	_apply_damage()
 
 	if follower:
 		return
@@ -291,6 +321,16 @@ func _update_positions() -> void:
 
 
 func _check_race_end() -> void:
+	if phase == Phase.RACING and not entries.is_empty():
+		var everyone_out := true
+		for e in entries:
+			if not e.dnf:
+				everyone_out = false
+		if everyone_out:
+			phase = Phase.FINISHED
+			_update_positions()
+			events.append({"type": "race_finished"})
+			return
 	if phase != Phase.CHEQUERED:
 		return
 	var all_done := true
@@ -376,6 +416,108 @@ func _collide_pair(i: int, j: int) -> void:
 		b.yaw_rate += r_b.cross(imp) / db.inertia
 	if jmag > 500.0:
 		events.append({"type": "collision", "a": i, "b": j, "impulse": jmag, "pos": contact})
+
+
+# --- Damage and incidents ------------------------------------------------------
+
+## Turns this tick's contacts and barrier hits into damage on the cars
+## simulated here, and (on the authority) reports incidents and retirements
+## for every car, including cars simulated elsewhere whose damage arrived
+## over the network.
+func _apply_damage() -> void:
+	var n := cars.size()
+	var hit_dv := PackedFloat64Array()
+	hit_dv.resize(n)
+	var hit_kind := []
+	hit_kind.resize(n)
+	var hit_other := PackedInt32Array()
+	hit_other.resize(n)
+	hit_other.fill(-1)
+	var salt := 0
+	for ev in events.duplicate():
+		var t: String = ev.get("type", "")
+		if t == "collision":
+			for side in 2:
+				var i: int = ev["a"] if side == 0 else ev["b"]
+				if external[i]:
+					continue
+				var c := cars[i]
+				var mass := defs[i].mass + c.fuel_l * CarPhysics.FUEL_DENSITY
+				var dv: float = ev["impulse"] / mass
+				var local: Vector2 = (ev["pos"] - c.pos).rotated(-c.heading)
+				salt += 1
+				_damage_hit(i, dv, local, salt)
+				if dv > hit_dv[i]:
+					hit_dv[i] = dv
+					hit_kind[i] = "collision"
+					hit_other[i] = ev["b"] if side == 0 else ev["a"]
+		elif t == "barrier_impact":
+			var i: int = ev["car"]
+			if external[i]:
+				continue
+			var c := cars[i]
+			var dv: float = ev["speed"] * 1.3
+			var nrm: Vector2 = ev.get("normal", -c.right())
+			var local := CarDamage.outline_point(nrm.rotated(-c.heading), defs[i])
+			salt += 1
+			_damage_hit(i, dv, local, salt)
+			if dv > hit_dv[i]:
+				hit_dv[i] = dv
+				hit_kind[i] = "barrier"
+				hit_other[i] = -1
+	if follower:
+		return
+	for i in n:
+		_incident_cooldown[i] = maxf(_incident_cooldown[i] - TICK_DT, 0.0)
+		var c := cars[i]
+		var seen: Array = _seen_damage[i]
+		var body := CarDamage.body_total(c)
+		var punct := 0
+		for w in 4:
+			if c.puncture[w] > 0.5:
+				punct |= 1 << w
+		var eng := CarDamage.engine_failed(c)
+		var gbx := c.damage_gearbox >= 1.0
+		var dv := hit_dv[i]
+		var kind: String = hit_kind[i] if hit_kind[i] != null else ""
+		if external[i] and body - float(seen[0]) > 0.2:
+			# A car simulated elsewhere: its owner felt the hit, we see the dent.
+			dv = CarDamage.DV_MIN + (body - float(seen[0])) * (CarDamage.DV_FULL - CarDamage.DV_MIN)
+			kind = "impact"
+		if dv >= INCIDENT_DV and _incident_cooldown[i] <= 0.0:
+			_incident(i, kind, CarDamage.severity(dv), hit_other[i])
+			_incident_cooldown[i] = INCIDENT_COOLDOWN_S
+		if punct & ~int(seen[1]):
+			_incident(i, "puncture", 0.3, -1)
+		if eng and not seen[2]:
+			_incident(i, "engine_failure", 1.0, -1)
+		if gbx and not seen[3]:
+			_incident(i, "gearbox_failure", 0.4, -1)
+		_seen_damage[i] = [body, punct, eng, gbx]
+		var e := entries[i]
+		if eng and not e.dnf and not e.finished:
+			e.dnf = true
+			events.append({"type": "retired", "car": i, "reason": "engine"})
+
+
+func _damage_hit(i: int, dv: float, local: Vector2, salt: int) -> void:
+	if damage_level == CarDamage.Level.OFF:
+		return
+	var r := CarDamage.apply_impact(cars[i], defs[i], dv, local, damage_level, tick * 64 + i * 8 + salt)
+	if r["zone"] >= 0 and r["amount"] > 0.03:
+		events.append({"type": "damage", "car": i, "zone": CarDamage.ZONE_NAMES[r["zone"]], "amount": r["amount"]})
+
+
+func _incident(i: int, kind: String, severity: float, other: int) -> void:
+	if CarDamage.is_crippled(cars[i]):
+		severity = 1.0
+	events.append({"type": "incident", "car": i, "kind": kind, "severity": severity,
+		"pos": cars[i].pos, "other": other})
+
+
+## The car is out of the race (engine failure, or retired by the rules).
+func is_retired(i: int) -> bool:
+	return entries[i].dnf and not entries[i].finished
 
 
 static func _closest_points(p1: Vector2, q1: Vector2, p2: Vector2, q2: Vector2) -> Array:

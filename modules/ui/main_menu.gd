@@ -10,6 +10,7 @@ extends Control
 ##   --track id  --class GT3|Road|multi|open                         pick track / car class
 ##   --autodrive --ready --quit-after-race --time-scale 3            test bots
 ##   race options: --weather heavy_rain --weather-changes --time 20 --clock-speed 60 --grid reversed
+##                 --damage off|visual|full
 
 
 var pages := {}
@@ -32,6 +33,7 @@ var difficulty_stepper: Stepper
 var fuel_stepper: Stepper
 var wear_stepper: Stepper
 var stops_stepper: Stepper
+var damage_stepper: Stepper
 var lobby_list: VBoxContainer
 var lobby_title: Label
 var join_info_label: Label
@@ -95,6 +97,8 @@ func _handle_cmdline() -> void:
 		wear_stepper.set_value(float(GameData.arg("tyre-wear")))
 	if GameData.arg("pit-stops"):
 		stops_stepper.set_value(int(GameData.arg("pit-stops")))
+	if GameData.arg("damage"):
+		damage_stepper.set_value(str(GameData.arg("damage")))
 	if GameData.arg("tyres"):
 		tyre_stepper.set_value(str(GameData.arg("tyres")))
 	if GameData.arg("car") and GameData.cars.has(GameData.arg("car")):
@@ -231,8 +235,10 @@ func _build_ui() -> void:
 	fuel_stepper = Stepper.choice("Fuel use", rates, 0.0)
 	wear_stepper = Stepper.choice("Tyre wear", rates, 0.0)
 	stops_stepper = Stepper.numeric("Mandatory pit stops", 0, 3, 1, 0)
+	damage_stepper = Stepper.choice("Damage", [["off", "Off"], ["visual", "Visual only"],
+		["full", "Full (affects the car)"]], "full")
 	_settings_steppers = [laps_stepper, ai_stepper, difficulty_stepper, tod_stepper, clock_stepper, weather_stepper,
-		weather_change_stepper, grid_stepper, fuel_stepper, wear_stepper, stops_stepper]
+		weather_change_stepper, grid_stepper, damage_stepper, fuel_stepper, wear_stepper, stops_stepper]
 
 	var single := _page(root, "single")
 	var single_settings := _settings_grid()
@@ -382,6 +388,7 @@ func _settings_from_ui() -> RaceSettings:
 	s.tyre_wear_rate = float(wear_stepper.value)
 	s.tyre_wear_enabled = s.tyre_wear_rate > 0.0
 	s.mandatory_pit_stops = int(stops_stepper.value)
+	s.set_damage_level(str(damage_stepper.value))
 	return s
 
 
@@ -499,6 +506,7 @@ func _refresh_lobby() -> void:
 		fuel_stepper.set_value(Net.settings.fuel_rate if Net.settings.fuel_enabled else 0.0)
 		wear_stepper.set_value(Net.settings.tyre_wear_rate if Net.settings.tyre_wear_enabled else 0.0)
 		stops_stepper.set_value(Net.settings.mandatory_pit_stops)
+		damage_stepper.set_value(Net.settings.effective_damage_level())
 	join_info_label.visible = host and not Net.dedicated
 	if join_info_label.visible:
 		join_info_label.text = Net.join_instructions()

@@ -23,10 +23,19 @@ var fy_rear: float = 0.0
 var tyre_temp: PackedFloat64Array = [20.0, 20.0, 20.0, 20.0]
 var tyre_wear: PackedFloat64Array = [0.0, 0.0, 0.0, 0.0] ## 0 = new, 1 = gone (wave 3)
 var fuel_l: float = 30.0
-## Damage 0..1 per system. Physics already reads these; wave 3 writes them.
+## Damage 0..1 per system (see CarDamage). The race sim writes them from
+## hits and kerbs, CarPhysics reads them, the pits repair them.
 var damage_engine: float = 0.0
 var damage_aero: float = 0.0
 var damage_suspension: float = 0.0
+var damage_gearbox: float = 0.0
+var alignment: float = 0.0     ## -1 pulls left .. 1 pulls right (bent toe links)
+var puncture: PackedFloat64Array = [0.0, 0.0, 0.0, 0.0] ## 1 = that tyre is flat
+## Bodywork bend per zone (CarDamage.FRONT, REAR, LEFT, RIGHT), what you see.
+var body_damage: PackedFloat64Array = [0.0, 0.0, 0.0, 0.0]
+## CarDamage.Level the race runs at (set on the grid from the race settings).
+var damage_level: int = 0
+var shift_cut: float = 0.0     ## seconds of power cut left from a slow (damaged) gearshift
 ## Track tracking
 var track_idx: int = 0
 var track_s: float = 0.0
@@ -70,18 +79,24 @@ func serialize() -> PackedFloat64Array:
 	a.append_array(tyre_temp)
 	a.append_array(tyre_wear)
 	a.append(int(assist_stability))
+	a.append_array(PackedFloat64Array([damage_gearbox, alignment, damage_level, shift_cut]))
+	a.append_array(puncture)
+	a.append_array(body_damage)
 	return a
 
 
 ## Compact float32 form streamed by the car's owner ~30 times a second.
-const NET_SIZE := 22
+const NET_SIZE := 28
 
 
 func pack_net(out: PackedFloat32Array) -> void:
 	out.append_array(PackedFloat32Array([pos.x, pos.y, heading, vel.x, vel.y, yaw_rate, steer_angle,
 		gear, rpm, ax, ay, fuel_l, damage_engine, damage_aero, damage_suspension,
-		int(assist_tc) | (int(assist_abs) << 1) | (int(wheelspin) << 2) | (int(assist_stability) << 3),
-		tyre_temp[0], tyre_temp[1], tyre_temp[2], tyre_temp[3], fy_front, fy_rear]))
+		int(assist_tc) | (int(assist_abs) << 1) | (int(wheelspin) << 2) | (int(assist_stability) << 3)
+			| (int(puncture[0] > 0.5) << 4) | (int(puncture[1] > 0.5) << 5)
+			| (int(puncture[2] > 0.5) << 6) | (int(puncture[3] > 0.5) << 7),
+		tyre_temp[0], tyre_temp[1], tyre_temp[2], tyre_temp[3], fy_front, fy_rear,
+		damage_gearbox, alignment, body_damage[0], body_damage[1], body_damage[2], body_damage[3]]))
 
 
 func unpack_net(a: PackedFloat32Array, o: int) -> void:
@@ -92,8 +107,12 @@ func unpack_net(a: PackedFloat32Array, o: int) -> void:
 	var flags := int(a[o + 15])
 	assist_tc = flags & 1 != 0; assist_abs = flags & 2 != 0; wheelspin = flags & 4 != 0
 	assist_stability = flags & 8 != 0
+	for w in 4:
+		puncture[w] = 1.0 if flags & (16 << w) != 0 else 0.0
 	tyre_temp = PackedFloat64Array([a[o + 16], a[o + 17], a[o + 18], a[o + 19]])
 	fy_front = a[o + 20]; fy_rear = a[o + 21]
+	damage_gearbox = a[o + 22]; alignment = a[o + 23]
+	body_damage = PackedFloat64Array([a[o + 24], a[o + 25], a[o + 26], a[o + 27]])
 
 
 func deserialize(a: PackedFloat64Array) -> void:
@@ -106,3 +125,7 @@ func deserialize(a: PackedFloat64Array) -> void:
 	tyre_temp = a.slice(23, 27)
 	tyre_wear = a.slice(27, 31)
 	assist_stability = a.size() > 31 and a[31] != 0.0
+	if a.size() >= 44:
+		damage_gearbox = a[32]; alignment = a[33]; damage_level = int(a[34]); shift_cut = a[35]
+		puncture = a.slice(36, 40)
+		body_damage = a.slice(40, 44)

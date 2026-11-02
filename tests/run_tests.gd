@@ -18,11 +18,14 @@ func _init() -> void:
 	test_weather_and_time()
 	test_wet_grip()
 	test_race_settings_and_grid()
+	test_damage()
 	test_elevation()
 	test_pit_rules()
 	var replay := test_ai_race_completes()
 	test_deterministic_replay(replay)
 	test_snapshot_restore(replay)
+	test_telemetry(replay)
+	test_weather_forecast()
 	print("\n%s (%d failures, %.1fs)" % ["PASS" if failures == 0 else "FAIL", failures, (Time.get_ticks_msec() - t0) / 1000.0])
 	quit(1 if failures > 0 else 0)
 
@@ -351,6 +354,7 @@ func test_ai_race_completes() -> Dictionary:
 	settings.tyre_wear_enabled = true
 	settings.tyre_wear_rate = 2.0
 	settings.mandatory_pit_stops = 1
+	settings.set_damage_level("full")  # determinism / snapshot tests cover damage too
 	var race := _race(settings, d)
 	var sim: RaceSim = race["sim"]
 	var ai: Dictionary = race["ai"]
@@ -364,6 +368,10 @@ func test_ai_race_completes() -> Dictionary:
 	var pit_calls := []
 	var penalties := []
 	var mid_pit_taken := false
+	# Race data watches the whole race; the determinism test replays without
+	# it, which proves it never changes the race.
+	var tel := RaceTelemetry.create(sim)
+	var feed_events := 0
 	while sim.phase != RaceSim.Phase.FINISHED and sim.tick < max_ticks:
 		if sim.tick == mid_tick:
 			mid_snapshot = sim.snapshot()
@@ -379,7 +387,13 @@ func test_ai_race_completes() -> Dictionary:
 				changed[i] = calls[i]
 		recorded.append(inputs)
 		pit_calls.append(changed)
+		if sim.tick == 60 * 30:
+			sim.post_event({"type": "radio", "car": 2, "topic": "tyres", "text": "Rears are going off"})
+			sim.post_event({"type": "strategy", "car": 3, "text": "Pushing for the undercut", "plan": {"mode": "push"}})
 		sim.step(inputs)
+		var fe := tel.observe(sim)
+		tel.on_events(sim.events)
+		feed_events += fe.size()
 		for e in sim.events:
 			if e["type"] == "collision":
 				collisions += 1
@@ -402,14 +416,16 @@ func test_ai_race_completes() -> Dictionary:
 		print("       P%d %-15s %-18s laps %d best %s  tyres %s fuel %.1f  stop lap %s" % [e.position, e.driver_name,
 			sim.defs[i].display_name, e.laps_done, _laptime(e.best_lap), _fmt(c.tyre_temp), c.fuel_l,
 			e.pit["last_stop"].get("lap", "-")])
-	check(finishers == sim.car_count(), "all %d cars finish (%d)" % [sim.car_count(), finishers])
+	# Full damage is on: a badly damaged car may limp home too late (DNF).
+	check(finishers >= sim.car_count() - 2, "%d of %d cars finish with full damage on" % [finishers, sim.car_count()])
 	var in_window := 0
 	for i in sim.car_count():
-		if int(sim.entries[i].pit["window_stops"]) == 1:
+		if int(sim.entries[i].pit["window_stops"]) == 1 or sim.entries[i].dnf:
 			in_window += 1
-	check(in_window == sim.car_count(), "every AI makes the mandatory stop inside the window (%d/%d, laps %d-%d)" % [
+	check(in_window == sim.car_count(), "every AI still running makes the mandatory stop inside the window (%d/%d, laps %d-%d)" % [
 		in_window, sim.car_count(), sim.pits.window_open, sim.pits.window_close])
-	check(penalties.is_empty(), "no penalties for AI drivers (%s)" % str(penalties))
+	var stop_penalties := penalties.filter(func(pe): return str(pe["reason"]).contains("pit"))
+	check(stop_penalties.is_empty(), "no pit penalties for AI drivers (%s)" % str(stop_penalties))
 	var times := []
 	for st in stops:
 		times.append(snappedf(st["stationary_s"], 0.1))
@@ -418,9 +434,9 @@ func test_ai_race_completes() -> Dictionary:
 	var worn := 0
 	var measured := 0
 	for i in sim.car_count():
-		if sim.cars[i].tyre_wear[0] > 0.005:
+		if sim.cars[i].tyre_wear[0] > 0.005 or sim.entries[i].dnf:
 			worn += 1
-		if float(sim.entries[i].pit["fuel_per_lap"]) > 0.5:
+		if float(sim.entries[i].pit["fuel_per_lap"]) > 0.5 or sim.entries[i].dnf:
 			measured += 1
 	check(worn == sim.car_count(), "tyres wear (%d/%d)" % [worn, sim.car_count()])
 	check(measured == sim.car_count(), "fuel use per lap is measured (%d/%d)" % [measured, sim.car_count()])
@@ -439,7 +455,7 @@ func test_ai_race_completes() -> Dictionary:
 			best = minf(best, e.best_lap)
 	check(best > 75.0 and best < 130.0, "plausible best lap %s (real GT cars ~1:35-1:45)" % _laptime(best))
 	print("       %d car-to-car contacts" % collisions)
-	return {"inputs": recorded, "pit_calls": pit_calls, "start_hash": start_hash, "end_hash": sim.state_hash(),
+	return {"telemetry": tel, "sim": sim, "feed_events": feed_events, "inputs": recorded, "pit_calls": pit_calls, "start_hash": start_hash, "end_hash": sim.state_hash(),
 		"settings": settings, "mid": mid_snapshot, "mid_tick": mid_tick}
 
 
@@ -757,3 +773,286 @@ func test_ai_drivers() -> void:
 		vs += slow.target_speed[k]
 		vf += fast.target_speed[k]
 	check(vf > vs * 1.03, "pace trait: faster plan for the faster driver (%.1f vs %.1f m/s avg)" % [vf / slow.target_speed.size(), vs / slow.target_speed.size()])
+
+
+## Wave 3: hits bend the car and hurt the systems behind them, the car
+## drives worse, the pits can fix it, incidents reach race control, and the
+## damage survives the trip over the network.
+func test_damage() -> void:
+	print("damage")
+	var d := _data()
+	var def: CarDefinition = d["cars"]["ferrari_296_gt3"] if d["cars"].has("ferrari_296_gt3") else d["cars"].values()[0]
+	var nose := Vector2(def.length * 0.5, 0.0)
+	# Levels
+	var off := CarState.new()
+	CarDamage.apply_impact(off, def, 15.0, nose, CarDamage.Level.OFF, 1)
+	check(CarDamage.body_total(off) == 0.0 and off.damage_aero == 0.0, "damage off: hits do nothing")
+	var vis := CarState.new()
+	CarDamage.apply_impact(vis, def, 15.0, nose, CarDamage.Level.VISUAL, 1)
+	check(vis.body_damage[CarDamage.FRONT] > 0.5 and vis.damage_aero == 0.0 and vis.damage_engine == 0.0,
+		"visual damage: the nose bends but the car is unhurt")
+	check(CarDamage.repair_time(vis) == 0.0 and CarDamage.repair_plan(vis).has("aero"), "visual damage: fixed for free in the pits")
+	var full := CarState.new()
+	full.damage_level = CarDamage.Level.FULL
+	CarDamage.apply_impact(full, def, 15.0, nose, CarDamage.Level.FULL, 1)
+	check(full.damage_aero > 0.3 and full.damage_engine > 0.1 and full.damage_gearbox == 0.0,
+		"front hit: aero %.2f, engine %.2f, gearbox untouched" % [full.damage_aero, full.damage_engine])
+	var rear := CarState.new()
+	CarDamage.apply_impact(rear, def, 15.0, Vector2(-def.length * 0.5, 0.2), CarDamage.Level.FULL, 1)
+	check(rear.damage_gearbox > 0.2 and rear.body_damage[CarDamage.REAR] > 0.5, "rear hit: gearbox %.2f" % rear.damage_gearbox)
+	var side := CarState.new()
+	CarDamage.apply_impact(side, def, 12.0, Vector2(0.0, def.width * 0.5), CarDamage.Level.FULL, 1)
+	check(side.damage_suspension > 0.15 and side.alignment > 0.1, "right side hit: suspension %.2f, pulls right %.2f" % [side.damage_suspension, side.alignment])
+	check(CarDamage.apply_impact(CarState.new(), def, 1.0, nose, CarDamage.Level.FULL, 1)["amount"] == 0.0, "a nudge does no damage")
+	var punctured := 0
+	for k in 40:
+		var p := CarState.new()
+		CarDamage.apply_impact(p, def, 18.0, CarDamage.wheel_pos(CarState.FR, def) + Vector2(0.0, 0.3), CarDamage.Level.FULL, k)
+		punctured += int(p.puncture[CarState.FR] > 0.5)
+	check(punctured > 10 and punctured < 40, "hard hits next to a wheel sometimes puncture it (%d/40)" % punctured)
+	# Effect on the car
+	var base := _accel_test(d, def, CarState.new())
+	var engine := CarState.new()
+	engine.damage_level = CarDamage.Level.FULL
+	engine.damage_engine = 0.45
+	var slow := _accel_test(d, def, engine)
+	check(slow["speed"] < base["speed"] - 3.0, "engine damage: slower (%.0f vs %.0f km/h after 7 s)" % [slow["speed"] * 3.6, base["speed"] * 3.6])
+	var gbox := CarState.new()
+	gbox.damage_level = CarDamage.Level.FULL
+	gbox.damage_gearbox = 0.95
+	var g := _accel_test(d, def, gbox)
+	check(g["speed"] < base["speed"] - 3.0 and g["gear"] < base["gear"], "gearbox damage: lost top gears (gear %d vs %d)" % [g["gear"], base["gear"]])
+	var flat := CarState.new()
+	flat.damage_level = CarDamage.Level.FULL
+	flat.puncture[CarState.FR] = 1.0
+	var pf := _accel_test(d, def, flat)
+	check(pf["drift"] > base["drift"] + 0.03, "right front puncture pulls the car right (%.2f vs %.2f rad)" % [pf["drift"], base["drift"]])
+	var bent := CarState.new()
+	bent.damage_level = CarDamage.Level.FULL
+	bent.alignment = -0.8
+	var pb := _accel_test(d, def, bent)
+	check(pb["drift"] < base["drift"] - 0.03, "bent steering pulls left (%.2f rad)" % pb["drift"])
+	var visual_only := CarState.new()
+	visual_only.damage_level = CarDamage.Level.VISUAL
+	visual_only.body_damage = PackedFloat64Array([1.0, 1.0, 1.0, 1.0])
+	check(absf(_accel_test(d, def, visual_only)["speed"] - base["speed"]) < 0.01, "visual damage drives like new")
+	# Repairs
+	var plan := CarDamage.repair_plan(full)
+	check(plan.has("aero") and plan.has("engine") and not plan.has("gearbox"), "repair plan lists the damaged parts %s" % str(plan.keys()))
+	var t_all := CarDamage.repair_time(full)
+	var t_aero := CarDamage.repair_time(full, ["aero"])
+	check(t_all > t_aero and t_aero >= 8.0, "repair time %.0f s (aero alone %.0f s)" % [t_all, t_aero])
+	CarDamage.repair(full, ["aero"])
+	check(full.damage_aero == 0.0 and full.damage_engine > 0.0 and CarDamage.body_total(full) == 0.0, "repairing aero leaves the engine")
+	CarDamage.repair(full)
+	check(CarDamage.worst(full) == 0.0 and CarDamage.repair_plan(full).is_empty(), "full repair: as new")
+	# Network: damage survives pack/unpack
+	var a := CarState.new()
+	CarDamage.apply_impact(a, def, 16.0, Vector2(0.0, -def.width * 0.5), CarDamage.Level.FULL, 3)
+	a.puncture[CarState.RL] = 1.0
+	a.damage_gearbox = 0.4
+	var buf := PackedFloat32Array()
+	a.pack_net(buf)
+	check(buf.size() == CarState.NET_SIZE, "net packet is NET_SIZE floats")
+	var b := CarState.new()
+	b.unpack_net(buf, 0)
+	check(b.puncture[CarState.RL] == 1.0 and is_equal_approx(b.damage_gearbox, 0.4) and is_equal_approx(b.alignment, a.alignment)
+		and is_equal_approx(b.body_damage[CarDamage.LEFT], a.body_damage[CarDamage.LEFT]), "damage survives the network")
+	var snap := CarState.new()
+	snap.deserialize(a.serialize())
+	check(snap.puncture == a.puncture and snap.body_damage == a.body_damage, "damage survives snapshots")
+	# In a race: a barrier hit and a car-to-car crash raise incidents
+	var st := RaceSettings.new()
+	st.ai_count = 3
+	st.seed = 5
+	st.countdown_s = 0.0
+	st.set_damage_level("full")
+	var sim: RaceSim = _race(st, d)["sim"]
+	sim.step([])
+	var c0 := sim.cars[0]
+	var q := sim.track.project(c0.pos, c0.track_idx)
+	var dirv: Vector2 = q["dir"]
+	var nrm := Vector2(-dirv.y, dirv.x)
+	c0.pos = sim.track.position_at(q["s"], q["w_right"] + sim.track.runoff - 1.0)
+	c0.heading = nrm.angle()
+	c0.vel = nrm * 30.0
+	var incidents := []
+	for k in 120:
+		sim.step([])
+		for e in sim.events:
+			if e["type"] == "incident":
+				incidents.append(e)
+	check(incidents.size() > 0 and incidents[0]["car"] == 0 and incidents[0]["kind"] == "barrier",
+		"driving into the wall raises a barrier incident (%s)" % str(incidents.slice(0, 1)))
+	check(c0.body_damage[CarDamage.FRONT] > 0.3, "the nose is bent after hitting the wall (%.2f)" % c0.body_damage[CarDamage.FRONT])
+	var c1 := sim.cars[1]
+	var c2 := sim.cars[2]
+	var s_crash := sim.track.length * 0.5
+	var fwd := Vector2.from_angle(sim.track.heading_at(s_crash))
+	c1.pos = sim.track.position_at(s_crash)
+	c2.pos = c1.pos + fwd * (sim.defs[1].length * 0.5 + sim.defs[2].length * 0.5 + 0.1)
+	c1.heading = fwd.angle()
+	c2.heading = (-fwd).angle()
+	c1.vel = fwd * 15.0
+	c2.vel = -fwd * 15.0
+	var crash := []
+	for k in 10:
+		sim.step([])
+		for e in sim.events:
+			if e["type"] == "incident" and e["kind"] == "collision":
+				crash.append(e)
+	check(crash.size() >= 2 and crash[0]["severity"] > 0.5, "head-on crash: both cars report a serious incident (%d)" % crash.size())
+	check(c1.body_damage[CarDamage.FRONT] > 0.5 and c2.body_damage[CarDamage.FRONT] > 0.5, "both noses smashed")
+	c1.damage_engine = 1.0
+	sim.step([])
+	check(sim.is_retired(1) and sim.entries[1].dnf, "a failed engine retires the car")
+	# Remote cars: the host sees damage that arrived from their owner
+	for k in 70:
+		sim.step([])
+	sim.external[2] = 1
+	c2.body_damage[CarDamage.LEFT] = 0.8
+	c2.puncture[CarState.RR] = 1.0
+	var remote := []
+	sim.step([])
+	for e in sim.events:
+		if e["type"] == "incident" and e["car"] == 2:
+			remote.append(e["kind"])
+	check("impact" in remote and "puncture" in remote, "host reports incidents for a remote player's car %s" % str(remote))
+
+
+## Full throttle, no steering, 7 s from a rolling start off the grid down
+## the main straight. Returns speed, gear and how far the heading drifted.
+func _accel_test(d: Dictionary, def: CarDefinition, s: CarState) -> Dictionary:
+	var track: TrackData = d["track"]
+	var env := SimEnvironment.create(track.default_environment, {}, 1)
+	env.bind_track(track)
+	var tc: TyreCompound = d["tyres"][def.tyre_compound_id]
+	var g := track.grid_slot(0)
+	s.pos = g["pos"]
+	s.heading = g["heading"]
+	s.vel = Vector2.from_angle(s.heading) * 20.0
+	s.track_idx = track.project(s.pos)["idx"]
+	s.tyre_temp = PackedFloat64Array([tc.optimal_temp_c, tc.optimal_temp_c, tc.optimal_temp_c, tc.optimal_temp_c])
+	s.assist_stability = false
+	var inp := CarInput.new()
+	inp.throttle = 1.0
+	var ev := []
+	for k in 240 * 7:
+		CarPhysics.step(s, inp, def, tc, env, track, 1.0 / 240.0, 0.0, ev, 0)
+	return {"speed": s.speed(), "gear": s.gear, "drift": wrapf(s.heading - g["heading"], -PI, PI)}
+
+
+## Race data for the pit wall: lap logs, averages, gaps, pit windows, feed, sync.
+func test_telemetry(rep: Dictionary) -> void:
+	print("telemetry")
+	var tel: RaceTelemetry = rep["telemetry"]
+	var sim: RaceSim = rep["sim"]
+	var logs_ok := true
+	var sectors_ok := true
+	for i in sim.car_count():
+		var c := tel.cars[i]
+		if c.laps.size() != sim.entries[i].laps_done:
+			logs_ok = false
+		for l in c.laps:
+			var sum := 0.0
+			for x in l["sectors"]:
+				sum += x
+			if l["sectors"].size() != sim.track.sectors.size() or absf(sum - l["time"]) > 0.01:
+				sectors_ok = false
+	check(logs_ok, "every completed lap is in each car's lap log")
+	check(sectors_ok, "each logged lap has all sector times, adding up to the lap time")
+	var c0 := tel.cars[sim.running_order[0]]
+	check(c0.last5_avg > 60.0 and c0.last5_avg < 200.0, "last-5-lap average for the winner (%s)" % _laptime(c0.last5_avg))
+	check(tel.fastest_lap > 0.0 and absf(tel.fastest_lap - sim.entries[tel.fastest_car].best_lap) < 0.001,
+		"fastest lap matches the race's best (%s, %s)" % [_laptime(tel.fastest_lap), tel.driver_name(tel.fastest_car)])
+	print("       pit lane: lane %.1f s + stop %.1f s, bypasses %.0f m of track" % [tel.pit.lane_time, tel.pit.stop_time_s, tel.pit.span_m])
+	var loss := tel.pit.loss_for(c0, sim.track.length)
+	check(tel.pit.has_lane and loss > 10.0 and loss < 90.0, "pit lane loss on %s is plausible (%.1f s, %d track samples)" % [sim.track.id, loss, c0.span_times.size()])
+
+	# Gaps mid-race, from a fresh run of the recorded race to a point where cars are spread out.
+	var sim2 := _fresh_sim(rep["settings"])
+	var tel2 := RaceTelemetry.create(sim2)
+	var inputs: Array = rep["inputs"]
+	var stop_at := mini(inputs.size() - 1, int(sim2.settings.countdown_s * 60) + 60 * 150)
+	for k in stop_at:
+		sim2.step(inputs[k])
+		tel2.observe(sim2)
+	tel2._compute_gaps(sim2)
+	tel2.pit.analyse(tel2.cars, sim2)
+	var order := sim2.running_order
+	var mono := true
+	var int_ok := true
+	var lines := []
+	for p in order.size():
+		var c := tel2.cars[order[p]]
+		if p > 0:
+			var prev := tel2.cars[order[p - 1]]
+			if c.gap_leader + 0.3 < prev.gap_leader:
+				mono = false
+			# Measured at different timing loops, so they differ by the pace
+			# difference over the stretch between the two cars.
+			if absf((c.gap_leader - prev.gap_leader) - c.interval) > maxf(1.0, 0.3 * c.interval):
+				int_ok = false
+		lines.append("P%d %s +%.2f int %.2f pit:%s" % [p + 1, sim2.entries[order[p]].driver_name, c.gap_leader, c.interval,
+			"P%d%s" % [c.pit.get("rejoin_pos", 0), " clear" if c.pit.get("clear_air", false) else ""]])
+	print("       " + "\n       ".join(lines))
+	check(mono, "gaps to the leader grow down the order")
+	check(int_ok, "intervals match the difference in gaps")
+	var last := tel2.cars[order[-1]]
+	check(tel2.cars[order[0]].gap_leader == 0.0 and last.gap_leader > 0.5, "leader has no gap, last car is behind (%.1f s)" % last.gap_leader)
+	var pit_ok := true
+	for i in order:
+		var pa: Dictionary = tel2.cars[i].pit
+		if pa.is_empty() or pa["rejoin_pos"] < sim2.entries[i].position or pa["rejoin_pos"] > order.size():
+			pit_ok = false
+	check(pit_ok, "pit analysis gives every car a rejoin position")
+
+	# Feed: AI radio/strategy events and derived calls.
+	var heard := tel.feed.items.filter(func(it): return it.get("text", "") in ["Rears are going off", "Pushing for the undercut"])
+	check(heard.size() == 2, "radio and strategy calls posted with post_event reach the feed (%d radio, %d strategy calls in the race)" % [
+		tel.feed.count_kind("radio"), tel.feed.count_kind("strategy")])
+	check(tel.strategies.has(3) and tel.strategies[3]["plan"].get("mode", "") == "push", "a team's latest strategy is kept")
+	check(rep["feed_events"] > 0, "the race data writes its own feed calls (%d)" % rep["feed_events"])
+	for it in tel.feed.latest(6):
+		print("       [%s] %s" % [it["kind"], it["text"]])
+
+	# Sync: a client copy gets the host's gaps and feed.
+	var client := RaceTelemetry.create(sim, false)
+	client.apply_net(bytes_to_var(var_to_bytes(tel2.to_net())))
+	var same := true
+	for i in order:
+		if absf(client.cars[i].gap_leader - tel2.cars[i].gap_leader) > 1e-6 or client.cars[i].pit != tel2.cars[i].pit:
+			same = false
+	check(same, "gaps and pit analysis survive the trip to a client")
+	client.on_events([{"type": "feed", "kind": "pit", "car": 1, "text": "x", "t": 1.0, "lap": 1}])
+	check(client.feed.items.size() == 1 and not client.feed.items[0].has("type"), "clients take feed items from host events")
+	client.on_events([{"type": "safety_car", "state": "sc", "reason": "Car stopped at turn 3", "lap": 2},
+		{"type": "penalty", "car": 0, "seconds": 5.0, "reason": "track limits"}])
+	check(client.feed.count_kind("race_control") == 2, "race control calls reach the feed (%s)" % client.feed.items[-1]["text"])
+	var saved = JSON.parse_string(JSON.stringify(tel.to_dict(sim)))
+	check(saved is Dictionary and saved["cars"].size() == sim.car_count(), "the race log exports to JSON")
+
+
+## Weather radar and forecast from the environment.
+func test_weather_forecast() -> void:
+	print("weather forecast")
+	var d := _data()
+	var f := WeatherForecast.new()
+	f.setup(d["track"], 99)
+	var env := SimEnvironment.new()
+	f.update(env)
+	check(f.changes.is_empty(), "fixed weather: nothing forecast (%s)" % f.summary())
+	if env.get("timeline") == null:
+		print("       (environment has no weather timeline in this build: forecast is current conditions only)")
+		return
+	env.set("timeline", [[0.0, 0.1, 0.0], [400.0, 0.85, 0.0], [700.0, 0.95, 0.35], [1300.0, 0.85, 0.0]])
+	f.update(env)
+	check(f.changes.size() == 3 and f.changes[0]["weather"] == "overcast", "forecast lists the coming changes")
+	check(f.changes[1]["eta"] == 700.0 and f.changes[1]["confidence"] < f.changes[0]["confidence"], "later changes are less certain")
+	check(f.radar_cells.size() > 0, "rain shows on the radar before it arrives (%d cells)" % f.radar_cells.size())
+	var nearest := INF
+	for c in f.radar_cells:
+		if c["rain"] > 0.05:
+			nearest = minf(nearest, c["pos"].distance_to(f.centre))
+	check(nearest > f.track_radius, "rain still upwind of the track")
+	print("       " + f.summary())

@@ -15,7 +15,8 @@ const KEYS := {
 	"zoom_in": [KEY_E, KEY_EQUAL, KEY_KP_ADD, KEY_PAGEUP],
 	"zoom_out": [KEY_Q, KEY_MINUS, KEY_KP_SUBTRACT, KEY_PAGEDOWN],
 	"zoom_full": [KEY_Z, KEY_TAB],
-	"pit_box": [KEY_P],
+	"strategy_screen": [KEY_P],
+	"pit_box": [KEY_B],
 	"pit_limiter": [KEY_L],
 	"pit_tyres": [KEY_T],
 	"pit_fuel": [KEY_F],
@@ -39,10 +40,10 @@ const PAD_BUTTONS := {
 	"zoom_in": [JOY_BUTTON_LEFT_SHOULDER, JOY_BUTTON_DPAD_UP],      # hold
 	"zoom_out": [JOY_BUTTON_RIGHT_SHOULDER, JOY_BUTTON_DPAD_DOWN],  # hold
 	"zoom_full": [JOY_BUTTON_RIGHT_STICK],
-	"pit_box": [JOY_BUTTON_B],
+	"strategy_screen": [JOY_BUTTON_DPAD_RIGHT],  # pit wall (strategist screen); B closes
+	"pit_box": [JOY_BUTTON_DPAD_LEFT],
 	"pit_limiter": [JOY_BUTTON_LEFT_STICK],
-	"pit_tyres": [JOY_BUTTON_DPAD_RIGHT],
-	"pit_fuel": [JOY_BUTTON_DPAD_LEFT],
+	"pit_tyres": [JOY_BUTTON_B],  # B closes the pit wall when it's open
 }
 const STICK_DEADZONE := 0.12
 const TRIGGER_DEADZONE := 0.05

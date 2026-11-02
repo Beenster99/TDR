@@ -230,16 +230,9 @@ func service_for(i: int, plan: Dictionary) -> Dictionary:
 		fuel = minf(want, room)
 	var repair_s := 0.0
 	var parts := []
-	var dmg = _damage_api()
-	if plan["repair"] and sim.settings.damage_enabled:
-		if dmg != null:
-			repair_s = dmg.repair_time(c, [])
-			parts = dmg.repair_plan(c).keys()
-		else:
-			var worst := maxf(c.damage_engine, maxf(c.damage_aero, c.damage_suspension))
-			repair_s = 25.0 * (c.damage_engine + c.damage_aero + c.damage_suspension)
-			if worst > 0.0:
-				parts = ["all"]
+	if plan["repair"] and sim.damage_level != CarDamage.Level.OFF:
+		parts = CarDamage.repair_plan(c).keys()
+		repair_s = CarDamage.repair_time(c, [])
 	var tyre_s := TYRE_CHANGE_S if tyre != "" else 0.0
 	var fuel_s := fuel / FUEL_FLOW_LPS
 	var total := STOP_BASE_S + maxf(tyre_s, fuel_s) + repair_s
@@ -390,19 +383,11 @@ func _finish_service(i: int) -> void:
 		var warm := lerpf(sim.env.ambient_c, sim.env.track_c, 0.5) + 10.0
 		c.tyre_temp = PackedFloat64Array([warm, warm, warm, warm])
 		p["stint_lap"] = e.laps_done
-		var dmg = _damage_api()
-		if dmg != null:
-			dmg.repair(c, ["tyres"])
+		CarDamage.repair(c, ["tyres"])  # new tyres fix punctures
 	c.fuel_l = minf(c.fuel_l + float(work.get("fuel_l", 0.0)), sim.defs[i].fuel_capacity_l)
 	_lap_fuel[i] = c.fuel_l
 	if not (work.get("repair_parts", []) as Array).is_empty():
-		var dmg = _damage_api()
-		if dmg != null:
-			dmg.repair(c, [])
-		else:
-			c.damage_engine = 0.0
-			c.damage_aero = 0.0
-			c.damage_suspension = 0.0
+		CarDamage.repair(c, work["repair_parts"])
 	# A stop counts in the lap the car came into the pits.
 	var lap := int(p["entry_lap"]) if int(p["entry_lap"]) > 0 else current_lap(i)
 	p["stops"] = int(p["stops"]) + 1
@@ -705,18 +690,3 @@ func from_dict(d: Dictionary) -> void:
 	_prev_s = PackedFloat64Array(d["prev_s"])
 	_lap_fuel = PackedFloat64Array(d["lap_fuel"])
 	_sent = d["sent"].duplicate(true)
-
-
-# --- Damage (CarDamage in the physics module, when present) ----------------------
-
-static var _dmg_script = null
-static var _dmg_checked := false
-
-
-static func _damage_api():
-	if not _dmg_checked:
-		_dmg_checked = true
-		const PATH := "res://modules/physics/car_damage.gd"
-		if ResourceLoader.exists(PATH):
-			_dmg_script = load(PATH)
-	return _dmg_script

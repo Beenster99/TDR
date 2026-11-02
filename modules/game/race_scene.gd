@@ -12,6 +12,7 @@ var car_views: Array[CarView] = []
 var camera: Camera2D
 var hud: RaceHud
 var race_audio: RaceAudio
+var pit_wall: StrategistScreen
 var results: PanelContainer
 var rotate_camera := false
 var _results_shown := false
@@ -61,10 +62,16 @@ func _ready() -> void:
 	hud = RaceHud.new()
 	layer.add_child(hud)
 	hud.setup(session)
+	pit_wall = StrategistScreen.new()
+	layer.add_child(pit_wall)
+	pit_wall.setup(session)
+	if GameData.arg("pit-wall"):
+		pit_wall.open()
 	results = _build_results()
 	layer.add_child(results)
 	if GameData.arg("autodrive") and session.local_car >= 0:
 		autodrive = AIDriver.for_car(session.sim, session.local_car)
+		autodrive.pit_strategy.telemetry = session.telemetry
 	if DisplayServer.get_name() == "headless":
 		var env := session.sim.env
 		print("[race] %s, %d cars, %d laps, local car %d, %s %02d:00, air %d C, track %d C" % [RaceSession.Mode.keys()[session.mode],
@@ -207,7 +214,9 @@ func _maybe_screenshot() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventMouseButton and event.pressed:
+	if event.is_action_pressed("strategy_screen") and not _results_shown:
+		pit_wall.toggle()
+	elif event is InputEventMouseButton and event.pressed:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
 			_set_zoom(_zoom_target - ZOOM_WHEEL_STEP)
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
@@ -220,7 +229,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		rotate_camera = not rotate_camera
 	elif event.is_action_pressed("restart_race") and session.mode == RaceSession.Mode.OFFLINE:
 		_restart()
-	elif event.is_action_pressed("back_to_menu") and not _results_shown:
+	elif event.is_action_pressed("back_to_menu") and not _results_shown and not pit_wall.visible:
 		_back_to_menu()
 
 
@@ -281,6 +290,7 @@ func _on_events(evs: Array) -> void:
 
 func _on_race_finished() -> void:
 	var sim := session.sim
+	_save_race_data()
 	var lines := []
 	for p in sim.running_order.size():
 		var i := sim.running_order[p]
@@ -306,6 +316,24 @@ func _on_race_finished() -> void:
 		get_tree().create_timer(10.0).timeout.connect(func(): Net.end_race())
 		return
 	_show_results(lines)
+
+
+## Every race's data (lap log, sectors, gaps, feed, weather) is kept as JSON
+## in user://race_data/, for the strategist tools to come.
+func _save_race_data() -> void:
+	DirAccess.make_dir_recursive_absolute("user://race_data")
+	var stamp := Time.get_datetime_string_from_system().replace(":", "-")
+	var path := "user://race_data/%s_%s.json" % [stamp, session.sim.track.id]
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	if f:
+		f.store_string(JSON.stringify(session.telemetry.to_dict(session.sim), "\t"))
+		f.close()
+		if DisplayServer.get_name() == "headless":
+			var gaps := []
+			for c in session.telemetry.cars:
+				gaps.append("%.1f" % c.gap_leader)
+			print("[race data] saved %s (%d feed items, gaps %s)" % [ProjectSettings.globalize_path(path),
+				session.telemetry.feed.items.size(), ", ".join(gaps)])
 
 
 func _build_results() -> PanelContainer:
