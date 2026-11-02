@@ -59,6 +59,7 @@ func _init() -> void:
 	test_rebinding()
 	test_grid_limits()
 	test_garage_saves()
+	test_online_contacts()
 	print("\n%s (%d failures, %.1fs)" % ["PASS" if failures == 0 else "FAIL", failures, (Time.get_ticks_msec() - t0) / 1000.0])
 	quit(1 if failures > 0 else 0)
 
@@ -2370,3 +2371,119 @@ func test_hud_timing() -> void:
 			break
 	check(RaceHud.short_name("Driver 727") == "Driver 727" and RaceHud.short_name("Alessandro Bellini-Rossi") == "A. Bellini-Ross", "driver names fit the tower")
 	check(RaceHud.fmt_sector(32.4567) == "32.457" and RaceHud.fmt_sector(0.0) == "--.---", "sector times format")
+
+
+## Online play: hit boxes match the bodywork, remote cars are placed where
+## they are now (clock sync + prediction), and every machine paints the
+## field the same.
+func test_online_contacts() -> void:
+	print("online contacts")
+	var cars := CarCatalog.load_all()
+	var mid: CarDefinition = cars["v8_mid_berlinetta"]
+	check(mid.body_offset > 0.15, "mid-engined car's body sits ahead of its CG (%.2f m)" % mid.body_offset)
+	# Nose to tail on a straight: the hit is when the bumpers meet, not before.
+	var rear_bumper := mid.body_offset - mid.length * 0.5
+	var at_gap := func(gap: float) -> Dictionary:
+		var x_b := rear_bumper - gap - (mid.body_offset + mid.length * 0.5)
+		return RaceSim.body_contact(Vector2.ZERO, 0.0, mid, Vector2(x_b, 0.0), 0.0, mid)
+	check(at_gap.call(0.12).is_empty(), "no contact with 12 cm between the bumpers")
+	var hit: Dictionary = at_gap.call(-0.05)
+	check(not hit.is_empty() and absf(hit["depth"] - 0.05) < 0.02 and hit["normal"].x < -0.9,
+		"contact when the bumpers overlap 5 cm (depth %.3f)" % (hit.get("depth", -1.0)))
+	# Side by side.
+	var side := func(gap: float) -> Dictionary:
+		return RaceSim.body_contact(Vector2.ZERO, 0.0, mid, Vector2(0.4, mid.width + gap), 0.0, mid)
+	check(side.call(0.1).is_empty(), "no contact with 10 cm between the doors")
+	check(not side.call(-0.04).is_empty(), "contact when the doors overlap")
+	# Deep overlap still pushes apart along the shortest way.
+	var deep := RaceSim.body_contact(Vector2.ZERO, 0.0, mid, Vector2(0.0, 1.2), 0.0, mid)
+	check(not deep.is_empty() and deep["normal"].y > 0.9 and deep["depth"] > 0.7, "deep overlap pushes sideways")
+	# Turned 90 degrees: T-bone, the nose of B into A's door.
+	var tb := RaceSim.body_contact(Vector2.ZERO, 0.0, mid, Vector2(mid.body_offset, mid.width * 0.5 + mid.length * 0.5 + mid.body_offset - 0.05), -PI * 0.5, mid)
+	check(not tb.is_empty() and tb["normal"].y > 0.9, "T-bone contact found")
+
+	# A remote car at 70 m/s round a long bend, sent at 30 Hz, arriving 90 ms
+	# (+/- 15 ms) later. Placed in the present it is within a car's width of
+	# where its driver has it; the old delayed view was many metres behind.
+	var path := []        # true state each 1/60 s, steering in and out
+	var c0 := CarState.new()
+	for tick in 601:
+		var t := tick / 60.0
+		var w := 0.12 + 0.1 * sin(t * 1.3)
+		var speed := 70.0 - 8.0 * sin(t * 0.7)
+		c0.ax = -8.0 * 0.7 * cos(t * 0.7)
+		var snap := CarState.new()
+		snap.pos = c0.pos
+		snap.heading = c0.heading
+		snap.vel = Vector2(cos(c0.heading), sin(c0.heading)) * speed
+		snap.yaw_rate = w
+		snap.ax = c0.ax
+		path.append(snap)
+		for sub in 10:
+			c0.heading += w / 600.0
+			c0.pos += Vector2(cos(c0.heading), sin(c0.heading)) * speed / 600.0
+	var truth := func(t: float) -> CarState:
+		return path[clampi(roundi(t * 60.0), 0, path.size() - 1)]
+	var live := NetTimeline.new()
+	var old := NetTimeline.new()
+	var pending := []
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 7
+	var err_now := 0.0
+	var err_old := 0.0
+	var shown := CarState.new()
+	var shown_old := CarState.new()
+	for tick in 600:
+		var now := tick / 60.0
+		if tick % 2 == 0:
+			var data := PackedFloat32Array()
+			truth.call(now).pack_net(data)
+			pending.append([now + 0.09 + rng.randf_range(-0.015, 0.015), now, data])
+		for p in pending.duplicate():
+			if p[0] <= now:
+				live.add(p[1], now, p[2])
+				old.add(p[1], now, p[2])
+				pending.erase(p)
+		live.apply(shown, now, true)
+		old.apply(shown_old, now, false)
+		if tick > 120:
+			var real: CarState = truth.call(now)
+			err_now = maxf(err_now, shown.pos.distance_to(real.pos))
+			err_old = maxf(err_old, shown_old.pos.distance_to(real.pos))
+	check(err_now < 0.6, "remote car placed in the present: worst error %.2f m" % err_now)
+	check(err_old > 8.0, "(the old delayed view was up to %.1f m behind)" % err_old)
+	# Braking hard: the guess doesn't run past where the car stops.
+	var b := CarState.new()
+	b.vel = Vector2(5.0, 0.0)
+	b.ax = -40.0
+	NetTimeline.predict(b, 0.3)
+	check(b.vel.x >= -0.01 and b.pos.x <= 1.6, "prediction brakes to a stop, not backwards (%.2f m/s)" % b.vel.x)
+
+	# Clock sync: the host's clock is 5 s ahead; uneven pings are ignored.
+	var nc := NetClock.new()
+	nc.add_pong(10.0, 15.05, 10.1)        # even 100 ms round trip
+	nc.add_pong(10.5, 15.70, 10.9)        # slow way back, 400 ms
+	check(nc.synced and absf(nc.offset - 5.0) < 0.03, "clock offset from the quickest pings (%.3f s)" % nc.offset)
+	nc.add_pong(20.0, 27.05, 20.1)        # host clock jumped 2 s (a hitch)
+	check(absf(nc.offset - 7.0) < 0.03, "clock offset follows a jump (%.3f s)" % nc.offset)
+	# A timeline whose sender switches to the host clock starts over.
+	var sw := NetTimeline.new()
+	var st := PackedFloat32Array()
+	CarState.new().pack_net(st)
+	sw.add(100.0, 3.0, st)
+	sw.add(3.05, 3.1, st)
+	check(sw.clocks_agree() and sw.received == 2, "timeline follows a sender that syncs its clock")
+
+	# Every machine paints the field the same, whichever car is its own.
+	var ids := ["bmw_m4_gt3", "bmw_m4_gt3", "bmw_m4_gt3", "bmw_m4_gt3"]
+	var liv := WorldView.field_liveries(ids, [{}, {}, {}, {}], [false, true, true, false])
+	check(liv[1].is_empty(), "first player in a model keeps its own livery (even behind an AI car)")
+	check(not liv[2].is_empty() and not liv[0].is_empty() and str(liv[0]) != str(liv[2]),
+		"same model again gets its own colours")
+	liv = WorldView.field_liveries(ids, [{}, {}, {"primary": "#123456"}, {}], [false, true, true, false])
+	check(liv[2]["primary"] == "#123456", "a player's own paint wins")
+	var p := RaceEntry.new()
+	p.crew = [{"peer_id": 5, "role": RaceEntry.ROLE_DRIVER}]
+	check(p.is_player_driving(), "a person at the wheel is highlighted")
+	p.crew = [{"peer_id": RaceEntry.AI_PEER, "role": RaceEntry.ROLE_DRIVER}]
+	check(not p.is_player_driving(), "an AI co-driver is not")
