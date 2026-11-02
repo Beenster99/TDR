@@ -6,8 +6,7 @@ extends Node2D
 var session: RaceSession
 var local_input := LocalInput.new()
 var autodrive: AIDriver = null
-var track_view: TrackView
-var weather_view: WeatherView
+var world: WorldView
 var car_views: Array[CarView] = []
 var camera: Camera2D
 var hud: RaceHud
@@ -34,19 +33,19 @@ func _ready() -> void:
 	Net.returned_to_lobby.connect(_on_returned_to_lobby)
 	Net.disconnected.connect(_on_disconnected)
 
-	track_view = TrackView.new()
-	add_child(track_view)
-	track_view.setup(session.sim.track)
-	weather_view = WeatherView.new()
-	add_child(weather_view)
-	weather_view.setup(session.sim.env, session.sim.track, track_view)
+	world = WorldView.new()
+	world.name = "World"
+	add_child(world)
+	world.setup(session.sim.track, session.sim.env)
+	var seen := {}
 	for i in session.sim.car_count():
-		var v := CarView.new()
-		v.setup(session.sim.defs[i], session.sim.cars[i], session.sim.entries[i].driver_name, i == session.local_car)
-		v.set_environment(session.sim.env)
-		weather_view.add_headlights(v, session.sim.defs[i].length)
-		add_child(v)
-		car_views.append(v)
+		var def: CarDefinition = session.sim.defs[i]
+		# Same model more than once: give the others their own colours.
+		var k: int = seen.get(def.id, 0)
+		seen[def.id] = k + 1
+		var livery := {} if i == session.local_car else WorldView.livery_variant(k)
+		car_views.append(world.add_car(def, session.sim.cars[i], session.sim.entries[i].driver_name,
+			i == session.local_car, i + 1, livery))
 	race_audio = RaceAudio.new()
 	add_child(race_audio)
 	race_audio.setup(session.sim.cars, session.sim.defs, session.local_car)
@@ -111,7 +110,7 @@ func _physics_process(delta: float) -> void:
 ## a bumper or the right stick to zoom; the wheel steps. The further out you
 ## zoom, the more of the lap ahead the camera shows, and right at the end it
 ## settles on the middle of the track.
-const ZOOM_CLOSE := 10.0         ## pixels per metre fully zoomed in
+const ZOOM_CLOSE := 26.0         ## pixels per metre fully zoomed in (close enough to see the car's details)
 const ZOOM_RATE := 0.45          ## share of the range per second while held
 const ZOOM_WHEEL_STEP := 0.04
 const LOOK_AHEAD := 0.32         ## how far ahead to aim, as a share of the screen
@@ -151,8 +150,8 @@ func _process(delta: float) -> void:
 	if focus < 0:
 		focus = session.sim.running_order[0]
 	var car: CarState = session.sim.cars[focus]
-	var target := car_views[focus].position
-	var heading := car_views[focus].rotation
+	var target := car_views[focus].pos2
+	var heading := car_views[focus].heading
 	var speed := car.speed()
 	# Held zoom: keys, bumpers and the right stick all ramp smoothly.
 	var zin := Input.get_action_strength("zoom_out") - Input.get_action_strength("zoom_in")
@@ -185,6 +184,7 @@ func _process(delta: float) -> void:
 	camera.ignore_rotation = not rot
 	if rot:
 		camera.rotation = heading + PI * 0.5
+	world.set_camera(camera.get_screen_center_position(), z, camera.rotation if rot else 0.0)
 	_maybe_screenshot()
 
 
