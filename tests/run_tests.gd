@@ -1224,7 +1224,7 @@ func test_wet_grip() -> void:
 func _stopping_distance(d: Dictionary, env: SimEnvironment) -> float:
 	var track: TrackData = d["track"]
 	env.bind_track(track)
-	var def: CarDefinition = d["cars"].values()[0]
+	var def: CarDefinition = d["cars"].values().filter(func(c): return c.discipline == "circuit")[0]
 	var tc: TyreCompound = d["tyres"][def.tyre_compound_id]
 	var s := CarState.new()
 	var g := track.grid_slot(10)

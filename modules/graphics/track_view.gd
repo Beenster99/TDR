@@ -81,37 +81,44 @@ const JOKER_LIFT := 0.045
 func _build_joker() -> void:
 	var path := track.joker_path
 	var h := track.joker_width * 0.5
-	var across := [-h - 1.2, -h, -h * 0.5, 0.0, h * 0.5, h, h + 1.2]
-	var cols := across.size()
 	var m := path.size()
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var hint := -1
-	for i in m:
-		var d := track.joker_cum[i]
-		var dir := (path[mini(i + 1, m - 1)] - path[maxi(i - 1, 0)]).normalized()
-		var nrm := Vector2(-dir.y, dir.x)
-		var dirt := track.joker_dirt_at(d)
-		for c in cols:
-			var off: float = across[c]
-			var q := path[i] + nrm * off
-			var qt := track.project(q, hint)
-			hint = qt["idx"]
-			var shoulder := absf(off) > h + 0.01
-			st.set_color(Color(1.0 - dirt, 1, 1, K_GRAVEL if shoulder and dirt > 0.5 else (K_TARMAC if shoulder else K_ASPHALT)))
-			st.set_uv(Vector2(d, off))
-			st.set_uv2(Vector2(off, h - absf(off)))
-			st.add_vertex(Vector3(q.x, track.surface_height_at(q, qt["idx"]) + JOKER_LIFT, q.y))
-	for i in m - 1:
-		for l in cols - 1:
-			var a := i * cols + l
-			var b := a + cols
-			st.add_index(a)
-			st.add_index(b)
-			st.add_index(a + 1)
-			st.add_index(a + 1)
-			st.add_index(b)
-			st.add_index(b + 1)
+	# Separate strips for the road and each verge, so the surface kind
+	# doesn't blend across their edge (a blend through the kerb band would
+	# draw a red and white stripe there).
+	var strips := [[-h - 1.2, -h], [-h, -h * 0.5, 0.0, h * 0.5, h], [h, h + 1.2]]
+	var base := 0
+	for across in strips:
+		var cols: int = across.size()
+		var hint := -1
+		for i in m:
+			var d := track.joker_cum[i]
+			var dir := (path[mini(i + 1, m - 1)] - path[maxi(i - 1, 0)]).normalized()
+			var nrm := Vector2(-dir.y, dir.x)
+			var dirt := track.joker_dirt_at(d)
+			var shoulder: bool = cols == 2
+			var kind := (K_GRAVEL if dirt > 0.5 else K_TARMAC) if shoulder else K_ASPHALT
+			for c in cols:
+				var off: float = across[c]
+				var q := path[i] + nrm * off
+				var qt := track.project(q, hint)
+				hint = qt["idx"]
+				st.set_color(Color(1.0 - dirt, 1, 1, kind))
+				st.set_uv(Vector2(d, off))
+				st.set_uv2(Vector2(off, h - absf(off)))
+				st.add_vertex(Vector3(q.x, track.surface_height_at(q, qt["idx"]) + JOKER_LIFT, q.y))
+		for i in m - 1:
+			for l in cols - 1:
+				var a := base + i * cols + l
+				var b := a + cols
+				st.add_index(a)
+				st.add_index(b)
+				st.add_index(a + 1)
+				st.add_index(a + 1)
+				st.add_index(b)
+				st.add_index(b + 1)
+		base += m * cols
 	_mesh_node(st, road_material, "Joker")
 
 
@@ -418,7 +425,6 @@ func _surface_y(k: int, s: float, off: float, q: Vector2) -> float:
 
 
 func _build_road() -> void:
-	var kw := track.kerb_width
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	# asphalt
@@ -431,7 +437,7 @@ func _build_road() -> void:
 		var sd: float = side
 		_ribbon(ks, func(i):
 			var e := track.width_right[i] if sd > 0 else track.width_left[i]
-			var w := kw if absf(curvature[i]) > 0.006 and track.dirt_at(track.cum_s[i]) < 0.3 else 0.0
+			var w := _kerb_w(i, sd)
 			return [sd * e, sd * (e + w)] if sd > 0 else [sd * (e + w), sd * e],
 			func(_i): return K_KERB, 0.06, 2)
 		_mesh_node(ks, road_material, "Kerbs")
@@ -440,11 +446,24 @@ func _build_road() -> void:
 		var rs := SurfaceTool.new()
 		rs.begin(Mesh.PRIMITIVE_TRIANGLES)
 		_ribbon(rs, func(i):
-			var e := (track.width_right[i] if sd > 0 else track.width_left[i]) + (kw if absf(curvature[i]) > 0.006 and track.dirt_at(track.cum_s[i]) < 0.3 else 0.0)
+			var e := (track.width_right[i] if sd > 0 else track.width_left[i]) + _kerb_w(i, sd)
 			var w := _runoff_width(i, sd)
 			return [sd * e, sd * (e + w)] if sd > 0 else [sd * (e + w), sd * e],
 			func(i): return K_GRAVEL if _is_gravel(i, sd) else K_TARMAC, 0.02, 2)
 		_mesh_node(rs, road_material, "Runoff")
+
+
+## Kerb width at point i on side sd: kerbs on corners, but none on dirt
+## (rallycross) or where the joker lane runs alongside.
+func _kerb_w(i: int, sd: float) -> float:
+	if absf(curvature[i]) <= 0.006 or track.dirt_at(track.cum_s[i]) >= 0.3:
+		return 0.0
+	if track.has_joker():
+		var e := track.width_right[i] if sd > 0 else track.width_left[i]
+		var q := track.points[i] + track.right_normal(i) * sd * (e + track.kerb_width * 0.5)
+		if track.project_joker(q)["dist"] < track.joker_width * 0.5 + 1.5:
+			return 0.0
+	return track.kerb_width
 
 
 ## Gravel trap here? From the track data where it has run-off surfaces,

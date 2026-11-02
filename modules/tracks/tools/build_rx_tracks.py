@@ -411,8 +411,20 @@ def build(cfg, cache):
     except Exception as e:
         print("   elevation unavailable:", e)
     add_barriers(out, cfg, cache)
+    rx_grass_runoff(out)
     with open(os.path.join(DATA, tid + ".json"), "w") as f:
         json.dump(out, f, separators=(",", ":"))
+
+
+def rx_grass_runoff(out):
+    """Rallycross run-off is grass banks: OSM's gravel areas at these venues
+    are mostly the dirt sections of the lap itself, not gravel traps."""
+    b = out.get("barriers") or {}
+    for side in ("runoff_left", "runoff_right"):
+        if isinstance(b.get(side), str):
+            b[side] = "G" * len(b[side])
+    if b:
+        b["source"] = b.get("source", "") + "; grass run-off (rallycross)"
 
 
 def main():

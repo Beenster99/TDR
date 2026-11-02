@@ -87,9 +87,9 @@ void fragment() {
 	// along the racing line, loose stones and ruts either side of it.
 	float dirt = (kind > 0.875) ? clamp(1.0 - COLOR.r, 0.0, 1.0) : 0.0;
 	if (dirt > 0.001) {
-		vec3 earth = vec3(0.36, 0.27, 0.18) * (0.78 + 0.34 * n1) * (0.88 + 0.22 * n3);
+		vec3 earth = vec3(0.47, 0.35, 0.23) * (0.8 + 0.32 * n1) * (0.86 + 0.26 * n3);
 		float groove = exp(-pow(abs(UV2.x) / 2.4, 2.0));
-		earth = mix(earth, vec3(0.24, 0.18, 0.12) * (0.9 + 0.2 * n2), groove * 0.6);
+		earth = mix(earth, vec3(0.33, 0.25, 0.17) * (0.9 + 0.2 * n2), groove * 0.55);
 		float rut = exp(-pow((abs(UV2.x) - 0.85) / 0.25, 2.0)) * (0.6 + 0.4 * n2);
 		earth *= 1.0 - 0.25 * rut;
 		float stones = smoothstep(0.62, 0.78, n3) * (1.0 - groove);
