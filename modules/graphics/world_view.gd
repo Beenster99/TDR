@@ -27,6 +27,7 @@ var safety_car: CarView           ## made on first use
 var driving_line: DrivingLineView ## the driving line aid (add_driving_aids)
 var brake_boards: BrakeBoards
 var recovery: RecoveryVehicles   ## made on first use
+var pit_guide: PitGuideView      ## the pit guide for a driver driving in themselves (add_pit_guide)
 var _sc_state: CarState
 var camera: Camera3D
 var sun: DirectionalLight3D
@@ -83,6 +84,21 @@ func add_driving_aids(line: DrivingLine, show_line: bool, show_brake: bool) -> v
 	driving_line.name = "DrivingLineAid"
 	add_child(driving_line)
 	driving_line.setup(line, track_view, show_line, show_brake)
+
+
+## The pit guide line, limit lines and box marks for the player's car
+## (g = PitRules.guide_line). Call once after setup; update_pit_guide shows it.
+func add_pit_guide(g: Dictionary) -> void:
+	pit_guide = PitGuideView.new()
+	pit_guide.name = "PitGuide"
+	add_child(pit_guide)
+	pit_guide.setup(g, track_view)
+
+
+## Every frame (see PitGuideView.update).
+func update_pit_guide(progress: float, speed: float, stopping: bool, on_marks: bool, delta: float) -> void:
+	if pit_guide:
+		pit_guide.update(progress, speed, stopping, on_marks, delta)
 
 
 ## Every frame: the player's car for the driving line colours.
