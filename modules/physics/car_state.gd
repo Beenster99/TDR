@@ -48,6 +48,13 @@ var assist_abs: bool = true
 ## wheel), adds some counter-steer and keeps the front tyres near their best
 ## slip angle. Off for AI, which drives the raw car.
 var assist_stability: bool = false
+## Track assist (players only): 0 = off, 1 = light, 2 = strong. Nudges the
+## steering to keep the car straight with no steering input, and away from
+## the track edge when it is drifting off (see CarPhysics._track_assist).
+var assist_track: int = 0
+## Manual gearbox: the driver shifts with CarInput.shift_up / shift_down.
+var manual_gears: bool = false
+var shift_held: bool = false   ## a shift button is still held (one shift per press)
 
 ## Telemetry (derived each step, not part of the authoritative snapshot)
 var slip_angle_front: float = 0.0
@@ -88,6 +95,7 @@ func serialize() -> PackedFloat64Array:
 	a.append_array(PackedFloat64Array([damage_gearbox, alignment, damage_level, shift_cut]))
 	a.append_array(puncture)
 	a.append_array(body_damage)
+	a.append_array(PackedFloat64Array([assist_track, int(manual_gears), int(shift_held)]))
 	return a
 
 
@@ -135,3 +143,5 @@ func deserialize(a: PackedFloat64Array) -> void:
 		damage_gearbox = a[32]; alignment = a[33]; damage_level = int(a[34]); shift_cut = a[35]
 		puncture = a.slice(36, 40)
 		body_damage = a.slice(40, 44)
+	if a.size() >= 47:
+		assist_track = int(a[44]); manual_gears = a[45] != 0.0; shift_held = a[46] != 0.0

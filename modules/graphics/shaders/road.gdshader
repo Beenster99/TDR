@@ -40,10 +40,12 @@ void fragment() {
 	if (kind > 0.875) {
 		// asphalt: aggregate speckle, patches, rubber line
 		c = vec3(0.105, 0.102, 0.098) * (0.86 + 0.22 * n1) * (0.93 + 0.14 * n3);
-		float rl = 1.0 - smoothstep(0.4, 1.6, abs(UV2.x));
-		c *= 1.0 - 0.32 * rl * (0.7 + 0.3 * n2);
+		// rubbered racing line: about 4 m wide, darkest in the middle and
+		// fading out softly to the edges (no hard border)
+		float rl = exp(-pow(abs(UV2.x) / 1.55, 2.2));
+		c *= 1.0 - 0.3 * rl * (0.7 + 0.3 * n2);
 		// marbles just outside the line
-		float marb = smoothstep(2.0, 3.2, abs(UV2.x)) * (1.0 - smoothstep(3.2, 5.5, abs(UV2.x)));
+		float marb = smoothstep(2.6, 3.6, abs(UV2.x)) * (1.0 - smoothstep(3.6, 6.0, abs(UV2.x)));
 		c = mix(c, vec3(0.1, 0.1, 0.1), marb * 0.25 * n2);
 		// white edge lines (painted 0.1-0.3 m in from the edge)
 		float line = smoothstep(0.08 - aa, 0.08 + aa, UV2.y) * (1.0 - smoothstep(0.3 - aa, 0.3 + aa, UV2.y));
