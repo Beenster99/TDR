@@ -38,6 +38,8 @@ var follower := false
 ## Events raised during the most recent step (HUD, audio, replication, and
 ## later damage / safety car logic all consume these).
 var events: Array = []
+## Flags, (virtual) safety car and penalties (see RaceControl).
+var race_control: RaceControl
 
 
 ## entries: RaceEntry per car, in grid order (index 0 = pole).
@@ -62,6 +64,7 @@ func _init(p_settings: RaceSettings, p_track: TrackData, p_entries: Array[RaceEn
 		cars.append(_make_car_on_grid(i, def))
 		running_order.append(i)
 		external.append(0)
+	race_control = RaceControl.new(self)
 	_update_positions()
 
 
@@ -99,6 +102,8 @@ func step(inputs: Array) -> void:
 	env.traffic = moving
 	env.update(TICK_DT)
 
+	if follower:
+		race_control.follower_step(TICK_DT)
 	if phase == Phase.COUNTDOWN and follower:
 		_hold_cars_on_grid(inputs)
 		return
@@ -128,7 +133,7 @@ func step(inputs: Array) -> void:
 			_refresh_track_position(cars[i])
 	for _sub in SUBSTEPS:
 		for i in cars.size():
-			if external[i]:
+			if external[i] or race_control.recovered[i]:
 				continue
 			var inp: CarInput = inputs[i] if i < inputs.size() and inputs[i] != null else CarInput.neutral()
 			CarPhysics.step(cars[i], inp, defs[i], compounds[i], env, track, sub_dt, fuel_rate, events, i)
@@ -139,6 +144,7 @@ func step(inputs: Array) -> void:
 	for i in cars.size():
 		_update_progress(i, prev_s[i])
 	_update_positions()
+	race_control.step(TICK_DT, prev_s)
 	_check_race_end()
 
 
@@ -232,6 +238,11 @@ func _update_positions() -> void:
 		if ex.finished != ey.finished:
 			return ex.finished
 		if ex.finished:
+			# Classification: laps, then race time including penalties.
+			if ex.laps_done != ey.laps_done:
+				return ex.laps_done > ey.laps_done
+			if ex.finish_time + ex.penalty_s != ey.finish_time + ey.penalty_s:
+				return ex.finish_time + ex.penalty_s < ey.finish_time + ey.penalty_s
 			return finish_order.find(x) < finish_order.find(y)
 		if ex.dnf != ey.dnf:
 			return ey.dnf
@@ -273,6 +284,8 @@ func _resolve_collisions() -> void:
 func _collide_pair(i: int, j: int) -> void:
 	if external[i] and external[j]:
 		return  # both simulated elsewhere: their owners resolve it
+	if race_control.recovered[i] or race_control.recovered[j]:
+		return  # craned away by the marshals
 	var a := cars[i]
 	var b := cars[j]
 	var da := defs[i]
@@ -375,6 +388,7 @@ func snapshot() -> Dictionary:
 		"tick": tick, "phase": phase, "phase_time": phase_time, "race_time": race_time,
 		"leader_finish_time": leader_finish_time, "finish_order": finish_order.duplicate(),
 		"env": env.to_dict(), "cars": car_data, "entries": entry_data,
+		"race_control": race_control.to_dict(true),
 	}
 
 
@@ -389,6 +403,8 @@ func apply_snapshot(snap: Dictionary) -> void:
 	for i in cars.size():
 		cars[i].deserialize(snap["cars"][i])
 		entries[i].from_dict(snap["entries"][i])
+	if snap.has("race_control"):
+		race_control.apply_dict(snap["race_control"])
 	_update_positions()
 
 
@@ -400,7 +416,7 @@ func race_state() -> Dictionary:
 		entry_data.append(e.to_dict())
 	return {"tick": tick, "phase": phase, "phase_time": phase_time, "race_time": race_time,
 		"leader_finish_time": leader_finish_time, "finish_order": finish_order.duplicate(),
-		"env": env.to_dict(), "entries": entry_data}
+		"env": env.to_dict(), "entries": entry_data, "race_control": race_control.to_dict()}
 
 
 func apply_race_state(st: Dictionary) -> void:
@@ -412,7 +428,37 @@ func apply_race_state(st: Dictionary) -> void:
 	env.apply_dict(st["env"])
 	for i in mini(entries.size(), st["entries"].size()):
 		entries[i].from_dict(st["entries"][i])
+	if st.has("race_control"):
+		race_control.apply_dict(st["race_control"])
 	_update_positions()
+
+
+# --- Race control (flags, safety car, penalties) -----------------------------
+
+## True while the safety car or the virtual safety car is out.
+func safety_car_active() -> bool:
+	return race_control.safety_car_active()
+
+
+## "green", "yellow" (local yellow flags only), "vsc" or "sc".
+func neutralisation() -> String:
+	return race_control.neutralisation()
+
+
+## Rough share of a normal pit stop's time loss saved by stopping now
+## (about 0.55 under the SC, 0.3 under the VSC), for pit strategy.
+func pit_time_saving() -> float:
+	return race_control.pit_time_saving()
+
+
+## A time penalty, added to the car's race time in the classification.
+## Authority only (clients get penalty_s with the entries).
+func add_penalty(car: int, seconds: float, reason: String) -> void:
+	if follower or car < 0 or car >= entries.size():
+		return
+	entries[car].penalty_s += seconds
+	events.append({"type": "penalty", "car": car, "seconds": seconds, "reason": reason,
+		"total": entries[car].penalty_s})
 
 
 func state_hash() -> String:

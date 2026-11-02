@@ -1,7 +1,7 @@
 {
   "id": "ai",
   "name": "AI drivers",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "status": "active",
   "summary": "Computer drivers with personalities: racing line, learned braking points, overtaking, defending, mistakes, tyre and weather awareness. Named drivers and traits are JSON in data/.",
   "depends": {

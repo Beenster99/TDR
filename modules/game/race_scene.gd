@@ -174,6 +174,8 @@ func _process(delta: float) -> void:
 	camera.position = follow.lerp(_track_rect.get_center(), centre_mix)
 	camera.position_smoothing_enabled = centre_mix < 0.01
 	camera.zoom = Vector2(z, z)
+	for i in car_views.size():
+		car_views[i].visible = not session.sim.race_control.recovered[i]
 	race_audio.update(delta, camera.position, local_input.last_throttle if autodrive == null else _autodrive_throttle, _zoom)
 	var rot := rotate_camera and _zoom < 0.5
 	camera.ignore_rotation = not rot
@@ -235,6 +237,15 @@ func _on_events(evs: Array) -> void:
 			"finished":
 				if e["car"] == session.local_car:
 					hud.flash("Finished P%d" % e["position"], 4.0)
+			"safety_car":
+				var says := {"sc": "SAFETY CAR DEPLOYED", "vsc": "VIRTUAL SAFETY CAR", "vsc_ending": "VSC ENDING",
+					"lapped_may_overtake": "LAPPED CARS MAY OVERTAKE", "in_this_lap": "SAFETY CAR IN THIS LAP",
+					"restart": "SAFETY CAR IN - RESTART", "green": "GREEN FLAG"}
+				if says.has(e.get("state", "")):
+					hud.flash(says[e["state"]], 2.5)
+			"penalty":
+				if e["car"] == session.local_car:
+					hud.flash("+%d s penalty: %s" % [int(e["seconds"]), e["reason"]], 4.0)
 
 
 func _on_race_finished() -> void:
@@ -243,8 +254,9 @@ func _on_race_finished() -> void:
 	for p in sim.running_order.size():
 		var i := sim.running_order[p]
 		var e := sim.entries[i]
-		lines.append("P%-2d %-18s %-16s %s  best %s" % [p + 1, e.driver_name, sim.defs[i].display_name,
-			"DNF" if e.dnf else RaceHud.fmt_time(e.finish_time), RaceHud.fmt_time(e.best_lap)])
+		lines.append("P%-2d %-18s %-16s %s  best %s%s" % [p + 1, e.driver_name, sim.defs[i].display_name,
+			"DNF" if e.dnf else RaceHud.fmt_time(e.finish_time + e.penalty_s), RaceHud.fmt_time(e.best_lap),
+			"  (+%d s penalty)" % int(e.penalty_s) if e.penalty_s > 0.0 else ""])
 	if DisplayServer.get_name() == "headless" or GameData.arg("quit-after-race"):
 		print("[results]\n" + "\n".join(lines))
 		var heard := []

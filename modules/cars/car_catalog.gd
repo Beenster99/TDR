@@ -4,6 +4,9 @@ extends RefCounted
 ## adding a JSON file there; no code changes.
 
 const DIR := "res://modules/cars/data"
+## Cars that never race (kept out of every list): the safety car.
+const SPECIAL_DIR := "res://modules/cars/special"
+const SAFETY_CAR_ID := "safety_car_amg_gt_black_series"
 
 
 ## car id -> CarDefinition
@@ -13,6 +16,13 @@ static func load_all() -> Dictionary:
 		var c := CarDefinition.from_dict(d)
 		cars[c.id] = c
 	return cars
+
+
+## The safety car (Mercedes-AMG GT Black Series), for the graphics to build
+## its model from real dimensions. Not in load_all(), so nobody can race it.
+static func load_safety_car() -> CarDefinition:
+	var d = JsonData.load_json("%s/%s.json" % [SPECIAL_DIR, SAFETY_CAR_ID])
+	return CarDefinition.from_dict(d) if d is Dictionary else null
 
 
 ## The car classes present (e.g. ["GT3", "Road"]), fastest class first

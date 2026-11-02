@@ -1,7 +1,7 @@
 {
   "id": "race",
   "name": "Race rules",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "status": "active",
   "summary": "The race itself: countdown, laps, sectors, positions, finish, car-to-car contacts, snapshots, race settings and entries (crews), and building a race from start data.",
   "depends": {
@@ -14,8 +14,9 @@
     "RaceSim",
     "RaceSettings",
     "RaceEntry",
-    "RaceFactory"
+    "RaceFactory",
+    "RaceControl"
   ],
   "internal": [],
-  "notes": "Pure data, no nodes, deterministic. Safety car, pit stops and fuel rules plug in here."
+  "notes": "Pure data, no nodes, deterministic. RaceControl owns flags, the virtual safety car, the safety car and penalties (RaceSim.add_penalty). Pit stops and fuel rules plug in here."
 }

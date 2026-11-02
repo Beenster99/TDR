@@ -26,6 +26,7 @@ var finished: bool = false
 var finish_time: float = 0.0
 var dnf: bool = false
 var position: int = 0
+var penalty_s: float = 0.0       ## time penalties, added in the classification
 
 
 func to_dict() -> Dictionary:
@@ -34,7 +35,7 @@ func to_dict() -> Dictionary:
 		"lap_times": lap_times.duplicate(), "best_lap": best_lap, "sector_times": sector_times.duplicate(),
 		"last_sector_times": last_sector_times.duplicate(), "next_sector": next_sector,
 		"sector_start_time": sector_start_time, "distance": distance,
-		"finished": finished, "finish_time": finish_time, "dnf": dnf, "position": position,
+		"finished": finished, "finish_time": finish_time, "dnf": dnf, "position": position, "penalty_s": penalty_s,
 	}
 
 

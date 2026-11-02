@@ -27,7 +27,7 @@ var fuel_rate: float = 1.0         ## consumption multiplier
 var start_fuel_l: float = -1.0     ## -1 = full tank
 var tyre_wear_enabled: bool = false
 var damage_enabled: bool = false
-var safety_car_enabled: bool = false
+var safety_car_enabled: bool = true  ## VSC + safety car (yellow flags always)
 var mandatory_pit_stops: int = 0
 var finish_timeout_s: float = 90.0 ## after the leader finishes
 var countdown_s: float = 4.0
