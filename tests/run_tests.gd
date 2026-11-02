@@ -53,6 +53,7 @@ func _init() -> void:
 	test_hud_timing()
 	test_graphics_effects()
 	test_settings_and_units()
+	test_rebinding()
 	test_grid_limits()
 	test_garage_saves()
 	print("\n%s (%d failures, %.1fs)" % ["PASS" if failures == 0 else "FAIL", failures, (Time.get_ticks_msec() - t0) / 1000.0])
@@ -1847,6 +1848,49 @@ func test_coop_roles() -> void:
 	check(is_equal_approx(other.cars[0].fuel_l, 12.5) and is_equal_approx(other.cars[0].tyre_wear[2], 0.4), "fuel and tyre wear move with the car")
 
 
+## Settings > Controller: the player's own key and button bindings (input).
+func test_rebinding() -> void:
+	print("rebinding")
+	InputSetup.register_actions()
+	check(InputSetup.keys_of({}, "accelerate") == [KEY_W, KEY_UP], "throttle starts on W and Up")
+	for r in InputSetup.REBINDABLE:
+		check(InputMap.has_action(r[0]), "%s is an action" % r[0])
+	var o := InputSetup.with_binding({}, "accelerate", "keys", 0, KEY_I)
+	check(InputSetup.keys_of(o, "accelerate") == [KEY_I, KEY_UP], "key 1 of throttle changed to I")
+	o = InputSetup.with_binding(o, "accelerate", "keys", 1, KEY_I)
+	check(InputSetup.keys_of(o, "accelerate") == [KEY_I], "the same key twice on one control is kept once")
+	o = InputSetup.with_binding(o, "brake", "pad", 0, {"button": JOY_BUTTON_B})
+	check(InputSetup.same_binding(InputSetup.pads_of(o, "brake")[0], {"button": JOY_BUTTON_B}), "pad brake on B")
+	check("Next tyres" in InputSetup.used_by(o, "brake", "pad", {"button": JOY_BUTTON_B}), "B is also next tyres: shown as a clash")
+	o = InputSetup.with_binding(o, "brake", "pad", 0, null)
+	check(InputSetup.pads_of(o, "brake").size() == 1, "a cleared binding is dropped")
+	InputSetup.apply_bindings(o)
+	var ev := InputEventKey.new()
+	ev.physical_keycode = KEY_I
+	ev.pressed = true
+	check(InputMap.event_is_action(ev, "accelerate"), "I now drives the throttle")
+	ev.physical_keycode = KEY_W
+	check(not InputMap.event_is_action(ev, "accelerate"), "W no longer does")
+	var m := InputEventJoypadMotion.new()
+	m.axis = JOY_AXIS_TRIGGER_LEFT
+	m.axis_value = 0.9
+	check(InputSetup.binding_from_event(m)["kind"] == "pad", "a squeezed trigger can be picked as a binding")
+	m.axis_value = 0.2
+	check(InputSetup.binding_from_event(m).is_empty(), "a stick barely moving is not taken as a binding")
+	check(InputSetup.describe("pad", {"axis": JOY_AXIS_TRIGGER_RIGHT, "dir": 1.0}) == "RT", "RT is named RT")
+	# Saved like any pref and loaded back (ConfigFile keeps the nested lists).
+	var cfg := ConfigFile.new()
+	cfg.set_value("prefs", "controls", o)
+	cfg.save("user://test_controls.cfg")
+	var back := ConfigFile.new()
+	back.load("user://test_controls.cfg")
+	check(InputSetup.keys_of(back.get_value("prefs", "controls"), "accelerate") == [KEY_I], "bindings load back from the settings file")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://test_controls.cfg"))
+	InputSetup.register_actions()
+	ev.physical_keycode = KEY_W
+	check(InputMap.event_is_action(ev, "accelerate"), "defaults come back on a reset")
+
+
 ## Settings registry, saved prefs and units (core).
 func test_settings_and_units() -> void:
 	print("settings and units")
@@ -1857,6 +1901,7 @@ func test_settings_and_units() -> void:
 	for key in ["driving_help", "aid_braking_zones", "aid_track_assist", "aid_racing_line", "manual_gears",
 			"hud_timing_tower", "units", "power_unit", "display_mode", "vol_master", "vol_engine", "show_fps"]:
 		check(not gd.setting_info(key).is_empty() and gd.prefs.has(key), "setting %s is registered with a value" % key)
+	check("controller" in gd.SECTIONS and gd.settings_in("controller").size() > 0, "Settings has a Controller section")
 	for sec in gd.SECTIONS:
 		if sec != "garage":
 			check(gd.settings_in(sec).size() > 0, "Settings > %s has options" % sec)

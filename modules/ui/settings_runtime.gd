@@ -51,6 +51,11 @@ func _process(delta: float) -> void:
 
 func _on_pref_changed(key: String, _value) -> void:
 	apply(get_tree(), key)
+	if key == "pad_deadzone":
+		InputSetup.set_deadzone(float(GameData.prefs["pad_deadzone"]) / 100.0)
+	elif key == "controls" and GameData.prefs["controls"] is Dictionary:
+		InputSetup.apply_bindings(GameData.prefs["controls"])
+		InputSetup.set_deadzone(float(GameData.prefs.get("pad_deadzone", 12)) / 100.0)
 	if key == "show_fps":
 		_fps.visible = bool(GameData.prefs.get("show_fps", false))
 

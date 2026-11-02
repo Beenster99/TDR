@@ -23,9 +23,11 @@ var pages := {}
 var current_page := ""
 var name_edit: LineEdit
 var address_edit: LineEdit
+var join_name_label: Label
 var status_label: Label
 var car_stepper: Stepper
 var class_stepper: Stepper
+var car_filter_stepper: Stepper   ## narrows the car list to one class (multi-class / open races)
 var track_stepper: Stepper
 var laps_stepper: Stepper
 var ai_stepper: Stepper
@@ -128,9 +130,8 @@ func _on_race_started(_start_data: Dictionary) -> void:
 
 func _handle_cmdline() -> void:
 	var port := int(GameData.arg("port", Net.DEFAULT_PORT))
-	if GameData.arg("name"):
+	if GameData.arg("name"):   # this run only: the saved driver name stays as it is
 		name_edit.text = str(GameData.arg("name"))
-		GameData.prefs["name"] = name_edit.text
 	if Net.is_online():
 		return
 	laps_stepper.set_value(int(GameData.arg("laps", laps_stepper.value)))
@@ -217,7 +218,7 @@ func _handle_cmdline() -> void:
 		_on_host()
 	elif GameData.arg("join"):
 		address_edit.text = str(GameData.arg("join")) if GameData.arg("join") is String else "127.0.0.1"
-		_on_join()
+		_on_join(false)
 
 
 func _process(_dt: float) -> void:
@@ -301,12 +302,14 @@ func _build_ui() -> void:
 	name_edit = LineEdit.new()
 	# The name is who you are in a season, so it stays the same between races.
 	if not GameData.prefs.has("name"):
-		GameData.prefs["name"] = "Driver %d" % (randi() % 900 + 100)
-	name_edit.text = GameData.prefs["name"]
+		GameData.set_pref("name", "Driver %d" % (randi() % 900 + 100))
+	name_edit.text = str(GameData.prefs["name"])
+	# Saved as you type, so the name is still there next time the game starts.
 	name_edit.text_changed.connect(func(t):
-		GameData.prefs["name"] = t
+		GameData.set_pref("name", t)
 		_refresh_badge())
-	name_edit.placeholder_text = "Your name"
+	name_edit.max_length = 24
+	name_edit.placeholder_text = "Your driver name"
 	name_edit.custom_minimum_size = Vector2(420, 40)
 	# Race picker: class, car, track, tyres, setup. Shown on the pages that
 	# start a race (not on the main page).
@@ -325,6 +328,18 @@ func _build_ui() -> void:
 	class_stepper = Stepper.choice("Class", class_opts, default_class)
 	class_stepper.value_changed.connect(func(_v): _rebuild_car_options(); _limit_grid(); _push_settings())
 	root.add_child(class_stepper)
+	# With every class on the grid (multi-class / open) the car list is long:
+	# this narrows it to one class. Shown only then.
+	var filter_opts := [["", "All classes"]]
+	for c in CarCatalog.classes(GameData.cars):
+		filter_opts.append([c, "%s  (%d cars)" % [c, CarCatalog.ids_in_class(GameData.cars, c).size()]])
+	var want_filter = GameData.prefs.get("car_filter", "")
+	car_filter_stepper = Stepper.choice("Car class", filter_opts,
+		want_filter if filter_opts.any(func(o): return o[0] == want_filter) else "")
+	car_filter_stepper.value_changed.connect(func(v):
+		GameData.set_pref("car_filter", v)
+		_rebuild_car_options())
+	root.add_child(car_filter_stepper)
 	car_stepper = Stepper.choice("Car", [], "")
 	car_stepper.value_changed.connect(func(v):
 		GameData.prefs["car_id"] = v
@@ -353,7 +368,8 @@ func _build_ui() -> void:
 	main.add_theme_constant_override("separation", 10)
 	for b in [["Single race", func(): _show("single")], ["Season / championship", func(): _show("season_list")],
 			["Garage", _open_garage], ["Host online race", _on_host], ["Join online race", func(): _show("join")],
-			["Settings", _open_settings], ["Quit", func(): get_tree().quit()]]:
+			["Profile and driver name", func(): _show("profile")], ["Settings", _open_settings],
+			["Quit", func(): GameData.save_prefs(); get_tree().quit()]]:
 		var btn := _button(main, b[0], b[1])
 		btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		btn.custom_minimum_size = Vector2(440, 54)
@@ -365,6 +381,10 @@ func _build_ui() -> void:
 	ph.text = "PROFILE"
 	ph.add_theme_font_size_override("font_size", 26)
 	prof.add_child(ph)
+	var name_label := Label.new()
+	name_label.text = "Driver name (used in races, seasons and online)"
+	name_label.modulate = Color(1, 1, 1, 0.7)
+	prof.add_child(name_label)
 	prof.add_child(name_edit)
 	var colour_stepper := Stepper.choice("Colour", ProfileBadge.COLOURS, str(GameData.prefs.get("profile_colour", "#e8412f")))
 	colour_stepper.value_changed.connect(func(v): GameData.set_pref("profile_colour", v); _refresh_badge())
@@ -418,8 +438,13 @@ func _build_ui() -> void:
 	_build_season_pages(root)
 
 	var join := _page(root, "join")
+	join_name_label = Label.new()
+	join_name_label.modulate = Color(1, 1, 1, 0.7)
+	join.add_child(join_name_label)
 	address_edit = LineEdit.new()
-	address_edit.text = "127.0.0.1"
+	# The last host you joined is remembered (saved when you connect).
+	address_edit.text = str(GameData.prefs.get("join_address", "127.0.0.1"))
+	address_edit.text_submitted.connect(func(_t): _on_join())
 	address_edit.placeholder_text = "Host address, e.g. 81.2.3.4 or 81.2.3.4:24690"
 	address_edit.custom_minimum_size = Vector2(420, 40)
 	join.add_child(address_edit)
@@ -463,7 +488,7 @@ func _build_ui() -> void:
 	root.add_child(status_label)
 	var help := Label.new()
 	help_label = help
-	help.text = "Drive: W/S/A/D or arrows  ·  Pad: RT throttle, LT brake, left stick steer\nZoom (hold): Q/E or mouse wheel, Z whole track  ·  Pad: LB/RB or right stick, R3 whole track  ·  C/Y camera  ·  R/Back restart  ·  Esc/Start menu\nPits: B or D-pad left box this lap  ·  L or L3 pit limiter  ·  T or pad B next tyres  ·  F next fuel"
+	help.text = "Drive: W/S/A/D or arrows  ·  Pad: RT throttle, LT brake, left stick steer\nZoom (hold): Q/E or mouse wheel, Z whole track  ·  Pad: LB/RB or right stick, R3 whole track  ·  C/Y camera  ·  R/Back restart  ·  Esc/Start menu\nPits: B or D-pad left box this lap  ·  L or L3 pit limiter  ·  T or pad B next tyres  ·  F next fuel\nThese are the defaults: change any of them in Settings > Controller."
 	help.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	help.modulate = Color(1, 1, 1, 0.45)
 	help.add_theme_font_size_override("font_size", 13)
@@ -508,6 +533,8 @@ func _show(id: String) -> void:
 	race_box.visible = not id in ["main", "join", "profile", "season_list"]
 	if id == "profile":
 		_refresh_badge()
+	if id == "join":
+		join_name_label.text = "Joining as %s  (change it on your profile)" % name_edit.text
 	if id != "lobby":  # host-only settings are editable again off-line
 		class_stepper.disabled = false
 		track_stepper.disabled = false
@@ -552,8 +579,13 @@ func _status(t: String) -> void:
 func _rebuild_car_options() -> void:
 	var cls: String = class_stepper.value
 	var fixed: bool = cls != "" and cls != RaceSettings.CLASS_MULTI
+	car_filter_stepper.visible = not fixed
+	var filter: String = "" if fixed else str(car_filter_stepper.value)
+	var ids := CarCatalog.ids_in_class(GameData.cars, cls if fixed else filter)
+	if ids.is_empty():
+		ids = CarCatalog.ids_in_class(GameData.cars, cls if fixed else "")
 	var opts := []
-	for id in CarCatalog.ids_in_class(GameData.cars, cls if fixed else ""):
+	for id in ids:
 		var c: CarDefinition = GameData.cars[id]
 		var st := UpgradeCatalog.stats(c, profile.levels(id))
 		var rd := 0
@@ -680,8 +712,12 @@ func _on_host() -> void:
 	_show("lobby")
 
 
-func _on_join() -> void:
+## remember: save the address for next time (not for --join test runs).
+func _on_join(remember := true) -> void:
 	var port := int(GameData.arg("port", Net.DEFAULT_PORT))
+	address_edit.text = address_edit.text.strip_edges()
+	if remember and address_edit.text != "":
+		GameData.set_pref("join_address", address_edit.text)
 	var err := Net.join(address_edit.text, port, name_edit.text, car_stepper.value)
 	if err != OK:
 		_status("Could not connect (error %d)." % err)
