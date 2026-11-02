@@ -64,7 +64,7 @@ static func _load_baked(name: String) -> AudioStream:
 
 
 static func _is_loop(name: String) -> bool:
-	return not (name.begins_with("pop_") or name in ["crackle", "shift", "flutter", "blowoff"])
+	return not (name.begins_with("pop_") or name in ["crackle", "shift", "flutter", "blowoff", "radio_open", "radio_close"])
 
 
 static func _frames(w: AudioStreamWAV) -> int:
@@ -91,6 +91,9 @@ static func _make(name: String) -> AudioStreamWAV:
 		"ui_select": return _tone([900.0, 1350.0], 0.09, 0.35)
 		"ui_back": return _tone([600.0], 0.08, 0.3)
 		"ui_tick": return _tone([2000.0], 0.025, 0.2)
+		"radio_open": return _radio_burst(0.2, true, 11)
+		"radio_close": return _radio_burst(0.26, false, 13)
+		"radio_static": return _radio_static(1.6)
 	push_error("SoundBank: no sound called " + name)
 	return _tone([440.0], 0.1, 0.1)
 
@@ -231,3 +234,63 @@ static func _tone(freqs: Array, length_s: float, vol: float) -> AudioStreamWAV:
 				v += sin(TAU * freqs[k] * (t - start))
 		out[i] = v / freqs.size() * env * vol
 	return _to_wav(out, false)
+
+
+## Team radio: band-limited noise (a narrow "radio" band, about 300 Hz to
+## 3 kHz) with sparse crackles. Used by RadioVoice under a read-out.
+static func _radio_noise(rng: RandomNumberGenerator, state: Array) -> float:
+	var x := rng.randf_range(-1.0, 1.0)
+	# High-pass (one pole, ~300 Hz) then low-pass (one pole, ~3 kHz).
+	var hp: float = 0.92 * (float(state[0]) + x - float(state[1]))
+	state[1] = x
+	state[0] = hp
+	var lp: float = float(state[2]) + 0.55 * (hp - float(state[2]))
+	state[2] = lp
+	return lp
+
+
+## The click and hiss as a radio opens (open = true: a click, a burst of
+## static and a short chirp) or closes (the squelch tail and a click).
+static func _radio_burst(length_s: float, open: bool, seed: int) -> AudioStreamWAV:
+	var n := int(RATE * length_s)
+	var out := PackedFloat32Array()
+	out.resize(n)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed
+	var st := [0.0, 0.0, 0.0]
+	for i in n:
+		var t := float(i) / RATE
+		var env := exp(-t * 9.0) if open else clampf(1.0 - t / length_s, 0.0, 1.0) * (0.6 + 0.4 * sin(t * 90.0))
+		var v := _radio_noise(rng, st) * 0.75 * env
+		if rng.randf() < 0.004:
+			v += rng.randf_range(-0.8, 0.8)
+		# The key click: a sharp edge at the start (open) or end (close).
+		var edge := t if open else length_s - t
+		if edge < 0.004:
+			v += 0.9 * (1.0 - edge / 0.004) * (1.0 if i % 2 == 0 else -1.0)
+		# A short chirp after the click as the channel opens.
+		if open and t > 0.03 and t < 0.085:
+			v += 0.22 * sin(TAU * 1250.0 * t)
+		out[i] = v
+	return _to_wav(out, false)
+
+
+## The quiet static bed under a radio read-out (a loop).
+static func _radio_static(length_s: float) -> AudioStreamWAV:
+	var n := int(RATE * length_s)
+	var out := PackedFloat32Array()
+	out.resize(n)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 17
+	var st := [0.0, 0.0, 0.0]
+	var pop := 0.0
+	for i in n:
+		var t := float(i) / RATE
+		var v := _radio_noise(rng, st) * (0.32 + 0.12 * sin(t * 7.3) + 0.06 * sin(t * 23.0))
+		# Crackles: little pops that die away in a few milliseconds.
+		if rng.randf() < 0.0012:
+			pop = rng.randf_range(-0.9, 0.9)
+		v += pop
+		pop *= 0.82
+		out[i] = v + 0.02 * sin(TAU * 50.0 * t)
+	return _to_wav(out, true)

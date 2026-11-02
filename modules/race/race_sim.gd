@@ -21,6 +21,10 @@ var defs: Array[CarDefinition] = []
 ## entries[i].setup): pit-stop setup changes rebuild defs[i] from this.
 var base_defs: Array[CarDefinition] = []
 var compounds: Array[TyreCompound] = []
+## The compound on each wheel of each car ([FL, FR, RL, RR]): the same as
+## compounds[i] on all four unless a pit stop fitted mixed tyres. compounds[i]
+## is then the one on most wheels (what timing, the AI and the HUD show).
+var wheel_compounds: Array = []
 var cars: Array[CarState] = []
 var entries: Array[RaceEntry] = []
 ## Every tyre compound by id (pit stops fit new ones), and each car's own dry compound.
@@ -88,6 +92,7 @@ func _init(p_settings: RaceSettings, p_track: TrackData, p_entries: Array[RaceEn
 		dry_compound.append(base.tyre_compound_id)
 		var compound: TyreCompound = tyre_defs.get(def.tyre_compound_id, tyre_defs.values()[0])
 		compounds.append(compound)
+		wheel_compounds.append([compound, compound, compound, compound])
 		cars.append(_make_car_on_grid(i, def))
 		running_order.append(i)
 		external.append(0)
@@ -110,6 +115,33 @@ func _def_for(i: int) -> CarDefinition:
 
 ## Changes some of car i's setup values mid-race (a pit stop: wings, tyre
 ## pressures; see PitRules.PIT_SETUP_KEYS) and rebuilds its definition.
+## Fits a compound to some wheels of car i (a pit stop), keeping
+## compounds[i] as the compound on most wheels.
+func fit_tyres(i: int, wheels: Array, compound: TyreCompound) -> void:
+	var w: Array = wheel_compounds[i]
+	for k in wheels:
+		w[int(k)] = compound
+	compounds[i] = main_compound(w)
+
+
+## The compound on most of these four wheels (ties go to the fronts).
+static func main_compound(w: Array) -> TyreCompound:
+	var best: TyreCompound = w[0]
+	var best_n := 0
+	for c in w:
+		var n := w.count(c)
+		if n > best_n:
+			best = c
+			best_n = n
+	return best
+
+
+## True when car i runs different compounds on its wheels.
+func mixed_tyres(i: int) -> bool:
+	var w: Array = wheel_compounds[i]
+	return w[0] != w[1] or w[0] != w[2] or w[0] != w[3]
+
+
 func change_setup(i: int, values: Dictionary) -> void:
 	if values.is_empty():
 		return
@@ -203,10 +235,10 @@ func step(inputs: Array) -> void:
 			_refresh_track_position(cars[i])
 	for _sub in SUBSTEPS:
 		for i in cars.size():
-			if external[i] or race_control.recovered[i]:
+			if external[i] or race_control.out_of_play(i):
 				continue
 			var inp: CarInput = inputs[i] if i < inputs.size() and inputs[i] != null else CarInput.neutral()
-			CarPhysics.step(cars[i], inp, defs[i], compounds[i], env, track, sub_dt, fuel_rate, events, i, wear_rate)
+			CarPhysics.step(cars[i], inp, defs[i], compounds[i], env, track, sub_dt, fuel_rate, events, i, wear_rate, wheel_compounds[i])
 		_resolve_collisions()
 	_apply_damage()
 
@@ -405,7 +437,7 @@ func _resolve_collisions() -> void:
 func _collide_pair(i: int, j: int) -> void:
 	if external[i] and external[j]:
 		return  # both simulated elsewhere: their owners resolve it
-	if race_control.recovered[i] or race_control.recovered[j]:
+	if race_control.out_of_play(i) or race_control.out_of_play(j):
 		return  # craned away by the marshals
 	var a := cars[i]
 	var b := cars[j]

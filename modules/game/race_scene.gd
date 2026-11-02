@@ -20,6 +20,8 @@ var pit_menu: PitCallMenu
 var driver_radio: TeamRadio
 ## The pit crew mini-game for the car this player leads the crew of.
 var crew_game: PitCrewGame
+## The strategist's pit stop planner (over the pit wall screens).
+var planner: PitPlanner
 var results: PanelContainer
 var rotate_camera := false
 var _results_shown := false
@@ -111,6 +113,15 @@ func _ready() -> void:
 	driver_radio = TeamRadio.new()
 	layer.add_child(driver_radio)
 	driver_radio.setup(session, session.local_car, true)
+	planner = PitPlanner.new()
+	layer.add_child(planner)
+	planner.setup(session)
+	crew.planner = planner
+	pit_wall.planner = planner
+	crew.open_planner.connect(_open_planner)
+	pit_wall.open_planner.connect(_open_planner)
+	if GameData.arg("planner"):
+		_open_planner.call_deferred()
 	crew_game = PitCrewGame.new()   # after the consoles, so it hears its buttons first
 	layer.add_child(crew_game)
 	crew_game.setup(session, world.pit_crews)
@@ -283,11 +294,21 @@ func _on_team_radio(car: int, msg: Dictionary) -> void:
 	if car != session.team_car and car != session.local_car:
 		return
 	crew.add_radio(msg)
-	if session.local_car == car and str(msg.get("role", "")) != RaceEntry.ROLE_DRIVER:
-		hud.show_radio(msg)
 	var me := driver_radio.my_name() if session.local_car >= 0 else crew.radio.my_name()
-	if str(msg.get("from", "")) != me:
+	if session.local_car == car and str(msg.get("role", "")) != RaceEntry.ROLE_DRIVER:
+		# The driver: on screen, and read out over the radio.
+		var lines: Array = msg.get("lines", [])
+		hud.show_radio(msg, clampf(4.0 + lines.size() * 2.2, 5.0, 16.0))
+		Sound.radio(str(msg.get("text", "")))
+	elif str(msg.get("from", "")) != me:
 		Sound.ui("chime", -6.0)
+
+
+## The pit stop planner for our car (the strategist's, or the driver's own).
+func _open_planner() -> void:
+	var car := session.team_car if session.team_car >= 0 else session.local_car
+	if car >= 0 and session.sim.pits.enabled:
+		planner.open_for(car)
 
 
 func _on_returned_to_lobby() -> void:
@@ -474,11 +495,18 @@ func _process(delta: float) -> void:
 	camera.position = follow.lerp(_track_rect.get_center(), centre_mix) - shift
 	camera.position_smoothing_enabled = centre_mix < 0.01
 	camera.zoom = Vector2(z, z)
+	var rc := session.sim.race_control
+	var recovering := rc.recovery_vehicles()
+	world.set_recovery_vehicles(recovering)
+	world.set_marshals(rc.marshal_views())
 	for i in car_views.size():
-		car_views[i].visible = not session.sim.race_control.recovered[i]
+		car_views[i].visible = not rc.recovered[i]
+		car_views[i].hoist = 0.0
+	for v in recovering:
+		if v["kind"] == "crane" and int(v["car"]) < car_views.size():
+			car_views[int(v["car"])].hoist = v["hoist"]
 	_update_pit_crews()
 	_update_rejoin()
-	var rc := session.sim.race_control
 	world.set_safety_car(rc.sc_visible, rc.sc_pos, rc.sc_heading, rc.sc_speed, rc.sc_lights)
 	world.update_driving_line(car.pos, speed)
 	_update_pit_guide(delta)
@@ -614,7 +642,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event.is_action_pressed("restart_race") and session.mode == RaceSession.Mode.OFFLINE \
 			and not session.start_data.has("season"):  # no do-overs in a championship
 		_restart()
-	elif event.is_action_pressed("back_to_menu") and not _results_shown and not pit_wall.visible \
+	elif event.is_action_pressed("back_to_menu") and not _results_shown and not pit_wall.visible and not planner.visible \
 			and not driver_radio.visible and not crew.radio.visible:
 		_back_to_menu()
 

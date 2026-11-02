@@ -87,6 +87,16 @@ var yellows: Array = []
 ## Per car
 var stranded_t: PackedFloat64Array = []   ## seconds stopped on the circuit
 var recovered: PackedByteArray = []       ## marshals have dealt with it (ignored from now on)
+var carried: PackedByteArray = []         ## a recovery vehicle has it (lifted or on the strap)
+## Recovery vehicles at work (CarRecovery jobs, one per retired car out on the
+## circuit). Draw them from recovery_vehicles().
+var recoveries: Array = []
+## Debris on the circuit, piles of it (TrackMarshals spots), and the crews of
+## marshals out clearing it under double yellows (TrackMarshals jobs). Draw
+## them from marshal_views().
+var debris: Array = []
+var marshal_jobs: Array = []
+var _marshal_ids: int = 0
 var _cleared: PackedByteArray = []        ## a live stopped car the marshals have made safe (yellow only)
 var vsc_delta: PackedFloat64Array = []    ## seconds; below 0 = faster than allowed
 var vsc_warned: PackedByteArray = []
@@ -111,6 +121,7 @@ func _init(p_sim: RaceSim) -> void:
 	var n := sim.cars.size()
 	stranded_t.resize(n)
 	recovered.resize(n)
+	carried.resize(n)
 	_cleared.resize(n)
 	vsc_delta.resize(n)
 	vsc_warned.resize(n)
@@ -125,6 +136,52 @@ func _init(p_sim: RaceSim) -> void:
 
 # --- Queries (AI, HUD, other race rules) ------------------------------------
 
+## True once car i is no longer driven by the physics: craned / towed away,
+## or recovered and gone.
+func out_of_play(i: int) -> bool:
+	return recovered[i] == 1 or carried[i] == 1
+
+
+## What to draw for each recovery vehicle at work: see CarRecovery.view().
+func recovery_vehicles() -> Array:
+	var out := []
+	for job in recoveries:
+		if not job["done"]:
+			out.append(CarRecovery.view(job))
+	return out
+
+
+## Every marshal out on the circuit: TrackMarshals.view() for each crew, one list.
+func marshal_views() -> Array:
+	var out := []
+	for job in marshal_jobs:
+		if not job["done"]:
+			out.append_array(TrackMarshals.view(job))
+	return out
+
+
+## Double yellow flags at track distance s (marshals on the circuit there).
+func double_yellow_at(s: float) -> bool:
+	for job in marshal_jobs:
+		if not job["done"] and _in_zone(s, fposmod(float(job["s"]) - TrackMarshals.DOUBLE_BEFORE_M, sim.track.length),
+				fposmod(float(job["s"]) + TrackMarshals.DOUBLE_AFTER_M, sim.track.length)):
+			return true
+	return false
+
+
+## Highest speed allowed at s under double yellows (m/s).
+func double_yellow_limit(s: float) -> float:
+	return vsc_speed_at(s) * TrackMarshals.DOUBLE_LIMIT
+
+
+## The recovery job for car i, or {} when there is none.
+func recovery_for(i: int) -> Dictionary:
+	for job in recoveries:
+		if int(job["car"]) == i:
+			return job
+	return {}
+
+
 func mode_name() -> String:
 	return MODE_NAMES[mode]
 
@@ -133,7 +190,7 @@ func mode_name() -> String:
 func neutralisation() -> String:
 	if mode != Mode.GREEN:
 		return MODE_NAMES[mode]
-	return "yellow" if not yellows.is_empty() else "green"
+	return "yellow" if not yellows.is_empty() or not marshal_jobs.is_empty() else "green"
 
 
 func safety_car_active() -> bool:
@@ -155,7 +212,7 @@ func yellow_at(s: float) -> bool:
 	for y in yellows:
 		if _in_zone(s, y["from"], y["to"]):
 			return true
-	return false
+	return double_yellow_at(s)
 
 
 ## May car i overtake car j right now?
@@ -242,6 +299,8 @@ func instruction_for(i: int) -> String:
 						return "Restart: you control the pace, go when ready"
 					return "RESTART - no overtaking until the line" if not released[i] else ""
 			return "SAFETY CAR - no overtaking, close up"
+	if double_yellow_at(sim.cars[i].track_s):
+		return "Marshals on track: under %d km/h, no overtaking" % roundi(double_yellow_limit(sim.cars[i].track_s) * 3.6)
 	if yellow_at(sim.cars[i].track_s):
 		return "YELLOW FLAG - slow down, no overtaking"
 	if not released[i]:
@@ -284,11 +343,15 @@ func step(dt: float, prev_s: PackedFloat64Array) -> void:
 		if mode != Mode.GREEN or not yellows.is_empty() or sc_visible:
 			_end_all_on_chequered()
 		_update_safety_car(dt)
+		_update_recoveries(dt)
+		_update_marshals(dt, PackedFloat64Array())
 		return
 	if not racing:
 		return
 	_read_incidents()
 	_track_stranded(dt)
+	_update_recoveries(dt)
+	_update_marshals(dt, prev_s)
 	_expire_yellows()
 	_escalate()
 	_update_mode()
@@ -316,6 +379,8 @@ func _read_incidents() -> void:
 		if e.has("pos") and e["pos"] is Vector2:
 			s = sim.track.project(e["pos"])["s"]
 		_add_yellow(s, car, "Incident")
+		var at: Vector2 = e["pos"] if e.has("pos") and e["pos"] is Vector2 else sim.track.position_at(s)
+		TrackMarshals.add_debris(debris, sim.track.length, s, at, sev)
 		if sev >= 0.85:
 			_big_incident_until = sim.race_time + 8.0
 
@@ -335,16 +400,111 @@ func _track_stranded(dt: float) -> void:
 			_cleared[i] = 0
 		if stranded_t[i] >= STRANDED_YELLOW_S:
 			_add_yellow(c.track_s, i, "Car stopped")
+		if e.dnf:
+			# A retired car: send a crane or a tractor once it has come to rest.
+			if stranded_t[i] >= STRANDED_VSC_S and c.speed() < STOPPED_SPEED and recovery_for(i).is_empty():
+				_dispatch_recovery(i)
+			continue
 		var limit := RECOVERY_SC_S if mode == Mode.SC else RECOVERY_VSC_S
 		if stranded_t[i] > limit + STRANDED_VSC_S:
-			# Marshals have pushed it clear / craned it away.
-			if e.dnf:
-				recovered[i] = 1
-				sim.events.append({"type": "flag", "flag": "recovered", "car": i,
-					"reason": "%s's car has been recovered" % e.driver_name})
+			_cleared[i] = 1  # a live car the marshals have pushed clear: yellow flag only
+			stranded_t[i] = STRANDED_YELLOW_S
+
+
+# --- Recovery vehicles ---------------------------------------------------------
+
+func _dispatch_recovery(i: int) -> void:
+	var c := sim.cars[i]
+	var job := CarRecovery.plan(sim.track, i, c.pos, c.heading, c.track_s, c.lateral_offset, sim.defs[i].length)
+	recoveries.append(job)
+	var what := "Crane" if job["kind"] == CarRecovery.CRANE else "Tractor"
+	_event({"type": "flag", "flag": "recovery", "car": i, "kind": job["kind"],
+		"reason": "%s sent to recover %s's car" % [what, sim.entries[i].driver_name]})
+
+
+func _update_recoveries(dt: float) -> void:
+	var k := 0
+	while k < recoveries.size():
+		var job: Dictionary = recoveries[k]
+		var i: int = job["car"]
+		CarRecovery.step(job, dt)
+		if job["carrying"] and not recovered[i]:
+			if sim.external[i]:
+				recovered[i] = 1  # simulated on its owner's machine: just take it off
 			else:
-				_cleared[i] = 1  # still there, but safe: yellow flag only
-			stranded_t[i] = 0.0 if e.dnf else STRANDED_YELLOW_S
+				carried[i] = 1
+				_carry(i, job)
+		if job["done"]:
+			if not recovered[i]:
+				recovered[i] = 1
+				var how := "craned away" if job["kind"] == CarRecovery.CRANE else "towed away"
+				_event({"type": "flag", "flag": "recovered", "car": i,
+					"reason": "%s's car has been %s" % [sim.entries[i].driver_name, how]})
+			carried[i] = 0
+			stranded_t[i] = 0.0
+			recoveries.remove_at(k)
+			continue
+		k += 1
+
+
+# --- Marshals clearing debris -------------------------------------------------
+
+func _update_marshals(dt: float, prev_s: PackedFloat64Array) -> void:
+	# Enough debris in one place: send a crew (one per pile at a time).
+	var k := 0
+	while k < debris.size():
+		var spot: Dictionary = debris[k]
+		if float(spot["amount"]) >= TrackMarshals.CLEAR_AT:
+			_marshal_ids += 1
+			var job := TrackMarshals.plan(sim.track, spot, _marshal_ids)
+			marshal_jobs.append(job)
+			debris.remove_at(k)
+			_event({"type": "flag", "flag": "double_yellow", "zone_s": [
+				fposmod(float(job["s"]) - TrackMarshals.DOUBLE_BEFORE_M, sim.track.length),
+				fposmod(float(job["s"]) + TrackMarshals.DOUBLE_AFTER_M, sim.track.length)],
+				"reason": "Double yellow: marshals on track clearing debris"})
+			continue
+		k += 1
+	k = 0
+	while k < marshal_jobs.size():
+		var job: Dictionary = marshal_jobs[k]
+		TrackMarshals.step(job, dt)
+		if job["done"]:
+			_event({"type": "flag", "flag": "clear", "car": -1, "reason": "Debris cleared, marshals back behind the barrier"})
+			marshal_jobs.remove_at(k)
+			continue
+		if not prev_s.is_empty() and mode == Mode.GREEN:
+			_check_double_yellow_speed(job, prev_s)
+		k += 1
+
+
+## Too fast past the marshals: 5 s penalty.
+func _check_double_yellow_speed(job: Dictionary, prev_s: PackedFloat64Array) -> void:
+	var at: float = job["s"]
+	for i in sim.cars.size():
+		var e := sim.entries[i]
+		if e.finished or e.dnf or _pitting(i) or out_of_play(i) or i >= prev_s.size():
+			continue
+		var c := sim.cars[i]
+		if not _crossed(prev_s[i], c.track_s, at):
+			continue
+		var limit := double_yellow_limit(at) * TrackMarshals.DOUBLE_TOLERANCE
+		if c.speed() > limit:
+			sim.add_penalty(i, PENALTY_S, "Too fast past the marshals under double yellows (%d km/h, limit %d)" % [
+				roundi(c.speed() * 3.6), roundi(double_yellow_limit(at) * 3.6)])
+
+
+## Puts the car where the recovery vehicle has it.
+func _carry(i: int, job: Dictionary) -> void:
+	var c := sim.cars[i]
+	c.pos = job["car_pos"]
+	c.heading = job["car_heading"]
+	c.vel = Vector2.from_angle(c.heading) * float(job["speed"]) if job["kind"] == CarRecovery.TRACTOR else Vector2.ZERO
+	c.yaw_rate = 0.0
+	var q := sim.track.project(c.pos, c.track_idx)
+	c.track_idx = q["idx"]
+	c.track_s = q["s"]
+	c.lateral_offset = q["offset"]
 
 
 func _on_racing_surface(i: int) -> bool:
@@ -355,6 +515,7 @@ func _on_racing_surface(i: int) -> bool:
 func _escalate() -> void:
 	var danger := 0.0
 	var stranded := 0
+	var recovering := 0
 	for i in sim.cars.size():
 		var t := stranded_t[i]
 		if t < STRANDED_YELLOW_S:
@@ -363,14 +524,20 @@ func _escalate() -> void:
 		if _cleared[i]:
 			continue
 		var on_track := _on_racing_surface(i)
-		var retired := sim.entries[i].dnf
-		if on_track and t >= STRANDED_SC_S:
+		if sim.entries[i].dnf:
+			# A retired car out on the circuit needs a recovery vehicle on
+			# track: safety car until the car is clear.
+			var job := recovery_for(i)
+			if t >= STRANDED_VSC_S and (job.is_empty() or not CarRecovery.car_clear(job)):
+				danger = maxf(danger, 2.0)
+				recovering += 1
+		elif on_track and t >= STRANDED_SC_S:
 			danger = maxf(danger, 2.0)
-		elif (on_track and t >= STRANDED_VSC_S) or (retired and t >= STRANDED_VSC_S):
+		elif on_track and t >= STRANDED_VSC_S:
 			danger = maxf(danger, 1.0)
 	var live := 0
 	for i in sim.cars.size():
-		if stranded_t[i] >= STRANDED_YELLOW_S and not _cleared[i]:
+		if stranded_t[i] >= STRANDED_YELLOW_S and not _cleared[i] and not _clear_retired(i):
 			live += 1
 	if live >= 3:
 		danger = 2.0
@@ -383,9 +550,17 @@ func _escalate() -> void:
 		return
 	var final_lap := _leader_laps() >= sim.settings.laps - 1
 	if danger >= 2.0 and mode != Mode.SC and not final_lap:
-		_deploy_sc("Car stopped on track" if stranded < 2 else "Multiple cars stopped")
+		_deploy_sc("Recovery vehicle on track" if recovering > 0 else ("Car stopped on track" if stranded < 2 else "Multiple cars stopped"))
 	elif danger >= 1.0 and mode == Mode.GREEN:
 		_deploy_vsc("Car stopped" if stranded == 1 else "Incident")
+
+
+## A retired car that a recovery vehicle has already got off the circuit.
+func _clear_retired(i: int) -> bool:
+	if not sim.entries[i].dnf:
+		return false
+	var job := recovery_for(i)
+	return recovered[i] == 1 or (not job.is_empty() and CarRecovery.car_clear(job))
 
 
 func _deploy_vsc(why: String) -> void:
@@ -562,6 +737,10 @@ func _place_sc() -> void:
 
 ## Client: carry the SC along between race-state updates.
 func follower_step(dt: float) -> void:
+	for job in recoveries:
+		CarRecovery.step(job, dt)
+	for job in marshal_jobs:
+		TrackMarshals.step(job, dt)
 	if not sc_visible:
 		return
 	if sc_in_pit:
@@ -879,13 +1058,16 @@ func to_dict(full := false) -> Dictionary:
 		"yellows": yellows.duplicate(true), "vsc_delta": vsc_delta.duplicate(),
 		"unlapping": unlapping.duplicate(), "released": released.duplicate(), "recovered": recovered.duplicate(),
 		"give_back": give_back.duplicate(true), "restart_lap": _restart_lap,
+		"recoveries": recoveries.duplicate(true), "carried": carried.duplicate(),
+		"marshal_jobs": marshal_jobs.duplicate(true),
 	}
 	if full:
 		d["full"] = {"stranded_t": stranded_t.duplicate(), "cleared": _cleared.duplicate(),
 			"vsc_warned": vsc_warned.duplicate(), "vsc_penalised": vsc_penalised.duplicate(),
 			"unlap_from": unlap_from.duplicate(), "prev_order": _prev_order.duplicate(),
 			"sc_behind": _sc_behind.duplicate(), "big_until": _big_incident_until,
-			"leader_laps_at": _leader_laps_at, "danger": _danger}
+			"leader_laps_at": _leader_laps_at, "danger": _danger,
+			"debris": debris.duplicate(true), "marshal_ids": _marshal_ids}
 	return d
 
 
@@ -906,7 +1088,9 @@ func apply_dict(d: Dictionary) -> void:
 	yellows = d.get("yellows", []).duplicate(true)
 	_restart_lap = d.get("restart_lap", 0)
 	give_back = d.get("give_back", {}).duplicate(true)
-	for k in ["vsc_delta", "unlapping", "released", "recovered"]:
+	recoveries = d.get("recoveries", []).duplicate(true)
+	marshal_jobs = d.get("marshal_jobs", []).duplicate(true)
+	for k in ["vsc_delta", "unlapping", "released", "recovered", "carried"]:
 		if d.has(k) and d[k].size() == get(k).size():
 			set(k, d[k].duplicate())
 	if d.has("full"):
@@ -921,5 +1105,7 @@ func apply_dict(d: Dictionary) -> void:
 		_big_incident_until = f["big_until"]
 		_leader_laps_at = f["leader_laps_at"]
 		_danger = f["danger"]
+		debris = f.get("debris", []).duplicate(true)
+		_marshal_ids = f.get("marshal_ids", 0)
 	if sc_visible:
 		_place_sc()

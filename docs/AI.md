@@ -21,7 +21,8 @@ Older files using `skill` and `racecraft` still load (skill = pace, racecraft = 
 
 ## How the AI drives
 
-- **Racing line:** the track's racing line, kept a little off the edges.
+- **Racing line:** the track's racing line (the fastest line for a GT3 car, see docs/ARCHITECTURE.md, Track data), squeezed a little towards the centre so it keeps its shape (wide entry, late apex, out to the edge) with room to spare at the edges.
+- **Braking:** the plan allows less braking while the car is still turning (friction circle), so it slows before the second part of a chicane instead of running wide.
 - **Speed:** a grip-based plan of corner speeds and braking points for its own car. The AI learns that plan during the race in 32 m sections: a section where it slid or ran wide is taken a little slower next time, a clean one a little faster, up to the driver's limit. New cars, tracks, physics changes and weather need no hand tuning.
 - **Live grip:** tyre temperature, wet track (`SimEnvironment.grip_factor`) and darkness change what it dares.
 - **Racecraft:** follows at a gap, picks a side (usually the inside of the next corner) and commits to a pass, leaves racing room alongside (the car further back lifts if there is no room), covers the inside when attacked, moves over for leaders lapping it, rejoins carefully after going off, and reverses out when stuck. The opening lap is calmer.

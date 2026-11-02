@@ -61,6 +61,10 @@ var layout := HudLayout.new()
 ## drawn, with sample content when there's nothing to show right now.
 var editing := false
 var editor: HudEditor = null
+## Co-op driver (sharing the car with team mates): the co-op layout is in use
+## (HudLayout.PREF_COOP, minimal by default), and it keeps the timing tower's
+## on/off in the layout instead of the solo pref.
+var coop := false
 ## Settings preview: the HUD runs its own (all-AI) race session.
 var drives_session := false
 ## The editor was closed (saved: true, or cancelled).
@@ -72,8 +76,44 @@ func setup(p_session: RaceSession) -> void:
 	font = ThemeDB.fallback_font
 	set_anchors_preset(PRESET_FULL_RECT)
 	mouse_filter = MOUSE_FILTER_IGNORE
-	layout = HudLayout.from_value(_prefs().get(HudLayout.PREF, {}))
+	coop = is_coop_driver()
+	load_layout()
 	_build_minimap()
+
+
+static func item_ids() -> Array:
+	return ITEMS.map(func(it): return it[0])
+
+
+## Driving a car shared with other players (co-op crew).
+func is_coop_driver() -> bool:
+	if session == null or drives_session or session.local_car < 0:
+		return false
+	return session.sim.entries[session.local_car].human_crew().size() > 1
+
+
+## The pref the layout in use is saved in.
+func layout_pref() -> String:
+	return HudLayout.PREF_COOP if coop else HudLayout.PREF
+
+
+func load_layout() -> void:
+	layout = HudLayout.load_from(_prefs(), coop, item_ids())
+
+
+## Back to the designed layout (solo: everything; co-op: the minimal set).
+func reset_layout() -> void:
+	if coop:
+		layout = HudLayout.coop_default(item_ids())
+	else:
+		layout.reset_all()
+		set_show_tower(true)
+
+
+func save_layout() -> void:
+	var gd := get_node_or_null("/root/GameData")
+	if gd != null and gd.has_method("set_pref"):
+		gd.call("set_pref", layout_pref(), layout.to_value())
 
 
 ## The player's prefs (GameData autoload, looked up by path so this class
@@ -102,8 +142,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("hud_tower"):
 		if get_node_or_null("/root/GameData") == null:
 			return
-		set_show_tower(not show_tower())
-		flash("Timing tower " + ("on" if show_tower() else "off"), 1.2)
+		set_item_on("tower", not item_on("tower"))
+		if coop:
+			save_layout()
+		flash("Timing tower " + ("on" if item_on("tower") else "off"), 1.2)
 
 
 ## Opens the HUD layout editor over the race.
@@ -132,25 +174,25 @@ static func item_name(id: String) -> String:
 ## Switched on by the player (the tower follows its own pref; the compact
 ## standings only show while the tower is off).
 func item_on(id: String) -> bool:
-	if id == "tower":
+	if id == "tower" and not coop:
 		return show_tower()
 	return layout.is_on(id)
 
 
 func set_item_on(id: String, on: bool) -> void:
-	if id == "tower":
+	if id == "tower" and not coop:
 		set_show_tower(on)
 		return
 	layout.set_on(id, on)
 	if id == "standings" and on:
-		set_show_tower(false)
+		set_item_on("tower", false)
 
 
 ## Drawn now: switched on, and (outside the editor) something to show.
 func item_shown(id: String) -> bool:
 	if session == null or not item_on(id):
 		return false
-	if id == "standings" and show_tower():
+	if id == "standings" and item_on("tower"):
 		return false
 	if editing:
 		return true
@@ -191,7 +233,7 @@ func item_size(id: String) -> Vector2:
 		"pitguide": return Vector2(440, 74)
 		"lights": return Vector2(224, 44)
 		"flags": return Vector2(520, 58)
-		"radio": return Vector2(_radio_width(), 44)
+		"radio": return _radio_size()
 		"messages": return Vector2(1000, 50)
 	return Vector2.ZERO
 
@@ -277,6 +319,11 @@ func _process(delta: float) -> void:
 	size = get_viewport_rect().size
 	message_time -= delta
 	radio_time -= delta
+	# A driver change can put this player at the wheel of a shared car (or take
+	# them out of it): switch to the matching layout.
+	if not editing and is_coop_driver() != coop:
+		coop = not coop
+		load_layout()
 	_watch_damage()
 	queue_redraw()
 
@@ -678,7 +725,26 @@ func _radio_width() -> float:
 	return minf(font.get_string_size(_radio_line(), HORIZONTAL_ALIGNMENT_LEFT, -1, 22).x + 120, size.x - 40)
 
 
+## The radio item's size: one line, or a pit stop plan (one job per line).
+func _radio_size() -> Vector2:
+	var lines := _plan_lines()
+	if lines.size() <= 1:
+		return Vector2(_radio_width(), 44)
+	var w := 560.0
+	for ln in lines:
+		w = maxf(w, font.get_string_size(str(ln), HORIZONTAL_ALIGNMENT_LEFT, -1, 20).x + 60)
+	return Vector2(minf(w, size.x - 40), 52.0 + lines.size() * 28.0)
+
+
+func _plan_lines() -> Array:
+	return radio_msg.get("lines", []) if radio_time > 0.0 else []
+
+
 func _draw_radio() -> void:
+	var lines := _plan_lines()
+	if lines.size() > 1:
+		_draw_radio_plan(lines)
+		return
 	var line := _radio_line()
 	var w := _radio_width()
 	var r := Rect2(0, 0, w, 44)
@@ -687,6 +753,26 @@ func _draw_radio() -> void:
 	draw_rect(r, Color(1, 0.88, 0.35, 0.8 * a), false, 2.0)
 	_text(r.position + Vector2(14, 30), "RADIO", 16, Color(1, 0.88, 0.35, a))
 	_text(r.position + Vector2(84, 30), line, 22, Color(1, 1, 1, a), HORIZONTAL_ALIGNMENT_LEFT, w - 96)
+
+
+## A pit stop plan from the strategist: a box with one line per job.
+func _draw_radio_plan(lines: Array) -> void:
+	var sz := _radio_size()
+	var w := sz.x
+	var r := Rect2(Vector2.ZERO, sz)
+	var who := str(radio_msg.get("from", "Pit wall"))
+	var role := str(radio_msg.get("role", "")).replace("_", " ")
+	var a := clampf(radio_time / 0.5, 0.0, 1.0)
+	draw_rect(r, Color(0.02, 0.04, 0.08, 0.86 * a))
+	draw_rect(r, Color(1, 0.88, 0.35, 0.8 * a), false, 2.0)
+	_text(Vector2(16, 28), "RADIO  ·  PIT STOP PLAN", 16, Color(1, 0.88, 0.35, a))
+	_text(Vector2(w - 16, 28), "%s%s" % [who, (" (%s)" % role) if role != "" else ""], 15,
+		Color(1, 1, 1, 0.7 * a), HORIZONTAL_ALIGNMENT_RIGHT, w * 0.5)
+	for k in lines.size():
+		var y := 62 + k * 28
+		var col := Color(1, 0.88, 0.35, a) if k == 0 else Color(1, 1, 1, a)
+		_text(Vector2(20, y), str(lines[k]) if k == 0 else "•  " + str(lines[k]), 20, col,
+			HORIZONTAL_ALIGNMENT_LEFT, w - 40)
 
 
 static func _crew_name(e: RaceEntry, peer_id: int) -> String:
@@ -846,7 +932,9 @@ func _flag_lines(me: int) -> Array:
 		"vsc":
 			title = "VSC ENDING" if rc.stage == "ending" else "VIRTUAL SAFETY CAR"
 		"yellow":
-			if me >= 0 and rc.yellow_at(sim.cars[me].track_s):
+			if me >= 0 and rc.double_yellow_at(sim.cars[me].track_s):
+				title = "DOUBLE YELLOW"
+			elif me >= 0 and rc.yellow_at(sim.cars[me].track_s):
 				title = "YELLOW FLAG"
 	return [title, line, col]
 
@@ -931,6 +1019,14 @@ func _draw_minimap(origin: Vector2) -> void:
 				for k in 7:
 					band.append(origin + (t.position_at(float(rj["s"]) - v * 0.8 + v * k / 6.0) - _mm_rect.position) * scale_f)
 				draw_polyline(band, rejoin_colour(rj), 6.0)
+	# Double yellows where marshals are out: a thicker band.
+	for job in rc.marshal_jobs:
+		var zone := PackedVector2Array()
+		var from := float(job["s"]) - TrackMarshals.DOUBLE_BEFORE_M
+		var span_m := TrackMarshals.DOUBLE_BEFORE_M + TrackMarshals.DOUBLE_AFTER_M
+		for k in 9:
+			zone.append(origin + (t.position_at(from + span_m * k / 8.0) - _mm_rect.position) * scale_f)
+		draw_polyline(zone, Color(1, 0.85, 0.1), 9.0)
 	if rc.sc_visible:
 		var sp := origin + (rc.sc_pos - _mm_rect.position) * scale_f
 		draw_rect(Rect2(sp - Vector2(5, 5), Vector2(10, 10)), Color(1, 0.6, 0.1))

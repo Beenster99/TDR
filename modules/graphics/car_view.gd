@@ -56,6 +56,8 @@ var _flat := {}                  ## visual damage incl. flat tyres (wheel name -
 var _mark_key := 0
 ## Jacked up in the pits (metres) and wheels off mid-stop (set by WorldView).
 var pit_lift := 0.0
+## Lifted clear of the ground by a recovery crane (metres, set by the race scene).
+var hoist := 0.0
 var wheels_hidden := false
 var wheels_off_mask := 0         ## pit stop: wheels off the car (bit 1 front left .. 8 rear right)
 
@@ -1012,7 +1014,7 @@ func _process(delta: float) -> void:
 	if state.surface != TrackData.Surface.TRACK and state.surface != TrackData.Surface.KERB:
 		lift = maxf(float(terrain.call(pos2, state.track_idx)) + 0.05 - gy, 0.0)
 	_lift = lerpf(_lift, lift, 1.0 - exp(-12.0 * delta)) if lift < _lift else lift
-	transform = Transform3D(Basis(fwd, up, right), Vector3(pos2.x, gy + _lift, pos2.y))
+	transform = Transform3D(Basis(fwd, up, right), Vector3(pos2.x, gy + _lift + hoist, pos2.y))
 	_sprung.position.y = pit_lift - _ride_drop
 	# Body pitch under braking/acceleration and roll in corners.
 	var k2 := 1.0 - exp(-8.0 * delta)

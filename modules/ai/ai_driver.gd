@@ -27,10 +27,12 @@ const SPACING := 4.0          ## metres between racing line points
 const BLOCK := 8              ## line points per learning section (32 m)
 const MAX_SPEED := 95.0
 const EDGE_MARGIN := 2.6      ## line keeps this far from the track edge
+const LINE_EDGE := 0.3        ## how close the track's racing line comes to the edge (raceline.py KERB_M)
 const ROOM_MARGIN := 1.2      ## how close to the edge a car centre may go when off line
 const DEFAULT_DIFFICULTY := 0.75
 const AERO_TRUST := 0.9      ## share of the downforce the profile counts on
 const OFF_LINE_TROUBLE := 4.0
+const BRAKE_TURNING := 0.35  ## share of braking grip left at the cornering limit
 
 ## What the driver is doing right now (for HUD / debugging).
 enum Mood { RACING, ATTACKING, DEFENDING, YIELDING, MISTAKE, RECOVERING }
@@ -166,7 +168,9 @@ func _build_line(track: TrackData) -> void:
 		line.append(src[seg].lerp(src[(seg + 1) % n], t))
 	# Keep a safety margin from the edges: the optimal line uses every
 	# centimetre of track, which leaves no room for tracking error. Aggressive
-	# drivers use a little more of the kerbs.
+	# drivers use a little more of the kerbs. The line is squeezed towards the
+	# centre in proportion (not cut off at the margin), so it keeps its shape:
+	# wide entry, late apex, out to the edge, just with room to spare.
 	var margin := EDGE_MARGIN - 0.5 * profile.aggression
 	var hint := -1
 	room_left.resize(count)
@@ -175,8 +179,9 @@ func _build_line(track: TrackData) -> void:
 		var q := track.project(line[k], hint)
 		hint = q["idx"]
 		var off: float = q["offset"]
-		var lim: float = (q["w_right"] if off > 0.0 else q["w_left"]) - margin
-		var clamped := clampf(off * 0.8, -maxf(lim, 0.0), maxf(lim, 0.0))
+		var w: float = q["w_right"] if off > 0.0 else q["w_left"]
+		var lim := maxf(w - margin, 0.0)
+		var clamped := clampf(off * lim / maxf(w - LINE_EDGE, 0.1), -lim, lim)
 		line[k] += Vector2(-q["dir"].y, q["dir"].x) * (clamped - off)
 		room_right[k] = maxf(float(q["w_right"]) - clamped - ROOM_MARGIN, 0.0)
 		room_left[k] = maxf(float(q["w_left"]) + clamped - ROOM_MARGIN, 0.0)
@@ -229,7 +234,12 @@ func _build_speed_profile() -> void:
 			var mu := _mu * _brake_frac * learn[k / BLOCK]
 			# Braking downhill or over a crest takes longer; uphill helps.
 			var weight_g := maxf(CarPhysics.G + nxt * nxt * vcurv[k], CarPhysics.G * 0.25)
-			var decel := mu * (weight_g + _aero * AERO_TRUST * nxt * nxt / _mass) + _drag * nxt * nxt / _mass * 0.5 + CarPhysics.G * grade[k]
+			var grip_acc := weight_g + _aero * AERO_TRUST * nxt * nxt / _mass
+			# Grip used for cornering can't brake as well (friction circle):
+			# through a chicane the car must slow before the next turn-in.
+			var lat := nxt * nxt * absf(curv[k]) / maxf(_mu * _corner_frac * learn[k / BLOCK] * grip_acc, 0.1)
+			var share := sqrt(maxf(1.0 - lat * lat, BRAKE_TURNING * BRAKE_TURNING))
+			var decel := mu * grip_acc * share + _drag * nxt * nxt / _mass * 0.5 + CarPhysics.G * grade[k]
 			decel = maxf(decel, 2.0)
 			target_speed[k] = minf(target_speed[k], sqrt(nxt * nxt + 2.0 * decel * SPACING))
 	_profile_dirty = false
@@ -673,6 +683,10 @@ func _race_control_limit(sim: RaceSim, me: int, rc: RaceControl, unlapping: bool
 			if _queue_gap(sim, me) > 120.0 and not rc.yellow_at(car.track_s):
 				return INF
 			return rc.vsc_speed_at(car.track_s) * (1.3 if unlapping else 1.15)
+	if rc.double_yellow_at(car.track_s):
+		# Marshals on the track: well under the limit, ready to stop.
+		_block_clean = false
+		return minf(target_speed[idx] * 0.8, rc.double_yellow_limit(car.track_s) * 0.92)
 	if rc.yellow_at(car.track_s):
 		_block_clean = false
 		return target_speed[idx] * 0.9

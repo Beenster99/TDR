@@ -46,11 +46,15 @@ func _init() -> void:
 	test_weather_forecast()
 	test_race_control_rules()
 	test_safety_car_race()
+	test_car_recovery()
+	test_marshals_clear_debris()
+	test_gravel_escape()
 	test_safety_car_off()
 	test_points_systems()
 	test_seasons()
 	test_coop_roles()
 	test_tyre_choice_and_line_ups()
+	test_mixed_tyres_per_wheel()
 	test_race_start()
 	test_driving_aids()
 	test_active_pad()
@@ -1642,6 +1646,261 @@ func test_safety_car_race() -> void:
 	check(late.state_hash() == r["end_hash"], "snapshot restore under the safety car matches the original race")
 
 
+## Recovery vehicles: a car that crashed into the wall is craned over it, a
+## car stopped anywhere else is towed out by a tractor, under the safety car,
+## which only goes in once the car is clear.
+func test_car_recovery() -> void:
+	print("car recovery")
+	var track := TrackCatalog.load_track("spielberg")
+	var s0 := 1200.0
+	var i0 := track.index_at(s0)
+	var wall_off := -(track.width_left[i0] + track.runoff - 1.0)
+	for spot in [["crane", wall_off], ["tractor", -(track.width_left[i0] + 12.0)], ["tractor", 1.0]]:
+		var off: float = spot[1]
+		var pos := track.position_at(s0, off)
+		var job := CarRecovery.plan(track, 3, pos, track.heading_at(s0) + 1.2, s0, off, 4.6)
+		var phases: Array = [job["phase"]]
+		var top := 0.0
+		var t := 0.0
+		var clear_at := INF
+		while not job["done"] and t < 200.0:
+			CarRecovery.step(job, 1.0 / 60.0)
+			t += 1.0 / 60.0
+			if phases[phases.size() - 1] != job["phase"]:
+				phases.append(job["phase"])
+			top = maxf(top, job["hoist"])
+			if clear_at == INF and CarRecovery.car_clear(job):
+				clear_at = t
+		var q := track.project(job["car_pos"], i0)
+		var bo := track.width_left[track.index_at(q["s"])] + track.runoff
+		var label := "%s for a car %.0f m off the centre line" % [spot[0], off]
+		check(job["kind"] == spot[0], "%s: right vehicle sent (%s)" % [label, job["kind"]])
+		var want: Array = ["drive_in", "reach", "lift", "swing", "lower", "drive_out", "done"] if spot[0] == "crane" \
+			else ["drive_in", "hook", "drive_out", "done"]
+		check(phases == want, "%s: %s" % [label, " > ".join(phases)])
+		check(t < 70.0 and clear_at < t + 0.01, "%s: car clear in %.0f s, done in %.0f s" % [label, clear_at, t])
+		check(absf(q["offset"]) > bo, "%s: car taken behind the barrier (%.0f m out, barrier at %.0f m)" % [label, absf(q["offset"]), bo])
+		if spot[0] == "crane":
+			check(top >= CarRecovery.LIFT_HEIGHT - 0.01, "crane lifts the car %.1f m, over the barrier" % top)
+	# In a race: a car crashes into the wall and retires.
+	var settings := RaceSettings.new()
+	settings.laps = 4
+	settings.ai_count = 7
+	settings.seed = 777
+	var race := _race(settings, _data())
+	var sim: RaceSim = race["sim"]
+	var ai: Dictionary = race["ai"]
+	var victim := -1
+	var ev := {}
+	var sc_reason := ""
+	var hoisted := 0.0
+	var moved := 0.0
+	var recovered_at := INF
+	var in_lap_at := INF
+	var start_pos := Vector2.ZERO
+	while sim.phase != RaceSim.Phase.FINISHED and sim.tick < 60 * 60 * 15:
+		var inputs := []
+		for i in sim.car_count():
+			inputs.append(ai[i].get_input(sim, i))
+		if victim < 0 and sim.phase == RaceSim.Phase.RACING and sim.race_time >= 40.0:
+			victim = sim.running_order[sim.car_count() / 2]
+			var c := sim.cars[victim]
+			var k := track.index_at(c.track_s)
+			# Into the wall on the outside, stopped and out of the race.
+			c.pos = track.position_at(c.track_s, -(track.width_left[k] + track.runoff - 1.0))
+			c.vel = Vector2.ZERO
+			c.track_idx = -1
+			sim.entries[victim].dnf = true
+			start_pos = c.pos
+		if victim >= 0 and not sim.race_control.out_of_play(victim):
+			inputs[victim] = CarInput.neutral()
+		sim.step(inputs)
+		for e in sim.events:
+			var key: String = e["type"] + ":" + str(e.get("state", e.get("flag", "")))
+			ev[key] = ev.get(key, 0) + 1
+			if key == "safety_car:sc" and sc_reason == "":
+				sc_reason = e["reason"]
+			if key == "flag:recovery":
+				ev["kind"] = e["kind"]
+			if key == "flag:recovered" and int(e["car"]) == victim:
+				recovered_at = sim.race_time
+			if key == "safety_car:in_this_lap" and in_lap_at == INF:
+				in_lap_at = sim.race_time
+		if victim >= 0:
+			var job := sim.race_control.recovery_for(victim)
+			if not job.is_empty():
+				hoisted = maxf(hoisted, job["hoist"])
+				check_views(sim)
+			moved = maxf(moved, sim.cars[victim].pos.distance_to(start_pos))
+	check(ev.get("kind", "") == "crane", "a crane is sent for the car in the wall")
+	check(sc_reason == "Recovery vehicle on track", "the safety car comes out for it (%s)" % sc_reason)
+	check(hoisted > 4.0 and moved > 20.0, "the crane lifts the car %.1f m and takes it away (%.0f m)" % [hoisted, moved])
+	check(recovered_at < INF and sim.race_control.recovered[victim] == 1, "car recovered at %.0f s" % recovered_at)
+	check(in_lap_at > recovered_at - 30.0, "safety car only comes in once the car is clear (in this lap at %.0f s)" % in_lap_at)
+	check(ev.has("safety_car:green") and sim.phase == RaceSim.Phase.FINISHED, "green flag again and the race finishes")
+	# Clients get the recovery vehicles with the race state.
+	var st := sim.race_control.to_dict()
+	check(st.has("recoveries") and st.has("carried"), "recovery vehicles go out with the race state")
+
+
+var _views_ok := true
+
+func check_views(sim: RaceSim) -> void:
+	for v in sim.race_control.recovery_vehicles():
+		if not (v.has("pos") and v.has("heading") and v.has("hoist") and v.has("reach")):
+			if _views_ok:
+				check(false, "recovery_vehicles() gives position, heading, hoist and reach")
+			_views_ok = false
+
+
+## Marshals: debris builds up from crashes; once there's a lot in one place a
+## crew runs out under double yellows, sweeps and runs back. Cars must slow
+## right down past them.
+func test_marshals_clear_debris() -> void:
+	print("marshals and double yellows")
+	var track := TrackCatalog.load_track("spielberg")
+	var spots := []
+	TrackMarshals.add_debris(spots, track.length, 800.0, track.position_at(800.0), 0.6)
+	TrackMarshals.add_debris(spots, track.length, 830.0, track.position_at(830.0, 2.0), 0.6)
+	TrackMarshals.add_debris(spots, track.length, 2000.0, track.position_at(2000.0), 0.5)
+	check(spots.size() == 2 and absf(float(spots[0]["amount"]) - 1.2) < 0.001, "debris close together piles up (%d piles)" % spots.size())
+	var job := TrackMarshals.plan(track, {"s": 800.0, "pos": track.position_at(800.0, 3.0), "amount": 2.0}, 1)
+	var phases := [job["phase"]]
+	var t := 0.0
+	var swept := false
+	while not job["done"] and t < 120.0:
+		TrackMarshals.step(job, 1.0 / 60.0)
+		t += 1.0 / 60.0
+		if phases[phases.size() - 1] != job["phase"]:
+			phases.append(job["phase"])
+		for m in TrackMarshals.view(job):
+			swept = swept or m["action"] == "sweep"
+	check(phases == ["out", "sweep", "back", "done"] and swept, "marshals run out, sweep, run back (%s, %.0f s)" % [" > ".join(phases), t])
+	check(job["crew"].size() == TrackMarshals.CREW and t < 60.0, "a crew of %d, done in %.0f s" % [job["crew"].size(), t])
+	# In a race: a pile of debris ahead of the field.
+	var settings := RaceSettings.new()
+	settings.laps = 2
+	settings.ai_count = 7
+	settings.seed = 515
+	var race := _race(settings, _data())
+	var sim: RaceSim = race["sim"]
+	var ai: Dictionary = race["ai"]
+	var rc := sim.race_control
+	var ev := {}
+	var placed := false
+	var marshal_s := 0.0
+	var fastest := 0.0
+	var limit := 0.0
+	var penalties := []
+	var snap := {}
+	while sim.phase != RaceSim.Phase.FINISHED and sim.tick < 60 * 60 * 10:
+		if not placed and sim.phase == RaceSim.Phase.RACING and sim.race_time > 20.0:
+			placed = true
+			var lead_s := sim.cars[sim.running_order[0]].track_s
+			marshal_s = fposmod(lead_s + 900.0, track.length)
+			TrackMarshals.add_debris(rc.debris, track.length, marshal_s, track.position_at(marshal_s, 1.0), 2.0)
+		var inputs := []
+		for i in sim.car_count():
+			inputs.append(ai[i].get_input(sim, i))
+		var before := PackedFloat64Array()
+		for c in sim.cars:
+			before.append(c.track_s)
+		sim.step(inputs)
+		for e in sim.events:
+			var key: String = e["type"] + ":" + str(e.get("state", e.get("flag", "")))
+			ev[key] = ev.get(key, 0) + 1
+			if e["type"] == "penalty":
+				penalties.append(e["reason"])
+		if not rc.marshal_jobs.is_empty():
+			if snap.is_empty():
+				snap = rc.to_dict(true)
+			var at: float = rc.marshal_jobs[0]["s"]
+			limit = rc.double_yellow_limit(at)
+			for i in sim.car_count():
+				if fposmod(at - before[i], track.length) < 60.0 and fposmod(sim.cars[i].track_s - at, track.length) < 60.0:
+					fastest = maxf(fastest, sim.cars[i].speed())
+	check(ev.has("flag:double_yellow"), "double yellow flags for the marshals")
+	check(rc.double_yellow_at(marshal_s) == false and rc.marshal_jobs.is_empty() and ev.get("flag:clear", 0) >= 1, "debris cleared, marshals back, flags withdrawn")
+	check(fastest > 1.0 and fastest <= limit * TrackMarshals.DOUBLE_TOLERANCE, "AI slows down past the marshals (%d km/h, limit %d)" % [roundi(fastest * 3.6), roundi(limit * 3.6)])
+	check(penalties.filter(func(r): return str(r).contains("marshals")).is_empty(), "no double yellow penalties for the AI (%s)" % str(penalties))
+	check(snap.has("marshal_jobs") and snap["full"].has("debris"), "marshals and debris go into snapshots and the race state")
+	# Too fast past them: penalty.
+	var race2 := _race(settings, _data())
+	var sim2: RaceSim = race2["sim"]
+	while sim2.phase != RaceSim.Phase.RACING:
+		sim2.step([])
+	for k in 60:
+		sim2.step([])
+	var rc2 := sim2.race_control
+	var c0 := sim2.cars[0]
+	var at2 := fposmod(c0.track_s + 30.0, track.length)
+	rc2.marshal_jobs.append(TrackMarshals.plan(track, {"s": at2, "pos": track.position_at(at2), "amount": 2.0}, 99))
+	c0.vel = c0.forward() * 70.0
+	var pen := 0.0
+	for k in 120:
+		var full := CarInput.new()
+		full.throttle = 1.0
+		var inp := []
+		for i in sim2.car_count():
+			inp.append(full if i == 0 else CarInput.neutral())
+		sim2.step(inp)
+	pen = sim2.entries[0].penalty_s
+	check(pen >= RaceControl.PENALTY_S, "flat out past the marshals: %.0f s penalty" % pen)
+
+
+## Gravel: a car stopped in the middle of a gravel trap can drive out, but a
+## car running into one at speed still loses a lot.
+func test_gravel_escape() -> void:
+	print("gravel")
+	var cars := CarCatalog.load_all()
+	var tyres := TyreCatalog.load_all()
+	var track := TrackCatalog.load_track("spa")
+	var k := -1
+	for i in track.point_count():
+		if track.runoff_left[i] == TrackData.Surface.GRAVEL and track.runoff_left[(i + 6) % track.point_count()] == TrackData.Surface.GRAVEL \
+				and track.runoff_left[(i - 6 + track.point_count()) % track.point_count()] == TrackData.Surface.GRAVEL:
+			k = i
+			break
+	check(k >= 0, "Spa has a gravel trap")
+	if k < 0:
+		return
+	var s0 := track.cum_s[k]
+	var edge := track.width_left[k] + track.kerb_width
+	var d: CarDefinition = cars["bmw_m4_gt3"]
+	var tc: TyreCompound = tyres[d.tyre_compound_id]
+	var env := SimEnvironment.new()
+	env.bind_track(track)
+	var along := track.heading_at(s0)
+	var c := CarState.new()
+	c.pos = track.position_at(s0, -(edge + track.runoff * 0.5))
+	c.heading = along + PI * 0.25
+	c.tyre_temp = PackedFloat64Array([80.0, 80.0, 80.0, 80.0])
+	c.assist_tc = true
+	var t := 0.0
+	var out_at := INF
+	var ev := []
+	while t < 20.0:
+		var inp := CarInput.new()
+		inp.throttle = 1.0
+		CarPhysics.step(c, inp, d, tc, env, track, 1.0 / 240.0, 0.0, ev, 0)
+		t += 1.0 / 240.0
+		if c.surface == TrackData.Surface.TRACK or c.surface == TrackData.Surface.KERB:
+			out_at = t
+			break
+	check(out_at < 10.0, "a GT3 stopped in the middle of a gravel trap drives out in %.1f s" % out_at)
+	# Into the gravel at 40 m/s, off the throttle: still a big loss.
+	c = CarState.new()
+	c.pos = track.position_at(s0, -(edge + track.runoff * 0.5))
+	c.heading = along
+	c.vel = Vector2.from_angle(along) * 40.0
+	c.tyre_temp = PackedFloat64Array([80.0, 80.0, 80.0, 80.0])
+	t = 0.0
+	while t < 2.0:
+		CarPhysics.step(c, CarInput.new(), d, tc, env, track, 1.0 / 240.0, 0.0, ev, 0)
+		t += 1.0 / 240.0
+	check(c.speed() < 34.0, "running into gravel at 144 km/h: down to %.0f km/h after 2 s" % (c.speed() * 3.6))
+
+
 ## Replays the test's retirement (the stopped car is marked retired once still).
 func _retire_like(sim: RaceSim, stopped: bool, victim: int) -> void:
 	if stopped and sim.cars[victim].speed() < 1.0:
@@ -2337,6 +2596,56 @@ func test_rebinding() -> void:
 
 ## Pit stops that change only some tyres, and drivers sharing a car: AI
 ## line-ups that change at a stop, a solo player's AI co-driver.
+func test_mixed_tyres_per_wheel() -> void:
+	print("strategist plans: mixed tyres and per-tyre pressures")
+	var d := _data()
+	var st := RaceSettings.new()
+	st.laps = 6
+	st.ai_count = 2
+	st.tuning_enabled = true
+	var sim: RaceSim = _race(st, d)["sim"]
+	var pits := sim.pits
+	var dry := sim.dry_compound[0]
+	var p: Dictionary = sim.entries[0].pit
+	check(not sim.mixed_tyres(0) and (p["compounds"] as Array).size() == 4, "a car starts on one compound, listed per wheel")
+	var psi := pits.wheel_psi(0)
+	pits.set_plan(0, {"wheel_tyres": [PitRules.TYRE_INTER, "", PitRules.TYRE_INTER, "bogus"], "fuel": 0.0,
+		"psi": [float(psi[0]), float(psi[1]) + 1.5, float(psi[2]), float(psi[3]) - 0.5]})
+	check(p["plan"]["wheel_tyres"] == [PitRules.TYRE_INTER, "", PitRules.TYRE_INTER, ""], "unknown tyres in a per-wheel plan are ignored")
+	var w := pits.service_for(0, p["plan"])
+	check(w["wheels"] == [0, 2] and w["wheel_tyres"] == [PitRules.TYRE_INTER, "", PitRules.TYRE_INTER, ""],
+		"only the left tyres change, to inters (%s)" % str(w["wheel_tyres"]))
+	check(w["setup_s"] >= PitRules.PRESSURE_ONLY_S, "re-setting pressures on tyres that stay on takes time")
+	p["work"] = w
+	pits._finish_service(0)
+	var ids: Array = sim.wheel_compounds[0].map(func(t: TyreCompound) -> String: return t.id)
+	check(ids == [PitRules.TYRE_INTER, dry, PitRules.TYRE_INTER, dry] and sim.mixed_tyres(0), "the car runs mixed tyres (%s)" % str(ids))
+	check(p["compounds"] == ids and not p["plan"].has("wheel_tyres") and not p["plan"].has("psi"), "the pit state lists them; the plan is used once")
+	check(is_equal_approx(float(p["psi_trim"][1]), 1.5) and is_equal_approx(sim.cars[0].psi_trim[3], -0.5), "per-tyre pressure trims are set")
+	check(is_equal_approx(float(pits.wheel_psi(0)[1]), float(psi[1]) + 1.5), "and the car's tyre pressures follow")
+	# Physics: the wheels behave as their own compounds.
+	var c := sim.cars[0]
+	var env := sim.env
+	var events := []
+	for k in 60:
+		CarPhysics.step(c, CarInput.neutral(), sim.defs[0], sim.compounds[0], env, sim.track, 1.0 / 60.0, 1.0, events, 0, 1.0, sim.wheel_compounds[0])
+	var slick: TyreCompound = sim.wheel_compounds[0][1]
+	var plain := slick.hot_psi(sim.defs[0].pressure_delta_front, c.tyre_temp[1])
+	check(c.tyre_psi[1] - plain > 1.3, "per-tyre pressures reach the physics (%.1f psi hot vs %.1f untrimmed)" % [c.tyre_psi[1], plain])
+	# The pit state carries the wheels to another machine.
+	var st2 := RaceSettings.new()
+	st2.laps = 6
+	st2.ai_count = 2
+	st2.tuning_enabled = true
+	var other: RaceSim = _race(st2, d)["sim"]
+	other.pits.apply_remote(0, p.duplicate(true))
+	var ids2: Array = other.wheel_compounds[0].map(func(t: TyreCompound) -> String: return t.id)
+	check(ids2 == ids and is_equal_approx(other.cars[0].psi_trim[1], 1.5), "mixed tyres and pressures survive the network / a driver change")
+	# A plain tyre call afterwards changes all four (no leftover mix).
+	var w2 := pits.service_for(0, {"tyre": PitRules.TYRE_DRY, "wheels": "front", "fuel": 0.0, "repair": true})
+	check(w2["wheels"] == [0, 1, 2, 3], "a plain tyre call on a mixed car fits all four")
+
+
 func test_tyre_choice_and_line_ups() -> void:
 	print("tyre choice and driver line-ups")
 	check(PitRules.wheels_of("front") == [0, 1] and PitRules.wheels_of("rr") == [3] and PitRules.wheels_of("left") == [0, 2]
@@ -2832,6 +3141,20 @@ func test_hud_layout() -> void:
 	for id in RaceHud.CAR_ITEMS:
 		check(ids.has(id), "car item %s is a HUD item" % id)
 	check(InputMap.has_action("hud_edit") or InputSetup.KEYS.has("hud_edit"), "F2 opens the HUD layout editor")
+	# Co-op drivers: their own layout, minimal until they change it.
+	var all_ids := RaceHud.item_ids()
+	var co := HudLayout.load_from({}, true, all_ids)
+	var shown := all_ids.filter(func(id): return co.is_on(id))
+	check(shown.size() == HudLayout.COOP_SHOWN.size() and "speed" in shown and not co.is_on("tower") and not co.is_on("map"),
+		"a co-op driver starts with a minimal HUD (%s)" % ", ".join(shown))
+	for id in HudLayout.COOP_SHOWN:
+		check(id in all_ids, "co-op item %s is a HUD item" % id)
+	co.set_on("map", true)
+	var saved := {HudLayout.PREF_COOP: co.to_value(), HudLayout.PREF: {"hint": {"on": false}}}
+	check(HudLayout.load_from(saved, true, all_ids).is_on("map") and not HudLayout.load_from(saved, true, all_ids).is_on("tower"),
+		"the co-op layout keeps the driver's changes")
+	check(not HudLayout.load_from(saved, false, all_ids).is_on("hint") and HudLayout.load_from(saved, false, all_ids).is_on("map"),
+		"the solo layout is separate from the co-op one")
 
 
 ## Race HUD: the timing tower fits big grids (top three plus a window round

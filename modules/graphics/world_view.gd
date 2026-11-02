@@ -11,7 +11,9 @@ extends Node3D
 ##
 ## Effects: tyre smoke and rubber marks (SkidMarks), bits flying off cars in
 ## crashes and sparks (Debris, impact), and the pit crews who do each stop
-## (PitCrews, add_pit_crew / set_pit_stop).
+## (PitCrews, add_pit_crew / set_pit_stop). The marshals' crane trucks and
+## tractors that take retired cars away (RecoveryVehicles,
+## set_recovery_vehicles).
 
 var track: TrackData
 var env: SimEnvironment
@@ -25,6 +27,8 @@ var safety_car: CarView           ## made on first use
 var driving_line: DrivingLineView ## the driving line aid (add_driving_aids)
 var brake_boards: BrakeBoards
 var rejoin_marker: RejoinMarker  ## where a pit stop rejoins (made on first use)
+var recovery: RecoveryVehicles   ## made on first use
+var marshals: MarshalsView        ## made on first use
 var pit_guide: PitGuideView      ## the pit guide for a driver driving in themselves (add_pit_guide)
 var _sc_state: CarState
 var camera: Camera3D
@@ -162,6 +166,39 @@ func set_safety_car(p_visible: bool, pos: Vector2, p_heading: float, speed: floa
 	_sc_state.heading = p_heading
 	_sc_state.vel = Vector2.from_angle(p_heading) * speed
 	safety_car.set_light_bar(lights)
+
+
+## The marshals' recovery vehicles (crane trucks and tractors). views: one
+## Dictionary per vehicle, from RaceControl.recovery_vehicles(). Call every
+## frame; vehicles that are no longer listed go away.
+func set_recovery_vehicles(views: Array) -> void:
+	if recovery == null:
+		if views.is_empty():
+			return
+		recovery = RecoveryVehicles.new()
+		recovery.name = "RecoveryVehicles"
+		recovery.ground = track_view.surface_height
+		recovery.ground_normal = track_view.surface_normal
+		recovery.terrain = track_view.terrain_mesh_height
+		add_child(recovery)
+	recovery.set_vehicles(views)
+
+
+## Track marshals out clearing debris (orange overalls, brooms). views: every
+## marshal, from RaceControl.marshal_views(). Call every frame. Debris bits
+## where they sweep are cleared away.
+func set_marshals(views: Array) -> void:
+	if marshals == null:
+		if views.is_empty():
+			return
+		marshals = MarshalsView.new()
+		marshals.name = "Marshals"
+		marshals.ground = track_view.surface_height
+		marshals.terrain = track_view.terrain_mesh_height
+		add_child(marshals)
+	marshals.set_marshals(views)
+	for p in marshals.sweeping():
+		debris.clear_near(p, 7.0)
 
 
 ## Car i's team crew at pit box `box` (the race's box for that car), in the

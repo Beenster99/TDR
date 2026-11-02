@@ -18,11 +18,17 @@ extends Control
 ## with X / V. The full-screen pit wall (StrategistScreen) opens from the
 ## strategy tab or with P.
 ##
-## Controller first: D-pad / arrows choose and change, A / Enter acts.
-## Drawn immediate-mode in the 1600x900 canvas, scaled to the window, so it
+## Mouse and keyboard first: click a row to act on it (right-click or the
+## mouse wheel steps a value back and forth, or click its ◀ ▶), click the tabs,
+## click a car in the timing to watch it, click the radio strip to call the
+## driver. "Plan the stop" opens the PitPlanner: every job for the next stop
+## queued on a plan view of the car, then sent to the driver. Keys: ↑ ↓ choose,
+## ← → change, Enter acts, C switches tab, V radio, P full pit wall. A
+## controller still works (D-pad, A, Y, X). Drawn immediate-mode in the 1600x900 canvas, scaled to the window, so it
 ## stays sharp at 4K.
 
 signal open_pit_wall
+signal open_planner
 signal watch_changed(car: int)
 
 const TAB_PIT := "pit_crew"
@@ -57,6 +63,10 @@ var radio_log: Array = []            ## [{t, from, role, text}]
 var car_screen_pos: Callable
 ## A screen drawn over the console (the full pit wall): input goes there while it's open.
 var cover: Control
+## The pit stop planner (PitPlanner): input goes there while it's open.
+var planner: Control
+var _hits: Array = []                ## [Rect2, action, arg] from the last draw
+var _hover := Vector2(-1, -1)
 ## The onboard camera for the picture-in-picture window (set by the race
 ## scene; null = no PiP, e.g. on a dedicated server).
 var onboard: OnboardCamera
@@ -152,7 +162,16 @@ func add_radio(msg: Dictionary) -> void:
 # --- Input -----------------------------------------------------------------------
 
 func _input(event: InputEvent) -> void:
-	if not visible or radio.visible or not event.is_pressed() or (cover and cover.visible):
+	if not visible or radio.visible or (cover and cover.visible) or (planner and planner.visible):
+		return
+	if event is InputEventMouseMotion:
+		_hover = event.position
+		return
+	if event is InputEventMouseButton:
+		if event.pressed and _click(event.position, event.button_index):
+			get_viewport().set_input_as_handled()
+		return
+	if not event.is_pressed():
 		return
 	if event.is_echo() and not (event.is_action("ui_up") or event.is_action("ui_down") \
 			or event.is_action("ui_left") or event.is_action("ui_right")):
@@ -177,6 +196,58 @@ func _input(event: InputEvent) -> void:
 		handled = false
 	if handled:
 		get_viewport().set_input_as_handled()
+
+
+## A click on the console. Returns true if it hit something (else the click
+## goes on to the 3D view: the wheel zooms there).
+func _click(pos: Vector2, button: int) -> bool:
+	var dir := 0
+	match button:
+		MOUSE_BUTTON_LEFT: dir = 1
+		MOUSE_BUTTON_RIGHT: dir = -1
+		MOUSE_BUTTON_WHEEL_UP: dir = 2
+		MOUSE_BUTTON_WHEEL_DOWN: dir = -2
+	if dir == 0:
+		return false
+	for k in range(_hits.size() - 1, -1, -1):
+		var h: Array = _hits[k]
+		if not (h[0] as Rect2).has_point(pos):
+			continue
+		var arg = h[2]
+		match str(h[1]):
+			"panel":
+				return true
+			"tab":
+				if absi(dir) == 1:
+					tab = int(arg)
+					selected = 0
+			"watch":
+				if absi(dir) == 1 and int(arg) != team_car():
+					watch_car = int(arg)
+					watch_changed.emit(watch_car)
+			"radio":
+				if dir == 1:
+					radio.open()
+			"row":
+				selected = int(arg)
+				if absi(dir) == 2:
+					_change(signi(dir))
+				elif _items[selected][0] in ACTION_ROWS:
+					if dir == 1:
+						_activate()
+				else:
+					_change(dir)
+			"step":
+				selected = int(arg[0])
+				_change(int(arg[1]))
+		if absi(dir) == 1:
+			Sound.ui("ui_select", -6.0)
+		return true
+	return false
+
+
+## Rows that do something when clicked (the rest step a value).
+const ACTION_ROWS := ["planner", "box", "repair", "radio", "pit_wall", "setup_reset", "swap"]
 
 
 func _item_id() -> String:
@@ -242,6 +313,8 @@ func _activate() -> void:
 		return
 	var p: Dictionary = session.sim.entries[car].pit
 	match _item_id():
+		"planner":
+			open_planner.emit()
 		"box":
 			var box: bool = not p["box"]
 			session.request_pit(car, {"box": box})
@@ -328,11 +401,22 @@ func _build_items() -> void:
 	var sim := session.sim
 	var p: Dictionary = sim.entries[car].pit
 	var plan: Dictionary = p["plan"]
+	if sim.pits.enabled:
+		_items.append(["planner", "Plan the stop", "tyres, pressures, downforce, driver: then Send", true])
 	if current_tab() == TAB_PIT:
 		if sim.pits.enabled:
 			_items.append(["box", "Pit call", "BOX THIS LAP" if p["box"] else "Stay out", true])
-			_items.append(["tyre", "Tyres", RaceHud.tyre_plan_text(sim, car, str(plan["tyre"])), true])
-			if str(plan["tyre"]) != PitRules.TYRE_KEEP:
+			var per_wheel: Array = plan.get("wheel_tyres", [])
+			if per_wheel.size() == 4:
+				# A stop planned tyre by tyre (Plan the stop); changing Tyres here replaces it.
+				var parts := PackedStringArray()
+				for w in 4:
+					var id := sim.pits.choice_compound(car, str(per_wheel[w]))
+					parts.append("%s %s" % [PitPlanner.WHEEL_SHORT[w], sim.tyre_defs[id].display_name.left(5) if sim.tyre_defs.has(id) else "keep"])
+				_items.append(["tyre", "Tyres (planned)", " · ".join(parts), true])
+			else:
+				_items.append(["tyre", "Tyres", RaceHud.tyre_plan_text(sim, car, str(plan["tyre"])), true])
+			if str(plan["tyre"]) != PitRules.TYRE_KEEP and per_wheel.size() != 4:
 				var work := sim.pits.service_for(car, plan)
 				var which := RaceHud.wheels_text(str(plan.get("wheels", PitRules.WHEELS_ALL)))
 				if (work.get("wheels", []) as Array).size() == 4 and str(plan.get("wheels", PitRules.WHEELS_ALL)) != PitRules.WHEELS_ALL:
@@ -364,7 +448,7 @@ func _build_items() -> void:
 				who = "P%d %s%s" % [sim.entries[cam_car].position, sim.entries[cam_car].at_wheel(), " (us)" if cam_car == car else ""]
 			_items.append(["cam_car", "Onboard camera", who, true])
 			_items.append(["cam_view", "Camera view", {CAM_FRONT: "Front", CAM_REAR: "Rear", CAM_OFF: "Off"}[cam_mode], true])
-	_items.append(["radio", "Radio the driver", "calls (X / V)", true])
+	_items.append(["radio", "Radio the driver", "quick calls (V)", true])
 	var mates := crew_mates()
 	if not mates.is_empty():
 		var pend: Dictionary = session.pending_swap(car)
@@ -422,6 +506,7 @@ func _panel(r: Rect2, title := "") -> void:
 
 
 func _draw() -> void:
+	_hits.clear()
 	if session == null:
 		return
 	var vp := size
@@ -430,6 +515,8 @@ func _draw() -> void:
 	_draw_timing(Rect2(12, 58, LEFT_W, vp.y - 58 - 12), car)
 	var rx := vp.x - RIGHT_W - 12
 	var rr := Rect2(rx, 58, RIGHT_W, vp.y - 58 - 12)
+	_hits.append([rr, "panel", null])
+	_hits.append([Rect2(12, 58, LEFT_W, vp.y - 70), "panel", null])
 	if car >= 0:
 		if current_tab() == TAB_PIT:
 			_draw_pit_crew(rr, car)
@@ -437,11 +524,12 @@ func _draw() -> void:
 			_draw_strategy(rr, car)
 	var mid := Rect2(LEFT_W + 24, vp.y - RADIO_H - 12, rx - LEFT_W - 36, RADIO_H)
 	_draw_radio(mid)
+	_hits.append([mid, "radio", null])
 	_draw_markers(car)
 	if pip_on():
 		OnboardPip.draw(self, font, onboard, pip_rect(), session, cam_car, cam_mode == CAM_REAR)
-	_text(Vector2(LEFT_W + 24, mid.position.y - 10), "↑↓ choose  ←→ change  A act   %s   X radio   P pit wall   right stick zoom, R3 whole track" % (
-		"Y switch tab" if tabs.size() > 1 else ""), 13, Color(1, 1, 1, 0.75))
+	_text(Vector2(LEFT_W + 24, mid.position.y - 10), "Click: act   Right-click / wheel: change   ↑↓ ←→ Enter   %sV radio   P pit wall" % (
+		"C switch tab   " if tabs.size() > 1 else ""), 13, Color(1, 1, 1, 0.75))
 
 
 func _draw_header(r: Rect2, car: int) -> void:
@@ -456,6 +544,9 @@ func _draw_header(r: Rect2, car: int) -> void:
 		if k == tab:
 			draw_rect(tr, Color(1, 0.88, 0.35, 0.22))
 			draw_rect(tr, Color(1, 0.88, 0.35, 0.8), false, 1.5)
+		elif tr.has_point(_hover):
+			draw_rect(tr, Color(1, 1, 1, 0.3), false, 1.0)
+		_hits.append([tr, "tab", k])
 		_text(tr.position + Vector2(12, 20), label, 16, Color.WHITE if k == tab else DIM)
 		tx += w + 8
 	if car >= 0:
@@ -490,6 +581,9 @@ func _draw_timing(r: Rect2, car: int) -> void:
 			draw_rect(row, Color(1, 0.88, 0.35, 0.7), false, 1.5)
 		elif i == watch_car:
 			draw_rect(row, Color(0.55, 0.75, 1.0, 0.16))
+		elif row.has_point(_hover):
+			draw_rect(row, Color(1, 1, 1, 0.06))
+		_hits.append([row, "watch", i])
 		var ty := y + rh * 0.5 + fs * 0.35
 		_text(Vector2(x + 8, ty), str(e.position), fs, Color.WHITE, HORIZONTAL_ALIGNMENT_RIGHT, 22)
 		draw_rect(Rect2(x + 34, y + 4, 4, rh - 10), sim.defs[i].colour)
@@ -528,16 +622,33 @@ func _draw_rows(r: Rect2) -> float:
 	for k in _items.size():
 		var it: Array = _items[k]
 		var row := Rect2(r.position.x, y, r.size.x, 30)
+		var hover := row.has_point(_hover)
+		if it[0] == "planner":
+			draw_rect(row, Color(1, 0.88, 0.35, 0.3 if hover else 0.2))
 		if k == selected:
 			draw_rect(row, Color(1, 0.88, 0.35, 0.18))
 			draw_rect(row, Color(1, 0.88, 0.35, 0.75), false, 1.5)
-		_text(Vector2(row.position.x + 10, y + 21), it[1], 15, DIM, HORIZONTAL_ALIGNMENT_LEFT, 170)
+		elif hover:
+			draw_rect(row, Color(1, 1, 1, 0.07))
+			draw_rect(row, Color(1, 1, 1, 0.3), false, 1.0)
+		_hits.append([row, "row", k])
+		_text(Vector2(row.position.x + 10, y + 21), it[1], 15, YELLOW if it[0] == "planner" else DIM, HORIZONTAL_ALIGNMENT_LEFT, 170)
 		var v: String = it[2]
 		var col := Color.WHITE
 		if it[0] == "box" and v.begins_with("BOX"):
 			col = YELLOW
-		_text(Vector2(row.position.x + 180, y + 21), ("◀ %s ▶" % v) if k == selected and it[3] else v, 15, col,
-			HORIZONTAL_ALIGNMENT_LEFT, r.size.x - 190)
+		var stepper: bool = it[3] and not it[0] in ACTION_ROWS
+		if stepper and (k == selected or hover):
+			# ◀ ▶ arrows to click.
+			var la := Rect2(row.position.x + 176, y + 2, 22, 26)
+			var ra := Rect2(row.end.x - 26, y + 2, 22, 26)
+			_text(Vector2(la.position.x + 4, y + 21), "◀", 15, YELLOW if la.has_point(_hover) else Color.WHITE)
+			_text(Vector2(ra.position.x + 4, y + 21), "▶", 15, YELLOW if ra.has_point(_hover) else Color.WHITE)
+			_hits.append([la, "step", [k, -1]])
+			_hits.append([ra, "step", [k, 1]])
+			_text(Vector2(row.position.x + 202, y + 21), v, 15, col, HORIZONTAL_ALIGNMENT_LEFT, r.size.x - 236)
+		else:
+			_text(Vector2(row.position.x + 180, y + 21), v, 15, col, HORIZONTAL_ALIGNMENT_LEFT, r.size.x - 190)
 		y += 32
 	return y
 
@@ -582,8 +693,12 @@ func _draw_pit_crew(r: Rect2, car: int) -> void:
 		var parts := PackedStringArray()
 		if work["tyre"] != "":
 			var n := (work.get("wheels", [0, 1, 2, 3]) as Array).size()
-			parts.append("%s%s %.0f s" % [sim.tyre_defs[work["tyre"]].display_name,
-				" tyres" if n == 4 else " x%d" % n, work["tyre_s"]])
+			var kinds := {}
+			for id in work.get("wheel_tyres", []):
+				if str(id) != "":
+					kinds[id] = true
+			var tname: String = "Mixed" if kinds.size() > 1 else sim.tyre_defs[work["tyre"]].display_name
+			parts.append("%s%s %.0f s" % [tname, " tyres" if n == 4 else " x%d" % n, work["tyre_s"]])
 		if float(work["fuel_l"]) > 0.0:
 			parts.append("%.0f L fuel %.0f s" % [work["fuel_l"], work["fuel_s"]])
 		if not (work["setup"] as Dictionary).is_empty():
@@ -774,7 +889,7 @@ func _draw_radio(r: Rect2) -> void:
 		y -= 20
 		lines += 1
 	if lines == 0:
-		_text(Vector2(r.position.x + 12, r.position.y + 50), "No calls yet. X / V to radio the driver.", 14, DIM)
+		_text(Vector2(r.position.x + 12, r.position.y + 50), "No calls yet. Click here or press V to radio the driver.", 14, DIM)
 	# Race control: the latest call, top right of the strip.
 	var rc := session.telemetry.feed.latest(1, ["race_control"])
 	if not rc.is_empty():

@@ -8,6 +8,11 @@ extends Node
 ##   after - you box on lap 1; shot <seconds> after the stop (its result)
 ##   crash - a car is dropped in front of you; shot just after the hit
 ##   slide - your car is flicked sideways; shot of smoke and rubber marks
+##   crane / tractor - your car is put out of the race in the wall (crane) or
+##           in the gravel (tractor); shot [seconds] after the vehicle is sent
+##   marshals - a crash leaves debris just ahead of you; marshals clear it
+##           under double yellows (you're held parked at the side); shot
+##           [seconds] after they're sent
 ##   godot --path . res://tests/fx_race_shot.tscn -- <out.png> <scenario> [track] [seconds into it] --autodrive --zoom 0
 
 var session: RaceSession
@@ -36,7 +41,7 @@ func _ready() -> void:
 	s.damage_enabled = true
 	s.fuel_enabled = true
 	s.tyre_wear_enabled = true
-	s.safety_car_enabled = false
+	s.safety_car_enabled = scenario in ["crane", "tractor"]
 	s.environment = {"time_h": 15.0, "weather": "dry"}
 	var start := RaceFactory.plan(s, [{"name": "You", "car_id": "bmw_m4_gt3"}], GameData.cars, GameData.drivers)
 	session = RaceSession.create(RaceSession.Mode.OFFLINE, start, 0)
@@ -99,6 +104,51 @@ func _physics_process(_delta: float) -> void:
 				_t0 = sim.race_time
 			if _armed and sim.race_time - _t0 >= wait:
 				_shoot()
+
+
+		"crane", "tractor":
+			if not _armed and sim.race_time > 9.0 and me.speed() > 30.0:
+				_armed = true
+				var t := sim.track
+				var k := t.index_at(me.track_s)
+				var off := t.width_left[k] + (t.runoff - 1.0 if scenario == "crane" else 12.0)
+				me.pos = t.position_at(me.track_s, -off)
+				me.heading += 0.7
+				me.vel = Vector2.ZERO
+				me.track_idx = -1
+				me.damage_engine = 1.0
+				sim.entries[mine].dnf = true
+			if _armed and _t0 < 0.0 and not sim.race_control.recovery_for(mine).is_empty():
+				_t0 = sim.race_time
+			if _t0 >= 0.0 and sim.race_time - _t0 >= wait:
+				var job := sim.race_control.recovery_for(mine)
+				print("[fx] recovery ", job.get("kind", "?"), " phase ", job.get("phase", "done"), " hoist ", job.get("hoist", 0.0))
+				_shoot()
+
+
+		"marshals":
+			var t := sim.track
+			if not _armed and sim.race_time > 9.0:
+				_armed = true
+				_park_s = me.track_s
+				var at := fposmod(_park_s + 4.0, t.length)
+				for k in 5:
+					var p := t.position_at(at + k * 3.0 - 6.0, (k - 2) * 1.5)
+					scene.world.impact(p, Vector2.from_angle(t.heading_at(at)) * 30.0, 1.2)
+				TrackMarshals.add_debris(sim.race_control.debris, t.length, at, t.position_at(at), 2.0)
+			if _armed:
+				# Parked at the side of the track, watching.
+				me.pos = t.position_at(_park_s, -t.width_left[t.index_at(_park_s)] - 3.0)
+				me.heading = t.heading_at(_park_s)
+				me.vel = Vector2.ZERO
+				if _t0 < 0.0 and not sim.race_control.marshal_jobs.is_empty():
+					_t0 = sim.race_time
+				if _t0 >= 0.0 and sim.race_time - _t0 >= wait:
+					print("[fx] marshals ", sim.race_control.marshal_jobs[0]["phase"] if not sim.race_control.marshal_jobs.is_empty() else "done")
+					_shoot()
+
+
+var _park_s := 0.0
 
 
 func _shoot() -> void:
