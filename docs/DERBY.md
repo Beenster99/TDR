@@ -43,7 +43,7 @@ On a track with jumps the car leaves the ground when the road drops away
 faster than it falls (`CarState.air_h`, `vz`). In the air there's no tyre
 grip; it lands where gravity puts it. Landings faster than 5 m/s down hurt
 the suspension and alignment. `air_h` and `vz` are in the network state and
-snapshots (`Net.PROTOCOL_VERSION` 16).
+snapshots (`Net.PROTOCOL_VERSION` 17).
 
 ## The cars (`modules/cars/tools/build_derby_cars.py`)
 

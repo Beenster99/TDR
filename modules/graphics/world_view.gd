@@ -26,7 +26,9 @@ var cars: Array[CarView] = []
 var safety_car: CarView           ## made on first use
 var driving_line: DrivingLineView ## the driving line aid (add_driving_aids)
 var brake_boards: BrakeBoards
+var rejoin_marker: RejoinMarker  ## where a pit stop rejoins (made on first use)
 var recovery: RecoveryVehicles   ## made on first use
+var marshals: MarshalsView        ## made on first use
 var pit_guide: PitGuideView      ## the pit guide for a driver driving in themselves (add_pit_guide)
 var _sc_state: CarState
 var camera: Camera3D
@@ -110,6 +112,20 @@ func update_driving_line(pos: Vector2, speed: float) -> void:
 		driving_line.update(pos, speed)
 
 
+## The band on the circuit where our car would rejoin after a clean pit
+## stop (see RejoinMarker): track metres s, back / front metres of band
+## behind / ahead of it, colour, metres past the track edges. show = false hides it.
+func set_rejoin(show: bool, s := 0.0, back := 30.0, front := 15.0, col := Color(0.4, 1.0, 0.5), widen := 0.0) -> void:
+	if rejoin_marker == null:
+		if not show:
+			return
+		rejoin_marker = RejoinMarker.new()
+		rejoin_marker.name = "RejoinMarker"
+		add_child(rejoin_marker)
+		rejoin_marker.setup(track_view)
+	rejoin_marker.show_at(show, s, back, front, col, widen)
+
+
 ## Adds a car. number = race number on the roof (0 = none); livery
 ## overrides the car's default ({"pattern", "primary", "secondary", "accent"}).
 func add_car(def: CarDefinition, state: CarState, label: String, is_local: bool, number := 0, livery := {}) -> CarView:
@@ -176,6 +192,23 @@ func set_recovery_vehicles(views: Array) -> void:
 		recovery.terrain = track_view.terrain_mesh_height
 		add_child(recovery)
 	recovery.set_vehicles(views)
+
+
+## Track marshals out clearing debris (orange overalls, brooms). views: every
+## marshal, from RaceControl.marshal_views(). Call every frame. Debris bits
+## where they sweep are cleared away.
+func set_marshals(views: Array) -> void:
+	if marshals == null:
+		if views.is_empty():
+			return
+		marshals = MarshalsView.new()
+		marshals.name = "Marshals"
+		marshals.ground = track_view.surface_height
+		marshals.terrain = track_view.terrain_mesh_height
+		add_child(marshals)
+	marshals.set_marshals(views)
+	for p in marshals.sweeping():
+		debris.clear_near(p, 7.0)
 
 
 ## Car i's team crew at pit box `box` (the race's box for that car), in the
@@ -310,7 +343,7 @@ func _process(_delta: float) -> void:
 		for i in cars.size():
 			pit_crews.set_car_pose(i, cars[i].pos2, cars[i].heading)
 			cars[i].pit_lift = pit_crews.car_lift(i)
-			cars[i].wheels_hidden = pit_crews.wheels_off(i)
+			cars[i].wheels_off_mask = pit_crews.wheels_off_mask(i)
 
 
 # --- Sun, sky and post-processing -------------------------------------------------

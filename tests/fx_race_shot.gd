@@ -1,11 +1,18 @@
 extends Node
 ## Screenshots of the race effects in a real race (needs a GPU or xvfb +
 ## mesa vulkan). Scenarios:
-##   pit   - you box on lap 1; shot mid-stop (crew at work, car on jacks)
+##   pit   - you box on lap 1; shot mid-stop (crew at work, car on jacks;
+##           with --crew-autoplay you're the left wheel gunner)
+##   lane  - you box on lap 1; shot <seconds> after the box call (pit crew
+##           game: crew to stations, and the rejoin band)
+##   after - you box on lap 1; shot <seconds> after the stop (its result)
 ##   crash - a car is dropped in front of you; shot just after the hit
 ##   slide - your car is flicked sideways; shot of smoke and rubber marks
 ##   crane / tractor - your car is put out of the race in the wall (crane) or
 ##           in the gravel (tractor); shot [seconds] after the vehicle is sent
+##   marshals - a crash leaves debris just ahead of you; marshals clear it
+##           under double yellows (you're held parked at the side); shot
+##           [seconds] after they're sent
 ##   godot --path . res://tests/fx_race_shot.tscn -- <out.png> <scenario> [track] [seconds into it] --autodrive --zoom 0
 
 var session: RaceSession
@@ -14,6 +21,7 @@ var scenario := "pit"
 var out := "user://fx_race.png"
 var wait := 2.5
 var _t0 := -1.0
+var _t1 := -1.0
 var _done := false
 var _armed := false
 
@@ -38,6 +46,8 @@ func _ready() -> void:
 	var start := RaceFactory.plan(s, [{"name": "You", "car_id": "bmw_m4_gt3"}], GameData.cars, GameData.drivers)
 	session = RaceSession.create(RaceSession.Mode.OFFLINE, start, 0)
 	GameData.active_session = session
+	if GameData.arg("crew-autoplay"):
+		GameData.prefs["pit_crew_game"] = true   # you're the left wheel gunner (played by the autoplay)
 	scene = load("res://modules/game/race.tscn").instantiate()
 	add_child(scene)
 	get_tree().create_timer(600.0).timeout.connect(func(): print("[fx] gave up"); get_tree().quit(1))
@@ -52,7 +62,7 @@ func _physics_process(_delta: float) -> void:
 	var mine := session.local_car
 	var me := sim.cars[mine]
 	match scenario:
-		"pit":
+		"pit", "lane", "after":
 			if not _armed:
 				_armed = true
 				# start just before the pit entry so we don't wait a lap
@@ -64,8 +74,17 @@ func _physics_process(_delta: float) -> void:
 				me.track_idx = t.index_at(s0)
 				me.track_s = s0
 				session.request_pit(mine, {"box": true, "tyre": "race_slick", "fuel": 30.0})
+				_t0 = sim.race_time
 			var p: Dictionary = sim.entries[mine].pit
-			if p["phase"] == PitRules.PHASE_SERVICE and float(p["service_total"]) - float(p["service_left"]) >= wait:
+			if scenario == "lane":
+				if sim.race_time - _t0 >= wait:
+					_shoot()
+			elif scenario == "after":
+				if int(p["stops"]) >= 1 and _t1 < 0.0:
+					_t1 = sim.race_time
+				if _t1 >= 0.0 and sim.race_time - _t1 >= wait:
+					_shoot()
+			elif p["phase"] == PitRules.PHASE_SERVICE and float(p["service_total"]) - float(p["service_left"]) >= wait:
 				_shoot()
 		"crash":
 			if not _armed and sim.race_time > 9.0 and me.speed() > 40.0:
@@ -105,6 +124,31 @@ func _physics_process(_delta: float) -> void:
 				var job := sim.race_control.recovery_for(mine)
 				print("[fx] recovery ", job.get("kind", "?"), " phase ", job.get("phase", "done"), " hoist ", job.get("hoist", 0.0))
 				_shoot()
+
+
+		"marshals":
+			var t := sim.track
+			if not _armed and sim.race_time > 9.0:
+				_armed = true
+				_park_s = me.track_s
+				var at := fposmod(_park_s + 4.0, t.length)
+				for k in 5:
+					var p := t.position_at(at + k * 3.0 - 6.0, (k - 2) * 1.5)
+					scene.world.impact(p, Vector2.from_angle(t.heading_at(at)) * 30.0, 1.2)
+				TrackMarshals.add_debris(sim.race_control.debris, t.length, at, t.position_at(at), 2.0)
+			if _armed:
+				# Parked at the side of the track, watching.
+				me.pos = t.position_at(_park_s, -t.width_left[t.index_at(_park_s)] - 3.0)
+				me.heading = t.heading_at(_park_s)
+				me.vel = Vector2.ZERO
+				if _t0 < 0.0 and not sim.race_control.marshal_jobs.is_empty():
+					_t0 = sim.race_time
+				if _t0 >= 0.0 and sim.race_time - _t0 >= wait:
+					print("[fx] marshals ", sim.race_control.marshal_jobs[0]["phase"] if not sim.race_control.marshal_jobs.is_empty() else "done")
+					_shoot()
+
+
+var _park_s := 0.0
 
 
 func _shoot() -> void:

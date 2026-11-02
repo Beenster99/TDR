@@ -18,6 +18,8 @@ var crew: CrewConsole
 ## Single player: the quick menu for a pit call (tyres, wings, fuel).
 var pit_menu: PitCallMenu
 var driver_radio: TeamRadio
+## The pit crew mini-game for the car this player leads the crew of.
+var crew_game: PitCrewGame
 ## The strategist's pit stop planner (over the pit wall screens).
 var planner: PitPlanner
 var results: PanelContainer
@@ -120,6 +122,10 @@ func _ready() -> void:
 	pit_wall.open_planner.connect(_open_planner)
 	if GameData.arg("planner"):
 		_open_planner.call_deferred()
+	crew_game = PitCrewGame.new()   # after the consoles, so it hears its buttons first
+	layer.add_child(crew_game)
+	crew_game.setup(session, world.pit_crews)
+	crew_game.autoplay = bool(GameData.arg("crew-autoplay", false))
 	_apply_role()
 	if GameData.arg("pit-wall"):
 		pit_wall.open()
@@ -390,6 +396,10 @@ var _zoom_target := 0.2
 var _zoom_before_full := 0.2
 var _autodrive_throttle := 0.0
 var _zoom := 0.2
+## The pit crew mini-game's close view of the box: metres across the
+## view's short side, and how far the camera has moved to it (0..1).
+const BOX_VIEW_M := 15.0
+var _box_mix := 0.0
 var _track_rect := Rect2()
 
 
@@ -472,7 +482,14 @@ func _process(delta: float) -> void:
 	if speed < 3.0:
 		offset *= speed / 3.0
 	var follow := target + offset
-	var centre_mix := smoothstep(0.85, 1.0, _zoom)
+	# A player gunning a wheel (PitCrewGame): close in on the box, north up.
+	_box_mix = move_toward(_box_mix, 1.0 if crew_game.wants_close_view() else 0.0, delta * 2.5)
+	if _box_mix > 0.0:
+		var k := smoothstep(0.0, 1.0, _box_mix)
+		var box_z := minf(_view_rect().size.x, _view_rect().size.y) / BOX_VIEW_M
+		z = exp(lerpf(log(z), log(box_z), k))
+		follow = follow.lerp(car_views[crew_game.car].pos2 if crew_game.car >= 0 else target, k)
+	var centre_mix := smoothstep(0.85, 1.0, _zoom) * (1.0 - _box_mix)
 	# Put the view's centre (not the window's) on the target.
 	var shift := (_view_rect().get_center() - vs * 0.5) / z
 	camera.position = follow.lerp(_track_rect.get_center(), centre_mix) - shift
@@ -481,6 +498,7 @@ func _process(delta: float) -> void:
 	var rc := session.sim.race_control
 	var recovering := rc.recovery_vehicles()
 	world.set_recovery_vehicles(recovering)
+	world.set_marshals(rc.marshal_views())
 	for i in car_views.size():
 		car_views[i].visible = not rc.recovered[i]
 		car_views[i].hoist = 0.0
@@ -488,13 +506,14 @@ func _process(delta: float) -> void:
 		if v["kind"] == "crane" and int(v["car"]) < car_views.size():
 			car_views[int(v["car"])].hoist = v["hoist"]
 	_update_pit_crews()
+	_update_rejoin()
 	world.set_safety_car(rc.sc_visible, rc.sc_pos, rc.sc_heading, rc.sc_speed, rc.sc_lights)
 	world.update_driving_line(car.pos, speed)
 	_update_pit_guide(delta)
 	if world.driving_line:
 		world.driving_line.visible = world.driving_line.enabled and session.local_car >= 0
 	race_audio.update(delta, camera.position, local_input.last_throttle if autodrive == null else _autodrive_throttle, _zoom)
-	var rot := rotate_camera and _zoom < 0.5
+	var rot := rotate_camera and _zoom < 0.5 and _box_mix <= 0.0
 	camera.ignore_rotation = not rot
 	if rot:
 		camera.rotation = heading + PI * 0.5
@@ -541,12 +560,39 @@ func _update_pit_crews() -> void:
 		elif p["box"] and (ph == PitRules.PHASE_ENTRY or ph == PitRules.PHASE_LIMIT):
 			state = PitCrews.Stop.COMING
 			if not _pit_work.has(i):
-				_pit_work[i] = pits.service_for(i, p["plan"])
+				var coming := pits.service_for(i, p["plan"])
+				coming["crew"] = pits.crew_timeline(i, coming)
+				_pit_work[i] = coming
 			work = _pit_work[i]
 		if state != PitCrews.Stop.COMING:
 			_pit_work.erase(i)
 		var elapsed := float(p.get("service_total", 0.0)) - float(p.get("service_left", 0.0))
 		world.set_pit_stop(i, state, elapsed, work)
+
+
+## The band on the circuit where our car would rejoin after a clean stop:
+## while it's boxing or in the pit lane, and always on the crew console
+## (the pit wall plans the stop from it).
+func _update_rejoin() -> void:
+	var car := session.local_car if session.local_car >= 0 else session.team_car
+	var pits := session.sim.pits
+	var show := pits.enabled and car >= 0 and session.sim.phase == RaceSim.Phase.RACING
+	var est := {}
+	if show:
+		var p: Dictionary = session.sim.entries[car].pit
+		var ph: String = p["phase"]
+		show = (p["box"] or (ph != PitRules.PHASE_NONE and ph != PitRules.PHASE_EXIT) or crew.visible)
+		if show:
+			est = pits.rejoin_estimate(car)
+			show = not est.is_empty()
+	if not show:
+		world.set_rejoin(false)
+		return
+	# At least a few pixels long and wide however far out the camera is.
+	var v: float = est["speed"]
+	var ppm := maxf(camera.zoom.x, 0.01)
+	world.set_rejoin(true, est["s"], maxf(v * 0.8, 40.0 / ppm), maxf(v * 0.2, 10.0 / ppm), RaceHud.rejoin_colour(est),
+		maxf(6.0 / ppm - 4.0, 0.0))
 
 
 ## Z / R3: jump to the whole track, and back to where you were.
@@ -698,7 +744,13 @@ func _on_events(evs: Array) -> void:
 					hud.flash("Finished P%d" % e["position"], 4.0)
 			"pit_stop":
 				if e["car"] == session.local_car:
-					hud.flash("Pit stop %.1f s" % e["stationary_s"], 2.5)
+					var std := float(e.get("standard_s", 0.0))
+					var txt := "Pit stop %.1f s" % e["stationary_s"]
+					if std > 0.0 and not e.get("played", false):
+						txt += "  (%s%.1f s on a standard stop)" % ["+" if float(e["stationary_s"]) >= std else "-", absf(float(e["stationary_s"]) - std)]
+					if int(e.get("fumble", -1)) >= 0:
+						txt += "  The crew fumbled the %s" % RaceHud.wheels_text(["fl", "fr", "rl", "rr"][int(e["fumble"])])
+					hud.flash(txt, 3.5)
 			"safety_car":
 				var says := {"sc": "SAFETY CAR DEPLOYED", "vsc": "VIRTUAL SAFETY CAR", "vsc_ending": "VSC ENDING",
 					"lapped_may_overtake": "LAPPED CARS MAY OVERTAKE", "in_this_lap": "SAFETY CAR IN THIS LAP",

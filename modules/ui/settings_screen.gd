@@ -127,7 +127,7 @@ func _show_section(id: String, focus_list := false) -> void:
 		_build_debug()
 	if id == "gameplay":
 		_action("Edit HUD layout", _open_hud_editor,
-			"Move, resize, hide and bring back each part of the race screen (timing tower, map, speed, tyres...) with the mouse and keyboard, over a live preview race. Also F2 during a race.")
+			"Move, resize, hide and bring back each part of the race screen (timing tower, map, speed, tyres...) with the mouse and keyboard, over a live preview race. Also F2 during a race. Co-op drivers (sharing a car with team mates) have their own layout, minimal by default.")
 	if id == "sound":
 		_action("Play test sound", func(): Sound.passby())
 	_help.text = ""

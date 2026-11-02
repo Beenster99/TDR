@@ -61,6 +61,10 @@ var layout := HudLayout.new()
 ## drawn, with sample content when there's nothing to show right now.
 var editing := false
 var editor: HudEditor = null
+## Co-op driver (sharing the car with team mates): the co-op layout is in use
+## (HudLayout.PREF_COOP, minimal by default), and it keeps the timing tower's
+## on/off in the layout instead of the solo pref.
+var coop := false
 ## Settings preview: the HUD runs its own (all-AI) race session.
 var drives_session := false
 ## The editor was closed (saved: true, or cancelled).
@@ -72,8 +76,44 @@ func setup(p_session: RaceSession) -> void:
 	font = ThemeDB.fallback_font
 	set_anchors_preset(PRESET_FULL_RECT)
 	mouse_filter = MOUSE_FILTER_IGNORE
-	layout = HudLayout.from_value(_prefs().get(HudLayout.PREF, {}))
+	coop = is_coop_driver()
+	load_layout()
 	_build_minimap()
+
+
+static func item_ids() -> Array:
+	return ITEMS.map(func(it): return it[0])
+
+
+## Driving a car shared with other players (co-op crew).
+func is_coop_driver() -> bool:
+	if session == null or drives_session or session.local_car < 0:
+		return false
+	return session.sim.entries[session.local_car].human_crew().size() > 1
+
+
+## The pref the layout in use is saved in.
+func layout_pref() -> String:
+	return HudLayout.PREF_COOP if coop else HudLayout.PREF
+
+
+func load_layout() -> void:
+	layout = HudLayout.load_from(_prefs(), coop, item_ids())
+
+
+## Back to the designed layout (solo: everything; co-op: the minimal set).
+func reset_layout() -> void:
+	if coop:
+		layout = HudLayout.coop_default(item_ids())
+	else:
+		layout.reset_all()
+		set_show_tower(true)
+
+
+func save_layout() -> void:
+	var gd := get_node_or_null("/root/GameData")
+	if gd != null and gd.has_method("set_pref"):
+		gd.call("set_pref", layout_pref(), layout.to_value())
 
 
 ## The player's prefs (GameData autoload, looked up by path so this class
@@ -102,8 +142,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("hud_tower"):
 		if get_node_or_null("/root/GameData") == null:
 			return
-		set_show_tower(not show_tower())
-		flash("Timing tower " + ("on" if show_tower() else "off"), 1.2)
+		set_item_on("tower", not item_on("tower"))
+		if coop:
+			save_layout()
+		flash("Timing tower " + ("on" if item_on("tower") else "off"), 1.2)
 
 
 ## Opens the HUD layout editor over the race.
@@ -132,25 +174,25 @@ static func item_name(id: String) -> String:
 ## Switched on by the player (the tower follows its own pref; the compact
 ## standings only show while the tower is off).
 func item_on(id: String) -> bool:
-	if id == "tower":
+	if id == "tower" and not coop:
 		return show_tower()
 	return layout.is_on(id)
 
 
 func set_item_on(id: String, on: bool) -> void:
-	if id == "tower":
+	if id == "tower" and not coop:
 		set_show_tower(on)
 		return
 	layout.set_on(id, on)
 	if id == "standings" and on:
-		set_show_tower(false)
+		set_item_on("tower", false)
 
 
 ## Drawn now: switched on, and (outside the editor) something to show.
 func item_shown(id: String) -> bool:
 	if session == null or not item_on(id):
 		return false
-	if id == "standings" and show_tower():
+	if id == "standings" and item_on("tower"):
 		return false
 	if editing:
 		return true
@@ -277,6 +319,11 @@ func _process(delta: float) -> void:
 	size = get_viewport_rect().size
 	message_time -= delta
 	radio_time -= delta
+	# A driver change can put this player at the wheel of a shared car (or take
+	# them out of it): switch to the matching layout.
+	if not editing and is_coop_driver() != coop:
+		coop = not coop
+		load_layout()
 	_watch_damage()
 	queue_redraw()
 
@@ -593,7 +640,7 @@ func _draw_pit_panel(me: int) -> void:
 			PitRules.PHASE_APPROACH: head = "BOXING: FOLLOW THE PIT LINE" if pits.self_drives(me) else "BOXING: CAR DRIVING TO THE PITS"
 			PitRules.PHASE_ENTRY: head = "PIT LANE: %d KM/H LIMIT" % roundi(sim.track.pit_speed_limit * 3.6)
 			PitRules.PHASE_LIMIT: head = "STOP ON YOUR BOX" if pits.self_drives(me) else "PIT LANE, TO YOUR BOX"
-			PitRules.PHASE_SERVICE: head = "PIT STOP  %.1f s" % float(p["service_left"])
+			PitRules.PHASE_SERVICE: head = PitRules.service_text(p, "PIT STOP")
 			PitRules.PHASE_LEAVE, PitRules.PHASE_EXIT: head = "PIT EXIT"
 			_:
 				if p["box"]:
@@ -618,7 +665,11 @@ func _draw_pit_panel(me: int) -> void:
 		_text(Vector2(o.x + 14, y), "Next: tyres %s%s" % [stop_tyres_text(sim, me, plan, work), fuel_txt], 14, Color(1, 1, 1, 0.85),
 			HORIZONTAL_ALIGNMENT_LEFT, 280)
 		y += 22
-		_text(Vector2(o.x + 14, y), "Stop about %.0f s%s" % [work["total_s"], "  + repairs" if float(work["repair_s"]) > 0.0 else ""], 14, Color(1, 1, 1, 0.7))
+		var rj := sim.pits.rejoin_estimate(me) if (p["box"] or phase != PitRules.PHASE_NONE) else {}
+		if not rj.is_empty() and phase != PitRules.PHASE_EXIT:
+			_text(Vector2(o.x + 14, y), rejoin_text(sim, rj), 14, rejoin_colour(rj), HORIZONTAL_ALIGNMENT_LEFT, 280)
+		else:
+			_text(Vector2(o.x + 14, y), "Stop about %.0f s%s" % [work["total_s"], "  + repairs" if float(work["repair_s"]) > 0.0 else ""], 14, Color(1, 1, 1, 0.7))
 		y += 22
 		if mates:
 			var pend := session.pending_swap(me)
@@ -632,6 +683,31 @@ func _draw_pit_panel(me: int) -> void:
 			y += 22
 	if e.penalty_s > 0.0:
 		_text(Vector2(o.x + 14, y), "Penalties +%d s" % int(e.penalty_s), 14, Color(1, 0.5, 0.3))
+
+
+## Where a clean stop rejoins (PitRules.rejoin_estimate), in a few words.
+static func rejoin_text(sim: RaceSim, rj: Dictionary) -> String:
+	var txt := "Rejoin P%d" % int(rj["position"])
+	if int(rj["ahead"]) >= 0 and float(rj["gap_ahead"]) < 3.0:
+		txt += ", %.1f s behind %s" % [rj["gap_ahead"], short_name(sim.entries[int(rj["ahead"])].at_wheel())]
+	elif int(rj["behind"]) >= 0 and float(rj["gap_behind"]) < 3.0:
+		txt += ", %.1f s ahead of %s" % [rj["gap_behind"], short_name(sim.entries[int(rj["behind"])].at_wheel())]
+	else:
+		txt += ", clear air"
+	return txt
+
+
+## Green: clear air at the rejoin; amber: a car within 1.5 s; red: within 0.6 s.
+static func rejoin_colour(rj: Dictionary) -> Color:
+	var near := INF
+	for k in ["gap_ahead", "gap_behind"]:
+		if float(rj.get(k, -1.0)) >= 0.0:
+			near = minf(near, float(rj[k]))
+	if near < 0.6:
+		return Color(1.0, 0.35, 0.3)
+	if near < 1.5:
+		return Color(1.0, 0.7, 0.25)
+	return Color(0.4, 1.0, 0.5)
 
 
 ## Sample radio call shown in the HUD layout editor.
@@ -856,7 +932,9 @@ func _flag_lines(me: int) -> Array:
 		"vsc":
 			title = "VSC ENDING" if rc.stage == "ending" else "VIRTUAL SAFETY CAR"
 		"yellow":
-			if me >= 0 and rc.yellow_at(sim.cars[me].track_s):
+			if me >= 0 and rc.double_yellow_at(sim.cars[me].track_s):
+				title = "DOUBLE YELLOW"
+			elif me >= 0 and rc.yellow_at(sim.cars[me].track_s):
 				title = "YELLOW FLAG"
 	return [title, line, col]
 
@@ -930,6 +1008,25 @@ func _draw_minimap(origin: Vector2) -> void:
 		for k in 9:
 			zone.append(origin + (t.position_at(from + span_m * k / 8.0) - _mm_rect.position) * scale_f)
 		draw_polyline(zone, Color(1, 0.85, 0.1), 5.0)
+	# Where a pit stop now would rejoin (while boxing / in the lane).
+	if session.local_car >= 0:
+		var pe: Dictionary = sim.entries[session.local_car].pit
+		if pe["box"] or (pe["phase"] != PitRules.PHASE_NONE and pe["phase"] != PitRules.PHASE_EXIT):
+			var rj := sim.pits.rejoin_estimate(session.local_car)
+			if not rj.is_empty():
+				var band := PackedVector2Array()
+				var v: float = rj["speed"]
+				for k in 7:
+					band.append(origin + (t.position_at(float(rj["s"]) - v * 0.8 + v * k / 6.0) - _mm_rect.position) * scale_f)
+				draw_polyline(band, rejoin_colour(rj), 6.0)
+	# Double yellows where marshals are out: a thicker band.
+	for job in rc.marshal_jobs:
+		var zone := PackedVector2Array()
+		var from := float(job["s"]) - TrackMarshals.DOUBLE_BEFORE_M
+		var span_m := TrackMarshals.DOUBLE_BEFORE_M + TrackMarshals.DOUBLE_AFTER_M
+		for k in 9:
+			zone.append(origin + (t.position_at(from + span_m * k / 8.0) - _mm_rect.position) * scale_f)
+		draw_polyline(zone, Color(1, 0.85, 0.1), 9.0)
 	if rc.sc_visible:
 		var sp := origin + (rc.sc_pos - _mm_rect.position) * scale_f
 		draw_rect(Rect2(sp - Vector2(5, 5), Vector2(10, 10)), Color(1, 0.6, 0.1))

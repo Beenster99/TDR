@@ -65,13 +65,17 @@ Command line: `--fuel 2 --tyre-wear 2 --pit-stops 1 --drivers 2`.
    time worked out as you go (ui `PitCallMenu`). A / Enter or the box
    button again: box this lap; B / Esc: no stop. Online the keys and the
    pit wall do this, as the race can't wait.
-3. **The stop.** Stop time = 2.5 s (car up and down) + the slower of the tyre
-   change and refuelling (3 L/s) + repairs (`CarDamage.repair_time`, parts
+3. **The stop.** Stop time = 2.5 s (car up and down) + refuelling (3 L/s), then
+   the tyre change (tyres only once the fuel is in, as in the WEC rules,
+   `PitRules.TYRES_AFTER_FUEL`; +0.2 s to get the hose off) + repairs (`CarDamage.repair_time`, parts
    one after another). Tyres take 1.5 s + 1.125 s a tyre: all four 6 s, a
    pair 3.75 s, one 2.6 s. New tyres arrive warm and fix punctures. A change
    to a different compound always fits all four (compounds aren't mixed), and
    with repairs on a punctured tyre is always changed, even on a "no tyres"
    stop. A driver change keeps the car in the box for at least 5 s.
+   That's the standard: the AI crew play the stop out the Le Mans way and
+   are a little quicker or slower each time, now and then fumbling a wheel
+   (docs/PIT_CREW_GAME.md).
 4. **Leaving.** The guide drives to the end of the speed limit; AI cars are
    driven to the end of the lane, players take over at the limit line.
 

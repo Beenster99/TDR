@@ -59,6 +59,7 @@ var pit_lift := 0.0
 ## Lifted clear of the ground by a recovery crane (metres, set by the race scene).
 var hoist := 0.0
 var wheels_hidden := false
+var wheels_off_mask := 0         ## pit stop: wheels off the car (bit 1 front left .. 8 rear right)
 
 var _init_done := false
 var _sprung: Node3D
@@ -1096,7 +1097,8 @@ func _process(delta: float) -> void:
 		hub.position.y = def.wheel_radius - 0.09 * float(_flat.get(str(hub.name), 0.0)) + pit_lift
 		if w[1]:
 			(w[1] as Node3D).rotate_z(-v / w[3] * delta)
-			(w[1] as Node3D).visible = not wheels_hidden
+			var bit := 1 << maxi(["wheel_fl", "wheel_fr", "wheel_rl", "wheel_rr"].find(str(hub.name)), 0)
+			(w[1] as Node3D).visible = not wheels_hidden and (wheels_off_mask & bit) == 0
 	var braking := state.ax < -3.0
 	var dark := 0.0
 	var wet := 0.0
