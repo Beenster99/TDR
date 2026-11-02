@@ -668,7 +668,7 @@ func _draw_pit_crew(r: Rect2, car: int) -> void:
 	match str(p["phase"]):
 		PitRules.PHASE_APPROACH: head = "COMING IN THIS LAP"
 		PitRules.PHASE_ENTRY, PitRules.PHASE_LIMIT: head = "IN THE PIT LANE"
-		PitRules.PHASE_SERVICE: head = "IN THE BOX  %.1f s" % float(p["service_left"])
+		PitRules.PHASE_SERVICE: head = PitRules.service_text(p, "IN THE BOX")
 		PitRules.PHASE_LEAVE, PitRules.PHASE_EXIT: head = "LEAVING THE PITS"
 		_:
 			if p["box"]:

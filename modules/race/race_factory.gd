@@ -17,10 +17,18 @@ static func plan(settings: RaceSettings, humans: Array, cars: Dictionary, driver
 		track: TrackData = null) -> Dictionary:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = settings.seed
-	var all_ids: Array = cars.keys()
+	# Only the cars built for this kind of racing (rallycross cars race
+	# rallycross, circuit cars race on circuits).
+	var all_ids: Array = []
+	for id in cars:
+		if cars[id].discipline == settings.discipline:
+			all_ids.append(id)
+	if all_ids.is_empty():
+		all_ids = cars.keys()
 	all_ids.sort()
+	var rx := settings.is_rallycross()
 	var fixed_class := settings.car_class != "" and settings.car_class != RaceSettings.CLASS_MULTI \
-		and not CarCatalog.ids_in_class(cars, settings.car_class).is_empty()
+		and CarCatalog.ids_in_class(cars, settings.car_class).any(func(id): return id in all_ids)
 	var class_ids: Array = CarCatalog.ids_in_class(cars, settings.car_class) if fixed_class else all_ids
 	# Human cars: their pick, unless it's outside a fixed class.
 	var human_cars := []
@@ -32,7 +40,7 @@ static func plan(settings: RaceSettings, humans: Array, cars: Dictionary, driver
 	if fixed_class:
 		ai_classes = [settings.car_class]
 	elif settings.car_class == RaceSettings.CLASS_MULTI or humans.is_empty():
-		ai_classes = CarCatalog.classes(cars)
+		ai_classes = CarCatalog.classes(cars, settings.discipline)
 	else:
 		for id in human_cars:
 			if not cars[id].class_tag in ai_classes:
@@ -54,11 +62,12 @@ static func plan(settings: RaceSettings, humans: Array, cars: Dictionary, driver
 			e.driver_name = d.get("name", "AI")
 			e.traits = d.get("traits", {})
 			e.car_id = d.get("car_id", "")  # a season's AI keep their team's car
-		var in_class: Array = CarCatalog.ids_in_class(cars, ai_classes[k % ai_classes.size()])
+		var in_class: Array = CarCatalog.ids_in_class(cars, ai_classes[k % ai_classes.size()]).filter(func(id): return id in all_ids)
 		var pick: String = in_class[rng.randi_range(0, in_class.size() - 1)]
 		if not cars.has(e.car_id) or (fixed_class and not e.car_id in class_ids):
 			e.car_id = pick
-		_fit_tyres(e, "auto", start_weather)
+		if not rx:  # rallycross cars race one all-weather tyre
+			_fit_tyres(e, "auto", start_weather)
 		entries.append(e.describe())
 	if settings.tuning_enabled and ai_count > 0:
 		_ai_setups(settings, entries, cars, track)
@@ -73,11 +82,12 @@ static func plan(settings: RaceSettings, humans: Array, cars: Dictionary, driver
 			e.setup = su.duplicate(true) if su is Dictionary else {}
 		var lv = h.get("livery", {})
 		e.livery = lv.duplicate(true) if lv is Dictionary else {}
-		_fit_tyres(e, h.get("tyre", "auto"), start_weather)
+		if not rx:
+			_fit_tyres(e, h.get("tyre", "auto"), start_weather)
 		entries.append(e.describe())
 	apply_balance(entries, settings.upgrades_mode, cars)
 	_order_grid(entries, settings.grid_order, cars, rng)
-	if settings.drivers_per_car > 1:
+	if settings.drivers_per_car > 1 and settings.allows_coop():
 		add_co_drivers(entries, settings.drivers_per_car, settings.seed)
 	return {"settings": settings.to_dict(), "entries": entries}
 
@@ -207,7 +217,7 @@ static func apply_balance(entries: Array, mode: String, cars: Dictionary) -> voi
 ## Per class: median stock power-to-weight (kW/kg) and downforce (ClA/kg).
 static func bop_reference(cars: Dictionary) -> Dictionary:
 	var out := {}
-	for cls in CarCatalog.classes(cars):
+	for cls in CarCatalog.all_classes(cars):
 		var pw: Array = []
 		var df: Array = []
 		for id in CarCatalog.ids_in_class(cars, cls):

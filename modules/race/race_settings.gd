@@ -4,6 +4,19 @@ extends RefCounted
 ## every client in the lobby (to_dict/from_dict) before the sim starts.
 
 var track_id: String = "spielberg"
+## Kind of racing (the race type): DISCIPLINE_CIRCUIT (road racing),
+## DISCIPLINE_RALLYCROSS (mixed tarmac and dirt, short races, a joker lap,
+## no pit stops, no co-op) or "derby" (demolition derby). Tracks and car
+## classes carry the same word.
+var discipline: String = "circuit"
+const DISCIPLINE_CIRCUIT := "circuit"
+const DISCIPLINE_RALLYCROSS := "rallycross"
+## Rallycross: joker laps each car must take in a race (taking the joker lane
+## once), and the time added at the finish for each one missed.
+var joker_laps: int = 1
+const JOKER_MISSED_PENALTY_S := 30.0
+## Most cars on a rallycross grid (the circuits are about a kilometre long).
+const MAX_CARS_RALLYCROSS := 12
 var laps: int = 3
 var ai_count: int = 5
 ## Most cars on the grid (players + AI): one class, or several classes mixed.
@@ -67,11 +80,22 @@ const SESSION_QUALIFYING := "qualifying"
 
 ## Most cars this race may have (players and AI together).
 func max_cars() -> int:
-	return MAX_CARS_MULTI_CLASS if car_class == CLASS_MULTI else MAX_CARS_SINGLE_CLASS
+	return max_cars_for(car_class, discipline)
 
 
-static func max_cars_for(p_class: String) -> int:
+static func max_cars_for(p_class: String, p_discipline: String = DISCIPLINE_CIRCUIT) -> int:
+	if p_discipline == DISCIPLINE_RALLYCROSS:
+		return MAX_CARS_RALLYCROSS
 	return MAX_CARS_MULTI_CLASS if p_class == CLASS_MULTI else MAX_CARS_SINGLE_CLASS
+
+
+func is_rallycross() -> bool:
+	return discipline == DISCIPLINE_RALLYCROSS
+
+
+## Co-op crews and drivers sharing a car belong to circuit racing only.
+func allows_coop() -> bool:
+	return discipline == DISCIPLINE_CIRCUIT
 
 
 func to_dict() -> Dictionary:
@@ -84,7 +108,7 @@ func to_dict() -> Dictionary:
 		"tyre_wear_rate": tyre_wear_rate, "pit_window_open_lap": pit_window_open_lap,
 		"pit_window_close_lap": pit_window_close_lap,
 		"countdown_s": countdown_s, "upgrades_mode": upgrades_mode, "tuning_enabled": tuning_enabled,
-		"session_type": session_type,
+		"session_type": session_type, "discipline": discipline, "joker_laps": joker_laps,
 	}
 
 

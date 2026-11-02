@@ -69,6 +69,12 @@ Keys: Tab picks the next item, arrows nudge (Shift for bigger steps), + / -
 resize, Delete hides, R resets the item, Ctrl+Z undoes, Enter or Esc saves.
 Offline races wait while you edit. The layout is saved with your settings.
 
+**Co-op drivers** (sharing a car with team mates, who tell you what you
+need over voice) get a layout of their own, minimal to start with: speed and
+gear, the pit lane guide, start lights, flags, team radio and messages.
+Adjust it with F2 while driving a shared car, or in Settings > Gameplay >
+Edit HUD layout (pick "Co-op driver" at the top of the panel).
+
 **Co-op pit wall (wave 5):** players who share a car but aren't driving run
 the pit wall: the pit crew calls the stops (tyres, fuel, repairs, wing and
 tyre pressure changes) and the strategist reads the race (gaps, pace, pit

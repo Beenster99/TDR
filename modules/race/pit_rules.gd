@@ -77,6 +77,34 @@ const FUEL_FLOW_LPS := 3.0
 ## co-driver, or an AI car's driver line-up): the stop lasts at least this
 ## long from the moment the drivers swap (done alongside tyres and fuel).
 const DRIVER_CHANGE_S := 5.0
+## The pit crew mini-game, co-op "Two guns" (docs/PIT_CREW_GAME.md): a player
+## can be one of the two wheel gunners (side 0 = left, front left then rear
+## left; side 1 = right). They say so before the car stops (set_plan "crew"
+## {side, play}), then report each wheel's nut off and nut on as they do it
+## ({side, wheel, nut}). The AI crew do everything else, and the car drops
+## once both sides are done. If a player never finishes, the crew give up
+## waiting and send the car at CREW_GIVE_UP x the standard time.
+const CREW_GIVE_UP := 1.6
+const GUN_SWAP_S := 1.1          ## a player's wheel: from nut off until the new wheel is on its hub
+## The crew (an AI crew, unless the player plays the stop): every stop is
+## worked out as a timeline of who does what, Le Mans style (see
+## crew_timeline). Each team's crew is a little better or worse than
+## average (CREW_TEAM_SPREAD), every job varies from stop to stop
+## (CREW_JOB_SPREAD), and now and then a wheel gunner fumbles a wheel
+## (CREW_FUMBLE_S). A player's own team has an average crew.
+const CREW_TEAM_SPREAD := 0.05
+const CREW_JOB_SPREAD := 0.04
+const CREW_FUMBLE_CHANCE := 0.06
+const CREW_FUMBLE_S := 1.5
+## STOP_BASE_S split over the stop: the air lance lifting the car, dropping
+## it, and the car controller releasing it.
+const LANCE_UP_S := 0.8
+const LANCE_DOWN_S := 0.8
+const RELEASE_S := 0.9
+const HOSE_S := 0.4              ## fuel hose on / off
+## Wheel guns start only once the fuel is in and the hose is off (the user's call,
+## 2026-11-02, as in the WEC rules): a stop's tyres and fuel add up.
+const TYRES_AFTER_FUEL := true
 
 const PHASE_NONE := ""
 const PHASE_APPROACH := "approach"  ## being driven to the pit entry (box requested)
@@ -127,6 +155,8 @@ var limit_end := 0.0
 var commit_s := 0.0              ## track distance where a boxing car is taken over
 var route_time := 0.0            ## seconds to drive the whole route without stopping
 var route_track_m := 0.0         ## track distance the route replaces
+var route_end_s := 0.0           ## track distance where the route ends (back on the track)
+var _route_tcum: PackedFloat64Array = []  ## seconds to drive the route up to each point
 var window_open := 1             ## pit window, in laps (inclusive)
 var window_close := 1
 
@@ -168,6 +198,11 @@ static func new_state(compound_id: String) -> Dictionary:
 		# AI cars with a driver line-up (RaceEntry.lineup): who drives now, and
 		# the lap they took over.
 		"driver_idx": 0, "driver_from_lap": 1,
+		# Pit crew mini-game: which wheel gunners players are (bit 1 left, 2
+		# right), the wheels they've done this stop ([[{wheel, off, fit, on}],
+		# [...]], seconds into the stop), the standard time, and the earliest
+		# the car can go (a driver change).
+		"crew_play": 0, "crew_jobs": [[], []], "service_std": 0.0, "service_floor": 0.0,
 	}
 
 
@@ -253,11 +288,14 @@ func self_drives(i: int) -> bool:
 ## compound id, "" or "keep" for no change (mixed compounds allowed; [] clears
 ## it and the plan's tyre / wheels apply again), psi: [4] cold pressure per
 ## wheel as a delta on the compound's own, like CarSetup pressure_front
-## ([] clears; only with car setups allowed)}
+## ([] clears; only with car setups allowed),
+## crew: the pit crew mini-game, see crew_input}
 ## A strategist's planned stop (wheel_tyres, psi) is used once, then cleared.
 func set_plan(i: int, changes: Dictionary) -> void:
 	var p: Dictionary = sim.entries[i].pit
 	var plan: Dictionary = p["plan"]
+	if changes.get("crew") is Dictionary:
+		crew_input(i, changes["crew"])
 	if changes.has("box") and p["phase"] == PHASE_NONE:
 		p["box"] = bool(changes["box"]) and enabled
 	if changes.has("tyre") and str(changes["tyre"]) in TYRE_CHOICES:
@@ -308,6 +346,193 @@ func set_plan(i: int, changes: Dictionary) -> void:
 			plan.erase("setup")
 		else:
 			plan["setup"] = cur
+
+
+## The pit crew mini-game for car i, from a wheel gunner's screen (through
+## RaceSession.request_pit(car, {"crew": {...}})); side 0 = left, 1 = right:
+##   {side, play: true}  a player is this side's gunner for the coming stop
+##                       (sent before the car stops; play: false takes it back);
+##   {side, wheel, nut: "off"}  they've gunned that wheel's nut off (the
+##                       new wheel is on its hub GUN_SWAP_S later);
+##   {side, wheel, nut: "on"}  and the new one's nut on: that wheel is done.
+## Times are this machine's (the one that simulates the car): a gunner on
+## another machine is a ping late.
+func crew_input(i: int, d: Dictionary) -> void:
+	var p: Dictionary = sim.entries[i].pit
+	var side := int(d.get("side", 0))
+	if side < 0 or side > 1:
+		return
+	var bit := 1 << side
+	if d.has("play"):
+		if p["phase"] != PHASE_SERVICE and p["phase"] != PHASE_LEAVE:
+			p["crew_play"] = (int(p["crew_play"]) | bit) if bool(d["play"]) else (int(p["crew_play"]) & ~bit)
+		return
+	if not d.has("nut") or p["phase"] != PHASE_SERVICE or int(p["crew_play"]) & bit == 0:
+		return
+	var work: Dictionary = p["work"]
+	var wheel := int(d.get("wheel", -1))
+	if not (wheel in _side_wheels(work, side)):
+		return
+	var tl: Dictionary = work.get("crew", {})
+	var now := float(p["service_total"]) - float(p["service_left"])
+	var jobs: Array = p["crew_jobs"][side]
+	var job := {}
+	for j in jobs:
+		if int(j["wheel"]) == wheel:
+			job = j
+	if str(d["nut"]) == "off" and job.is_empty():
+		var off := maxf(now, float(tl.get("guns_from", 0.0)))
+		jobs.append({"wheel": wheel, "off": off, "fit": off + GUN_SWAP_S, "on": INF})
+	elif str(d["nut"]) == "on" and not job.is_empty() and is_inf(float(job["on"])):
+		job["on"] = maxf(now, float(job["fit"]))
+	else:
+		return
+	_replay(i)
+
+
+## The wheels one side's gunner changes this stop (0 = left side), front first.
+static func _side_wheels(work: Dictionary, side: int) -> Array:
+	var out := []
+	if str(work.get("tyre", "")) == "":
+		return out
+	for w in work.get("wheels", []):
+		if int(w) % 2 == side:
+			out.append(int(w))
+	out.sort()
+	return out
+
+
+## Car i's stop with the players' wheels in: when it ends (or, while a
+## player still has a wheel to do, the crew's give-up time).
+func _replay(i: int) -> void:
+	var p: Dictionary = sim.entries[i].pit
+	var work: Dictionary = p["work"]
+	var tl := crew_timeline(i, work, _played(p))
+	work["crew"] = tl
+	var now := float(p["service_total"]) - float(p["service_left"])
+	var end := float(p["service_std"]) * CREW_GIVE_UP
+	if not is_inf(float(tl["release"])):
+		end = maxf(float(tl["release"]), float(p.get("service_floor", 0.0)))
+	end = maxf(end, now)
+	p["service_total"] = end
+	p["service_left"] = end - now
+
+
+## The players' sides of a stop for crew_timeline: [jobs or null, jobs or null].
+static func _played(p: Dictionary) -> Array:
+	var out := [null, null]
+	for g in 2:
+		if int(p.get("crew_play", 0)) & (1 << g):
+			out[g] = p["crew_jobs"][g]
+	return out
+
+
+## A random number 0..1 that is the same every time for the same race,
+## car, stop and key.
+func _crew_rand(i: int, key: String) -> float:
+	var h := hash([sim.settings.seed, i, int(sim.entries[i].pit["stops"]), key])
+	return float(h & 0xFFFFFF) / float(0xFFFFFF)
+
+
+## How good car i's team crew is: -1 (slow) .. 1 (sharp); 0 for a player's team.
+func crew_skill(i: int) -> float:
+	var e := sim.entries[i]
+	if not e.is_ai:
+		return 0.0
+	var h := hash([sim.settings.seed, i, e.car_id, e.driver_name, "crew"])
+	return float(h & 0xFFFF) / 65535.0 * 2.0 - 1.0
+
+
+## One job's pace in car i's stop (1 = average), for this team.
+func _job_pace(i: int, team: float, job: String) -> float:
+	return team * (1.0 + CREW_JOB_SPREAD * (2.0 * _crew_rand(i, job) - 1.0))
+
+
+## Who does what in car i's stop, and when (seconds after the car stops):
+## the car controller brings it onto its marks, the refueller plugs in the
+## hose (with the fire extinguisher attendant and the cut-off valve
+## attendant beside it), a mechanic puts the air lance in and the car rises
+## on its air jacks, two mechanics change the tyres unaided, each with their
+## own wheel gun (one down the left side, front then rear, one down the
+## right), the cockpit helper swaps the drivers, mechanics do the wings and
+## the repairs, the air lance comes out, the car drops and the controller
+## sends it. The tyres wait until the fuel is in (docs/PITS.md).
+## played: a side a player guns ([jobs or null, jobs or null], see
+## crew_input): its wheels take the player's times, and one not done yet
+## leaves everything after it (and the release) at INF.
+## {up: [from, to], fuel: [hose on, fuel in, hose off] or [], guns: [[{wheel,
+##  off, on, fumble}], [...]] (left gunner, right gunner), setup: [from, to],
+##  repair: [from, to], driver: [from, to] or [], down: [from, to],
+##  release: seconds the car leaves, standard: the same stop at average pace,
+##  fumble: the wheel fumbled (-1 none)}
+func crew_timeline(i: int, work: Dictionary, played: Array = [null, null]) -> Dictionary:
+	var team := 1.0 - CREW_TEAM_SPREAD * crew_skill(i)
+	var t0 := float(work.get("overshoot_s", 0.0))   # the crew getting to a car past its marks
+	var up := t0 + LANCE_UP_S * _job_pace(i, team, "lance")
+	var tl := {"up": [t0, up]}
+	var block := up
+	# Fuel: the hose goes on while the car rises; the flow is fixed.
+	var fuel_s := float(work.get("fuel_s", 0.0))
+	tl["fuel"] = []
+	if fuel_s > 0.0:
+		var on := maxf(up - HOSE_S * _job_pace(i, team, "hose"), t0 + 0.1)
+		tl["fuel"] = [on, up, up + fuel_s]
+		block = maxf(block, up + fuel_s + HOSE_S * _job_pace(i, team, "hose_off") * 0.5)
+	# Tyres: two gunners, one each side, front first.
+	var wheels: Array = work.get("wheels", []) if str(work.get("tyre", "")) != "" else []
+	var tyre_s := float(work.get("tyre_s", 0.0))
+	var sides := [_side_wheels(work, 0), _side_wheels(work, 1)]
+	var per := maxi(sides[0].size(), sides[1].size())
+	var fumble := -1
+	if not wheels.is_empty() and _crew_rand(i, "fumble") < CREW_FUMBLE_CHANCE:
+		fumble = int(wheels[int(_crew_rand(i, "which") * wheels.size()) % wheels.size()])
+		if played[fumble % 2] != null:
+			fumble = -1   # the AI fumble roll is only for the AI's side
+	# Tyres wait until the fuel is in and the hose is off (TYRES_AFTER_FUEL).
+	var guns_from := block if not tl["fuel"].is_empty() else up
+	tl["guns_from"] = guns_from
+	var guns := []
+	for g in 2:
+		var t := guns_from
+		var jobs := []
+		if played[g] != null:
+			# A player's side: their wheels as they did them.
+			for w in _side_wheels(work, g):
+				var job := {"wheel": w, "off": INF, "fit": INF, "on": INF, "player": true}
+				for j in played[g]:
+					if int(j["wheel"]) == w:
+						job = (j as Dictionary).duplicate()
+						job["player"] = true
+				jobs.append(job)
+				t = maxf(t, float(job["on"]))
+			guns.append(jobs)
+			block = maxf(block, t)
+			continue
+		for w in sides[g]:
+			var d: float = tyre_s / maxf(per, 1) * _job_pace(i, team, "gun%d_%d" % [g, int(w)])
+			var extra := CREW_FUMBLE_S if int(w) == fumble else 0.0
+			jobs.append({"wheel": int(w), "off": t, "on": t + d + extra, "fumble": extra > 0.0})
+			t += d + extra
+		guns.append(jobs)
+		block = maxf(block, t)
+	tl["guns"] = guns
+	tl["fumble"] = fumble
+	var setup_s := float(work.get("setup_s", 0.0))
+	tl["setup"] = [up, up + setup_s * _job_pace(i, team, "setup")]
+	block = maxf(block, tl["setup"][1])
+	var repair_s := float(work.get("repair_s", 0.0))
+	tl["repair"] = [block, block + repair_s * _job_pace(i, team, "repair")]
+	var down0: float = tl["repair"][1]
+	var down1 := down0 + LANCE_DOWN_S * _job_pace(i, team, "lance_out")
+	tl["down"] = [down0, down1]
+	var release := down1 + RELEASE_S * _job_pace(i, team, "release")
+	tl["driver"] = []
+	if int(work.get("driver", -1)) >= 0:
+		tl["driver"] = [t0 + 0.3, t0 + DRIVER_CHANGE_S - 0.3]
+		release = maxf(release, t0 + DRIVER_CHANGE_S)
+	tl["release"] = release
+	tl["standard"] = float(work.get("total_s", release))
+	return tl
 
 
 ## Car i's current value of each pit-adjustable setup key.
@@ -470,7 +695,8 @@ func service_for(i: int, plan: Dictionary) -> Dictionary:
 				psi_trim[w] = float(ps[w]) - float(axle[w])
 			if changed_only:
 				setup_s = maxf(setup_s, PRESSURE_ONLY_S)
-	var total := STOP_BASE_S + maxf(maxf(tyre_s, fuel_s), setup_s) + repair_s
+	# Tyres only once the fuel is in (TYRES_AFTER_FUEL): the two add up.
+	var total := STOP_BASE_S + maxf(tyre_s + fuel_s + (HOSE_S * 0.5 if tyre_s > 0.0 and fuel_s > 0.0 else 0.0), setup_s) + repair_s
 	# Driver change (cars with a driver line-up): at least DRIVER_CHANGE_S.
 	var driver := -1
 	if bool(plan.get("driver_change", false)):
@@ -572,11 +798,7 @@ func _step_car(i: int, inp: CarInput) -> CarInput:
 			if self_drives(i):
 				_self_drive_box(i)
 			elif _route_d(i) >= box_d - 1.2 and c.speed() < 1.5:
-				var work := service_for(i, p["plan"])
-				p["work"] = work
-				p["service_total"] = work["total_s"]
-				p["service_left"] = work["total_s"]
-				p["phase"] = PHASE_SERVICE
+				_arrive(i)
 		PHASE_SERVICE:
 			c.vel = Vector2.ZERO
 			c.yaw_rate = 0.0
@@ -597,6 +819,25 @@ func _step_car(i: int, inp: CarInput) -> CarInput:
 	return _limited(i, inp)
 
 
+## Car i has stopped in its box: the crew start work, through the stop at
+## their own pace (crew_timeline). A side a player guns waits for them.
+## overshoot: seconds the crew lose because the driver stopped past the
+## marks (a self-driven stop): the whole stop starts that much later.
+func _arrive(i: int, overshoot := 0.0) -> void:
+	var p: Dictionary = sim.entries[i].pit
+	var work := service_for(i, p["plan"])
+	work["overshoot_s"] = overshoot
+	work["total_s"] = float(work["total_s"]) + overshoot
+	p["work"] = work
+	p["service_std"] = float(work["total_s"])
+	p["service_floor"] = 0.0
+	p["crew_jobs"] = [[], []]
+	p["service_total"] = 0.0
+	p["service_left"] = 0.0
+	p["phase"] = PHASE_SERVICE
+	_replay(i)
+
+
 ## A driver stopping in their own box (self drive, PHASE_LIMIT): on the
 ## marks, the stop starts; a little past them it starts but costs time; well
 ## past them they've missed the box: the stop is off this lap (the box call
@@ -609,16 +850,10 @@ func _self_drive_box(i: int) -> void:
 	var along: float = m["along"]
 	if c.speed() < BOX_STOP_SPEED and absf(m["across"]) < BOX_STOP_WIDE and along > -BOX_STOP_SHORT \
 			and along < BOX_OVERSHOOT_MAX and not bool(p.get("missed_box", false)):
-		var work := service_for(i, p["plan"])
 		var extra := 0.0
 		if along > BOX_STOP_LONG:
 			extra = BOX_OVERSHOOT_S + BOX_OVERSHOOT_S_PER_M * (along - BOX_STOP_LONG)
-		work["overshoot_s"] = extra
-		work["total_s"] = float(work["total_s"]) + extra
-		p["work"] = work
-		p["service_total"] = work["total_s"]
-		p["service_left"] = work["total_s"]
-		p["phase"] = PHASE_SERVICE
+		_arrive(i, extra)
 	elif along >= BOX_OVERSHOOT_MAX and absf(m["across"]) < 8.0:
 		p["missed_box"] = true
 	if p["phase"] == PHASE_LIMIT and _route_d(i) >= limit_end:
@@ -733,12 +968,16 @@ func _finish_service(i: int) -> void:
 	p["stops"] = int(p["stops"]) + 1
 	if in_window(lap):
 		p["window_stops"] = int(p["window_stops"]) + 1
-	p["last_stop"] = {"lap": lap, "stationary_s": p["service_total"], "tyre": tyre, "wheels": wheels if tyre != "" else [],
+	var stationary := float(p["service_total"])
+	p["last_stop"] = {"lap": lap, "stationary_s": stationary, "standard_s": float(p.get("service_std", stationary)),
+		"played": int(p.get("crew_play", 0)) != 0, "fumble": int((work.get("crew", {}) as Dictionary).get("fumble", -1)), "tyre": tyre, "wheels": wheels if tyre != "" else [],
 		"wheel_tyres": per if tyre != "" else [],
 		"fuel_l": work.get("fuel_l", 0.0), "repairs": work.get("repair_parts", []), "setup": work.get("setup", {}),
 		"driver": handed}
 	p["box"] = false
 	p["work"] = {}
+	p["crew_play"] = 0
+	p["crew_jobs"] = [[], []]
 
 
 ## Fuel used per lap, measured at the line (laps with a refuel don't count).
@@ -821,12 +1060,16 @@ func _build_route() -> void:
 	# Time to drive the route (accelerating at ~5 m/s^2), for the stop-loss estimate.
 	var v := route_speed[0]
 	route_time = 0.0
+	_route_tcum.resize(m)
+	_route_tcum[0] = 0.0
 	for k in range(1, m):
 		var ds := route_cum[k] - route_cum[k - 1]
 		var nv := minf(route_speed[k], sqrt(v * v + 2.0 * 5.0 * ds))
 		route_time += ds / maxf((v + nv) * 0.5, 1.0)
+		_route_tcum[k] = route_time
 		v = nv
 	route_track_m = fposmod(t.pit_exit_s - commit_s, t.length)
+	route_end_s = float(t.project(route[m - 1], exit_idx, 60)["s"])
 
 
 static func _radius(a: Vector2, b: Vector2, c: Vector2) -> float:
@@ -967,6 +1210,95 @@ func _guide(i: int) -> CarInput:
 	if p["limiter"] and speed > sim.track.pit_speed_limit - 0.3:
 		inp.throttle = 0.0
 	return inp.quantized()
+
+
+# --- Where a stop rejoins -------------------------------------------------------
+
+## Where car i comes back out among the cars on the circuit after a clean
+## stop at the crew's standard pace: the stop it is making (boxing or in the
+## lane), or one it would make if it boxed now. Works on every machine.
+## {s: the spot on the circuit, now, whose traffic will be passing the pit
+##  exit as the car leaves it (it slides up to the exit as the stop goes on),
+##  exit_in: seconds until the car is back on the track, position: race
+##  position there, ahead / behind: the cars either side there (-1 none),
+##  gap_ahead / gap_behind: seconds to them (-1 none), speed: m/s used}
+## {} when the track has no pit lane or the car is out of the race.
+func rejoin_estimate(i: int) -> Dictionary:
+	var e := sim.entries[i]
+	if not enabled or e.finished or e.dnf or sim.race_control.recovered[i]:
+		return {}
+	var t := sim.track
+	var L := t.length
+	var c := sim.cars[i]
+	var p: Dictionary = e.pit
+	var v := L / e.lap_times[-1] if e.lap_times.size() > 0 and e.lap_times[-1] > 0.0 else 42.0
+	if sim.race_control.safety_car_active():
+		v = minf(v, 30.0)
+	var ph: String = p["phase"]
+	var exit_in := 0.0
+	var fwd := 0.0   # metres along the circuit from the car to where it rejoins
+	if ph in IN_LANE or ph == PHASE_APPROACH:
+		var d := _route_d_peek(i)
+		exit_in = maxf(route_time - _route_time_at(d), 0.0)
+		match ph:
+			PHASE_SERVICE:
+				exit_in += maxf(float(p.get("service_std", p["service_total"])) - (float(p["service_total"]) - float(p["service_left"])), 0.0)
+			PHASE_LEAVE, PHASE_EXIT:
+				pass
+			_:
+				exit_in += float(service_for(i, p["plan"])["total_s"])
+		fwd = fposmod(route_end_s - c.track_s, L)
+		if fwd > L - 400.0:
+			fwd -= L   # the lane has taken it a little past the exit already
+	else:
+		var to_commit := fposmod(commit_s - c.track_s, L)
+		exit_in = to_commit / v + route_time + float(service_for(i, p["plan"])["total_s"])
+		fwd = to_commit + fposmod(route_end_s - commit_s, L)
+	var ghost := e.distance + fwd - exit_in * v
+	var ahead := -1
+	var behind := -1
+	var da := INF
+	var db := INF
+	var pos := 1
+	for j in sim.car_count():
+		var o := sim.entries[j]
+		if j == i or o.finished or o.dnf or sim.race_control.recovered[j]:
+			continue
+		var dd := o.distance - ghost
+		if dd > 0.0:
+			pos += 1
+			if dd < da:
+				da = dd
+				ahead = j
+		elif -dd < db:
+			db = -dd
+			behind = j
+	return {"s": fposmod(ghost, L), "exit_in": exit_in, "position": pos, "ahead": ahead, "behind": behind,
+		"gap_ahead": da / v if ahead >= 0 else -1.0, "gap_behind": db / v if behind >= 0 else -1.0, "speed": v}
+
+
+## Route metres car i has reached, without moving its route marker (any
+## machine, any car).
+func _route_d_peek(i: int) -> float:
+	var keep := _route_k[i]
+	var d := _route_d(i)
+	_route_k[i] = keep
+	return d
+
+
+## Seconds to drive the route up to route metres d.
+func _route_time_at(d: float) -> float:
+	if _route_tcum.is_empty():
+		return 0.0
+	var k := clampi(int(d / ROUTE_STEP), 0, route.size() - 1)
+	while k > 0 and route_cum[k] > d:
+		k -= 1
+	while k < route.size() - 1 and route_cum[k + 1] <= d:
+		k += 1
+	if k >= route.size() - 1:
+		return _route_tcum[k]
+	var f := clampf((d - route_cum[k]) / maxf(route_cum[k + 1] - route_cum[k], 0.0001), 0.0, 1.0)
+	return lerpf(_route_tcum[k], _route_tcum[k + 1], f)
 
 
 # --- The pit guide line (drivers driving in themselves) ------------------------
@@ -1111,7 +1443,8 @@ func host_update(events: Array) -> void:
 		if int(p["stops"]) > int(was.get("stops", 0)):
 			var last: Dictionary = p.get("last_stop", {})
 			events.append({"type": "pit_stop", "car": i, "stop": p["stops"], "lap": last.get("lap", current_lap(i)),
-				"stationary_s": last.get("stationary_s", 0.0), "tyre": last.get("tyre", ""), "wheels": last.get("wheels", []),
+				"stationary_s": last.get("stationary_s", 0.0), "standard_s": last.get("standard_s", 0.0),
+				"played": last.get("played", false), "fumble": last.get("fumble", -1), "tyre": last.get("tyre", ""), "wheels": last.get("wheels", []),
 				"fuel_l": last.get("fuel_l", 0.0), "driver": last.get("driver", ""),
 				"in_window": int(p["window_stops"]) > int(was.get("window_stops", 0))})
 		if p["box"] != was.get("box", false) and p["box"]:
@@ -1155,11 +1488,19 @@ func apply_remote(i: int, state: Dictionary) -> void:
 		sim.cars[i].psi_trim = PackedFloat64Array(trim)
 
 
+## The stop's clock for the HUD: time left, or (a stop players are gunning,
+## which ends when they're done) time so far.
+static func service_text(p: Dictionary, head: String) -> String:
+	if int(p.get("crew_play", 0)) != 0:
+		return "%s  %.1f s" % [head, float(p["service_total"]) - float(p["service_left"])]
+	return "%s  %.1f s" % [head, float(p["service_left"])]
+
+
 ## Short signature of a car's pit state: changes when the owner should tell the host.
 static func signature(p: Dictionary) -> String:
-	return "%s|%s|%s|%s|%d|%d|%d|%s|%s|%d|%d|%s" % [p["phase"], p["auto"], p["box"], p["limiter"], p["stops"],
+	return "%s|%s|%s|%s|%d|%d|%d|%s|%s|%d|%d|%s|%d|%s" % [p["phase"], p["auto"], p["box"], p["limiter"], p["stops"],
 		p["window_stops"], p["speeding"], p["compound"], str(p["plan"]), int(float(p["service_left"]) * 2.0),
-		int(p.get("driver_idx", 0)), str(p.get("compounds", ""))]
+		int(p.get("driver_idx", 0)), str(p.get("compounds", "")), int(p.get("crew_play", 0)), str(p.get("crew_jobs", []))]
 
 
 # --- Co-op: handing a car to another machine --------------------------------
@@ -1188,6 +1529,9 @@ func add_driver_change(i: int) -> void:
 	var extra := maxf(DRIVER_CHANGE_S - float(p["service_left"]), 0.0)
 	p["service_left"] = float(p["service_left"]) + extra
 	p["service_total"] = float(p["service_total"]) + extra
+	# A played stop: the car can't go before the swap is done, however quick the gunners.
+	var elapsed := float(p["service_total"]) - float(p["service_left"])
+	p["service_floor"] = maxf(float(p.get("service_floor", 0.0)), elapsed + DRIVER_CHANGE_S)
 
 
 # --- Snapshots ----------------------------------------------------------------

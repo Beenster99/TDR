@@ -55,6 +55,18 @@ data is too coarse to see goes in the track's `tracks.json` entry as
 start/finish line in race direction; positive degrees lower the right side
 of the track, which banks a right-hand corner).
 
+The racing line comes from `tools/raceline.py` (also run by `build_tracks.py`,
+about two minutes a track): the fastest line for a GT3 car on slicks, found by
+moving the line sideways until the lap time stops dropping. It uses the track
+up to 1 m from the edge, or 0.3 m where there are kerbs (corners), so the
+wheels ride the kerbs at apexes and exits. Late apexes before straights and
+compromises through corner sequences come out of the lap time, not by hand.
+To redo the lines of existing tracks without rebuilding them, run
+`python3 modules/tracks/tools/raceline.py [ids]` (needs numpy and a C
+compiler); `--check` prints the old and new model lap times without writing.
+`tests/line_shot.tscn` takes screenshots of the driving line through the
+slowest corners to check it by eye.
+
 Barriers and run-off come from `tools/barriers.py` (also run by
 `build_tracks.py`, or on its own from the cached OpenStreetMap downloads):
 for each point and side, the barrier at the edge of the run-off (concrete
@@ -64,6 +76,25 @@ gravel trap, paved). OpenStreetMap barriers (`barrier=wall`, `guard_rail`,
 track are used where mapped; defaults fill the rest. In `tracks.json`,
 `"runoff_style": "gravel" | "paved" | "grass"` sets the default run-off on
 the outside of corners, and `"street": true` puts walls all round.
+
+## A rallycross track
+
+Rallycross venues come from OpenStreetMap too, through
+`modules/tracks/tools/build_rx_tracks.py` and its list `tools/rx_tracks.json`
+(centre point, search radius, name, description, climate). The builder takes
+the venue's raceway ways (only `sport=rallycross` ones where they are
+tagged), cuts them where they meet, finds the longest closed one-way loop for
+the lap and the way named "Joker" (or `joker_ways`) for the joker lane. Way
+`surface` tags give the dirt stretches (`dirt_override` fixes them by hand,
+as fractions of the lap); the start is `start_way`, a `raceway=start` way or
+the longest straight tarmac. Run-off is grass. Afterwards run
+`tools/raceline.py <id>` for the racing line. Track JSON gets
+`"discipline": "rallycross"`, `"dirt"` and `"joker"`, and no pit lane.
+`tests/rx_probe.gd` races six AI on each rallycross track and prints lap
+times, jokers taken and offs.
+
+A rallycross car is a normal car file with `"discipline": "rallycross"`,
+class `RX1` and the `rx_tyre`.
 
 ## Tests
 

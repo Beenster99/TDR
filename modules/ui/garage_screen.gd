@@ -46,9 +46,14 @@ func open(p_car_id: String, p_profile: TeamProfile = null) -> void:
 
 func _all_car_ids() -> Array:
 	var ids: Array = []
-	for cls in CarCatalog.classes(GameData.cars):
+	for cls in _garage_classes():
 		ids.append_array(CarCatalog.ids_in_class(GameData.cars, cls))
 	return ids
+
+
+## Every class in the garage: circuit racing first, then rallycross and the rest.
+static func _garage_classes() -> Array[String]:
+	return CarCatalog.all_classes(GameData.cars)
 
 
 func _def() -> CarDefinition:
@@ -197,7 +202,7 @@ func _build() -> void:
 ## The class filter: every class with its number of cars, all cars, and the cars you own.
 func _class_options() -> Array:
 	var opts := []
-	for cls in CarCatalog.classes(GameData.cars):
+	for cls in _garage_classes():
 		opts.append([cls, "%s  (%d cars)" % [cls, CarCatalog.ids_in_class(GameData.cars, cls).size()]])
 	opts.append(["", "All classes"])
 	opts.append(["*owned", "My garage (%d)" % profile.owned_ids().size()])
