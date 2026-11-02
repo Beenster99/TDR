@@ -256,7 +256,7 @@ func _draw_pit_panel(o: Vector2, me: int) -> void:
 			PitRules.PHASE_APPROACH: head = "BOXING: CAR DRIVING TO THE PITS"
 			PitRules.PHASE_ENTRY: head = "PIT LANE: %d KM/H LIMIT" % roundi(sim.track.pit_speed_limit * 3.6)
 			PitRules.PHASE_LIMIT: head = "PIT LANE, TO YOUR BOX"
-			PitRules.PHASE_SERVICE: head = "PIT STOP  %.1f s" % float(p["service_left"])
+			PitRules.PHASE_SERVICE: head = PitRules.service_text(p, "PIT STOP")
 			PitRules.PHASE_LEAVE, PitRules.PHASE_EXIT: head = "PIT EXIT"
 			_:
 				if p["box"]:
@@ -281,7 +281,11 @@ func _draw_pit_panel(o: Vector2, me: int) -> void:
 		_text(Vector2(o.x + 14, y), "Next: tyres %s%s" % [stop_tyres_text(sim, me, plan, work), fuel_txt], 14, Color(1, 1, 1, 0.85),
 			HORIZONTAL_ALIGNMENT_LEFT, 280)
 		y += 22
-		_text(Vector2(o.x + 14, y), "Stop about %.0f s%s" % [work["total_s"], "  + repairs" if float(work["repair_s"]) > 0.0 else ""], 14, Color(1, 1, 1, 0.7))
+		var rj := sim.pits.rejoin_estimate(me) if (p["box"] or phase != PitRules.PHASE_NONE) else {}
+		if not rj.is_empty() and phase != PitRules.PHASE_EXIT:
+			_text(Vector2(o.x + 14, y), rejoin_text(sim, rj), 14, rejoin_colour(rj), HORIZONTAL_ALIGNMENT_LEFT, 280)
+		else:
+			_text(Vector2(o.x + 14, y), "Stop about %.0f s%s" % [work["total_s"], "  + repairs" if float(work["repair_s"]) > 0.0 else ""], 14, Color(1, 1, 1, 0.7))
 		y += 22
 		if mates:
 			var pend := session.pending_swap(me)
@@ -295,6 +299,31 @@ func _draw_pit_panel(o: Vector2, me: int) -> void:
 			y += 22
 	if e.penalty_s > 0.0:
 		_text(Vector2(o.x + 14, y), "Penalties +%d s" % int(e.penalty_s), 14, Color(1, 0.5, 0.3))
+
+
+## Where a clean stop rejoins (PitRules.rejoin_estimate), in a few words.
+static func rejoin_text(sim: RaceSim, rj: Dictionary) -> String:
+	var txt := "Rejoin P%d" % int(rj["position"])
+	if int(rj["ahead"]) >= 0 and float(rj["gap_ahead"]) < 3.0:
+		txt += ", %.1f s behind %s" % [rj["gap_ahead"], short_name(sim.entries[int(rj["ahead"])].at_wheel())]
+	elif int(rj["behind"]) >= 0 and float(rj["gap_behind"]) < 3.0:
+		txt += ", %.1f s ahead of %s" % [rj["gap_behind"], short_name(sim.entries[int(rj["behind"])].at_wheel())]
+	else:
+		txt += ", clear air"
+	return txt
+
+
+## Green: clear air at the rejoin; amber: a car within 1.5 s; red: within 0.6 s.
+static func rejoin_colour(rj: Dictionary) -> Color:
+	var near := INF
+	for k in ["gap_ahead", "gap_behind"]:
+		if float(rj.get(k, -1.0)) >= 0.0:
+			near = minf(near, float(rj[k]))
+	if near < 0.6:
+		return Color(1.0, 0.35, 0.3)
+	if near < 1.5:
+		return Color(1.0, 0.7, 0.25)
+	return Color(0.4, 1.0, 0.5)
 
 
 func _draw_radio(vp: Vector2) -> void:
@@ -528,6 +557,17 @@ func _draw_minimap(origin: Vector2) -> void:
 		for k in 9:
 			zone.append(origin + (t.position_at(from + span_m * k / 8.0) - _mm_rect.position) * scale_f)
 		draw_polyline(zone, Color(1, 0.85, 0.1), 5.0)
+	# Where a pit stop now would rejoin (while boxing / in the lane).
+	if session.local_car >= 0:
+		var pe: Dictionary = sim.entries[session.local_car].pit
+		if pe["box"] or (pe["phase"] != PitRules.PHASE_NONE and pe["phase"] != PitRules.PHASE_EXIT):
+			var rj := sim.pits.rejoin_estimate(session.local_car)
+			if not rj.is_empty():
+				var band := PackedVector2Array()
+				var v: float = rj["speed"]
+				for k in 7:
+					band.append(origin + (t.position_at(float(rj["s"]) - v * 0.8 + v * k / 6.0) - _mm_rect.position) * scale_f)
+				draw_polyline(band, rejoin_colour(rj), 6.0)
 	if rc.sc_visible:
 		var sp := origin + (rc.sc_pos - _mm_rect.position) * scale_f
 		draw_rect(Rect2(sp - Vector2(5, 5), Vector2(10, 10)), Color(1, 0.6, 0.1))

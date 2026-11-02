@@ -2,6 +2,9 @@ extends Node
 ## Screenshots of the race effects in a real race (needs a GPU or xvfb +
 ## mesa vulkan). Scenarios:
 ##   pit   - you box on lap 1; shot mid-stop (crew at work, car on jacks)
+##   lane  - you box on lap 1; shot <seconds> after the box call (pit crew
+##           game: crew to stations, and the rejoin band)
+##   after - you box on lap 1; shot <seconds> after the stop (its result)
 ##   crash - a car is dropped in front of you; shot just after the hit
 ##   slide - your car is flicked sideways; shot of smoke and rubber marks
 ##   godot --path . res://tests/fx_race_shot.tscn -- <out.png> <scenario> [track] [seconds into it] --autodrive --zoom 0
@@ -12,6 +15,7 @@ var scenario := "pit"
 var out := "user://fx_race.png"
 var wait := 2.5
 var _t0 := -1.0
+var _t1 := -1.0
 var _done := false
 var _armed := false
 
@@ -50,7 +54,7 @@ func _physics_process(_delta: float) -> void:
 	var mine := session.local_car
 	var me := sim.cars[mine]
 	match scenario:
-		"pit":
+		"pit", "lane", "after":
 			if not _armed:
 				_armed = true
 				# start just before the pit entry so we don't wait a lap
@@ -62,8 +66,17 @@ func _physics_process(_delta: float) -> void:
 				me.track_idx = t.index_at(s0)
 				me.track_s = s0
 				session.request_pit(mine, {"box": true, "tyre": "race_slick", "fuel": 30.0})
+				_t0 = sim.race_time
 			var p: Dictionary = sim.entries[mine].pit
-			if p["phase"] == PitRules.PHASE_SERVICE and float(p["service_total"]) - float(p["service_left"]) >= wait:
+			if scenario == "lane":
+				if sim.race_time - _t0 >= wait:
+					_shoot()
+			elif scenario == "after":
+				if int(p["stops"]) >= 1 and _t1 < 0.0:
+					_t1 = sim.race_time
+				if _t1 >= 0.0 and sim.race_time - _t1 >= wait:
+					_shoot()
+			elif p["phase"] == PitRules.PHASE_SERVICE and float(p["service_total"]) - float(p["service_left"]) >= wait:
 				_shoot()
 		"crash":
 			if not _armed and sim.race_time > 9.0 and me.speed() > 40.0:

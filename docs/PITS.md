@@ -50,6 +50,9 @@ Command line: `--fuel 2 --tyre-wear 2 --pit-stops 1 --drivers 2`.
    to a different compound always fits all four (compounds aren't mixed), and
    with repairs on a punctured tyre is always changed, even on a "no tyres"
    stop. A driver change keeps the car in the box for at least 5 s.
+   The **pit crew mini-game** (docs/PIT_CREW_GAME.md) makes this depend on
+   how well the player leads the crew; AI crews are a little quicker or
+   slower each stop.
 4. **Leaving.** The guide drives to the end of the speed limit; AI cars are
    driven to the end of the lane, players take over at the limit line.
 

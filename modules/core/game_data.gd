@@ -182,6 +182,8 @@ func _register_defaults() -> void:
 		"Shows the ideal line through each corner.")
 	register_setting("gameplay", "manual_gears", "Gears", [[false, "Automatic"], [true, "Manual"]], false,
 		"Manual: change gear yourself with the shift buttons.")
+	register_setting("gameplay", "pit_crew_game", "Pit crew mini-game", [[true, "On"], [false, "Off"]], true,
+		"Lead the crew at your stops: call them to their stations in the pit lane, work the wheel guns, cut the fuel and release the car (throttle and brake). Played well, stops are quicker; off, the crew work at a standard pace.")
 	register_setting("gameplay", "hud_timing_tower", "Timing tower", [[true, "Show"], [false, "Hide"]], true,
 		"The column on the left of the race screen: position, make, driver, last lap and gap to the car ahead.")
 	register_setting("gameplay", "units", "Units of measure", [["metric", "Metric (km/h, °C, km, litres)"],

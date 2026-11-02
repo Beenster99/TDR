@@ -16,6 +16,8 @@ var pit_wall: StrategistScreen
 ## not driving it) and the driver's radio calls to them.
 var crew: CrewConsole
 var driver_radio: TeamRadio
+## The pit crew mini-game for the car this player leads the crew of.
+var crew_game: PitCrewGame
 var results: PanelContainer
 var rotate_camera := false
 var _results_shown := false
@@ -86,6 +88,10 @@ func _ready() -> void:
 	driver_radio = TeamRadio.new()
 	layer.add_child(driver_radio)
 	driver_radio.setup(session, session.local_car, true)
+	crew_game = PitCrewGame.new()   # after the consoles, so it hears the pedals first
+	layer.add_child(crew_game)
+	crew_game.setup(session)
+	crew_game.autoplay = bool(GameData.arg("crew-autoplay", false))
 	_apply_role()
 	if GameData.arg("pit-wall"):
 		pit_wall.open()
@@ -363,6 +369,7 @@ func _process(delta: float) -> void:
 	for i in car_views.size():
 		car_views[i].visible = not session.sim.race_control.recovered[i]
 	_update_pit_crews()
+	_update_rejoin()
 	var rc := session.sim.race_control
 	world.set_safety_car(rc.sc_visible, rc.sc_pos, rc.sc_heading, rc.sc_speed, rc.sc_lights)
 	world.update_driving_line(car.pos, speed)
@@ -404,6 +411,31 @@ func _update_pit_crews() -> void:
 			_pit_work.erase(i)
 		var elapsed := float(p.get("service_total", 0.0)) - float(p.get("service_left", 0.0))
 		world.set_pit_stop(i, state, elapsed, work)
+
+
+## The band on the circuit where our car would rejoin after a clean stop:
+## while it's boxing or in the pit lane, and always on the crew console
+## (the pit wall plans the stop from it).
+func _update_rejoin() -> void:
+	var car := session.local_car if session.local_car >= 0 else session.team_car
+	var pits := session.sim.pits
+	var show := pits.enabled and car >= 0 and session.sim.phase == RaceSim.Phase.RACING
+	var est := {}
+	if show:
+		var p: Dictionary = session.sim.entries[car].pit
+		var ph: String = p["phase"]
+		show = (p["box"] or (ph != PitRules.PHASE_NONE and ph != PitRules.PHASE_EXIT) or crew.visible)
+		if show:
+			est = pits.rejoin_estimate(car)
+			show = not est.is_empty()
+	if not show:
+		world.set_rejoin(false)
+		return
+	# At least a few pixels long and wide however far out the camera is.
+	var v: float = est["speed"]
+	var ppm := maxf(camera.zoom.x, 0.01)
+	world.set_rejoin(true, est["s"], maxf(v * 0.8, 40.0 / ppm), maxf(v * 0.2, 10.0 / ppm), RaceHud.rejoin_colour(est),
+		maxf(6.0 / ppm - 4.0, 0.0))
 
 
 ## Z / R3: jump to the whole track, and back to where you were.
