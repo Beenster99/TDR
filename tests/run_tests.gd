@@ -23,6 +23,8 @@ func _init() -> void:
 	var replay := test_ai_race_completes()
 	test_deterministic_replay(replay)
 	test_snapshot_restore(replay)
+	test_telemetry(replay)
+	test_weather_forecast()
 	print("\n%s (%d failures, %.1fs)" % ["PASS" if failures == 0 else "FAIL", failures, (Time.get_ticks_msec() - t0) / 1000.0])
 	quit(1 if failures > 0 else 0)
 
@@ -354,6 +356,10 @@ func test_ai_race_completes() -> Dictionary:
 	var max_ticks := 60 * 60 * 8
 	var mid_snapshot := {}
 	var mid_tick := 60 * 45
+	# Race data watches the whole race; the determinism test replays without
+	# it, which proves it never changes the race.
+	var tel := RaceTelemetry.create(sim)
+	var feed_events := 0
 	while sim.phase != RaceSim.Phase.FINISHED and sim.tick < max_ticks:
 		if sim.tick == mid_tick:
 			mid_snapshot = sim.snapshot()
@@ -361,7 +367,13 @@ func test_ai_race_completes() -> Dictionary:
 		for i in sim.car_count():
 			inputs.append(ai[i].get_input(sim, i))
 		recorded.append(inputs)
+		if sim.tick == 60 * 30:
+			sim.post_event({"type": "radio", "car": 2, "topic": "tyres", "text": "Rears are going off"})
+			sim.post_event({"type": "strategy", "car": 3, "text": "Pushing for the undercut", "plan": {"mode": "push"}})
 		sim.step(inputs)
+		var fe := tel.observe(sim)
+		tel.on_events(sim.events)
+		feed_events += fe.size()
 		for e in sim.events:
 			if e["type"] == "collision":
 				collisions += 1
@@ -391,7 +403,7 @@ func test_ai_race_completes() -> Dictionary:
 			best = minf(best, e.best_lap)
 	check(best > 75.0 and best < 130.0, "plausible best lap %s (real GT cars ~1:35-1:45)" % _laptime(best))
 	print("       %d car-to-car contacts" % collisions)
-	return {"inputs": recorded, "start_hash": start_hash, "end_hash": sim.state_hash(),
+	return {"telemetry": tel, "sim": sim, "feed_events": feed_events, "inputs": recorded, "start_hash": start_hash, "end_hash": sim.state_hash(),
 		"settings": settings, "mid": mid_snapshot, "mid_tick": mid_tick}
 
 
@@ -769,3 +781,119 @@ func _accel_test(d: Dictionary, def: CarDefinition, s: CarState) -> Dictionary:
 	for k in 240 * 7:
 		CarPhysics.step(s, inp, def, tc, env, track, 1.0 / 240.0, 0.0, ev, 0)
 	return {"speed": s.speed(), "gear": s.gear, "drift": wrapf(s.heading - g["heading"], -PI, PI)}
+
+
+## Race data for the pit wall: lap logs, averages, gaps, pit windows, feed, sync.
+func test_telemetry(rep: Dictionary) -> void:
+	print("telemetry")
+	var tel: RaceTelemetry = rep["telemetry"]
+	var sim: RaceSim = rep["sim"]
+	var logs_ok := true
+	var sectors_ok := true
+	for i in sim.car_count():
+		var c := tel.cars[i]
+		if c.laps.size() != sim.entries[i].laps_done:
+			logs_ok = false
+		for l in c.laps:
+			var sum := 0.0
+			for x in l["sectors"]:
+				sum += x
+			if l["sectors"].size() != sim.track.sectors.size() or absf(sum - l["time"]) > 0.01:
+				sectors_ok = false
+	check(logs_ok, "every completed lap is in each car's lap log")
+	check(sectors_ok, "each logged lap has all sector times, adding up to the lap time")
+	var c0 := tel.cars[sim.running_order[0]]
+	check(c0.last5_avg > 60.0 and c0.last5_avg < 200.0, "last-5-lap average for the winner (%s)" % _laptime(c0.last5_avg))
+	check(tel.fastest_lap > 0.0 and absf(tel.fastest_lap - sim.entries[tel.fastest_car].best_lap) < 0.001,
+		"fastest lap matches the race's best (%s, %s)" % [_laptime(tel.fastest_lap), tel.driver_name(tel.fastest_car)])
+	print("       pit lane: lane %.1f s + stop %.1f s, bypasses %.0f m of track" % [tel.pit.lane_time, tel.pit.stop_time_s, tel.pit.span_m])
+	var loss := tel.pit.loss_for(c0, sim.track.length)
+	check(tel.pit.has_lane and loss > 10.0 and loss < 90.0, "pit lane loss on %s is plausible (%.1f s, %d track samples)" % [sim.track.id, loss, c0.span_times.size()])
+
+	# Gaps mid-race, from a fresh run of the recorded race to a point where cars are spread out.
+	var sim2 := _fresh_sim(rep["settings"])
+	var tel2 := RaceTelemetry.create(sim2)
+	var inputs: Array = rep["inputs"]
+	var stop_at := mini(inputs.size() - 1, int(sim2.settings.countdown_s * 60) + 60 * 150)
+	for k in stop_at:
+		sim2.step(inputs[k])
+		tel2.observe(sim2)
+	tel2._compute_gaps(sim2)
+	tel2.pit.analyse(tel2.cars, sim2)
+	var order := sim2.running_order
+	var mono := true
+	var int_ok := true
+	var lines := []
+	for p in order.size():
+		var c := tel2.cars[order[p]]
+		if p > 0:
+			var prev := tel2.cars[order[p - 1]]
+			if c.gap_leader + 0.3 < prev.gap_leader:
+				mono = false
+			# Measured at different timing loops, so they differ by the pace
+			# difference over the stretch between the two cars.
+			if absf((c.gap_leader - prev.gap_leader) - c.interval) > maxf(1.0, 0.3 * c.interval):
+				int_ok = false
+		lines.append("P%d %s +%.2f int %.2f pit:%s" % [p + 1, sim2.entries[order[p]].driver_name, c.gap_leader, c.interval,
+			"P%d%s" % [c.pit.get("rejoin_pos", 0), " clear" if c.pit.get("clear_air", false) else ""]])
+	print("       " + "\n       ".join(lines))
+	check(mono, "gaps to the leader grow down the order")
+	check(int_ok, "intervals match the difference in gaps")
+	var last := tel2.cars[order[-1]]
+	check(tel2.cars[order[0]].gap_leader == 0.0 and last.gap_leader > 0.5, "leader has no gap, last car is behind (%.1f s)" % last.gap_leader)
+	var pit_ok := true
+	for i in order:
+		var pa: Dictionary = tel2.cars[i].pit
+		if pa.is_empty() or pa["rejoin_pos"] < sim2.entries[i].position or pa["rejoin_pos"] > order.size():
+			pit_ok = false
+	check(pit_ok, "pit analysis gives every car a rejoin position")
+
+	# Feed: AI radio/strategy events and derived calls.
+	var heard := tel.feed.items.filter(func(it): return it.get("text", "") in ["Rears are going off", "Pushing for the undercut"])
+	check(heard.size() == 2, "radio and strategy calls posted with post_event reach the feed (%d radio, %d strategy calls in the race)" % [
+		tel.feed.count_kind("radio"), tel.feed.count_kind("strategy")])
+	check(tel.strategies.has(3) and tel.strategies[3]["plan"].get("mode", "") == "push", "a team's latest strategy is kept")
+	check(rep["feed_events"] > 0, "the race data writes its own feed calls (%d)" % rep["feed_events"])
+	for it in tel.feed.latest(6):
+		print("       [%s] %s" % [it["kind"], it["text"]])
+
+	# Sync: a client copy gets the host's gaps and feed.
+	var client := RaceTelemetry.create(sim, false)
+	client.apply_net(bytes_to_var(var_to_bytes(tel2.to_net())))
+	var same := true
+	for i in order:
+		if absf(client.cars[i].gap_leader - tel2.cars[i].gap_leader) > 1e-6 or client.cars[i].pit != tel2.cars[i].pit:
+			same = false
+	check(same, "gaps and pit analysis survive the trip to a client")
+	client.on_events([{"type": "feed", "kind": "pit", "car": 1, "text": "x", "t": 1.0, "lap": 1}])
+	check(client.feed.items.size() == 1 and not client.feed.items[0].has("type"), "clients take feed items from host events")
+	client.on_events([{"type": "safety_car", "state": "sc", "reason": "Car stopped at turn 3", "lap": 2},
+		{"type": "penalty", "car": 0, "seconds": 5.0, "reason": "track limits"}])
+	check(client.feed.count_kind("race_control") == 2, "race control calls reach the feed (%s)" % client.feed.items[-1]["text"])
+	var saved = JSON.parse_string(JSON.stringify(tel.to_dict(sim)))
+	check(saved is Dictionary and saved["cars"].size() == sim.car_count(), "the race log exports to JSON")
+
+
+## Weather radar and forecast from the environment.
+func test_weather_forecast() -> void:
+	print("weather forecast")
+	var d := _data()
+	var f := WeatherForecast.new()
+	f.setup(d["track"], 99)
+	var env := SimEnvironment.new()
+	f.update(env)
+	check(f.changes.is_empty(), "fixed weather: nothing forecast (%s)" % f.summary())
+	if env.get("timeline") == null:
+		print("       (environment has no weather timeline in this build: forecast is current conditions only)")
+		return
+	env.set("timeline", [[0.0, 0.1, 0.0], [400.0, 0.85, 0.0], [700.0, 0.95, 0.35], [1300.0, 0.85, 0.0]])
+	f.update(env)
+	check(f.changes.size() == 3 and f.changes[0]["weather"] == "overcast", "forecast lists the coming changes")
+	check(f.changes[1]["eta"] == 700.0 and f.changes[1]["confidence"] < f.changes[0]["confidence"], "later changes are less certain")
+	check(f.radar_cells.size() > 0, "rain shows on the radar before it arrives (%d cells)" % f.radar_cells.size())
+	var nearest := INF
+	for c in f.radar_cells:
+		if c["rain"] > 0.05:
+			nearest = minf(nearest, c["pos"].distance_to(f.centre))
+	check(nearest > f.track_radius, "rain still upwind of the track")
+	print("       " + f.summary())

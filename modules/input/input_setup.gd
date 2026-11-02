@@ -15,6 +15,7 @@ const KEYS := {
 	"zoom_in": [KEY_E, KEY_EQUAL, KEY_KP_ADD, KEY_PAGEUP],
 	"zoom_out": [KEY_Q, KEY_MINUS, KEY_KP_SUBTRACT, KEY_PAGEDOWN],
 	"zoom_full": [KEY_Z, KEY_TAB],
+	"strategy_screen": [KEY_P],
 }
 ## Gamepad: analog triggers + left stick. Buttons use the Xbox layout names
 ## (Godot maps PlayStation/Nintendo pads to the same positions).
@@ -35,6 +36,7 @@ const PAD_BUTTONS := {
 	"zoom_in": [JOY_BUTTON_LEFT_SHOULDER, JOY_BUTTON_DPAD_UP],      # hold
 	"zoom_out": [JOY_BUTTON_RIGHT_SHOULDER, JOY_BUTTON_DPAD_DOWN],  # hold
 	"zoom_full": [JOY_BUTTON_RIGHT_STICK],
+	"strategy_screen": [JOY_BUTTON_DPAD_RIGHT],  # pit wall (strategist screen); B closes
 }
 const STICK_DEADZONE := 0.12
 const TRIGGER_DEADZONE := 0.05
