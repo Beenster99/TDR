@@ -54,6 +54,7 @@ var slip_angle_front: float = 0.0
 var slip_angle_rear: float = 0.0
 var grip_usage_rear: float = 0.0
 var wheelspin: bool = false
+var load_factor: float = 1.0  ## weight on the tyres vs flat ground (crests < 1, dips > 1)
 
 
 func speed() -> float:

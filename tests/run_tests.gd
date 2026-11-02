@@ -19,6 +19,7 @@ func _init() -> void:
 	test_wet_grip()
 	test_race_settings_and_grid()
 	test_damage()
+	test_elevation()
 	var replay := test_ai_race_completes()
 	test_deterministic_replay(replay)
 	test_snapshot_restore(replay)
@@ -212,6 +213,75 @@ func test_every_track() -> void:
 			printerr("       ", t.id, ": ", pr)
 		check(problems.is_empty(), "%-34s %5.0f m, pit lane %4.0f m (%s), AI lap %s, %d offs" % [t.display_name,
 			t.length, t.pit_length, "right" if t.pit_side > 0 else "left", _laptime(lap["time"]), lap["offs"]])
+
+
+## Elevation: every track has real heights in the right range, and physics
+## feels them (rolls back on a hill, slower uphill, light over a crest).
+func test_elevation() -> void:
+	print("elevation")
+	# Real lowest-to-highest height of the lap, roughly (metres): [min, max].
+	var real := {"spa": [85, 125], "spielberg": [50, 80], "interlagos": [30, 55], "austin": [28, 55],
+		"mugello": [32, 60], "monza": [5, 25], "silverstone": [5, 25], "bahrain": [8, 30], "melbourne": [0, 12]}
+	for info in TrackCatalog.list_all():
+		var t := TrackCatalog.load_track(info["id"])
+		var r := t.height_range()
+		var ok := t.has_elevation() and t.terrain_size.x > 10 and t.terrain_size.y > 10
+		if real.has(t.id):
+			ok = ok and r.y - r.x >= real[t.id][0] and r.y - r.x <= real[t.id][1]
+		var steep := 0.0
+		for k in t.point_count():
+			steep = maxf(steep, absf(t.grade_at(t.cum_s[k])))
+		ok = ok and steep <= 0.21
+		check(ok, "%-34s %5.1f m high, steepest %4.1f%%, base %4.0f m above sea" % [t.display_name, r.y - r.x, steep * 100.0, t.base_alt_m])
+	# Physics on Spa: find the steepest climb and the sharpest crest.
+	var d := _data()
+	var spa := TrackCatalog.load_track("spa")
+	var def: CarDefinition = d["cars"]["porsche_911_gt3_r"]
+	var tc: TyreCompound = d["tyres"][def.tyre_compound_id] if d["tyres"].has(def.tyre_compound_id) else d["tyres"].values()[0]
+	var env := SimEnvironment.from_dict({})
+	var climb_s := 0.0
+	var crest_s := 0.0
+	for k in spa.point_count():
+		var s := spa.cum_s[k]
+		if spa.grade_at(s) > spa.grade_at(climb_s):
+			climb_s = s
+		if spa.vertical_curvature_at(s) < spa.vertical_curvature_at(crest_s):
+			crest_s = s
+	var parked := _car_at(spa, climb_s, 0.0)
+	var none := CarInput.new()
+	for i in 120:
+		CarPhysics.step(parked, none, def, tc, env, spa, 1.0 / 60.0, 0.0, [], 0)
+	var back := parked.vel.dot(Vector2.from_angle(spa.heading_at(climb_s)))
+	check(back < -0.5, "parked on a %.0f%% climb with no brakes, the car rolls back (%.1f m/s)" % [spa.grade_at(climb_s) * 100.0, back])
+	var held := _car_at(spa, climb_s, 0.0)
+	var brake := CarInput.new()
+	brake.brake = 0.4  # below the "hold brake to reverse" threshold
+	for i in 120:
+		CarPhysics.step(held, brake, def, tc, env, spa, 1.0 / 60.0, 0.0, [], 0)
+	check(held.vel.length() < 0.5, "with the brakes on it stays put (%.2f m/s)" % held.vel.length())
+	var up := _car_at(spa, climb_s - 40.0, 30.0)
+	var flat_track := TrackCatalog.load_track("spa")
+	flat_track.height = PackedFloat64Array()
+	var flat := _car_at(flat_track, climb_s - 40.0, 30.0)
+	var go := CarInput.new()
+	go.throttle = 1.0
+	for i in 60:
+		CarPhysics.step(up, go, def, tc, env, spa, 1.0 / 60.0, 0.0, [], 0)
+		CarPhysics.step(flat, go, def, tc, env, flat_track, 1.0 / 60.0, 0.0, [], 0)
+	check(up.speed() < flat.speed() - 0.5, "full throttle up the hill is slower than on the flat (%.1f vs %.1f m/s)" % [up.speed(), flat.speed()])
+	var crest := _car_at(spa, crest_s, 60.0)
+	CarPhysics.step(crest, none, def, tc, env, spa, 1.0 / 60.0, 0.0, [], 0)
+	check(crest.load_factor < 0.95, "over the sharpest crest at 216 km/h the car goes light (%.2f g)" % crest.load_factor)
+
+
+func _car_at(t: TrackData, s: float, speed: float) -> CarState:
+	var c := CarState.new()
+	c.pos = t.position_at(s)
+	c.heading = t.heading_at(s)
+	c.vel = Vector2.from_angle(c.heading) * speed
+	c.track_idx = t.index_at(s)
+	c.gear = 2 if speed > 10.0 else 1
+	return c
 
 
 ## One AI car (a GT3) drives one flying lap of a track on its own.

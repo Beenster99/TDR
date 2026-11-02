@@ -1,7 +1,7 @@
 {
   "id": "ui",
   "name": "UI",
-  "version": "1.2.1",
+  "version": "1.3.1",
   "status": "active",
   "summary": "Screens and overlays: main menu, lobby, race settings, the in-race HUD, and controller-friendly widgets (Stepper).",
   "depends": {

@@ -13,5 +13,14 @@ from the list in `modules/tracks/tools/tracks.json`.
   © OpenStreetMap contributors, available under the Open Database Licence
   (ODbL).
 
+- Elevation (heights, terrain, estimated camber) comes from the
+  [Terrain Tiles](https://registry.opendata.aws/terrain-tiles/) on the
+  Registry of Open Data on AWS (Terrarium format), which combine SRTM
+  (NASA), GMTED2010 and NED/3DEP (USGS), ETOPO1 (NOAA), and national
+  elevation models; see the
+  [full source and attribution list](https://github.com/tilezen/joerd/blob/master/docs/attribution.md).
+  The heights are smoothed and limited to realistic gradients, so they are
+  close to, but not survey-exact for, each circuit.
+
 The layouts are the real-world circuits. Circuit and car names are used as
 the project owner chose; see "Naming and licensing" in docs/ARCHITECTURE.md.
