@@ -17,6 +17,7 @@ extends Control
 ##                 --damage off|visual|full  --upgrades on|bop|stock
 ##   --setup-screen [--menu-screenshot out.png]                     open the car setup screen
 ##   --open-settings gameplay|graphics|sound|garage|debug  --open-garage  --splash-shot out.png
+##   --host --host-demo   (screenshots) the host changes the track, weather and laps once two guests are in
 
 
 var pages := {}
@@ -63,11 +64,41 @@ var crew_box: VBoxContainer
 var _crew_rows: Dictionary = {}   ## peer id -> {"team": Stepper, "role": Stepper}
 var _crew_ids: Array = []
 var _cmdline_team_sent := false
+var _demo_done := false
 var lobby_title: Label
 var join_info_label: Label
 var ready_button: Button
 var start_button: Button
-var lobby_settings_box: GridContainer
+var lobby_ready_label: Label
+## Race set-up layout (see _build_ui and _layout).
+const COLUMN_GAP := 20
+var _margin: MarginContainer
+var _root_box: VBoxContainer
+var _page_title: Label
+var _stripe: ColorRect
+var _sub_label: Label
+var _setup_row: HBoxContainer
+var _cols: Array[VBoxContainer] = []
+var _circuit_card: PanelContainer
+var _car_card: PanelContainer
+var _settings_panel: PanelContainer
+var _settings_holder: VBoxContainer
+var _settings_change_label: Label
+var _track_map: TrackMap
+var _track_title: Label
+var _track_facts: Label
+var _track_desc: Label
+var _car_preview: CarPreview
+var _car_title: Label
+var _car_facts: Label
+var _car_desc: Label
+## What each host setting showed last time (guests: to flash what the host changed).
+var _last_shown := {}
+var _recent_changes := {}   ## Stepper -> {"text", "t"}: what the host changed lately
+const PAGE_TITLES := {"single": "SINGLE RACE", "lobby": "ONLINE LOBBY", "season_new": "NEW SEASON",
+	"season_hub": "SEASON", "season_list": "SEASONS", "join": "JOIN ONLINE RACE", "profile": "PROFILE"}
+## Pages laid out in the set-up columns (the others are a plain list on the left).
+const SETUP_PAGES := ["single", "lobby", "season_new", "season_hub"]
 var lobby_season_label: Label
 var _settings_steppers: Array[Stepper] = []
 var help_label: Label
@@ -268,37 +299,47 @@ func _build_ui() -> void:
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	add_child(scroll)
 	# The menu sits on the left, over the dark side of the background, so the
-	# racing shows on the right.
+	# racing shows on the right. Race set-up pages use the whole width.
 	var margin := MarginContainer.new()
 	margin.size_flags_horizontal = SIZE_EXPAND_FILL
 	margin.size_flags_vertical = SIZE_EXPAND_FILL
-	margin.add_theme_constant_override("margin_left", 80)
-	margin.add_theme_constant_override("margin_top", 56)
-	margin.add_theme_constant_override("margin_bottom", 40)
-	margin.add_theme_constant_override("margin_right", 40)
+	_margin = margin
 	scroll.add_child(margin)
 	_menu_root = scroll
 	var root := VBoxContainer.new()
 	root.add_theme_constant_override("separation", 12)
 	root.size_flags_horizontal = SIZE_SHRINK_BEGIN
 	margin.add_child(root)
+	_root_box = root
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 22)
+	root.add_child(head)
 	var title := Label.new()
 	title.text = "TOP DOWN RACER"
 	title.add_theme_font_override("font", SplashScreen.title_font())
 	title.add_theme_font_size_override("font_size", 54)
 	title.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.6))
 	title.add_theme_constant_override("outline_size", 8)
-	root.add_child(title)
+	head.add_child(title)
+	_page_title = Label.new()
+	_page_title.add_theme_font_size_override("font_size", 30)
+	_page_title.add_theme_color_override("font_color", Color(0.94, 0.26, 0.2))
+	_page_title.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.6))
+	_page_title.add_theme_constant_override("outline_size", 6)
+	_page_title.size_flags_vertical = SIZE_SHRINK_CENTER
+	head.add_child(_page_title)
 	var stripe := ColorRect.new()
 	stripe.color = Color(0.94, 0.26, 0.2)
 	stripe.custom_minimum_size = Vector2(300, 5)
 	stripe.size_flags_horizontal = SIZE_SHRINK_BEGIN
 	root.add_child(stripe)
+	_stripe = stripe
 	var sub := Label.new()
 	sub.text = "%d cars  ·  %d circuits  ·  version %s" % [GameData.cars.size(),
 		GameData.tracks.size(), ProjectSettings.get_setting("application/config/version", "dev")]
 	sub.modulate = Color(1, 1, 1, 0.6)
 	root.add_child(sub)
+	_sub_label = sub
 	_title_label = title
 
 	# The player's name lives on the profile page (top right badge).
@@ -314,68 +355,44 @@ func _build_ui() -> void:
 	name_edit.max_length = 24
 	name_edit.placeholder_text = "Your driver name"
 	name_edit.custom_minimum_size = Vector2(420, 40)
-	# Race picker: class, car, track, tyres, setup. Shown on the pages that
-	# start a race (not on the main page).
-	race_box = VBoxContainer.new()
-	race_box.add_theme_constant_override("separation", 8)
-	root.add_child(race_box)
-	var root_main := root
-	root = race_box
-	# Class (host setting), then car (yours), then track (host setting).
-	var class_opts := []
-	for c in CarCatalog.classes(GameData.cars):
-		class_opts.append([c, "%s  (%d cars)" % [c, CarCatalog.ids_in_class(GameData.cars, c).size()]])
-	class_opts.append([RaceSettings.CLASS_MULTI, "Multi-class (all cars)"])
-	class_opts.append(["", "Open (AI match the players)"])
-	var default_class: String = "GT3" if CarCatalog.ids_in_class(GameData.cars, "GT3").size() > 0 else class_opts[0][0]
-	class_stepper = Stepper.choice("Class", class_opts, default_class)
-	class_stepper.value_changed.connect(func(_v): _rebuild_car_options(); _limit_grid(); _push_settings())
-	root.add_child(class_stepper)
-	# With every class on the grid (multi-class / open) the car list is long:
-	# this narrows it to one class. Shown only then.
-	var filter_opts := [["", "All classes"]]
-	for c in CarCatalog.classes(GameData.cars):
-		filter_opts.append([c, "%s  (%d cars)" % [c, CarCatalog.ids_in_class(GameData.cars, c).size()]])
-	var want_filter = GameData.prefs.get("car_filter", "")
-	car_filter_stepper = Stepper.choice("Car class", filter_opts,
-		want_filter if filter_opts.any(func(o): return o[0] == want_filter) else "")
-	car_filter_stepper.value_changed.connect(func(v):
-		GameData.set_pref("car_filter", v)
-		_rebuild_car_options())
-	root.add_child(car_filter_stepper)
-	car_stepper = Stepper.choice("Car", [], "")
-	car_stepper.value_changed.connect(func(v):
-		GameData.prefs["car_id"] = v
-		if Net.is_online(): Net.update_me(_my_lobby_fields(v)))
-	root.add_child(car_stepper)
-	_rebuild_car_options()
-	# Driving aids, gears and units are in Settings > Gameplay.
-	var track_opts := []
-	for t in GameData.tracks:
-		track_opts.append([t["id"], "%s  (%.1f km, %s)" % [t["name"], t["length_m"] / 1000.0, t["location"]]])
-	var default_track: String = "mugello" if _track_info("mugello") else track_opts[0][0]
-	track_stepper = Stepper.choice("Track", track_opts, default_track)
-	track_stepper.value_changed.connect(func(_v): _push_settings())
-	root.add_child(track_stepper)
-	tyre_stepper = Stepper.choice("Tyres", [["auto", "Auto (suit the weather)"], ["dry", "Dry"],
-		["intermediate", "Intermediate"], ["wet", "Full wet"]], "auto")
-	tyre_stepper.value_changed.connect(func(v): if Net.is_online(): Net.update_me({"tyre": v}))
-	root.add_child(tyre_stepper)
-	setup_button = _button(root, "Car setup", _open_setup)
-	car_stepper.value_changed.connect(func(_v): _setup_changed())
-	track_stepper.value_changed.connect(func(_v): _setup_changed())
-	root = root_main
+
+	# Race set-up: three columns that fit one screen (built for 1600x900,
+	# scaled by the window, so the same at 1080p and 4K). The circuit and car
+	# cards, and the page itself, are placed into the columns by _show.
+	_setup_row = HBoxContainer.new()
+	_setup_row.add_theme_constant_override("separation", COLUMN_GAP)
+	_setup_row.size_flags_vertical = SIZE_EXPAND_FILL
+	root.add_child(_setup_row)
+	for i in 3:
+		var col := VBoxContainer.new()
+		col.add_theme_constant_override("separation", 10)
+		_setup_row.add_child(col)
+		_cols.append(col)
+	race_box = VBoxContainer.new()   # kept for the season pages' layout checks
+	_build_circuit_card()
+	_build_car_card()
+	_settings_panel = _card("RACE SETTINGS")
+	_settings_change_label = Label.new()
+	_settings_change_label.add_theme_font_size_override("font_size", 14)
+	_settings_change_label.add_theme_color_override("font_color", Color(1, 0.85, 0.35))
+	_settings_change_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_settings_change_label.visible = false
+	_card_box(_settings_panel).add_child(_settings_change_label)
+	_settings_holder = VBoxContainer.new()
+	_settings_holder.add_theme_constant_override("separation", 3)
+	_card_box(_settings_panel).add_child(_settings_holder)
 
 	# Main page
 	var main := _page(root, "main")
 	main.add_theme_constant_override("separation", 10)
 	for b in [["Single race", func(): _show("single")], ["Season / championship", func(): _show("season_list")],
 			["Garage", _open_garage], ["Host online race", _on_host], ["Join online race", func(): _show("join")],
-			["Profile and driver name", func(): _show("profile")], ["Settings", _open_settings],
+			["Settings", _open_settings],
 			["Quit", func(): GameData.save_prefs(); get_tree().quit()]]:
 		var btn := _button(main, b[0], b[1])
 		btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		btn.custom_minimum_size = Vector2(440, 54)
+		btn.size_flags_horizontal = SIZE_SHRINK_BEGIN
 		btn.add_theme_font_size_override("font_size", 22)
 
 	# Profile page: your name and colour (the badge top right opens it).
@@ -420,25 +437,30 @@ func _build_ui() -> void:
 	wear_stepper = Stepper.choice("Tyre wear", rates, 0.0)
 	stops_stepper = Stepper.numeric("Mandatory pit stops", 0, 3, 1, 0)
 	drivers_stepper = Stepper.choice("Drivers per car", [[1, "1 (no driver changes)"],
-		[2, "2 (AI co-driver, change at stops)"], [3, "3 (endurance line-ups)"]], 2)
-	safety_car_stepper = Stepper.choice("Safety car", [[true, "On (yellows, VSC and safety car)"], [false, "Off (yellow flags only)"]], true)
+		[2, "2 (AI co-driver at stops)"], [3, "3 (endurance line-ups)"]], 2)
+	safety_car_stepper = Stepper.choice("Safety car", [[true, "On (yellows, VSC, SC)"], [false, "Off (yellow flags only)"]], true)
 	damage_stepper = Stepper.choice("Damage", [["off", "Off"], ["visual", "Visual only"],
 		["full", "Full (affects the car)"]], "full")
 	tuning_stepper = Stepper.choice("Car setups", [[true, "Free (tune per track)"], [false, "Fixed (all on default)"]], true)
 	tuning_stepper.value_changed.connect(func(_v): _setup_changed())
 	upgrades_stepper = Stepper.choice("Car upgrades", [[RaceSettings.UPGRADES_ON, "On (R&D counts)"],
-		[RaceSettings.UPGRADES_BOP, "Balanced (BoP, looks only)"], [RaceSettings.UPGRADES_STOCK, "Off (stock cars)"]],
+		[RaceSettings.UPGRADES_BOP, "BoP (looks only)"], [RaceSettings.UPGRADES_STOCK, "Off (stock cars)"]],
 		RaceSettings.UPGRADES_ON)
 	_settings_steppers = [laps_stepper, ai_stepper, difficulty_stepper, tod_stepper, clock_stepper, weather_stepper,
 		weather_change_stepper, grid_stepper, damage_stepper, safety_car_stepper, fuel_stepper, wear_stepper, stops_stepper,
 		drivers_stepper, upgrades_stepper, tuning_stepper]
 
 	var single := _page(root, "single")
-	var single_settings := _settings_grid()
-	single.add_child(single_settings)
-	_button(single, "Start race", _on_single)
-	_button(single, "Back", func(): _show("main"))
-	single.set_meta("settings_box", single_settings)
+	var sb := HBoxContainer.new()
+	sb.add_theme_constant_override("separation", 10)
+	single.add_child(sb)
+	var go := _button(sb, "Start race", _on_single)
+	go.size_flags_horizontal = SIZE_EXPAND_FILL
+	go.custom_minimum_size = Vector2(0, 50)
+	go.add_theme_font_size_override("font_size", 20)
+	var back := _button(sb, "Back", func(): _show("main"))
+	back.custom_minimum_size = Vector2(150, 50)
+	single.set_meta("settings_box", _settings_holder)
 
 	_build_season_pages(root)
 
@@ -456,45 +478,79 @@ func _build_ui() -> void:
 	_button(join, "Connect", _on_join)
 	_button(join, "Back", func(): _show("main"))
 
+	# Lobby: who's here and whether they're ready, big and clear; co-op car
+	# shares; how friends join; then the buttons.
 	var lobby := _page(root, "lobby")
+	var players_card := _card("DRIVERS")
+	players_card.size_flags_vertical = SIZE_EXPAND_FILL
+	lobby.add_child(players_card)
+	var pbox := _card_box(players_card)
 	lobby_title = Label.new()
-	lobby.add_child(lobby_title)
+	lobby_title.add_theme_font_size_override("font_size", 22)
+	lobby_title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	pbox.add_child(lobby_title)
+	lobby_ready_label = Label.new()
+	lobby_ready_label.add_theme_font_size_override("font_size", 15)
+	lobby_ready_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	pbox.add_child(lobby_ready_label)
+	var list_scroll := ScrollContainer.new()
+	list_scroll.size_flags_vertical = SIZE_EXPAND_FILL
+	list_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	list_scroll.custom_minimum_size = Vector2(0, 200)
+	pbox.add_child(list_scroll)
+	var list_v := VBoxContainer.new()
+	list_v.size_flags_horizontal = SIZE_EXPAND_FILL
+	list_v.add_theme_constant_override("separation", 6)
+	list_scroll.add_child(list_v)
 	lobby_list = VBoxContainer.new()
-	lobby.add_child(lobby_list)
+	lobby_list.add_theme_constant_override("separation", 6)
+	list_v.add_child(lobby_list)
 	crew_box = VBoxContainer.new()
-	lobby.add_child(crew_box)
+	crew_box.add_theme_constant_override("separation", 3)
+	list_v.add_child(crew_box)
 	var crew_head := Label.new()
-	crew_head.text = "Co-op: share a car with up to 3 players (driver, pit crew, strategist)"
+	crew_head.text = "CO-OP  ·  share a car with up to 3 players (driver, pit crew, strategist)"
+	crew_head.add_theme_font_size_override("font_size", 14)
+	crew_head.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	crew_head.modulate = Color(0.75, 0.9, 1)
 	crew_box.add_child(crew_head)
 	join_info_label = Label.new()
 	join_info_label.modulate = Color(0.75, 0.9, 1)
+	join_info_label.add_theme_font_size_override("font_size", 14)
 	join_info_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	join_info_label.custom_minimum_size = Vector2(420, 0)
-	lobby.add_child(join_info_label)
+	pbox.add_child(join_info_label)
 	lobby_season_label = Label.new()
 	lobby_season_label.add_theme_font_override("font", _mono())
-	lobby_season_label.add_theme_font_size_override("font_size", 14)
+	lobby_season_label.add_theme_font_size_override("font_size", 13)
 	lobby_season_label.modulate = Color(1, 0.95, 0.75)
-	lobby.add_child(lobby_season_label)
-	lobby_settings_box = _settings_grid()
-	lobby.add_child(lobby_settings_box)
-	ready_button = _button(lobby, "Ready", func(): Net.update_me({"ready": not _my_ready()}))
-	_button(lobby, "Garage", _open_garage)
-	start_button = _button(lobby, "Start race", _on_start_online)
-	_button(lobby, "Leave", _on_leave)
+	pbox.add_child(lobby_season_label)
+	lobby.set_meta("settings_box", _settings_holder)
+	var actions := GridContainer.new()
+	actions.columns = 2
+	actions.add_theme_constant_override("h_separation", 10)
+	actions.add_theme_constant_override("v_separation", 8)
+	lobby.add_child(actions)
+	ready_button = _button(actions, "Ready", func(): Net.update_me({"ready": not _my_ready()}))
+	start_button = _button(actions, "Start race", _on_start_online)
+	for big in [ready_button, start_button]:
+		big.add_theme_font_size_override("font_size", 20)
+	var gb := _button(actions, "Garage", _open_garage)
+	var lb := _button(actions, "Leave", _on_leave)
+	for btn in [ready_button, start_button, gb, lb]:
+		btn.custom_minimum_size = Vector2(0, 48)
+		btn.size_flags_horizontal = SIZE_EXPAND_FILL
 
 	for s in _settings_steppers:
 		s.value_changed.connect(func(_v): _push_settings())
 
 	status_label = Label.new()
 	status_label.modulate = Color(1, 0.75, 0.4)
-	status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	root.add_child(status_label)
+	status_label.size_flags_vertical = SIZE_SHRINK_CENTER
+	head.add_child(status_label)
 	var help := Label.new()
 	help_label = help
 	help.text = "Drive: W/S/A/D or arrows  ·  Pad: RT throttle, LT brake, left stick steer\nZoom (hold): Q/E or mouse wheel, Z whole track  ·  Pad: LB/RB or right stick, R3 whole track  ·  C/Y camera  ·  R/Back restart  ·  Esc/Start menu\nPits: B or D-pad left box this lap  ·  L or L3 pit limiter  ·  T or pad B next tyres  ·  F next fuel\nThese are the defaults: change any of them in Settings > Controller."
-	help.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	help.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	help.modulate = Color(1, 1, 1, 0.45)
 	help.add_theme_font_size_override("font_size", 13)
 	root.add_child(help)
@@ -513,6 +569,124 @@ func _settings_grid() -> GridContainer:
 	g.add_theme_constant_override("h_separation", 12)
 	g.add_theme_constant_override("v_separation", 4)
 	return g
+
+
+## A dark panel with a heading, for the race set-up columns.
+func _card(heading: String) -> PanelContainer:
+	var pc := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.03, 0.04, 0.05, 0.82)
+	sb.set_corner_radius_all(8)
+	sb.set_content_margin_all(14)
+	sb.border_color = Color(1, 1, 1, 0.08)
+	sb.set_border_width_all(1)
+	pc.add_theme_stylebox_override("panel", sb)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 6)
+	pc.add_child(v)
+	var h := Label.new()
+	h.text = heading
+	h.add_theme_font_size_override("font_size", 15)
+	h.add_theme_color_override("font_color", Color(0.94, 0.26, 0.2))
+	v.add_child(h)
+	pc.set_meta("heading", h)
+	return pc
+
+
+func _card_box(card: PanelContainer) -> VBoxContainer:
+	return card.get_child(0) as VBoxContainer
+
+
+## Circuit: the track picker, the circuit from above, and what it's like.
+func _build_circuit_card() -> void:
+	_circuit_card = _card("CIRCUIT")
+	var box := _card_box(_circuit_card)
+	var track_opts := []
+	for t in GameData.tracks:
+		track_opts.append([t["id"], t["name"]])
+	var default_track: String = "mugello" if _track_info("mugello") else track_opts[0][0]
+	track_stepper = Stepper.choice("Track", track_opts, default_track)
+	track_stepper.value_changed.connect(func(_v): _push_settings(); _refresh_cards())
+	box.add_child(track_stepper)
+	_track_map = TrackMap.new()
+	_track_map.size_flags_vertical = SIZE_EXPAND_FILL
+	box.add_child(_track_map)
+	_track_title = Label.new()
+	_track_title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_track_title.add_theme_font_size_override("font_size", 19)
+	box.add_child(_track_title)
+	_track_facts = Label.new()
+	_track_facts.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_track_facts.add_theme_font_size_override("font_size", 14)
+	_track_facts.modulate = Color(0.8, 0.86, 0.92)
+	box.add_child(_track_facts)
+	_track_desc = Label.new()
+	_track_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_track_desc.add_theme_font_size_override("font_size", 15)
+	_track_desc.modulate = Color(1, 1, 1, 0.82)
+	box.add_child(_track_desc)
+
+
+## Car: class filter, the car picker, the car turning in its livery, what it
+## is, then your tyres and setup.
+func _build_car_card() -> void:
+	_car_card = _card("YOUR CAR")
+	var box := _card_box(_car_card)
+	# Class (host setting): placed with the race settings on the single race
+	# and lobby pages, at the top of this card elsewhere.
+	var class_opts := []
+	for c in CarCatalog.classes(GameData.cars):
+		class_opts.append([c, "%s  (%d cars)" % [c, CarCatalog.ids_in_class(GameData.cars, c).size()]])
+	class_opts.append([RaceSettings.CLASS_MULTI, "Multi-class (all cars)"])
+	class_opts.append(["", "Open (AI match the players)"])
+	var default_class: String = "GT3" if CarCatalog.ids_in_class(GameData.cars, "GT3").size() > 0 else class_opts[0][0]
+	class_stepper = Stepper.choice("Class", class_opts, default_class)
+	class_stepper.value_changed.connect(func(_v): _rebuild_car_options(); _limit_grid(); _push_settings())
+	box.add_child(class_stepper)
+	# With every class on the grid (multi-class / open) the car list is long:
+	# this narrows it to one class. Shown only then.
+	var filter_opts := [["", "All classes"]]
+	for c in CarCatalog.classes(GameData.cars):
+		filter_opts.append([c, "%s  (%d cars)" % [c, CarCatalog.ids_in_class(GameData.cars, c).size()]])
+	var want_filter = GameData.prefs.get("car_filter", "")
+	car_filter_stepper = Stepper.choice("Car class", filter_opts,
+		want_filter if filter_opts.any(func(o): return o[0] == want_filter) else "")
+	car_filter_stepper.value_changed.connect(func(v):
+		GameData.set_pref("car_filter", v)
+		_rebuild_car_options())
+	box.add_child(car_filter_stepper)
+	car_stepper = Stepper.choice("Car", [], "")
+	car_stepper.value_changed.connect(func(v):
+		GameData.prefs["car_id"] = v
+		_refresh_cards()
+		if Net.is_online(): Net.update_me(_my_lobby_fields(v)))
+	box.add_child(car_stepper)
+	_car_preview = CarPreview.new()
+	_car_preview.size_flags_vertical = SIZE_EXPAND_FILL
+	box.add_child(_car_preview)
+	_car_title = Label.new()
+	_car_title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_car_title.add_theme_font_size_override("font_size", 19)
+	box.add_child(_car_title)
+	_car_facts = Label.new()
+	_car_facts.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_car_facts.add_theme_font_size_override("font_size", 14)
+	_car_facts.modulate = Color(0.8, 0.86, 0.92)
+	box.add_child(_car_facts)
+	_car_desc = Label.new()
+	_car_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_car_desc.add_theme_font_size_override("font_size", 15)
+	_car_desc.modulate = Color(1, 1, 1, 0.82)
+	box.add_child(_car_desc)
+	# Driving aids, gears and units are in Settings > Gameplay.
+	tyre_stepper = Stepper.choice("Tyres", [["auto", "Auto (suit the weather)"], ["dry", "Dry"],
+		["intermediate", "Intermediate"], ["wet", "Full wet"]], "auto")
+	tyre_stepper.value_changed.connect(func(v): if Net.is_online(): Net.update_me({"tyre": v}))
+	box.add_child(tyre_stepper)
+	setup_button = _button(box, "Car setup", _open_setup)
+	car_stepper.value_changed.connect(func(_v): _setup_changed())
+	track_stepper.value_changed.connect(func(_v): _setup_changed())
+	_rebuild_car_options()
 
 
 func _page(parent: Node, id: String) -> VBoxContainer:
@@ -535,7 +709,6 @@ func _button(parent: Node, text: String, cb: Callable) -> Button:
 func _show(id: String) -> void:
 	Sound.wire_buttons(self)
 	current_page = id
-	race_box.visible = not id in ["main", "join", "profile", "season_list"]
 	if id == "profile":
 		_refresh_badge()
 	if id == "join":
@@ -545,27 +718,154 @@ func _show(id: String) -> void:
 		track_stepper.disabled = false
 		for st in _settings_steppers:
 			st.disabled = false
+		_settings_change_label.visible = false
+		_last_shown.clear()
+		_recent_changes.clear()
 	for k in pages:
 		pages[k].visible = k == id
 	# In a season the season picks the class and each round's track.
 	class_stepper.visible = not id in SEASON_PAGES
 	track_stepper.visible = not id in SEASON_PAGES
-	help_label.visible = id in ["single", "lobby", "season_hub"]
+	help_label.visible = id == "main"
 	if id == "season_hub":
 		_refresh_hub()
 	elif id == "season_list":
 		_refresh_season_list()
 	elif id == "season_new":
 		_refresh_calendar()
+	_layout(id)
 	# Settings steppers live on whichever page needs them.
-	var box: Node = pages[id].get_meta("settings_box") if pages[id].has_meta("settings_box") else lobby_settings_box
+	var box: Node = pages[id].get_meta("settings_box") if pages[id].has_meta("settings_box") else _settings_holder
 	for s in _settings_steppers:
 		if s.get_parent() != box:
 			if s.get_parent():
 				s.get_parent().remove_child(s)
 			box.add_child(s)
+	_style_steppers(box == _settings_holder)
+	_refresh_cards()
 	_status("")
 	_focus_first.call_deferred(pages[id])
+
+
+func _move(node: Control, parent: Node) -> void:
+	if node.get_parent() != parent:
+		if node.get_parent():
+			node.get_parent().remove_child(node)
+		parent.add_child(node)
+
+
+## Places the circuit card, the car card, the race settings and the page into
+## the three columns. Single race: circuit | car | settings + start. Lobby:
+## circuit over car | drivers | settings. Seasons: circuit over car | page.
+## Other pages: a plain list on the left, over the background.
+func _layout(id: String) -> void:
+	var setup: bool = id in SETUP_PAGES
+	var lobby := id == "lobby"
+	var single := id == "single"
+	_margin.add_theme_constant_override("margin_left", 40 if setup else 80)
+	_margin.add_theme_constant_override("margin_right", 40)
+	_margin.add_theme_constant_override("margin_top", 22 if setup else 56)
+	_margin.add_theme_constant_override("margin_bottom", 18 if setup else 40)
+	_root_box.size_flags_horizontal = SIZE_EXPAND_FILL if setup else SIZE_SHRINK_BEGIN
+	_root_box.add_theme_constant_override("separation", 10 if setup else 12)
+	_title_label.add_theme_font_size_override("font_size", 34 if setup else 54)
+	_page_title.text = PAGE_TITLES.get(id, "")
+	if lobby:
+		_page_title.text = "HOSTING ONLINE" if Net.is_server() else "ONLINE LOBBY"
+	_stripe.visible = not setup
+	_sub_label.visible = id == "main"
+	_setup_row.visible = setup
+	# Fixed column widths add up to the 1520 px inside the margins.
+	var widths: Array = [470, 470, 500] if single else ([440, 540, 500] if lobby else [440, 1000, 0])
+	for i in 3:
+		_cols[i].custom_minimum_size.x = widths[i]
+		_cols[i].visible = widths[i] > 0
+		_cols[i].size_flags_horizontal = SIZE_EXPAND_FILL if i == 1 and not (single or lobby) else SIZE_FILL
+	if not setup:
+		for c in [_circuit_card, _car_card, _settings_panel]:
+			if c.get_parent():
+				c.get_parent().remove_child(c)
+		for k in pages:
+			_move(pages[k], _root_box)
+		_root_box.move_child(help_label, -1)
+		return
+	_move(_circuit_card, _cols[0])
+	_move(_car_card, _cols[1] if single else _cols[0])
+	_circuit_card.visible = id != "season_hub" or (GameData.season != null and not GameData.season.is_complete())
+	# Big pictures when each card has a column to itself, smaller stacked.
+	_track_map.custom_minimum_size = Vector2(0, 300 if single else 170)
+	_track_map.show_profile = single
+	_car_preview.custom_minimum_size = Vector2(0, 260 if single else 120)
+	for l in [_track_desc, _car_desc]:
+		l.add_theme_font_size_override("font_size", 15 if single else 14)
+	_circuit_card.size_flags_vertical = SIZE_EXPAND_FILL
+	_car_card.size_flags_vertical = SIZE_EXPAND_FILL
+	if single or lobby:
+		_move(_settings_panel, _cols[2])
+		_settings_panel.size_flags_vertical = SIZE_EXPAND_FILL if lobby else SIZE_FILL
+		_move(pages[id], _cols[2] if single else _cols[1])
+		pages[id].size_flags_vertical = SIZE_EXPAND_FILL if lobby else SIZE_FILL
+		# Class decides who's on the grid: a race setting here.
+		_move(class_stepper, _settings_holder)
+		_settings_holder.move_child(class_stepper, 0)
+	else:
+		if _settings_panel.get_parent():
+			_settings_panel.get_parent().remove_child(_settings_panel)
+		_move(pages[id], _cols[1])
+		pages[id].size_flags_vertical = SIZE_FILL
+		_move(class_stepper, _card_box(_car_card))
+		_card_box(_car_card).move_child(class_stepper, 1)
+
+
+## Steppers in the set-up columns: shorter rows, values lined up, and (for
+## guests) still easy to read while only the host can change them.
+func _style_steppers(compact: bool) -> void:
+	var list: Array = _settings_steppers.duplicate()
+	list.append(class_stepper)
+	for st in list:
+		st.custom_minimum_size = Vector2(0, 33) if compact else Vector2(420, 40)
+		st.value_column = 190.0 if compact else 0.0
+		st.add_theme_font_size_override("font_size", 16)
+		st.add_theme_color_override("font_disabled_color", Color(0.86, 0.89, 0.93))
+	for st in [track_stepper, car_filter_stepper, car_stepper, tyre_stepper]:
+		st.custom_minimum_size = Vector2(0, 36)
+		st.value_column = 110.0
+		st.add_theme_font_size_override("font_size", 17)
+		st.add_theme_color_override("font_disabled_color", Color(0.86, 0.89, 0.93))
+	setup_button.custom_minimum_size = Vector2(0, 36)
+
+
+## The circuit and car cards: map, picture and words for what's picked.
+func _refresh_cards() -> void:
+	if _track_map == null or car_stepper == null:
+		return
+	var t := _track_info(str(track_stepper.value))
+	_track_map.show_track(t)
+	_track_title.text = t.get("name", "")
+	var facts := ["%.2f km" % (float(t.get("length_m", 0.0)) / 1000.0), str(t.get("location", ""))]
+	if t.get("has_pit_lane", false):
+		facts.append("pit lane")
+	_track_facts.text = "  ·  ".join(facts)
+	_track_desc.text = str(t.get("description", ""))
+	var c: CarDefinition = GameData.cars.get(str(car_stepper.value))
+	if c == null:
+		return
+	var levels := profile.levels(c.id)
+	var def := c.with_overrides(UpgradeCatalog.overrides_for(c, levels))
+	_car_preview.show_car(def, profile.livery_for(c.id))
+	var st := UpgradeCatalog.stats(c, levels)
+	var rd := 0
+	for l in levels.values():
+		rd += int(l)
+	_car_title.text = c.display_name
+	var drive := "RWD" if c.front_drive_split <= 0.01 else ("FWD" if c.front_drive_split >= 0.99 else "AWD")
+	var parts := [c.class_tag, Units.power(st["power_kw"]), "%.0f kg" % st["mass_kg"], drive]
+	if rd > 0:
+		parts.append("R&D %d" % rd)
+	if profile.owns(c.id):
+		parts.append("in your garage")
+	_car_facts.text = "  ·  ".join(parts)
+	_car_desc.text = c.description
 
 
 func _focus_first(page: Control) -> void:
@@ -592,12 +892,9 @@ func _rebuild_car_options() -> void:
 	var opts := []
 	for id in ids:
 		var c: CarDefinition = GameData.cars[id]
-		var st := UpgradeCatalog.stats(c, profile.levels(id))
-		var rd := 0
-		for l in profile.levels(id).values():
-			rd += int(l)
-		opts.append([id, "%s  (%s, %s, %.0f kg%s%s)" % [c.display_name, c.class_tag, Units.power(st["power_kw"]), st["mass_kg"],
-			", R&D %d" % rd if rd > 0 else "", ", yours" if profile.owns(id) else ""]])
+		# The card under the picker shows the numbers; the list stays short.
+		opts.append([id, "%s%s%s" % [c.display_name, "  (%s)" % c.class_tag if not fixed else "",
+			"  ★" if profile.owns(id) else ""]])
 	car_stepper.options = opts
 	var keep := false
 	for o in opts:
@@ -613,6 +910,7 @@ func _rebuild_car_options() -> void:
 			Net.update_me(_my_lobby_fields(car_stepper.value))
 	else:
 		car_stepper.set_value(car_stepper.value)
+	_refresh_cards()
 
 
 func _track_info(id: String) -> Dictionary:
@@ -682,7 +980,9 @@ func _open_setup() -> void:
 	screen.open(car, track, GameData.tyres.get(car.tyre_compound_id), {"track_c": env.track_c,
 		"ambient_c": env.ambient_c, "wetness": env.wetness, "laps": s.laps, "fuel_enabled": s.fuel_enabled,
 		"fuel_rate": s.fuel_rate})
+	_set_activity("setup")
 	screen.closed.connect(func(_setup):
+		_set_activity("lobby")
 		_setup_changed()
 		setup_button.grab_focus())
 
@@ -779,6 +1079,11 @@ func _refresh_crews() -> void:
 			row.add_child(ts)
 			row.add_child(rs)
 			crew_box.add_child(row)
+			for st in [ts, rs]:   # after add_child: Stepper._ready sets its own size
+				st.custom_minimum_size = Vector2(0, 32)
+				st.size_flags_horizontal = SIZE_EXPAND_FILL
+				st.value_column = 130.0 if st == ts else 60.0
+				st.add_theme_font_size_override("font_size", 15)
 			_crew_rows[id] = {"row": row, "team": ts, "role": rs}
 		Sound.wire_buttons(crew_box)
 	var me := Net.my_id()
@@ -796,6 +1101,150 @@ func _refresh_crews() -> void:
 		r["role"].options = opts
 		r["role"].set_value(p.get("role", RaceEntry.ROLE_DRIVER))
 		r["role"].disabled = not mine or size <= 1 or Net.in_race
+
+
+## Guests: the host's changes show straight away (the lobby is sent to every
+## player on each change); a setting the host just changed lights up, and the
+## settings card says what it was.
+func _flash_host_changes() -> void:
+	var list: Array = [track_stepper, class_stepper]
+	list.append_array(_settings_steppers)
+	var changed := []
+	for st in list:
+		var shown: String = st.label_text + "=" + str(st.value)
+		if _last_shown.has(st) and _last_shown[st] != shown:
+			changed.append(st)
+		_last_shown[st] = shown
+	if changed.is_empty():
+		return
+	var now := Time.get_ticks_msec()
+	for st in changed:
+		_recent_changes[st] = {"text": "%s: %s" % [st.label_text, st.shown_text()], "t": now}
+		var tw: Tween = st.create_tween()
+		st.modulate = Color(1.0, 0.82, 0.3)
+		tw.tween_property(st, "modulate", Color.WHITE, 2.5).set_delay(0.6)
+	# Changes made close together are listed together.
+	var words := []
+	for st in _recent_changes.keys():
+		if now - int(_recent_changes[st]["t"]) > 8000:
+			_recent_changes.erase(st)
+		else:
+			words.append(_recent_changes[st]["text"])
+	_settings_change_label.text = "The host changed " + ",  ".join(words.slice(-4))
+	_settings_change_label.visible = true
+	if changed.has(track_stepper):
+		var tw: Tween = _track_map.create_tween()
+		_track_map.modulate = Color(1.3, 1.2, 0.8)
+		tw.tween_property(_track_map, "modulate", Color.WHITE, 1.5)
+
+
+const ACTIVITY_NAMES := {"lobby": "", "garage": "in the garage", "setup": "tuning the car setup",
+	"settings": "in settings"}
+const TYRE_NAMES := {"auto": "", "dry": "dry tyres", "intermediate": "inters", "wet": "wets"}
+
+
+func _not_ready_names() -> String:
+	var names := []
+	for id in Net.players:
+		if id != 1 and not Net.players[id]["ready"]:
+			names.append(str(Net.players[id]["name"]))
+	return ", ".join(names.slice(0, 3)) + (" ..." if names.size() > 3 else "")
+
+
+## One driver in the lobby: their paint colour, name, car and what they're
+## doing on the left; a big READY / NOT READY / HOST tag on the right.
+func _player_row(id: int, p: Dictionary) -> Control:
+	var me := id == Net.my_id()
+	var host := id == 1
+	var ready: bool = p.get("ready", false)
+	var pc := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(1, 1, 1, 0.09) if me else Color(1, 1, 1, 0.04)
+	sb.set_corner_radius_all(6)
+	sb.content_margin_left = 0
+	sb.content_margin_right = 10
+	sb.content_margin_top = 6
+	sb.content_margin_bottom = 6
+	if me:
+		sb.border_color = Color(1, 0.8, 0.3, 0.6)
+		sb.set_border_width_all(1)
+	pc.add_theme_stylebox_override("panel", sb)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 12)
+	pc.add_child(row)
+	var car: CarDefinition = GameData.cars.get(p["car_id"])
+	var paint := car.colour if car else Color.GRAY
+	var liv: Dictionary = p.get("livery", {})
+	if liv.get("primary") is String and str(liv["primary"]).begins_with("#"):
+		paint = Color(str(liv["primary"]))
+	var swatch := ColorRect.new()
+	swatch.color = paint
+	swatch.custom_minimum_size = Vector2(8, 0)
+	row.add_child(swatch)
+	var text := VBoxContainer.new()
+	text.size_flags_horizontal = SIZE_EXPAND_FILL
+	text.add_theme_constant_override("separation", 0)
+	row.add_child(text)
+	var name_l := Label.new()
+	name_l.text = str(p["name"]) + ("  (you)" if me else "")
+	name_l.add_theme_font_size_override("font_size", 21)
+	name_l.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	text.add_child(name_l)
+	var bits := [car.display_name if car else str(p["car_id"])]
+	if TYRE_NAMES.get(p.get("tyre", "auto"), "") != "":
+		bits.append(TYRE_NAMES[p["tyre"]])
+	var vis: Dictionary = p.get("setup", {}).get("visual", {})
+	if not p.get("setup", {}).is_empty() and Net.settings.upgrades_mode == RaceSettings.UPGRADES_ON:
+		bits.append("upgraded")
+	elif not vis.is_empty() and Net.settings.upgrades_mode == RaceSettings.UPGRADES_BOP:
+		bits.append("upgraded (looks only)")
+	var team: int = p.get("team", -1)
+	if team >= 0 and Net.team_members(team).size() > 1:
+		bits.append("car share %d: %s" % [team + 1, ROLE_NAMES.get(p.get("role", ""), "?")])
+	var info := Label.new()
+	info.text = "  ·  ".join(bits)
+	info.add_theme_font_size_override("font_size", 14)
+	info.modulate = Color(0.8, 0.86, 0.92)
+	info.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	text.add_child(info)
+	var doing := str(ACTIVITY_NAMES.get(p.get("activity", "lobby"), ""))
+	var ping := int(p.get("ping", -1))
+	if doing != "" or (ping >= 0 and not host):
+		var act := Label.new()
+		var parts := []
+		if doing != "":
+			parts.append(doing[0].to_upper() + doing.substr(1))
+		if ping >= 0 and not host:
+			parts.append("ping %d ms" % ping)
+		act.text = "  ·  ".join(parts)
+		act.add_theme_font_size_override("font_size", 13)
+		act.add_theme_color_override("font_color", Color(0.65, 0.85, 1) if doing != "" else Color(1, 1, 1, 0.5))
+		if ping > 150:
+			act.add_theme_color_override("font_color", Color(1, 0.6, 0.4))
+		text.add_child(act)
+	var tag := Label.new()
+	var tag_sb := StyleBoxFlat.new()
+	tag_sb.set_corner_radius_all(5)
+	tag_sb.content_margin_left = 12
+	tag_sb.content_margin_right = 12
+	tag_sb.content_margin_top = 4
+	tag_sb.content_margin_bottom = 4
+	if host:
+		tag.text = "HOST"
+		tag_sb.bg_color = Color(0.2, 0.45, 0.9)
+	elif ready:
+		tag.text = "READY"
+		tag_sb.bg_color = Color(0.16, 0.62, 0.3)
+	else:
+		tag.text = "NOT READY"
+		tag_sb.bg_color = Color(0.75, 0.45, 0.08)
+	tag.add_theme_stylebox_override("normal", tag_sb)
+	tag.add_theme_font_size_override("font_size", 17)
+	tag.size_flags_vertical = SIZE_SHRINK_CENTER
+	tag.custom_minimum_size = Vector2(122, 0)
+	tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	row.add_child(tag)
+	return pc
 
 
 func _set_crew(id: int, fields: Dictionary) -> void:
@@ -831,38 +1280,41 @@ func _refresh_lobby() -> void:
 				Net.update_me({"tyre": tyre_stepper.value})  # just joined: send my choice
 			else:
 				tyre_stepper.set_value(my_tyre)
+	if GameData.arg("host-demo") and Net.is_server() and Net.players.size() >= 3 and not _demo_done:
+		_demo_done = true
+		get_tree().create_timer(2.0).timeout.connect(func():
+			track_stepper._nudge(1, false)
+			weather_stepper._nudge(1, false)
+			laps_stepper._nudge(1, false))
 	if GameData.arg("ready") and Net.players.has(me) and not _my_ready():
 		Net.update_me({"ready": true})
 	var env_s := Net.settings.environment
-	lobby_title.text = ("Hosting" if Net.is_server() else "Lobby") + "  ·  %d player(s)  ·  %s, %d laps, %d AI  ·  %s, %02d:00" % [
-		Net.players.size(), _track_info(Net.settings.track_id).get("short_name", Net.settings.track_id),
+	lobby_title.text = "%d driver%s  ·  %s  ·  %d laps  ·  %d AI  ·  %s, %02d:00" % [
+		Net.players.size(), "" if Net.players.size() == 1 else "s",
+		_track_info(Net.settings.track_id).get("short_name", Net.settings.track_id),
 		Net.settings.laps, Net.settings.ai_count,
 		SimEnvironment.weather_name(env_s.get("weather", "dry")), int(env_s.get("time_of_day_h", 14))]
+	var joiners := 0
+	var ready_n := 0
+	for id in Net.players:
+		if id != 1:
+			joiners += 1
+			ready_n += 1 if Net.players[id]["ready"] else 0
+	if joiners == 0:
+		lobby_ready_label.text = "Waiting for drivers to join" if Net.is_server() else "Connecting ..."
+		lobby_ready_label.add_theme_color_override("font_color", Color(0.75, 0.85, 1))
+	elif ready_n == joiners:
+		lobby_ready_label.text = "Everyone is ready" + ("  ·  start when you like" if Net.is_server() else "  ·  waiting for the host to start")
+		lobby_ready_label.add_theme_color_override("font_color", Color(0.45, 0.95, 0.55))
+	else:
+		lobby_ready_label.text = "%d of %d ready  ·  waiting for %s" % [ready_n, joiners, _not_ready_names()]
+		lobby_ready_label.add_theme_color_override("font_color", Color(1, 0.78, 0.3))
 	for c in lobby_list.get_children():
 		c.queue_free()
 	var ids := Net.players.keys()
 	ids.sort()
 	for id in ids:
-		var p: Dictionary = Net.players[id]
-		var l := Label.new()
-		var car: CarDefinition = GameData.cars.get(p["car_id"])
-		var tyre_name: String = {"auto": "", "dry": "  ·  dry tyres", "intermediate": "  ·  inters", "wet": "  ·  wets"}.get(p.get("tyre", "auto"), "")
-		var rd := ""
-		var vis: Dictionary = p.get("setup", {}).get("visual", {})
-		if not p.get("setup", {}).is_empty() and Net.settings.upgrades_mode == RaceSettings.UPGRADES_ON:
-			rd = "  ·  upgraded"
-		elif not vis.is_empty() and Net.settings.upgrades_mode == RaceSettings.UPGRADES_BOP:
-			rd = "  ·  upgraded (looks only)"
-		var crew := ""
-		var team: int = p.get("team", -1)
-		if team >= 0 and Net.team_members(team).size() > 1:
-			var lead: Dictionary = Net.players[Net.team_members(team)[0]]
-			var lead_car: CarDefinition = GameData.cars.get(lead["car_id"])
-			crew = "  ·  car share %d (%s): %s" % [team + 1, lead_car.display_name if lead_car else lead["car_id"],
-				ROLE_NAMES.get(p.get("role", ""), "?")]
-		l.text = "%s %s  ·  %s%s%s%s%s" % ["★" if id == 1 else "•", p["name"], car.display_name if car else p["car_id"], tyre_name, rd,
-			crew, "" if id == 1 else ("  ·  READY" if p["ready"] else "  ·  not ready")]
-		lobby_list.add_child(l)
+		lobby_list.add_child(_player_row(id, Net.players[id]))
 	_refresh_crews()
 	if GameData.arg("team") and Net.players.has(me) and not _cmdline_team_sent:
 		_cmdline_team_sent = true  # testing: --team 1 --role strategist
@@ -900,7 +1352,9 @@ func _refresh_lobby() -> void:
 		upgrades_stepper.set_value(Net.settings.upgrades_mode)
 		if tuning_stepper.value != Net.settings.tuning_enabled:
 			tuning_stepper.set_value(Net.settings.tuning_enabled)
+		_flash_host_changes()
 	_refresh_setup_button()
+	_refresh_cards()
 	var mine: Dictionary = Net.players.get(me, {})
 	if not mine.is_empty() and JSON.stringify(mine.get("setup", {})) != JSON.stringify(_my_setup(str(car_stepper.value))):
 		Net.update_me({"setup": _my_setup(str(car_stepper.value))})  # joined, or the host changed track
@@ -1139,6 +1593,10 @@ func _refresh_hub() -> void:
 		class_stepper.set_value(cls)
 		_rebuild_car_options()
 	hub_title.text = "%s%s" % [s.name, "" if s.number <= 1 else "  ·  season %d" % s.number]
+	# The circuit card shows the next round.
+	if not s.is_complete() and _track_info(str(s.current_round()["track_id"])):
+		track_stepper.set_value(str(s.current_round()["track_id"]))
+		_refresh_setup_button()
 	var champ := s.champion()
 	if s.is_complete():
 		hub_info.text = "Season finished.  Champion: %s (%s), %d points." % [champ.get("name", "?"), champ.get("team", ""), champ.get("points", 0)]
@@ -1297,10 +1755,18 @@ func _open_garage() -> void:
 	add_child(_garage)
 	_garage.open(car_stepper.value, profile)
 	_garage.closed.connect(_on_garage_closed)
+	_set_activity("garage")
+
+
+## Online: tell the lobby what I'm doing (garage, car setup, settings).
+func _set_activity(what: String) -> void:
+	if Net.is_online() and Net.players.has(Net.my_id()):
+		Net.update_me({"activity": what})
 
 
 func _on_garage_closed(picked_car: String) -> void:
 	_garage = null
+	_set_activity("settings" if _settings else "lobby")
 	_menu_root.visible = true
 	badge.visible = true
 	profile = TeamProfile.load_or_new()
@@ -1327,10 +1793,12 @@ func _open_settings() -> void:
 	add_child(_settings)
 	_settings.open(profile)
 	_settings.closed.connect(_on_settings_closed)
+	_set_activity("settings")
 
 
 func _on_settings_closed() -> void:
 	_settings = null
+	_set_activity("garage" if _garage else "lobby")
 	if _garage == null:
 		_menu_root.visible = true
 		badge.visible = true
