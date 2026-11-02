@@ -44,6 +44,10 @@ var _roll := 0.0
 var _parts := {}                 ## part name -> [node, rest transform]
 var _smoke: GPUParticles3D
 var _damage_tick := 0.0
+var _bar_amber: StandardMaterial3D   ## safety car light bar lenses (null on other cars)
+var _bar_green: StandardMaterial3D
+var _bar_mode := "off"
+var _bar_t := 0.0
 
 ## CarDamage.visual_parts() name -> model part name.
 const DAMAGE_PARTS := {"splitter": "splitter", "front_bumper": "bumper_front", "rear_wing": "wing_rear",
@@ -212,6 +216,19 @@ func _style(n: Node) -> void:
 				mi.set_surface_override_material(s, _tail)
 			"light_head", "light_drl":
 				mi.set_surface_override_material(s, _head)
+			"light_bar_amber", "light_bar_green":
+				var amber := mname == "light_bar_amber"
+				var lm := StandardMaterial3D.new()
+				lm.albedo_color = Color(0.55, 0.3, 0.03) if amber else Color(0.05, 0.35, 0.1)
+				lm.emission_enabled = true
+				lm.emission = Color(1.0, 0.55, 0.05) if amber else Color(0.15, 1.0, 0.3)
+				lm.emission_energy_multiplier = 0.0
+				lm.roughness = 0.1
+				if amber:
+					_bar_amber = lm
+				else:
+					_bar_green = lm
+				mi.set_surface_override_material(s, lm)
 			"glass":
 				var g := StandardMaterial3D.new()
 				g.albedo_color = Color(0.03, 0.04, 0.06, 0.62)
@@ -250,6 +267,41 @@ func _add_number() -> void:
 	l.rotation = Vector3(-PI * 0.5, -PI * 0.5, 0)
 	l.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	at.add_child(l)
+
+
+## Safety car light bar: "off", "amber" (flashing while out) or "green"
+## (coming in this lap).
+func set_light_bar(mode: String) -> void:
+	_bar_mode = mode
+
+
+## Words on the roof, read from above (e.g. "SAFETY CAR").
+func add_roof_text(text: String) -> void:
+	var at := _find(self, "number_roof") as Node3D
+	if at == null:
+		return
+	var l := Label3D.new()
+	l.text = text
+	l.font_size = 96
+	l.outline_size = 0
+	l.pixel_size = 0.0028
+	l.modulate = Color(0.06, 0.06, 0.06)
+	l.double_sided = false
+	l.shaded = true
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.position = Vector3(-0.12, 0.012, 0)
+	l.rotation = Vector3(-PI * 0.5, -PI * 0.5, 0)
+	l.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	at.add_child(l)
+
+
+func _update_light_bar(delta: float) -> void:
+	if _bar_amber == null:
+		return
+	_bar_t += delta
+	var flash := 1.0 if fmod(_bar_t, 0.5) < 0.25 else 0.15
+	_bar_amber.emission_energy_multiplier = 6.0 * flash if _bar_mode == "amber" else 0.0
+	_bar_green.emission_energy_multiplier = 6.0 * flash if _bar_mode == "green" else 0.0
 
 
 ## Soft dark patch on the ground under the car, so it sits on the road even
@@ -417,8 +469,9 @@ func _find(n: Node, want: String) -> Node:
 
 
 func _process(delta: float) -> void:
-	if state == null:
+	if state == null or not visible:
 		return
+	_update_light_bar(delta)
 	if not _init_done or pos2.distance_to(state.pos) > 6.0:
 		pos2 = state.pos
 		heading = state.heading

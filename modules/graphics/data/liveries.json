@@ -47,6 +47,13 @@
   "accent": "#d5001c",
   "front_overhang": 1.03
  },
+ "safety_car_amg_gt_black_series": {
+  "pattern": "stripes",
+  "primary": "#c3c7cb",
+  "secondary": "#e10600",
+  "accent": "#111111",
+  "front_overhang": 1.05
+ },
  "v8_front_gt": {
   "pattern": "solid",
   "secondary": "#111111",

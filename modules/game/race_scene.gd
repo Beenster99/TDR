@@ -192,6 +192,8 @@ func _process(delta: float) -> void:
 	camera.zoom = Vector2(z, z)
 	for i in car_views.size():
 		car_views[i].visible = not session.sim.race_control.recovered[i]
+	var rc := session.sim.race_control
+	world.set_safety_car(rc.sc_visible, rc.sc_pos, rc.sc_heading, rc.sc_speed, rc.sc_lights)
 	race_audio.update(delta, camera.position, local_input.last_throttle if autodrive == null else _autodrive_throttle, _zoom)
 	var rot := rotate_camera and _zoom < 0.5
 	camera.ignore_rotation = not rot

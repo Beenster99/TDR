@@ -52,6 +52,14 @@ lines up across every part. Each model also has a livery UV unwrap (UV0: nose
 to tail, and round the body from sill to sill), ready for painted livery
 textures later.
 
+The safety car (`modules/cars/special/safety_car_amg_gt_black_series.json`,
+a Mercedes-AMG GT Black Series) is built the same way; its shape adds a
+`light_bar` (roof bar with amber lenses at the ends and green ones in the
+middle, materials `light_bar_amber` / `light_bar_green`). The race scene calls
+`WorldView.set_safety_car(visible, pos, heading, speed, lights)` every frame
+from `race_control`; the lights flash amber while it is out and green when it
+comes in, and "SAFETY CAR" is written on the roof.
+
 To hand-edit a car, open its `.blend`, change it, export the `.glb` (glTF
 binary, default settings) over the old one, and set `"hand_edited": true` in
 its shape file so the builder leaves it alone. To replace a car with a better

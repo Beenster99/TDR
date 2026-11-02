@@ -4,7 +4,7 @@ Run (Blender 4.5, no window needed):
     blender -b --python modules/graphics/tools/build_cars.py -- [car_id ...]
 
 Inputs
-  modules/cars/data/<id>.json          real dimensions (length, width, wheelbase,
+  modules/cars/data/<id>.json          real dimensions (special/ for the safety car) (length, width, wheelbase,
                                        track, wheel radius, weight split)
   modules/graphics/tools/car_shapes/<id>.json   the car's shape: body sections,
                                        cabin, wing, lights, vents, livery
@@ -49,6 +49,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 GFX = os.path.dirname(HERE)
 ROOT = os.path.dirname(os.path.dirname(GFX))
 CARS_DATA = os.path.join(ROOT, "modules", "cars", "data")
+CARS_SPECIAL = os.path.join(ROOT, "modules", "cars", "special")   # the safety car
 SHAPES = os.path.join(HERE, "car_shapes")
 OUT_GLB = os.path.join(GFX, "cars")
 OUT_BLEND = os.path.join(GFX, "cars_blend")
@@ -180,6 +181,8 @@ def setup_materials(shape):
     material("helmet", hex_rgb(shape.get("helmet_colour", "#f0f0f0")), 0.2, 0.25, coat=1.0)
     material("mirror_glass", (0.6, 0.62, 0.65), 1.0, 0.05)
     material("cage", (0.12, 0.12, 0.13), 0.6, 0.4)
+    material("light_bar_amber", (0.6, 0.32, 0.02), 0.1, 0.1, emission=((1.0, 0.55, 0.05), 0.0))
+    material("light_bar_green", (0.05, 0.4, 0.1), 0.1, 0.1, emission=((0.1, 1.0, 0.25), 0.0))
 
 
 def hex_rgb(h):
@@ -1016,6 +1019,52 @@ class Car:
         new_object(name + "_caliper", m, hub)
         return hub
 
+    # ---------------------------------------------------- safety car light bar
+
+    def build_light_bar(self):
+        """Roof light bar: a dark housing with amber lenses at the ends and
+        green ones in the middle (lit by the game). One object, light_bar."""
+        lb = self.s["light_bar"]
+        c = self.s["cabin"]
+        t = lb.get("t", lerp(c["side_windows"][0], c["side_windows"][1], 0.3))
+        x = self.x_of(t)
+        roof = interp_keys(c["stations"], t, "zt")
+        hw = self.W * 0.5 * lb.get("width", 0.62)
+        depth = lb.get("depth", 0.2)
+        h = lb.get("height", 0.075)
+        objs = []
+
+        def box(cx, cy, cz, sx, sy, sz, mat):
+            b = bmesh.new()
+            bmesh.ops.create_cube(b, size=1.0)
+            bmesh.ops.bevel(b, geom=b.edges[:], offset=min(sx, sy, sz) * 0.18, segments=2, affect="EDGES")
+            bmesh.ops.scale(b, vec=(sx, sy, sz), verts=b.verts)
+            bmesh.ops.translate(b, vec=(cx, cy, cz), verts=b.verts)
+            m = bpy.data.meshes.new("lb")
+            b.to_mesh(m)
+            b.free()
+            m.materials.append(MATS[mat])
+            objs.append(new_object("lb", m))
+
+        z0 = roof - 0.01
+        # feet sunk into the curved roof, then the housing
+        for sy in (-1, 1):
+            box(x, sy * hw * 0.75, z0 + 0.0, depth * 0.6, 0.06, 0.06, "carbon")
+        box(x, 0, z0 + 0.025 + h * 0.5, depth, hw * 2.0, h, "carbon")
+        # lenses on top: amber at the ends, green in the middle
+        n = 6
+        seg = hw * 2.0 / n
+        for i in range(n):
+            y = -hw + seg * (i + 0.5)
+            mat = "light_bar_green" if i in (2, 3) else "light_bar_amber"
+            box(x, y, z0 + 0.025 + h * 0.6, depth * 0.88, seg * 0.88, h * 0.85, mat)
+        ob = objs[0]
+        ob.name = "light_bar"
+        for o in objs[1:]:
+            join_into(ob, o)
+        shade_smooth(ob, 40)
+        return ob
+
     # ---------------------------------------------------- markers
 
     def markers(self):
@@ -1052,6 +1101,8 @@ class Car:
         for f in (self.build_splitter, self.build_diffuser, self.build_wing, self.build_interior):
             f()
         self.build_mirrors()
+        if self.s.get("light_bar"):
+            self.build_light_bar()
         for axle in (0, 1):
             for side in (1, -1):
                 self.build_wheel(axle, side)
@@ -1148,7 +1199,10 @@ def clear_scene():
 
 
 def build_car(cid):
-    with open(os.path.join(CARS_DATA, cid + ".json")) as f:
+    path = os.path.join(CARS_DATA, cid + ".json")
+    if not os.path.exists(path):
+        path = os.path.join(CARS_SPECIAL, cid + ".json")
+    with open(path) as f:
         data = json.load(f)
     with open(os.path.join(SHAPES, cid + ".json")) as f:
         shape = json.load(f)
