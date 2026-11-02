@@ -47,13 +47,14 @@ const ITEMS := [
 	["sectors", "Sectors and gaps"],
 	["speed", "Speed, gear and revs"],
 	["hint", "Pit wall hint"],
+	["pitguide", "Pit lane guide"],
 	["lights", "Start lights"],
 	["flags", "Flags and race control"],
 	["radio", "Team radio"],
 	["messages", "Messages"],
 ]
 ## Items about the player's own car (a placeholder when spectating).
-const CAR_ITEMS := ["timing", "pit", "damage", "tyres", "sectors", "speed"]
+const CAR_ITEMS := ["timing", "pit", "damage", "tyres", "sectors", "speed", "pitguide"]
 ## Where the player put each item, how big, shown or not.
 var layout := HudLayout.new()
 ## True while the HUD layout editor is open: every item that's switched on is
@@ -164,6 +165,7 @@ func item_shown(id: String) -> bool:
 		"radio": return radio_time > 0.0 and not radio_msg.is_empty()
 		"messages": return message_time > 0.0
 		"lights": return sim.phase == RaceSim.Phase.COUNTDOWN
+		"pitguide": return pit_guide_on and sim.pits.self_drives(me) and str(sim.pits.guide_info(me)["stage"]) != ""
 	return true
 
 
@@ -186,6 +188,7 @@ func item_size(id: String) -> Vector2:
 		"sectors": return Vector2(_sectors_width(), 82)
 		"speed": return Vector2(250, 120)
 		"hint": return Vector2(260, 20)
+		"pitguide": return Vector2(440, 74)
 		"lights": return Vector2(224, 44)
 		"flags": return Vector2(520, 58)
 		"radio": return Vector2(_radio_width(), 44)
@@ -215,6 +218,7 @@ func default_pos(id: String, sz: Vector2, vp: Vector2) -> Vector2:
 		"sectors": return Vector2((vp.x - sz.x) * 0.5, vp.y - 110)
 		"speed": return Vector2(vp.x - 260, vp.y - 130)
 		"hint": return Vector2((vp.x - sz.x) * 0.5, vp.y - 28)
+		"pitguide": return Vector2((vp.x - sz.x) * 0.5, vp.y - 200)
 		"lights": return Vector2((vp.x - sz.x) * 0.5, 48)
 		"flags": return Vector2((vp.x - sz.x) * 0.5, 96)
 		"radio": return Vector2((vp.x - sz.x) * 0.5, 196)
@@ -373,6 +377,7 @@ func _draw_item(id: String, me: int, sz: Vector2) -> void:
 		"speed": _draw_speed(me)
 		"hint": _text(Vector2(0, 14), "P / D-pad →  Pit wall", 13, Color(1, 1, 1, 0.45), HORIZONTAL_ALIGNMENT_CENTER, sz.x)
 		"lights": _draw_lights()
+		"pitguide": _draw_pit_guide(me)
 		"flags": _draw_race_control(me)
 		"radio": _draw_radio()
 		"messages":
@@ -485,6 +490,85 @@ func _pit_panel_height(me: int) -> float:
 		h = maxi(h, 114)
 	return h + (22.0 if e.penalty_s > 0.0 else 0.0)
 
+## The pit lane guide cues for a driver driving in themselves (Settings >
+## Gameplay > Pit stops): distance to the pit limit line, the box or the end
+## of the limit, and when to brake (PitRules.guide_info). pit_guide_on:
+## Settings > Gameplay > Pit lane guide.
+var pit_guide_on := true
+const SAMPLE_GUIDE := {"stage": "approach", "to_limit": 180.0, "limit": 16.67, "speed": 52.0, "brake_at": 135.0}
+
+
+func _draw_pit_guide(me: int) -> void:
+	var sim := session.sim
+	var g: Dictionary = sim.pits.guide_info(me) if me >= 0 else {}
+	if str(g.get("stage", "")) == "":
+		g = SAMPLE_GUIDE
+	var sz := item_size("pitguide")
+	_panel(Rect2(Vector2.ZERO, sz))
+	var lim := float(g.get("limit", sim.track.pit_speed_limit))
+	var v := float(g.get("speed", 0.0))
+	var title := ""
+	var dist := 0.0
+	var cue := ""
+	var cue_col := Color(0.35, 0.95, 0.45)
+	match str(g["stage"]):
+		"approach":
+			dist = float(g["to_limit"])
+			title = "PIT LIMIT " + Units.speed(lim).to_upper()
+			var brake_at := float(g.get("brake_at", 0.0))
+			if v <= lim + 0.3:
+				cue = "AT THE LIMIT"
+				cue_col = Color(0.4, 0.8, 1.0)
+			elif dist <= brake_at + 5.0:
+				cue = "BRAKE"
+				cue_col = Color(1, 0.25, 0.2)
+			elif dist <= brake_at * 1.35 + 30.0:
+				cue = "GET READY"
+				cue_col = Color(1, 0.82, 0.2)
+			else:
+				cue = "FOLLOW THE PIT LINE"
+				cue_col = Color(0.4, 0.8, 1.0)
+		"box":
+			dist = float(g["to_box"])
+			title = "YOUR BOX"
+			if bool(g.get("on_marks", false)):
+				cue = "STOP" if v > 1.0 else "ON YOUR MARKS"
+				cue_col = Color(0.35, 0.95, 0.45)
+			elif absf(float(g.get("across", 0.0))) >= PitRules.BOX_STOP_WIDE and dist < 15.0:
+				cue = "PULL INTO YOUR BOX"
+				cue_col = Color(1, 0.82, 0.2)
+			elif dist < -PitRules.BOX_STOP_LONG:
+				cue = "OVERSHOT: STOP NOW"
+				cue_col = Color(1, 0.25, 0.2)
+			elif dist <= float(g.get("brake_at", 0.0)) + 3.0:
+				cue = "BRAKE"
+				cue_col = Color(1, 0.25, 0.2)
+			else:
+				cue = "LIMITER ON"
+				cue_col = Color(0.4, 0.8, 1.0)
+		"leave":
+			dist = float(g["to_end"])
+			title = "MISSED YOUR BOX: END OF LIMIT" if bool(g.get("missed", false)) else "END OF PIT LIMIT"
+			cue = "LIMITER ON"
+			cue_col = Color(0.4, 0.8, 1.0)
+		"service":
+			title = "IN YOUR BOX"
+			cue = "CREW AT WORK"
+			cue_col = Color(1, 0.82, 0.2)
+	_text(Vector2(14, 24), title, 15, Color(1, 0.85, 0.2))
+	if str(g["stage"]) != "service":
+		_text(Vector2(14, 60), "%d m" % maxi(roundi(dist), 0) if dist >= 0.0 else "%d m past" % roundi(-dist), 30, Color.WHITE)
+	_text(Vector2(0, 60), cue, 22, cue_col, HORIZONTAL_ALIGNMENT_RIGHT, sz.x - 14)
+	# Speed against the limit: a bar that fills to the limit mark.
+	var bar := Rect2(230, 15, sz.x - 244, 6)
+	draw_rect(bar, Color(1, 1, 1, 0.12))
+	var top := maxf(lim * 3.0, v)
+	var mark := bar.position.x + bar.size.x * lim / top
+	draw_rect(Rect2(bar.position, Vector2(bar.size.x * clampf(v / top, 0.0, 1.0), bar.size.y)),
+		Color(0.4, 0.8, 1.0) if v <= lim + 0.3 else Color(1, 0.5, 0.3))
+	draw_rect(Rect2(mark - 1.0, bar.position.y - 4.0, 2.0, bar.size.y + 8.0), Color.WHITE)
+
+
 ## Pit panel (left, under the timing): pit call, limiter, plan, stops, stop time.
 func _draw_pit_panel(me: int) -> void:
 	var o := Vector2.ZERO
@@ -506,9 +590,9 @@ func _draw_pit_panel(me: int) -> void:
 		var head := "PIT"
 		var hc := Color(1, 1, 1, 0.7)
 		match phase:
-			PitRules.PHASE_APPROACH: head = "BOXING: CAR DRIVING TO THE PITS"
+			PitRules.PHASE_APPROACH: head = "BOXING: FOLLOW THE PIT LINE" if pits.self_drives(me) else "BOXING: CAR DRIVING TO THE PITS"
 			PitRules.PHASE_ENTRY: head = "PIT LANE: %d KM/H LIMIT" % roundi(sim.track.pit_speed_limit * 3.6)
-			PitRules.PHASE_LIMIT: head = "PIT LANE, TO YOUR BOX"
+			PitRules.PHASE_LIMIT: head = "STOP ON YOUR BOX" if pits.self_drives(me) else "PIT LANE, TO YOUR BOX"
 			PitRules.PHASE_SERVICE: head = "PIT STOP  %.1f s" % float(p["service_left"])
 			PitRules.PHASE_LEAVE, PitRules.PHASE_EXIT: head = "PIT EXIT"
 			_:
