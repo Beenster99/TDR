@@ -26,6 +26,7 @@ var cars: Array[CarView] = []
 var safety_car: CarView           ## made on first use
 var driving_line: DrivingLineView ## the driving line aid (add_driving_aids)
 var brake_boards: BrakeBoards
+var rejoin_marker: RejoinMarker  ## where a pit stop rejoins (made on first use)
 var recovery: RecoveryVehicles   ## made on first use
 var marshals: MarshalsView        ## made on first use
 var pit_guide: PitGuideView      ## the pit guide for a driver driving in themselves (add_pit_guide)
@@ -106,6 +107,20 @@ func update_pit_guide(progress: float, speed: float, stopping: bool, on_marks: b
 func update_driving_line(pos: Vector2, speed: float) -> void:
 	if driving_line:
 		driving_line.update(pos, speed)
+
+
+## The band on the circuit where our car would rejoin after a clean pit
+## stop (see RejoinMarker): track metres s, back / front metres of band
+## behind / ahead of it, colour, metres past the track edges. show = false hides it.
+func set_rejoin(show: bool, s := 0.0, back := 30.0, front := 15.0, col := Color(0.4, 1.0, 0.5), widen := 0.0) -> void:
+	if rejoin_marker == null:
+		if not show:
+			return
+		rejoin_marker = RejoinMarker.new()
+		rejoin_marker.name = "RejoinMarker"
+		add_child(rejoin_marker)
+		rejoin_marker.setup(track_view)
+	rejoin_marker.show_at(show, s, back, front, col, widen)
 
 
 ## Adds a car. number = race number on the roof (0 = none); livery
@@ -318,7 +333,7 @@ func _process(_delta: float) -> void:
 		for i in cars.size():
 			pit_crews.set_car_pose(i, cars[i].pos2, cars[i].heading)
 			cars[i].pit_lift = pit_crews.car_lift(i)
-			cars[i].wheels_hidden = pit_crews.wheels_off(i)
+			cars[i].wheels_off_mask = pit_crews.wheels_off_mask(i)
 
 
 # --- Sun, sky and post-processing -------------------------------------------------
