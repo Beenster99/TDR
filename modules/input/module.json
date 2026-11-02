@@ -1,7 +1,7 @@
 {
   "id": "input",
   "name": "Input",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "status": "active",
   "summary": "Keyboard and game controller: action bindings and turning them into CarInput (deadzones, steering curve, smoothing).",
   "depends": {
