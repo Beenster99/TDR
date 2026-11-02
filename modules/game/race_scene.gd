@@ -74,7 +74,9 @@ func _ready() -> void:
 	crew.open_pit_wall.connect(pit_wall.open)
 	crew.cover = pit_wall
 	crew.car_screen_pos = func(i: int) -> Vector2:
-		return world.camera.unproject_position(car_views[i].global_position) if world.camera else Vector2(-1000, -1000)
+		if not _camera_placed or world.camera == null or world.camera.is_position_behind(car_views[i].global_position):
+			return Vector2(-1000, -1000)
+		return world.camera.unproject_position(car_views[i].global_position)
 	driver_radio = TeamRadio.new()
 	layer.add_child(driver_radio)
 	driver_radio.setup(session, session.local_car, true)
@@ -114,6 +116,7 @@ func _is_crew() -> bool:
 
 
 var _was_crew := false
+var _camera_placed := false
 
 
 ## Shows the driving HUD or the pit wall console for the local role, and
@@ -302,6 +305,7 @@ func _process(delta: float) -> void:
 	if rot:
 		camera.rotation = heading + PI * 0.5
 	world.set_camera(camera.get_screen_center_position(), z, camera.rotation if rot else 0.0)
+	_camera_placed = true
 	_maybe_screenshot()
 
 
