@@ -111,11 +111,14 @@ static func new_state(compound_id: String) -> Dictionary:
 	}
 
 
+## The pit window never includes the last lap: the boxes are past the finish
+## line, so a car that came in on the last lap would finish before its stop.
 func _compute_window() -> void:
 	var laps := maxi(sim.settings.laps, 1)
+	var last := maxi(laps - 1, 1)
 	var margin := roundi(laps * 0.2)
-	window_open = clampi(sim.settings.pit_window_open_lap if sim.settings.pit_window_open_lap > 0 else margin + 1, 1, laps)
-	window_close = clampi(sim.settings.pit_window_close_lap if sim.settings.pit_window_close_lap > 0 else laps - margin, window_open, laps)
+	window_open = clampi(sim.settings.pit_window_open_lap if sim.settings.pit_window_open_lap > 0 else margin + 1, 1, last)
+	window_close = clampi(sim.settings.pit_window_close_lap if sim.settings.pit_window_close_lap > 0 else laps - maxi(margin, 1), window_open, last)
 
 
 ## Lap number (1 = first lap) in which car i is now.
@@ -127,7 +130,10 @@ func in_window(lap: int) -> bool:
 	return lap >= window_open and lap <= window_close
 
 
+## Mandatory stops car i still has to make (none in a one-lap race).
 func mandatory_left(i: int) -> int:
+	if sim.settings.laps < 2:
+		return 0
 	return maxi(sim.settings.mandatory_pit_stops - int(sim.entries[i].pit["window_stops"]), 0)
 
 

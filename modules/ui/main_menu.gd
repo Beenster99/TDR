@@ -280,7 +280,7 @@ func _build_ui() -> void:
 	status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	root.add_child(status_label)
 	var help := Label.new()
-	help.text = "Drive: W/S/A/D or arrows  ·  Pad: RT throttle, LT brake, left stick steer\nZoom (hold): Q/E or mouse wheel, Z whole track  ·  Pad: LB/RB or right stick, R3 whole track  ·  C/Y camera  ·  R/Back restart  ·  Esc/Start menu\nPits: P/B box this lap, L/L3 pit limiter, T/D-pad right tyres, F/D-pad left fuel"
+	help.text = "Drive: W/S/A/D or arrows  ·  Pad: RT throttle, LT brake, left stick steer\nZoom (hold): Q/E or mouse wheel, Z whole track  ·  Pad: LB/RB or right stick, R3 whole track  ·  C/Y camera  ·  R/Back restart  ·  Esc/Start menu\nPits: B or D-pad left box this lap  ·  L or L3 pit limiter  ·  T or pad B next tyres  ·  F next fuel"
 	help.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	help.modulate = Color(1, 1, 1, 0.45)
 	help.add_theme_font_size_override("font_size", 13)
