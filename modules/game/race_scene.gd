@@ -15,6 +15,7 @@ var pit_wall: StrategistScreen
 var results: PanelContainer
 var rotate_camera := false
 var _results_shown := false
+var _forced := {}
 
 
 func _ready() -> void:
@@ -105,9 +106,9 @@ func _physics_process(delta: float) -> void:
 	session.tick(inp)
 	# Testing: --force-sc 30 sends the safety car out after 30 s (--force-vsc too).
 	for opt in ["force-sc", "force-vsc"]:
-		if GameData.arg(opt) and not has_meta(opt) and session.is_authority() \
+		if GameData.arg(opt) and not _forced.has(opt) and session.is_authority() \
 				and session.sim.race_time >= float(GameData.arg(opt)):
-			set_meta(opt, true)
+			_forced[opt] = true
 			if opt == "force-sc":
 				session.sim.race_control.deploy_safety_car("Test")
 			else:
