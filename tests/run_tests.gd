@@ -9,6 +9,11 @@ var failures := 0
 func _init() -> void:
 	var t0 := Time.get_ticks_msec()
 	# TDR_ONLY=test_a,test_b runs just those tests (ones that take no arguments).
+	if OS.has_environment("TDR_SNAP"):
+		var rep := test_ai_race_completes()
+		test_snapshot_restore(rep)
+		quit(1 if failures > 0 else 0)
+		return
 	if OS.has_environment("TDR_ONLY"):
 		for t in OS.get_environment("TDR_ONLY").split(","):
 			call(t)
@@ -29,6 +34,7 @@ func _init() -> void:
 	test_elevation()
 	test_barriers()
 	test_pit_rules()
+	test_car_setups()
 	test_upgrades()
 	var replay := test_ai_race_completes()
 	test_deterministic_replay(replay)
@@ -340,25 +346,141 @@ func _car_at(t: TrackData, s: float, speed: float) -> CarState:
 
 
 ## One AI car (a GT3) drives one flying lap of a track on its own.
-func _solo_lap(track: TrackData, d: Dictionary) -> Dictionary:
+## Car setups (wave 4): ranges, physics effects, the advisor, AI setups, the
+## host switch, saving, and tyres that reach their temperature window.
+func test_car_setups() -> void:
+	print("car setups")
+	var d := _data()
+	var car: CarDefinition = d["cars"]["porsche_911_gt3_r"]
+	var plain := car.with_overrides({"tuning": {}})
+	check(is_equal_approx(plain.cla, car.cla) and is_equal_approx(plain.cda, car.cda)
+		and is_equal_approx(plain.aero_balance_front, car.aero_balance_front)
+		and is_equal_approx(plain.steer_rate, car.steer_rate), "an empty setup is the car as it comes")
+	check(CarSetup.defaults(car).size() == CarSetup.KEYS.size() and CarSetup.ITEMS.size() == CarSetup.KEYS.size(),
+		"%d settings, each with a default and an explanation" % CarSetup.KEYS.size())
+	var clean := CarSetup.sanitize(car, {"wing_rear": 99, "camber_front": -3.43, "bogus": 1, "brake_bias": 0.2})
+	check(clean["wing_rear"] == 10.0 and is_equal_approx(clean["camber_front"], -3.4) and not clean.has("bogus")
+		and clean["brake_bias"] >= CarSetup.range_of(car, "brake_bias")[1], "setups are clamped and snapped, unknown keys dropped")
+	var hi := car.with_overrides({"tuning": {"wing_rear": 10}})
+	var lo := car.with_overrides({"tuning": {"wing_rear": 0}})
+	check(hi.cla > car.cla and hi.cda > car.cda and hi.aero_balance_front < car.aero_balance_front and lo.cla < car.cla,
+		"rear wing: more downforce and drag, balance moves back (%.2f / %.2f / %.2f)" % [lo.cla, car.cla, hi.cla])
+	var short := car.with_overrides({"tuning": {"final_drive": CarSetup.range_of(car, "final_drive")[2]}})
+	check(CarSetup.top_speed(short, short.final_drive) < CarSetup.top_speed(car, car.final_drive), "shorter gearing, lower top speed")
+	var stiff_front := car.with_overrides({"tuning": {"arb_front": 10}})
+	check(stiff_front.roll_stiffness_front > car.roll_stiffness_front, "stiffer front bar takes more of the roll (understeer)")
+	# Tyre pressure: hot pressure rises with temperature, best at the compound's optimum.
+	var tc: TyreCompound = d["tyres"]["race_slick"]
+	check(absf(tc.hot_psi(0.0, tc.optimal_temp_c) - tc.optimal_hot_psi) < 0.01 and tc.pressure_grip_factor(tc.optimal_hot_psi) == 1.0
+		and tc.pressure_grip_factor(tc.optimal_hot_psi + 4.0) < tc.pressure_grip_factor(tc.optimal_hot_psi - 4.0)
+		and tc.pressure_heat_factor(24.0) > tc.pressure_heat_factor(30.0),
+		"tyre pressure: %.1f psi cold reaches %.1f hot at %d C; over-inflated loses most grip; soft tyres heat more" % [tc.cold_psi, tc.optimal_hot_psi, tc.optimal_temp_c])
+	# Bottoming: the lowest, softest car hits the ground in Mugello's biggest dip.
+	var mugello := TrackCatalog.load_track("mugello")
+	var low_soft := car.with_overrides({"tuning": {"ride_front": 48, "ride_rear": 58, "spring_front": 140, "spring_rear": 120,
+		"damper_front": 1, "damper_rear": 1}})
+	var dip_s := 0.0
+	for k in mugello.point_count():
+		if mugello.vertical_curvature_at(mugello.cum_s[k]) > mugello.vertical_curvature_at(dip_s):
+			dip_s = mugello.cum_s[k]
+	var bottom := []
+	for def in [car, low_soft]:
+		var st := CarState.new()
+		st.pos = mugello.position_at(dip_s)
+		st.heading = mugello.heading_at(dip_s)
+		st.vel = Vector2.from_angle(st.heading) * 60.0
+		st.tyre_temp = PackedFloat64Array([95.0, 95.0, 95.0, 95.0])
+		var q := mugello.project(st.pos)
+		st.track_idx = q["idx"]
+		var inp := CarInput.new()
+		inp.throttle = 1.0
+		CarPhysics.step(st, inp, def, tc, SimEnvironment.from_dict({}), mugello, 1.0 / 240.0, 0.0, [], 0)
+		bottom.append(st.bottoming)
+	check(bottom[0] < 0.05 and bottom[1] > 0.2, "low and soft bottoms out in Mugello's dip (default %.2f, low %.2f)" % [bottom[0], bottom[1]])
+	# The advisor: less wing at Monza than at the Hungaroring, gearing to suit,
+	# ride height raised for Mugello's compressions, fuel for the race.
+	var monza := TrackCatalog.load_track("monza")
+	var hun := TrackCatalog.load_track("budapest")
+	var r_monza := SetupAdvisor.recommend(car, monza, {"track_c": 35.0, "compound": tc})
+	var r_hun := SetupAdvisor.recommend(car, hun, {"track_c": 35.0, "compound": tc})
+	var r_mug := SetupAdvisor.recommend(car, mugello, {"track_c": 30.0, "compound": tc, "fuel_enabled": true, "laps": 5})
+	check(r_monza["wing_rear"] < r_hun["wing_rear"] and r_monza["final_drive"] <= r_hun["final_drive"],
+		"advisor: Monza wing %d, gearing %.2f; Hungaroring wing %d, gearing %.2f" % [r_monza["wing_rear"], r_monza["final_drive"], r_hun["wing_rear"], r_hun["final_drive"]])
+	var mug_def := car.with_overrides({"tuning": r_mug})
+	var sink := SetupAdvisor.worst_sink(mug_def, SetupAdvisor.analyse(mug_def, mugello))
+	check(mug_def.ride_front_mm - sink[0] >= mug_def.plank_mm and mug_def.ride_rear_mm - sink[1] >= mug_def.plank_mm
+		and r_mug["fuel_l"] > 10.0 and r_mug["fuel_l"] <= car.fuel_capacity_l,
+		"advisor: Mugello floor clear in the compressions (%d/%d mm), %d L for 5 laps" % [r_mug["ride_front"], r_mug["ride_rear"], r_mug["fuel_l"]])
+	var hot := SetupAdvisor.recommend(car, monza, {"track_c": 50.0, "compound": tc})
+	check(hot["pressure_front"] < r_monza["pressure_front"], "advisor: lower cold pressures on a hot track (%+.1f vs %+.1f psi)" % [hot["pressure_front"], r_monza["pressure_front"]])
+	check(not SetupAdvisor.notes(car, monza).is_empty(), "advisor: track notes (%s)" % SetupAdvisor.notes(car, monza)[0])
+	# AI setups at race start, and the host switch.
+	var s := RaceSettings.new()
+	s.track_id = "monza"
+	s.ai_count = 3
+	s.car_class = "GT3"
+	var start := RaceFactory.plan(s, [{"name": "me", "car_id": "porsche_911_gt3_r", "setup": {"tuning": {"wing_rear": 7}}}], d["cars"], d["drivers"], monza)
+	var all_tuned := true
+	for e in start["entries"]:
+		all_tuned = all_tuned and e["setup"].has("tuning")
+	var sim := RaceFactory.build_sim(start, d["cars"], d["tyres"], monza)
+	var me := sim.car_count() - 1
+	check(all_tuned and sim.defs[me].tuning.get("wing_rear", 0.0) == 7.0 and sim.defs[0].tuning.has("final_drive"),
+		"every AI car gets a setup, players keep theirs")
+	s.tuning_enabled = false
+	var fixed := RaceFactory.build_sim(RaceFactory.plan(s, [{"name": "me", "car_id": "porsche_911_gt3_r", "setup": {"tuning": {"wing_rear": 7}}}],
+		d["cars"], d["drivers"], monza), d["cars"], d["tyres"], monza)
+	var none := true
+	for def in fixed.defs:
+		none = none and def.tuning.is_empty()
+	check(none, "car setups off: everyone races the default setup")
+	# Fuel load counts only when fuel is used.
+	s.tuning_enabled = true
+	s.fuel_enabled = true
+	s.ai_count = 0
+	var fuel_sim := RaceFactory.build_sim(RaceFactory.plan(s, [{"name": "me", "car_id": "porsche_911_gt3_r", "setup": {"tuning": {"fuel_l": 30}}}],
+		d["cars"], d["drivers"], monza), d["cars"], d["tyres"], monza)
+	check(absf(fuel_sim.cars[0].fuel_l - 30.0) < 0.01, "setup fuel load: %.0f L on the grid" % fuel_sim.cars[0].fuel_l)
+	# Saving per car per track.
+	SetupStore.save_setup("test_car", "test_track", {"wing_rear": 2.0})
+	var back := SetupStore.load_setup("test_car", "test_track")
+	SetupStore.erase("test_car", "test_track")
+	check(back.get("wing_rear", -1.0) == 2.0 and not SetupStore.has("test_car", "test_track"), "setups save and load per car per track")
+	# On track: tyres reach their window, and the recommended setup is quicker at Monza.
+	var lap_def := _solo_lap(monza, d)
+	var lap_rec := _solo_lap(monza, d, {"tuning": r_monza})
+	check(lap_def["front_c"] > 85.0 and lap_def["front_c"] < 112.0 and lap_def["rear_c"] > 85.0 and lap_def["rear_c"] < 112.0,
+		"slicks in their window on lap 2: front %.0f C, rear %.0f C (best %d C)" % [lap_def["front_c"], lap_def["rear_c"], tc.optimal_temp_c])
+	# AI laps vary by a few tenths, so: no slower than the default (within 1%).
+	check(lap_rec["time"] > 0.0 and lap_rec["time"] < lap_def["time"] * 1.01, "Monza: recommended setup %s vs default %s" % [_laptime(lap_rec["time"]), _laptime(lap_def["time"])])
+
+
+func _solo_lap(track: TrackData, d: Dictionary, setup: Dictionary = {}) -> Dictionary:
 	var s := RaceSettings.new()
 	s.track_id = track.id
 	s.ai_count = 0
 	s.laps = 2
 	s.countdown_s = 0.5
-	var start := RaceFactory.plan(s, [{"name": "bot", "car_id": "porsche_911_gt3_r"}], d["cars"], [])
+	var start := RaceFactory.plan(s, [{"name": "bot", "car_id": "porsche_911_gt3_r", "setup": setup}], d["cars"], [], track)
 	var sim := RaceFactory.build_sim(start, d["cars"], d["tyres"], track)
 	var ai := AIDriver.new(track, sim.defs[0], sim.compounds[0], {"skill": 0.95, "consistency": 1.0}, 1)
 	var offs := 0
 	var was_off := false
+	var temps := [0.0, 0.0, 0]
 	while sim.entries[0].laps_done < 2 and sim.tick < 60 * 600:
 		sim.step([ai.get_input(sim, 0)])
 		var off := sim.cars[0].surface >= TrackData.Surface.GRASS
 		if off and not was_off:
 			offs += 1
 		was_off = off
+		if sim.entries[0].laps_done == 1:
+			var c := sim.cars[0]
+			temps[0] += (c.tyre_temp[0] + c.tyre_temp[1]) * 0.5
+			temps[1] += (c.tyre_temp[2] + c.tyre_temp[3]) * 0.5
+			temps[2] += 1
 	var e := sim.entries[0]
-	return {"time": e.lap_times[1] if e.lap_times.size() > 1 else -1.0, "offs": offs}
+	return {"time": e.lap_times[1] if e.lap_times.size() > 1 else -1.0, "offs": offs,
+		"front_c": temps[0] / maxf(temps[2], 1), "rear_c": temps[1] / maxf(temps[2], 1)}
 
 
 func test_input_wire_format() -> void:
@@ -656,7 +778,31 @@ func test_snapshot_restore(rep: Dictionary) -> void:
 	for k in range(rep["mid_tick"], inputs.size()):
 		_replay_pit_calls(sim, rep["pit_calls"][k])
 		sim.step(inputs[k])
-	check(sim.state_hash() == rep["end_hash"], "snapshot restore + replay matches the original race")
+	var same: bool = sim.state_hash() == rep["end_hash"]
+	check(same, "snapshot restore + replay matches the original race")
+	if not same:
+		var sa: Dictionary = rep["sim"].snapshot()
+		var sb := sim.snapshot()
+		for k in ["cars", "entries", "env", "pits", "race_control"]:
+			_print_snapshot_diff(sa[k], sb[k], "/" + k)
+
+
+## Where two snapshots differ (first few differences), to debug determinism.
+func _print_snapshot_diff(a, b, path: String) -> void:
+	if a is Dictionary and b is Dictionary:
+		for k in a:
+			if var_to_bytes(a[k]) != var_to_bytes(b.get(k)):
+				_print_snapshot_diff(a[k], b.get(k), path + "/" + str(k))
+				return
+	elif (a is Array or a is PackedFloat64Array) and typeof(a) == typeof(b) and a.size() == b.size():
+		for k in a.size():
+			if var_to_bytes(a[k]) != var_to_bytes(b[k]):
+				printerr("       differs at %s[%d]: %s vs %s" % [path, k, str(a[k]).left(200), str(b[k]).left(200)])
+				if not (a[k] is float or a[k] is int):
+					_print_snapshot_diff(a[k], b[k], "%s[%d]" % [path, k])
+				return
+	else:
+		printerr("       differs at %s: %s vs %s" % [path, str(a).left(300), str(b).left(300)])
 
 
 ## Wave 2: clock, temperatures and weather follow the settings, deterministically.

@@ -33,6 +33,9 @@ var damage_enabled: bool = false  ## true unless damage_level is "off"
 var damage_level: String = "off"
 var safety_car_enabled: bool = true  ## VSC + safety car (yellow flags always)
 var mandatory_pit_stops: int = 0   ## stops each car must make inside the pit window
+## Car setups (wave 4 per-track tuning): false = every car (players and AI)
+## races the default setup and the race's fuel load, for equal-car races.
+var tuning_enabled: bool = true
 ## Pit window (laps, inclusive) in which mandatory stops count. 0 = automatic:
 ## from about a fifth of the race in to a fifth before the end.
 var pit_window_open_lap: int = 0
@@ -63,7 +66,8 @@ func to_dict() -> Dictionary:
 		"mandatory_pit_stops": mandatory_pit_stops, "finish_timeout_s": finish_timeout_s,
 		"tyre_wear_rate": tyre_wear_rate, "pit_window_open_lap": pit_window_open_lap,
 		"pit_window_close_lap": pit_window_close_lap,
-		"countdown_s": countdown_s, "upgrades_mode": upgrades_mode, "session_type": session_type,
+		"countdown_s": countdown_s, "upgrades_mode": upgrades_mode, "tuning_enabled": tuning_enabled,
+		"session_type": session_type,
 	}
 
 

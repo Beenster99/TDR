@@ -12,6 +12,7 @@ var max_value := 10.0
 var step_value := 1.0
 var value = 0
 var suffix := ""
+var loop_options := true       ## choice lists loop round at the ends
 
 
 static func numeric(p_label: String, p_min: float, p_max: float, p_step: float, p_value: float, p_suffix := "") -> Stepper:
@@ -66,7 +67,7 @@ func _nudge(dir: int, wrap: bool) -> void:  # wrap: numeric values loop when pre
 			if options[k][0] == value:
 				i = k
 		i += dir
-		i = posmod(i, options.size())
+		i = posmod(i, options.size()) if loop_options else clampi(i, 0, options.size() - 1)
 		value = options[i][0]
 	_refresh()
 	Sound.ui("ui_tick")

@@ -1,7 +1,7 @@
 {
   "id": "ui",
   "name": "UI",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "status": "active",
   "summary": "Screens and overlays: main menu, lobby, race settings, the in-race HUD, and controller-friendly widgets (Stepper), and the pit wall (StrategistScreen: timing, gaps, pit windows, weather radar, team radio feed).",
   "depends": {
@@ -21,8 +21,10 @@
     "RaceHud",
     "Stepper",
     "StrategistScreen",
-    "GarageScreen"
+    "GarageScreen",
+    "SetupScreen",
+    "SetupStore"
   ],
   "internal": [],
-  "notes": "Main menu scene: main_menu.tscn."
+  "notes": "Main menu scene: main_menu.tscn. SetupScreen: the controller-friendly car setup screen; SetupStore saves setups per car per track in user://setups/."
 }

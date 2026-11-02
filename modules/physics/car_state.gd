@@ -55,6 +55,12 @@ var slip_angle_rear: float = 0.0
 var grip_usage_rear: float = 0.0
 var wheelspin: bool = false
 var load_factor: float = 1.0  ## weight on the tyres vs flat ground (crests < 1, dips > 1)
+## Setup telemetry (wave 4): ride height now (mm), how hard the floor hits
+## the ground (0 = clear .. 1 = bottomed out), hot tyre pressures (psi).
+var ride_front: float = 60.0
+var ride_rear: float = 70.0
+var bottoming: float = 0.0
+var tyre_psi: PackedFloat64Array = [27.5, 27.5, 27.5, 27.5]
 
 
 func speed() -> float:
