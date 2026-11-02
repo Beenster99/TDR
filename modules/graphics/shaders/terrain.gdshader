@@ -1,6 +1,6 @@
 shader_type spatial;
 // Grass around the circuit: colour noise, mown stripes near the track,
-// optional hillshade boost and contour lines for elevation.
+// optional hillshade boost for elevation.
 //   COLOR.r : 1 near the track (mown stripes), 0 far away (rougher meadow)
 
 uniform sampler2D noise : filter_linear_mipmap, repeat_enable;
@@ -9,8 +9,6 @@ uniform vec3 grass_dry : source_color = vec3(0.42, 0.42, 0.22);
 uniform float dryness = 0.25;
 uniform float hillshade = 0.0;
 uniform vec3 light_dir = vec3(0.5, 0.6, 0.6);
-uniform float contours = 0.0;
-uniform float contour_step = 2.0;
 uniform float wetness = 0.0;
 uniform float stripe_angle = 0.0;
 // Real ground from map data (Scenery): RGB colour, A how much it replaces the grass.
@@ -18,12 +16,10 @@ uniform sampler2D ground_map : source_color, filter_linear_mipmap, repeat_disabl
 uniform vec4 ground_rect = vec4(0.0, 0.0, 1.0, 1.0);   // origin x, y and size in metres
 uniform float ground_on = 0.0;
 
-varying float h;
 varying vec3 wn;
 varying vec3 wp;
 
 void vertex() {
-	h = VERTEX.y;
 	wn = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz);
 	wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 }
@@ -51,13 +47,6 @@ void fragment() {
 	}
 	vec3 L = normalize(light_dir);
 	c *= clamp(1.0 + hillshade * (dot(normalize(wn), L) - L.y), 0.55, 1.5);
-	if (contours > 0.0) {
-		float g = h / contour_step;
-		float f = abs(fract(g + 0.5) - 0.5) / max(fwidth(g), 1e-4);
-		float line = 1.0 - clamp(f - 0.5, 0.0, 1.0);
-		float major = abs(fract(h / (contour_step * 5.0) + 0.5) - 0.5) < 0.1 ? 1.0 : 0.6;
-		c = mix(c, c * 0.55, line * contours * major);
-	}
 	c *= 1.0 - 0.2 * wetness;
 	ALBEDO = c;
 	ROUGHNESS = mix(0.95, 0.6, wetness);
