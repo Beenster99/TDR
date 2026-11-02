@@ -1,0 +1,6 @@
+{
+  "format": 1,
+  "notes": "Names for the co-drivers who share a car with the lead driver when a race has more than one driver per car (RaceSettings.drivers_per_car). RaceFactory pairs a first and a last name at random (from the race seed), skipping names already in the race. Their traits are based on the lead driver's, a little lower.",
+  "first": ["Alex", "Bruno", "Carla", "Dario", "Elin", "Felix", "Greta", "Hugo", "Ines", "Jonas", "Kai", "Lena", "Marco", "Nadia", "Oscar", "Paula", "Quentin", "Rosa", "Sami", "Tilda", "Umberto", "Vera", "Wim", "Yara", "Zeno", "Ayumi", "Ben", "Chloe", "Diego", "Eva"],
+  "last": ["Albers", "Brandt", "Castell", "Dufour", "Eriksen", "Fontana", "Grady", "Holm", "Ibarra", "Janssen", "Keane", "Lindqvist", "Moreau", "Navarro", "Okafor", "Pires", "Quinlan", "Rask", "Sato", "Thorne", "Ueda", "Varga", "Whitlock", "Yilmaz", "Zanetti", "Ashby", "Brenner", "Calloway", "Delacroix", "Ferraz"]
+}

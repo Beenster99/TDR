@@ -36,6 +36,11 @@ var damage_enabled: bool = false  ## true unless damage_level is "off"
 var damage_level: String = "off"
 var safety_car_enabled: bool = true  ## VSC + safety car (yellow flags always)
 var mandatory_pit_stops: int = 0   ## stops each car must make inside the pit window
+## Drivers sharing each car (1-3). With 2 or more, every AI car has a driver
+## line-up that changes at its pit stops, and a solo player gets an AI
+## co-driver they can hand the car to at a stop (see docs/PITS.md).
+var drivers_per_car: int = 1
+const MAX_DRIVERS_PER_CAR := 3
 ## Car setups (wave 4 per-track tuning): false = every car (players and AI)
 ## races the default setup and the race's fuel load, for equal-car races.
 var tuning_enabled: bool = true
@@ -75,7 +80,7 @@ func to_dict() -> Dictionary:
 		"environment": environment, "grid_order": grid_order, "ai_difficulty": ai_difficulty, "fuel_enabled": fuel_enabled, "fuel_rate": fuel_rate,
 		"start_fuel_l": start_fuel_l, "tyre_wear_enabled": tyre_wear_enabled,
 		"damage_enabled": damage_enabled, "damage_level": damage_level, "safety_car_enabled": safety_car_enabled,
-		"mandatory_pit_stops": mandatory_pit_stops, "finish_timeout_s": finish_timeout_s,
+		"mandatory_pit_stops": mandatory_pit_stops, "drivers_per_car": drivers_per_car, "finish_timeout_s": finish_timeout_s,
 		"tyre_wear_rate": tyre_wear_rate, "pit_window_open_lap": pit_window_open_lap,
 		"pit_window_close_lap": pit_window_close_lap,
 		"countdown_s": countdown_s, "upgrades_mode": upgrades_mode, "tuning_enabled": tuning_enabled,

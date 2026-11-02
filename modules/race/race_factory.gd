@@ -77,7 +77,64 @@ static func plan(settings: RaceSettings, humans: Array, cars: Dictionary, driver
 		entries.append(e.describe())
 	apply_balance(entries, settings.upgrades_mode, cars)
 	_order_grid(entries, settings.grid_order, cars, rng)
+	if settings.drivers_per_car > 1:
+		add_co_drivers(entries, settings.drivers_per_car, settings.seed)
 	return {"settings": settings.to_dict(), "entries": entries}
+
+
+const CO_DRIVERS_PATH := "res://modules/race/data/co_drivers.json"
+## A solo player's AI co-driver: a steady, decent driver.
+const PLAYER_CO_DRIVER := {"pace": 0.86, "consistency": 0.9, "aggression": 0.45, "overtaking": 0.6,
+	"defending": 0.6, "tyre_management": 0.75, "wet_skill": 0.7, "composure": 0.8}
+
+
+## Drivers sharing cars (RaceSettings.drivers_per_car > 1), on entry
+## descriptions: every AI car gets a "lineup" of that many drivers (the lead
+## driver first), and a player racing alone gets one AI co-driver in their
+## crew (RaceEntry.AI_PEER) to hand the car to at a stop. Co-op crews share
+## the car between themselves. Names come from co_drivers.json, never one
+## already in the race; traits are the lead driver's, a little lower.
+static func add_co_drivers(entries: Array, per_car: int, seed: int) -> void:
+	per_car = clampi(per_car, 1, RaceSettings.MAX_DRIVERS_PER_CAR)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed * 13 + 5   # its own stream: the grid itself stays as it was
+	var data = JsonData.load_json(CO_DRIVERS_PATH)
+	var first: Array = data.get("first", ["Alex"]) if data is Dictionary else ["Alex"]
+	var last: Array = data.get("last", ["Reserve"]) if data is Dictionary else ["Reserve"]
+	var used := {}
+	for d in entries:
+		used[str(d.get("driver_name", ""))] = true
+		for m in d.get("crew", []):
+			used[str(m.get("name", ""))] = true
+	var pick_name := func() -> String:
+		for _t in 200:
+			var n := "%s %s" % [first[rng.randi_range(0, first.size() - 1)], last[rng.randi_range(0, last.size() - 1)]]
+			if not used.has(n):
+				used[n] = true
+				return n
+		return "Reserve %d" % used.size()
+	for d in entries:
+		if d.get("is_ai", false):
+			var lead: Dictionary = d.get("traits", {})
+			var lineup := [{"name": d.get("driver_name", "AI"), "traits": lead}]
+			for _k in per_car - 1:
+				var t := {}
+				for key in lead:
+					t[key] = clampf(float(lead[key]) * rng.randf_range(0.9, 1.0), 0.0, 1.0)
+				if t.is_empty():
+					t = {"pace": 0.86, "consistency": 0.88}
+				lineup.append({"name": pick_name.call(), "traits": t})
+			d["lineup"] = lineup
+		else:
+			var crew: Array = (d.get("crew", []) as Array).duplicate(true)
+			if crew.size() != 1 or crew[0].get("role", "") != RaceEntry.ROLE_DRIVER:
+				continue
+			d["crew"] = crew
+			var t := {}
+			for key in PLAYER_CO_DRIVER:
+				t[key] = clampf(PLAYER_CO_DRIVER[key] + rng.randf_range(-0.04, 0.04), 0.0, 1.0)
+			crew.append({"peer_id": RaceEntry.AI_PEER, "name": pick_name.call(), "role": RaceEntry.ROLE_PIT_WALL,
+				"ai": true, "traits": t})
 
 
 ## Every AI car gets a good setup for this track and the start conditions

@@ -141,6 +141,13 @@ func on_events(evs: Array) -> void:
 				strategies[car] = {"text": str(ev.get("text", "")), "plan": ev.get("plan", {}), "t": _now()}
 				feed.add({"t": _now(), "lap": _leader_laps, "kind": "strategy", "car": car,
 					"text": str(ev.get("text", ""))})
+			"pit_stop":
+				# Driver line-ups: who took over in the box.
+				var who := str(ev.get("driver", ""))
+				if who != "":
+					var car := int(ev.get("car", -1))
+					feed.add({"t": _now(), "lap": _leader_laps, "kind": "pit", "car": car,
+						"text": "Driver change: %s takes over the car" % who})
 			"flag", "safety_car", "penalty", "warning":
 				# Race control (wave 3 safety car / stewards), shown as it comes.
 				var text := str(ev.get("text", ev.get("reason", "")))

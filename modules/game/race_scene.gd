@@ -229,14 +229,25 @@ func _tick_once(delta: float) -> void:
 
 func _after_tick() -> void:
 	# Testing: --request-swap asks for a driver change (this player takes the
-	# wheel at the next stop) once the race is green.
+	# wheel at the next stop) once the race is green (and once they're on the
+	# pit wall, after --hand-over).
 	if GameData.arg("request-swap") and not _forced.has("swap") and session.team_car >= 0 \
-			and session.local_car < 0 and session.sim.phase == RaceSim.Phase.RACING:
+			and session.local_car < 0 and session.sim.phase == RaceSim.Phase.RACING \
+			and session.sim.pits.phase(session.team_car) == PitRules.PHASE_NONE:
 		_forced["swap"] = true
 		var driver := session.sim.entries[session.team_car].driver_peer()
-		if driver > 0:
+		if driver > 0 or RaceEntry.is_ai_peer(driver):
 			session.request_role_swap(session.team_car, session.local_peer, driver)
 			print("[coop] %s asked to take over from peer %d at the next stop" % [Net.local_name, driver])
+			if RaceEntry.is_ai_peer(driver):
+				session.request_pit(session.team_car, {"box": true})  # call our AI co-driver in
+	# Testing: --hand-over boxes this player's car and hands it to their
+	# co-driver at that stop, once the race is green.
+	if GameData.arg("hand-over") and not _forced.has("hand_over") and session.local_car >= 0 \
+			and session.sim.phase == RaceSim.Phase.RACING:
+		_forced["hand_over"] = true
+		print("[coop] %s: %s" % [Net.local_name, RaceHud.toggle_driver_change(session, session.local_car)])
+		session.request_pit(session.local_car, {"box": true})
 	# Testing: --force-sc 30 sends the safety car out after 30 s (--force-vsc too).
 	for opt in ["force-sc", "force-vsc"]:
 		if GameData.arg(opt) and not _forced.has(opt) and session.is_authority() \
@@ -323,7 +334,7 @@ func _process(delta: float) -> void:
 	var speed := car.speed()
 	# Held zoom: keys, bumpers and the right stick all ramp smoothly.
 	var zin := Input.get_action_strength("zoom_out") - Input.get_action_strength("zoom_in")
-	if absf(zin) > 0.0:
+	if absf(zin) > 0.0 and not pit_wall.visible:  # the bumpers pick tyres on the pit wall
 		_set_zoom(_zoom_target + zin * ZOOM_RATE * delta)
 	_zoom = lerpf(_zoom, _zoom_target, 1.0 - exp(-8.0 * delta))
 	# Zoom level: log scale from close up to the whole track, so every bit
@@ -444,7 +455,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _has_crew_mates() -> bool:
-	return session.sim.entries[session.local_car].crew.size() > 1
+	return session.sim.entries[session.local_car].human_crew().size() > 1
 
 
 ## Pit calls for the car this player drives (see PitRules / RaceSession.request_pit).
@@ -476,9 +487,17 @@ func _pit_input(event: InputEvent) -> bool:
 		var next: float = FUEL_STEPS[(k + 1) % FUEL_STEPS.size()]
 		session.request_pit(me, {"fuel": next})
 		hud.flash("Next stop fuel: " + RaceHud.fuel_plan_text(next), 1.5)
+	elif event.is_action_pressed("pit_wheels"):
+		var ch := PitRules.WHEEL_CHOICES
+		var next: String = ch[(ch.find(str(plan.get("wheels", PitRules.WHEELS_ALL))) + 1) % ch.size()]
+		session.request_pit(me, {"wheels": next})
+		hud.flash("Next stop: change " + RaceHud.wheels_text(next), 1.5)
+	elif event.is_action_pressed("pit_driver"):
+		hud.flash(RaceHud.toggle_driver_change(session, me), 2.0)
 	else:
 		return false
 	return true
+
 
 
 func _on_events(evs: Array) -> void:

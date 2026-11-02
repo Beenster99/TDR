@@ -41,6 +41,7 @@ var difficulty_stepper: Stepper
 var fuel_stepper: Stepper
 var wear_stepper: Stepper
 var stops_stepper: Stepper
+var drivers_stepper: Stepper
 var safety_car_stepper: Stepper
 var damage_stepper: Stepper
 var tuning_stepper: Stepper
@@ -157,6 +158,8 @@ func _handle_cmdline() -> void:
 		wear_stepper.set_value(float(GameData.arg("tyre-wear")))
 	if GameData.arg("pit-stops"):
 		stops_stepper.set_value(int(GameData.arg("pit-stops")))
+	if GameData.arg("drivers"):
+		drivers_stepper.set_value(int(GameData.arg("drivers")))
 	if GameData.arg("safety-car"):
 		safety_car_stepper.set_value(str(GameData.arg("safety-car")) != "off")
 	if GameData.arg("damage"):
@@ -416,6 +419,8 @@ func _build_ui() -> void:
 	fuel_stepper = Stepper.choice("Fuel use", rates, 0.0)
 	wear_stepper = Stepper.choice("Tyre wear", rates, 0.0)
 	stops_stepper = Stepper.numeric("Mandatory pit stops", 0, 3, 1, 0)
+	drivers_stepper = Stepper.choice("Drivers per car", [[1, "1 (no driver changes)"],
+		[2, "2 (AI co-driver, change at stops)"], [3, "3 (endurance line-ups)"]], 2)
 	safety_car_stepper = Stepper.choice("Safety car", [[true, "On (yellows, VSC and safety car)"], [false, "Off (yellow flags only)"]], true)
 	damage_stepper = Stepper.choice("Damage", [["off", "Off"], ["visual", "Visual only"],
 		["full", "Full (affects the car)"]], "full")
@@ -426,7 +431,7 @@ func _build_ui() -> void:
 		RaceSettings.UPGRADES_ON)
 	_settings_steppers = [laps_stepper, ai_stepper, difficulty_stepper, tod_stepper, clock_stepper, weather_stepper,
 		weather_change_stepper, grid_stepper, damage_stepper, safety_car_stepper, fuel_stepper, wear_stepper, stops_stepper,
-		upgrades_stepper, tuning_stepper]
+		drivers_stepper, upgrades_stepper, tuning_stepper]
 
 	var single := _page(root, "single")
 	var single_settings := _settings_grid()
@@ -632,6 +637,7 @@ func _settings_from_ui() -> RaceSettings:
 	s.tyre_wear_rate = float(wear_stepper.value)
 	s.tyre_wear_enabled = s.tyre_wear_rate > 0.0
 	s.mandatory_pit_stops = int(stops_stepper.value)
+	s.drivers_per_car = int(drivers_stepper.value)
 	s.safety_car_enabled = bool(safety_car_stepper.value)
 	s.set_damage_level(str(damage_stepper.value))
 	s.upgrades_mode = str(upgrades_stepper.value)
@@ -888,6 +894,7 @@ func _refresh_lobby() -> void:
 		fuel_stepper.set_value(Net.settings.fuel_rate if Net.settings.fuel_enabled else 0.0)
 		wear_stepper.set_value(Net.settings.tyre_wear_rate if Net.settings.tyre_wear_enabled else 0.0)
 		stops_stepper.set_value(Net.settings.mandatory_pit_stops)
+		drivers_stepper.set_value(Net.settings.drivers_per_car)
 		safety_car_stepper.set_value(Net.settings.safety_car_enabled)
 		damage_stepper.set_value(Net.settings.effective_damage_level())
 		upgrades_stepper.set_value(Net.settings.upgrades_mode)

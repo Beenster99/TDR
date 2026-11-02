@@ -9,7 +9,11 @@ var is_ai: bool = false
 ## driver's inputs steer the car. [{ "peer_id": int, "name": String, "role": String }]
 var crew: Array = []
 var car_id: String = ""
-var traits: Dictionary = {}
+var traits: Dictionary = {}      ## AI: the driver at the wheel now (changes with the line-up)
+## AI cars that share the car between drivers (RaceSettings.drivers_per_car):
+## [{name, traits}], the first is the starting driver (driver_name). The one
+## at the wheel is pit["driver_idx"]; changes happen at pit stops (PitRules).
+var lineup: Array = []
 var setup: Dictionary = {}       ## CarDefinition overrides: upgrades, tuning ("tuning"), tyres, balance
 ## Paint scheme {pattern, primary, secondary, accent} ({} = the car's default).
 var livery: Dictionary = {}
@@ -56,8 +60,11 @@ func from_dict(d: Dictionary) -> void:
 
 
 func describe() -> Dictionary:
-	return {"driver_name": driver_name, "is_ai": is_ai, "crew": crew,
+	var d := {"driver_name": driver_name, "is_ai": is_ai, "crew": crew,
 		"car_id": car_id, "traits": traits, "setup": setup, "livery": livery}
+	if not lineup.is_empty():
+		d["lineup"] = lineup
+	return d
 
 
 static func from_description(d: Dictionary) -> RaceEntry:
@@ -69,6 +76,7 @@ static func from_description(d: Dictionary) -> RaceEntry:
 	e.traits = d.get("traits", {})
 	e.setup = d.get("setup", {})
 	e.livery = d.get("livery", {})
+	e.lineup = d.get("lineup", []).duplicate(true)
 	return e
 
 
@@ -77,6 +85,10 @@ const ROLE_PIT_CREW := "pit_crew"
 const ROLE_STRATEGIST := "strategist"
 ## Co-op with two players: one player is both pit crew and strategist.
 const ROLE_PIT_WALL := "pit_wall"
+## A solo player's AI co-driver is a crew member with this peer id (and
+## "ai": true, "traits"). Swapping roles with it is a driver change: the AI
+## takes the wheel at the next stop and the player runs the pit wall.
+const AI_PEER := -2
 ## Every role, in the order the lobby offers them.
 const ROLES := [ROLE_DRIVER, ROLE_PIT_CREW, ROLE_STRATEGIST, ROLE_PIT_WALL]
 
@@ -124,7 +136,39 @@ func member_role(peer_id: int) -> String:
 	return ""
 
 
-## Peer whose inputs drive this car (0 = local/offline player, -1 = nobody).
+## Whether a crew member's peer id is an AI co-driver (not a machine).
+static func is_ai_peer(peer_id: int) -> bool:
+	return peer_id <= AI_PEER
+
+
+## Crew members who are players (AI co-drivers left out).
+func human_crew() -> Array:
+	return crew.filter(func(m): return not is_ai_peer(int(m.get("peer_id", 0))))
+
+
+## The crew member at the wheel ({} when nobody, e.g. an AI car).
+func driver_member() -> Dictionary:
+	for m in crew:
+		if m.get("role", "") == ROLE_DRIVER:
+			return m
+	return {}
+
+
+## Who is driving the car now: the line-up driver at the wheel (AI cars), the
+## crew member at the wheel (players and AI co-drivers), else driver_name.
+func at_wheel() -> String:
+	if lineup.size() > 1:
+		var k := int(pit.get("driver_idx", 0))
+		if k >= 0 and k < lineup.size():
+			return str(lineup[k].get("name", driver_name))
+	var m := driver_member()
+	if not m.is_empty() and crew.size() > 1:
+		return str(m.get("name", driver_name))
+	return driver_name
+
+
+## Peer whose inputs drive this car (0 = local/offline player, -1 = nobody,
+## AI_PEER = the AI co-driver).
 func driver_peer() -> int:
 	for m in crew:
 		if m.get("role", "") == ROLE_DRIVER:

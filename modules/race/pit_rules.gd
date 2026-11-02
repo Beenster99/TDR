@@ -35,13 +35,18 @@ const ROUTE_GRIP := 1.4          ## tyre grip the route's speeds are planned for
 const BOX_DECEL := 3.5
 const LATERAL_G := 10.0          ## m/s^2 the guide plans to corner at
 const ROUTE_MAX_SPEED := 75.0
-## Stop time: the car up and down, a set of four tyres, fuel flow. Tyres and
-## fuel are done at the same time; repairs come after.
+## Stop time: the car up and down, the tyres, fuel flow. Tyres and fuel are
+## done at the same time; repairs come after.
 const STOP_BASE_S := 2.5
-const TYRE_CHANGE_S := 6.0
+const TYRE_CHANGE_S := 6.0       ## all four tyres
+## Fewer tyres are quicker: TYRE_SETUP_S + TYRE_PER_WHEEL_S for each one
+## (4 tyres = TYRE_CHANGE_S, 2 tyres 3.75 s, 1 tyre 2.6 s).
+const TYRE_SETUP_S := 1.5
+const TYRE_PER_WHEEL_S := 1.125
 const FUEL_FLOW_LPS := 3.0
-## Co-op driver change in the box: the stop lasts at least this long from
-## the moment the drivers swap (done alongside tyres and fuel).
+## Driver change in the box (co-op, a player handing over to their AI
+## co-driver, or an AI car's driver line-up): the stop lasts at least this
+## long from the moment the drivers swap (done alongside tyres and fuel).
 const DRIVER_CHANGE_S := 5.0
 
 const PHASE_NONE := ""
@@ -60,6 +65,16 @@ const TYRE_DRY := "dry"      ## the car's own dry compound
 const TYRE_INTER := "intermediate"
 const TYRE_WET := "full_wet"
 const TYRE_CHOICES := [TYRE_AUTO, TYRE_DRY, TYRE_INTER, TYRE_WET, TYRE_KEEP]
+## Which tyres to change (plan "wheels"). Wheel indices as CarState: 0 front
+## left, 1 front right, 2 rear left, 3 rear right. A change to a different
+## compound always fits all four (compounds aren't mixed on a car), and a
+## punctured tyre is always changed when the plan allows repairs.
+const WHEELS_ALL := "all"
+const WHEEL_CHOICES := ["all", "front", "rear", "left", "right", "fl", "fr", "rl", "rr"]
+const WHEEL_SETS := {"all": [0, 1, 2, 3], "front": [0, 1], "rear": [2, 3], "left": [0, 2],
+	"right": [1, 3], "fl": [0], "fr": [1], "rl": [2], "rr": [3]}
+const WHEEL_LABELS := {"all": "all four", "front": "fronts", "rear": "rears", "left": "left side",
+	"right": "right side", "fl": "front left", "fr": "front right", "rl": "rear left", "rr": "rear right"}
 ## Setup changes the crew can make during a stop (plan "setup": {key: value},
 ## absolute CarSetup values). Only when the host allows car setups.
 const PIT_SETUP_KEYS := ["wing_front", "wing_rear", "pressure_front", "pressure_rear"]
@@ -113,9 +128,12 @@ static func new_state(compound_id: String) -> Dictionary:
 	return {
 		"phase": PHASE_NONE, "auto": false, "box": false, "limiter": false,
 		"service_left": 0.0, "service_total": 0.0, "work": {},
-		"plan": {"tyre": TYRE_AUTO, "fuel": FUEL_AUTO, "repair": true},
+		"plan": {"tyre": TYRE_AUTO, "wheels": WHEELS_ALL, "fuel": FUEL_AUTO, "repair": true, "driver_change": false},
 		"compound": compound_id, "stops": 0, "window_stops": 0, "speeding": 0,
 		"stint_lap": 0, "lane_time": 0.0, "entry_lap": 0, "fuel_per_lap": 0.0, "last_stop": {},
+		# AI cars with a driver line-up (RaceEntry.lineup): who drives now, and
+		# the lap they took over.
+		"driver_idx": 0, "driver_from_lap": 1,
 	}
 
 
@@ -173,7 +191,8 @@ func controls(i: int) -> bool:
 
 ## Changes car i's pit plan and/or box flag. Only takes effect on the machine
 ## that simulates the car: RaceSession routes requests from elsewhere there.
-## changes: any of {box: bool, tyre: String, fuel: float, repair: bool,
+## changes: any of {box: bool, tyre: String, wheels: String (WHEEL_CHOICES),
+## fuel: float, repair: bool, driver_change: bool (cars with a driver line-up),
 ## setup: {key: value} for PIT_SETUP_KEYS (merged; an empty dict clears it)}
 func set_plan(i: int, changes: Dictionary) -> void:
 	var p: Dictionary = sim.entries[i].pit
@@ -182,6 +201,10 @@ func set_plan(i: int, changes: Dictionary) -> void:
 		p["box"] = bool(changes["box"]) and enabled
 	if changes.has("tyre") and str(changes["tyre"]) in TYRE_CHOICES:
 		plan["tyre"] = str(changes["tyre"])
+	if changes.has("wheels") and str(changes["wheels"]) in WHEEL_CHOICES:
+		plan["wheels"] = str(changes["wheels"])
+	if changes.has("driver_change"):
+		plan["driver_change"] = bool(changes["driver_change"]) and sim.entries[i].lineup.size() > 1
 	if changes.has("fuel"):
 		plan["fuel"] = maxf(float(changes["fuel"]), FUEL_AUTO)
 	if changes.has("repair"):
@@ -256,13 +279,38 @@ func _plan_compound(i: int, plan: Dictionary) -> String:
 	return plan["tyre"]
 
 
+## The wheels (0-3) a wheel choice covers.
+static func wheels_of(choice: String) -> Array:
+	return (WHEEL_SETS.get(choice, WHEEL_SETS[WHEELS_ALL]) as Array).duplicate()
+
+
+## Time to change this many tyres (0 = none).
+static func tyre_time(count: int) -> float:
+	return TYRE_SETUP_S + TYRE_PER_WHEEL_S * count if count > 0 else 0.0
+
+
 ## What a stop with this plan would do and how long it would take now:
-## {tyre: compound id or "", fuel_l, repair_parts: Array, tyre_s, fuel_s, repair_s, total_s}
+## {tyre: compound id or "", wheels: [0-3 changed], fuel_l, repair_parts: Array,
+##  driver: line-up index taking over (-1 none), tyre_s, fuel_s, repair_s, total_s}
 func service_for(i: int, plan: Dictionary) -> Dictionary:
 	var c := sim.cars[i]
 	var tyre := _plan_compound(i, plan)
 	if tyre != "" and not sim.tyre_defs.has(tyre):
 		tyre = ""
+	# Which tyres: the plan's choice; all four for a new compound; and any
+	# punctured tyre when repairs are on (with the compound it runs now).
+	var wheels: Array = []
+	if tyre != "":
+		wheels = wheels_of(str(plan.get("wheels", WHEELS_ALL)))
+		if tyre != sim.compounds[i].id:
+			wheels = [0, 1, 2, 3]
+	if plan["repair"] and sim.damage_level != CarDamage.Level.OFF:
+		for w in 4:
+			if c.puncture[w] > 0.5 and not w in wheels:
+				wheels.append(w)
+				if tyre == "":
+					tyre = sim.compounds[i].id
+	wheels.sort()
 	var fuel := 0.0
 	if sim.settings.fuel_enabled:
 		var room := maxf(sim.defs[i].fuel_capacity_l - c.fuel_l, 0.0)
@@ -275,7 +323,7 @@ func service_for(i: int, plan: Dictionary) -> Dictionary:
 	if plan["repair"] and sim.damage_level != CarDamage.Level.OFF:
 		parts = CarDamage.repair_plan(c).keys()
 		repair_s = CarDamage.repair_time(c, [])
-	var tyre_s := TYRE_CHANGE_S if tyre != "" else 0.0
+	var tyre_s := tyre_time(wheels.size()) if tyre != "" else 0.0
 	var fuel_s := fuel / FUEL_FLOW_LPS
 	# Setup changes: only what differs from the car now.
 	var setup := {}
@@ -292,8 +340,37 @@ func service_for(i: int, plan: Dictionary) -> Dictionary:
 		if tyre == "" and (setup.has("pressure_front") or setup.has("pressure_rear")):
 			setup_s += PRESSURE_ONLY_S
 	var total := STOP_BASE_S + maxf(maxf(tyre_s, fuel_s), setup_s) + repair_s
-	return {"tyre": tyre, "fuel_l": fuel, "repair_parts": parts, "tyre_s": tyre_s,
-		"fuel_s": fuel_s, "repair_s": repair_s, "setup": setup, "setup_s": setup_s, "total_s": total}
+	# Driver change (cars with a driver line-up): at least DRIVER_CHANGE_S.
+	var driver := -1
+	if bool(plan.get("driver_change", false)):
+		driver = next_driver(i)
+		if driver >= 0:
+			total = maxf(total, DRIVER_CHANGE_S)
+	return {"tyre": tyre, "wheels": wheels, "fuel_l": fuel, "repair_parts": parts, "tyre_s": tyre_s,
+		"fuel_s": fuel_s, "repair_s": repair_s, "setup": setup, "setup_s": setup_s, "driver": driver, "total_s": total}
+
+
+# --- Driver line-ups (AI cars sharing a car between drivers) ---------------------
+
+## Index in RaceEntry.lineup of the driver at the wheel of car i.
+func driver_index(i: int) -> int:
+	return int(sim.entries[i].pit.get("driver_idx", 0))
+
+
+## The line-up driver who would take over at the next change (the next one
+## in the line-up, round in turn), -1 when the car has nobody to change to.
+func next_driver(i: int) -> int:
+	var e := sim.entries[i]
+	if e.lineup.size() < 2:
+		return -1
+	var now := driver_index(i)
+	return (now + 1) % e.lineup.size()
+
+
+## Laps the driver now at the wheel of car i has driven in this stint,
+## counting the lap they are on.
+func driver_stint_laps(i: int) -> int:
+	return current_lap(i) - int(sim.entries[i].pit.get("driver_from_lap", 1)) + 1
 
 
 ## Time a stop costs against staying out (lane at the limit + stop), seconds.
@@ -432,14 +509,17 @@ func _finish_service(i: int) -> void:
 	var p: Dictionary = e.pit
 	var work: Dictionary = p["work"]
 	var tyre: String = work.get("tyre", "")
-	if tyre != "" and sim.tyre_defs.has(tyre):
+	var wheels: Array = work.get("wheels", [0, 1, 2, 3])
+	if tyre != "" and sim.tyre_defs.has(tyre) and not wheels.is_empty():
 		sim.compounds[i] = sim.tyre_defs[tyre]
 		p["compound"] = tyre
-		c.tyre_wear = PackedFloat64Array([0.0, 0.0, 0.0, 0.0])
 		var warm := lerpf(sim.env.ambient_c, sim.env.track_c, 0.5) + 10.0
-		c.tyre_temp = PackedFloat64Array([warm, warm, warm, warm])
-		p["stint_lap"] = e.laps_done
-		CarDamage.repair(c, ["tyres"])  # new tyres fix punctures
+		for w in wheels:
+			c.tyre_wear[int(w)] = 0.0
+			c.tyre_temp[int(w)] = warm
+			c.puncture[int(w)] = 0.0  # a new tyre fixes a puncture
+		if wheels.size() == 4:
+			p["stint_lap"] = e.laps_done
 	c.fuel_l = minf(c.fuel_l + float(work.get("fuel_l", 0.0)), sim.defs[i].fuel_capacity_l)
 	_lap_fuel[i] = c.fuel_l
 	if not (work.get("repair_parts", []) as Array).is_empty():
@@ -448,13 +528,22 @@ func _finish_service(i: int) -> void:
 	if not setup.is_empty():
 		sim.change_setup(i, setup)
 		(p["plan"] as Dictionary).erase("setup")
+	var driver := int(work.get("driver", -1))
+	var handed := ""
+	if driver >= 0 and driver < e.lineup.size():
+		handed = str(e.lineup[driver].get("name", ""))
+		p["driver_idx"] = driver
+		p["driver_from_lap"] = current_lap(i)
+		e.traits = e.lineup[driver].get("traits", e.traits)
+	(p["plan"] as Dictionary)["driver_change"] = false
 	# A stop counts in the lap the car came into the pits.
 	var lap := int(p["entry_lap"]) if int(p["entry_lap"]) > 0 else current_lap(i)
 	p["stops"] = int(p["stops"]) + 1
 	if in_window(lap):
 		p["window_stops"] = int(p["window_stops"]) + 1
-	p["last_stop"] = {"lap": lap, "stationary_s": p["service_total"], "tyre": tyre,
-		"fuel_l": work.get("fuel_l", 0.0), "repairs": work.get("repair_parts", []), "setup": work.get("setup", {})}
+	p["last_stop"] = {"lap": lap, "stationary_s": p["service_total"], "tyre": tyre, "wheels": wheels if tyre != "" else [],
+		"fuel_l": work.get("fuel_l", 0.0), "repairs": work.get("repair_parts", []), "setup": work.get("setup", {}),
+		"driver": handed}
 	p["box"] = false
 	p["work"] = {}
 
@@ -706,8 +795,9 @@ func host_update(events: Array) -> void:
 		if int(p["stops"]) > int(was.get("stops", 0)):
 			var last: Dictionary = p.get("last_stop", {})
 			events.append({"type": "pit_stop", "car": i, "stop": p["stops"], "lap": last.get("lap", current_lap(i)),
-				"stationary_s": last.get("stationary_s", 0.0), "tyre": last.get("tyre", ""),
-				"fuel_l": last.get("fuel_l", 0.0), "in_window": int(p["window_stops"]) > int(was.get("window_stops", 0))})
+				"stationary_s": last.get("stationary_s", 0.0), "tyre": last.get("tyre", ""), "wheels": last.get("wheels", []),
+				"fuel_l": last.get("fuel_l", 0.0), "driver": last.get("driver", ""),
+				"in_window": int(p["window_stops"]) > int(was.get("window_stops", 0))})
 		if p["box"] != was.get("box", false) and p["box"]:
 			events.append({"type": "pit_request", "car": i, "lap": current_lap(i)})
 		var speeding := int(p["speeding"]) - int(was.get("speeding", 0))
@@ -731,6 +821,9 @@ func on_finished(i: int) -> void:
 func apply_remote(i: int, state: Dictionary) -> void:
 	var e := sim.entries[i]
 	e.pit = state.duplicate(true)
+	var idx := int(e.pit.get("driver_idx", 0))
+	if idx >= 0 and idx < e.lineup.size():
+		e.traits = e.lineup[idx].get("traits", e.traits)
 	var comp: String = e.pit.get("compound", "")
 	if comp != "" and sim.tyre_defs.has(comp) and sim.compounds[i].id != comp:
 		sim.compounds[i] = sim.tyre_defs[comp]
@@ -738,8 +831,9 @@ func apply_remote(i: int, state: Dictionary) -> void:
 
 ## Short signature of a car's pit state: changes when the owner should tell the host.
 static func signature(p: Dictionary) -> String:
-	return "%s|%s|%s|%s|%d|%d|%d|%s|%s|%d" % [p["phase"], p["auto"], p["box"], p["limiter"], p["stops"],
-		p["window_stops"], p["speeding"], p["compound"], str(p["plan"]), int(float(p["service_left"]) * 2.0)]
+	return "%s|%s|%s|%s|%d|%d|%d|%s|%s|%d|%d" % [p["phase"], p["auto"], p["box"], p["limiter"], p["stops"],
+		p["window_stops"], p["speeding"], p["compound"], str(p["plan"]), int(float(p["service_left"]) * 2.0),
+		int(p.get("driver_idx", 0))]
 
 
 # --- Co-op: handing a car to another machine --------------------------------

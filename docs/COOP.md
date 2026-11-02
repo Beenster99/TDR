@@ -51,7 +51,19 @@ Each car is simulated on its driver's machine. At a driver change:
    stream as before.
 
 If the driver leaves mid-race, the next crew member takes the wheel where
-the car is; if nobody is left, the host's AI drives it.
+the car is; if nobody is left, the host's AI drives it (the AI co-driver,
+when the car has one).
+
+### AI co-drivers
+
+With **Drivers per car** at 2 or more, a player racing alone gets an AI
+co-driver as a second crew member (`peer_id` `RaceEntry.AI_PEER`, `"ai":
+true`, its `traits`). It uses the same role swap: the driver asks with N
+(`RaceHud.toggle_driver_change`), the change happens in the box, and the car
+moves to the host, whose AI drives it with the co-driver's traits while the
+player runs the pit wall. Taking the wheel back is a role swap the other way
+(crew console "Driver change", then box the car). Co-op crews of two or more
+players get no AI co-driver.
 
 ## API for the role screens (multiplayer module)
 

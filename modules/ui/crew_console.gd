@@ -173,6 +173,10 @@ func _change(dir: int) -> void:
 		"tyre":
 			var ch := PitRules.TYRE_CHOICES
 			session.request_pit(car, {"tyre": ch[posmod(ch.find(str(plan["tyre"])) + dir, ch.size())]})
+		"wheels":
+			var ch := PitRules.WHEEL_CHOICES
+			var now := ch.find(str(plan.get("wheels", PitRules.WHEELS_ALL)))
+			session.request_pit(car, {"wheels": ch[posmod(now + dir, ch.size())]})
 		"fuel":
 			var cap := sim.defs[car].fuel_capacity_l
 			var f := float(plan["fuel"])
@@ -289,6 +293,12 @@ func _build_items() -> void:
 		if sim.pits.enabled:
 			_items.append(["box", "Pit call", "BOX THIS LAP" if p["box"] else "Stay out", true])
 			_items.append(["tyre", "Tyres", RaceHud.tyre_plan_text(sim, car, str(plan["tyre"])), true])
+			if str(plan["tyre"]) != PitRules.TYRE_KEEP:
+				var work := sim.pits.service_for(car, plan)
+				var which := RaceHud.wheels_text(str(plan.get("wheels", PitRules.WHEELS_ALL)))
+				if (work.get("wheels", []) as Array).size() == 4 and str(plan.get("wheels", PitRules.WHEELS_ALL)) != PitRules.WHEELS_ALL:
+					which += " (new compound: all four)"
+				_items.append(["wheels", "Change", which, true])
 			if sim.settings.fuel_enabled:
 				_items.append(["fuel", "Fuel", RaceHud.fuel_plan_text(float(plan["fuel"])), true])
 			if sim.damage_level != CarDamage.Level.OFF:
@@ -317,7 +327,12 @@ func _build_items() -> void:
 			_items.append(["swap", "Role swap", "waiting for the stop: A to cancel", true])
 		else:
 			var m: Dictionary = mates[swap_pick % mates.size()]
-			_items.append(["swap", "Swap roles with", "%s (%s)" % [m.get("name", "?"), role_title(str(m.get("role", ""))).to_lower()], true])
+			if m.get("ai", false):
+				# The AI co-driver: take the wheel back, or hand it over.
+				var what := "take the wheel from" if m.get("role", "") == RaceEntry.ROLE_DRIVER else "swap with"
+				_items.append(["swap", "Driver change", "%s %s (AI) at the stop" % [what, m.get("name", "?")], true])
+			else:
+				_items.append(["swap", "Swap roles with", "%s (%s)" % [m.get("name", "?"), role_title(str(m.get("role", ""))).to_lower()], true])
 	selected = clampi(selected, 0, maxi(_items.size() - 1, 0))
 
 
@@ -398,7 +413,7 @@ func _draw_header(r: Rect2, car: int) -> void:
 		var e := sim.entries[car]
 		var lap := mini(e.laps_done + 1, sim.settings.laps)
 		_text(Vector2(tx + 16, r.position.y + 28), "%s  ·  P%d %s  ·  %s  ·  Lap %d/%d" % [role_title(role()), e.position,
-			e.driver_name, sim.defs[car].display_name, lap, sim.settings.laps], 16, Color.WHITE, HORIZONTAL_ALIGNMENT_LEFT, r.end.x - tx - 300)
+			e.at_wheel(), sim.defs[car].display_name, lap, sim.settings.laps], 16, Color.WHITE, HORIZONTAL_ALIGNMENT_LEFT, r.end.x - tx - 300)
 	var f := session.telemetry.forecast
 	_text(Vector2(r.end.x - 290, r.position.y + 28), "%s  Air %d°  Track %d°  Wet %d%%" % [WeatherForecast.weather_label(f.weather),
 		int(f.ambient_c), int(f.track_c), int(f.wetness * 100.0)], 15, BLUE, HORIZONTAL_ALIGNMENT_RIGHT, 280)
@@ -429,7 +444,7 @@ func _draw_timing(r: Rect2, car: int) -> void:
 		var ty := y + rh * 0.5 + fs * 0.35
 		_text(Vector2(x + 8, ty), str(e.position), fs, Color.WHITE, HORIZONTAL_ALIGNMENT_RIGHT, 22)
 		draw_rect(Rect2(x + 34, y + 4, 4, rh - 10), sim.defs[i].colour)
-		_text(Vector2(x + 42, ty), e.driver_name, fs, YELLOW if i == car else (BLUE if not e.is_ai else Color.WHITE),
+		_text(Vector2(x + 42, ty), e.at_wheel(), fs, YELLOW if i == car else (BLUE if not e.is_ai else Color.WHITE),
 			HORIZONTAL_ALIGNMENT_LEFT, 150)
 		var gap := ""
 		if e.finished:
@@ -517,7 +532,9 @@ func _draw_pit_crew(r: Rect2, car: int) -> void:
 			15, Color.WHITE, HORIZONTAL_ALIGNMENT_LEFT, w - 90)
 		var parts := PackedStringArray()
 		if work["tyre"] != "":
-			parts.append("%s tyres %.0f s" % [sim.tyre_defs[work["tyre"]].display_name, work["tyre_s"]])
+			var n := (work.get("wheels", [0, 1, 2, 3]) as Array).size()
+			parts.append("%s%s %.0f s" % [sim.tyre_defs[work["tyre"]].display_name,
+				" tyres" if n == 4 else " x%d" % n, work["tyre_s"]])
 		if float(work["fuel_l"]) > 0.0:
 			parts.append("%.0f L fuel %.0f s" % [work["fuel_l"], work["fuel_s"]])
 		if not (work["setup"] as Dictionary).is_empty():
@@ -590,7 +607,7 @@ func _draw_strategy(r: Rect2, car: int) -> void:
 	var c := tel.cars[car]
 	var x := r.position.x + 12
 	var w := r.size.x - 24
-	_text(Vector2(x, r.position.y + 28), "P%d  %s" % [e.position, e.driver_name], 20, YELLOW, HORIZONTAL_ALIGNMENT_LEFT, w * 0.6)
+	_text(Vector2(x, r.position.y + 28), "P%d  %s" % [e.position, e.at_wheel()], 20, YELLOW, HORIZONTAL_ALIGNMENT_LEFT, w * 0.6)
 	_text(Vector2(x + w * 0.6, r.position.y + 28), "Avg 5 %s" % StrategistScreen.fmt_lap(c.last5_avg), 14, Color.WHITE,
 		HORIZONTAL_ALIGNMENT_RIGHT, w * 0.4)
 	var y := r.position.y + 40

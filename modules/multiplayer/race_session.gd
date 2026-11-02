@@ -267,17 +267,27 @@ func on_peer_left(peer_id: int) -> void:
 		var was_driver := e.driver_peer() == peer_id
 		e.crew = e.crew.filter(func(m): return int(m.get("peer_id", 0)) != peer_id)
 		_pending.erase(i)
-		if was_driver and not e.crew.is_empty():
+		var co_driver := {}
+		for m in e.crew:
+			if RaceEntry.is_ai_peer(int(m.get("peer_id", 0))):
+				co_driver = m
+		if e.human_crew().is_empty():
+			# Only an AI co-driver (or nobody) left: the host's AI drives on.
+			e.crew = [co_driver] if not co_driver.is_empty() else []
+			if not co_driver.is_empty():
+				co_driver["role"] = RaceEntry.ROLE_DRIVER
+			if not ai.has(i):
+				owners[i] = local_peer
+				ai[i] = AIDriver.for_car(sim, i)
+				ai[i].pit_strategy.telemetry = telemetry
+				if co_driver.is_empty():
+					e.driver_name += " (AI)"
+		elif was_driver and not e.crew.is_empty():
 			# The next crew member takes the wheel where the car is.
 			for m in e.crew:
 				m["role"] = ""
 			e.crew[0]["role"] = RaceEntry.ROLE_DRIVER
 			owners[i] = int(e.crew[0]["peer_id"])
-		elif was_driver:
-			owners[i] = local_peer
-			ai[i] = AIDriver.for_car(sim, i)
-			ai[i].pit_strategy.telemetry = telemetry
-			e.driver_name += " (AI)"
 		RaceEntry.share_roles(e.crew)
 		_share_crew(i, {})
 	_apply_ownership()
@@ -390,7 +400,7 @@ func _do_handovers() -> void:
 			# Stop simulating it here; the new driver's machine carries on.
 			var e := sim.entries[car]
 			var next_driver := int(d["b"]) if e.member_role(int(d["a"])) == RaceEntry.ROLE_DRIVER else int(d["a"])
-			owners[car] = next_driver
+			owners[car] = HOST_PEER if RaceEntry.is_ai_peer(next_driver) else next_driver
 			_apply_ownership()
 			net.send_handover(car, int(d["a"]), int(d["b"]), state)
 
@@ -404,7 +414,15 @@ func on_handover(sender: int, car: int, a: int, b: int, state: Dictionary) -> vo
 		_swap_roles(e, a, b)
 	_pending.erase(car)
 	var driver := e.driver_peer()
-	if driver > 0 or mode == Mode.OFFLINE:
+	if RaceEntry.is_ai_peer(driver):
+		# The player's AI co-driver takes the wheel: this machine (the host)
+		# runs the car from the state handed over.
+		owners[car] = local_peer
+		if state.has("car"):
+			sim.cars[car].deserialize(PackedFloat64Array(state["car"]))
+		ai[car] = AIDriver.for_car(sim, car)
+		ai[car].pit_strategy.telemetry = telemetry
+	elif driver > 0 or mode == Mode.OFFLINE:
 		owners[car] = driver if mode != Mode.OFFLINE else local_peer
 	if DisplayServer.get_name() == "headless":
 		print("[coop] driver change: car %d now driven by %s" % [car, _member_name(e, driver)])
@@ -449,7 +467,9 @@ func apply_crew(car: int, crew: Array, owner: int, pending: Dictionary, state: D
 			var fresh := NetTimeline.new()
 			fresh.received = timelines[car].received
 			timelines[car] = fresh
-	if ai.has(car) and not e.is_ai and e.driver_peer() > 0:
+	var driver := e.driver_peer()
+	if ai.has(car) and not e.is_ai and driver >= 0 and not RaceEntry.is_ai_peer(driver) \
+			and (driver > 0 or mode == Mode.OFFLINE):
 		ai.erase(car)  # a player has the wheel again
 	_apply_ownership()
 	_refresh_local_roles()
@@ -486,7 +506,7 @@ func on_team_radio(sender: int, car: int, msg: Dictionary) -> void:
 		msg["peer"] = sender
 		for m in e.crew:
 			var pid := int(m.get("peer_id", 0))
-			if pid != local_peer and net:
+			if pid != local_peer and net and not RaceEntry.is_ai_peer(pid):
 				net.send_team_radio(pid, car, msg)
 		if e.has_peer(local_peer):
 			team_radio.emit(car, msg)

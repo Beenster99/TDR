@@ -310,15 +310,20 @@ func _station(c: Crew, i: int, w: Dictionary) -> Array:
 			var front := i == GUN_FL or i == GUN_FR
 			var s := side if (i == GUN_FR or i == GUN_RR) else -side
 			var x := c.axle_f if front else -c.axle_r
-			var working: bool = serving and tyres and e < w["tyre_end"]
-			if not tyres:
+			var mine: bool = tyres and (i - GUN_FL) in _wheels(c)
+			var working: bool = serving and mine and e < w["tyre_end"]
+			if not mine:
 				# no tyres this stop: stand clear by the garage
 				return [_at(c, x, side * (tw + 2.6)), to_car, Pose.STAND]
 			return [_at(c, x, s * (tw + 0.75)), to_car if s > 0.0 else from_out, Pose.KNEEL if working else Pose.STAND]
 		TYRE_A, TYRE_B:
 			var front := i == TYRE_A
 			var x := (c.axle_f if front else -c.axle_r) + (0.9 if front else -0.9)
-			if not tyres:
+			var axle: Array = [0, 1] if front else [2, 3]
+			var any := false
+			for k in _wheels(c):
+				any = any or k in axle
+			if not tyres or not any:
 				return [_at(c, x, side * (tw + 3.2)), to_car, Pose.STAND]
 			var carrying: bool = serving and e > w["off"] - 0.6 and e < w["on"] + 0.6
 			return [_at(c, x, side * (tw + (1.15 if carrying else 1.6))), to_car, Pose.CARRY]
@@ -332,6 +337,11 @@ func _station(c: Crew, i: int, w: Dictionary) -> Array:
 				return [_at(c, c.car_front + 0.5 if i == WANDER_A else -c.car_rear - 0.5, -0.4 if i == WANDER_A else 0.6),
 					into + PI if i == WANDER_A else into, Pose.CROUCH]
 			return [_at(c, 2.0 if i == WANDER_A else -2.0, side * (tw + 3.6)), to_car, Pose.STAND]
+
+
+## The wheels (0 front left .. 3 rear right) this stop changes.
+func _wheels(c: Crew) -> Array:
+	return c.work.get("wheels", [0, 1, 2, 3])
 
 
 ## A point in the box: along metres forward from the car's centre, across
@@ -429,8 +439,11 @@ func _props(c: Crew) -> void:
 	if c.state == Stop.SERVICE:
 		var w := _windows(c)
 		off = c.elapsed > w["off"] and c.elapsed < w["on"]
-	for t in c.ground_tyres:
-		(t as Node3D).visible = off
+	# Ground tyres by corner: front +side, front -side, rear +side, rear -side.
+	var corner_wheel := [1, 0, 3, 2]
+	var wheels := _wheels(c)
+	for k in c.ground_tyres.size():
+		(c.ground_tyres[k] as Node3D).visible = off and corner_wheel[k % 4] in wheels
 	if off:
 		var tw := c.track_w * 0.5
 		var k := 0

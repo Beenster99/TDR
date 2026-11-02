@@ -242,6 +242,9 @@ func _draw_pit_panel(o: Vector2, me: int) -> void:
 	var need := sim.settings.mandatory_pit_stops
 	var busy: bool = phase != PitRules.PHASE_NONE or p["box"] or p["limiter"]
 	var h := 114 if need > 0 or busy or sim.settings.fuel_enabled or sim.settings.tyre_wear_enabled else 0
+	var mates := e.crew.size() > 1
+	if mates:
+		h = 136
 	if h == 0 and e.penalty_s <= 0.0:
 		return
 	_panel(Rect2(o, Vector2(300, h + (22 if e.penalty_s > 0.0 else 0))))
@@ -274,11 +277,22 @@ func _draw_pit_panel(o: Vector2, me: int) -> void:
 		var fuel_txt := ""
 		if sim.settings.fuel_enabled:
 			fuel_txt = "  fuel " + fuel_plan_text(float(plan["fuel"]))
-		_text(Vector2(o.x + 14, y), "Next: tyres %s%s" % [tyre_plan_text(sim, me, str(plan["tyre"])), fuel_txt], 14, Color(1, 1, 1, 0.85))
-		y += 22
 		var work := pits.service_for(me, plan)
+		_text(Vector2(o.x + 14, y), "Next: tyres %s%s" % [stop_tyres_text(sim, me, plan, work), fuel_txt], 14, Color(1, 1, 1, 0.85),
+			HORIZONTAL_ALIGNMENT_LEFT, 280)
+		y += 22
 		_text(Vector2(o.x + 14, y), "Stop about %.0f s%s" % [work["total_s"], "  + repairs" if float(work["repair_s"]) > 0.0 else ""], 14, Color(1, 1, 1, 0.7))
 		y += 22
+		if mates:
+			var pend := session.pending_swap(me)
+			var txt := "Driver change: no (N)"
+			var col := Color(1, 1, 1, 0.7)
+			if not pend.is_empty():
+				var other := int(pend["b"]) if int(pend["a"]) == session.local_peer else int(pend["a"])
+				txt = "Driver change: %s takes over" % _crew_name(e, other)
+				col = Color(1, 0.85, 0.2)
+			_text(Vector2(o.x + 14, y), txt, 14, col, HORIZONTAL_ALIGNMENT_LEFT, 280)
+			y += 22
 	if e.penalty_s > 0.0:
 		_text(Vector2(o.x + 14, y), "Penalties +%d s" % int(e.penalty_s), 14, Color(1, 0.5, 0.3))
 
@@ -294,6 +308,48 @@ func _draw_radio(vp: Vector2) -> void:
 	draw_rect(r, Color(1, 0.88, 0.35, 0.8 * a), false, 2.0)
 	_text(r.position + Vector2(14, 30), "RADIO", 16, Color(1, 0.88, 0.35, a))
 	_text(r.position + Vector2(84, 30), line, 22, Color(1, 1, 1, a), HORIZONTAL_ALIGNMENT_LEFT, w - 96)
+
+
+static func _crew_name(e: RaceEntry, peer_id: int) -> String:
+	for m in e.crew:
+		if int(m.get("peer_id", 0)) == peer_id:
+			return str(m.get("name", "?"))
+	return "?"
+
+
+## Which tyres a plan's wheel choice changes, in words ("fronts", "all four").
+static func wheels_text(choice: String) -> String:
+	return PitRules.WHEEL_LABELS.get(choice, "all four")
+
+
+## The tyres a stop will fit, with which ones: "Soft (fronts)", "no change".
+## work: PitRules.service_for (a new compound always fits all four).
+static func stop_tyres_text(sim: RaceSim, car: int, plan: Dictionary, work: Dictionary) -> String:
+	var t := tyre_plan_text(sim, car, str(plan["tyre"]))
+	var wheels: Array = work.get("wheels", [])
+	if str(work.get("tyre", "")) == "" or wheels.is_empty():
+		return t
+	if wheels.size() == 4:
+		return t + " (all four)"
+	for k in PitRules.WHEEL_CHOICES:
+		if PitRules.wheels_of(k) == wheels:
+			return "%s (%s)" % [t, wheels_text(k)]
+	return "%s (%d tyres)" % [t, wheels.size()]
+
+
+## The driver's "driver change" button (N, or Y on the pit wall): hand the
+## wheel to the next crew mate at the next stop (the AI co-driver, or a co-op
+## team mate), or take back a change that is waiting. Returns the line to show.
+static func toggle_driver_change(session: RaceSession, me: int) -> String:
+	if not session.pending_swap(me).is_empty():
+		session.cancel_role_swap(me)
+		return "Driver change cancelled"
+	var mates := session.sim.entries[me].crew.filter(func(m): return int(m.get("peer_id", 0)) != session.local_peer)
+	if mates.is_empty():
+		return "No co-driver in this car (Drivers per car, in the race settings)"
+	var m: Dictionary = mates[0]
+	session.request_role_swap(me, session.local_peer, int(m["peer_id"]))
+	return "Driver change at the next stop: %s takes over" % m.get("name", "?")
 
 
 static func tyre_plan_text(sim: RaceSim, car: int, choice: String) -> String:
@@ -500,7 +556,7 @@ func _draw_standings(vp: Vector2, me: int) -> int:
 			var gap := sim.entries[sim.running_order[0]].distance - e.distance
 			right = "+%.0f m" % gap if gap < sim.track.length else "+%d lap" % int(gap / sim.track.length)
 		draw_rect(Rect2(x0, 42 + p * 22, 8, 14), sim.defs[i].colour)
-		_text(Vector2(x0 + 14, 55 + p * 22), "%2d  %s" % [p + 1, e.driver_name.left(18)], 15, col)
+		_text(Vector2(x0 + 14, 55 + p * 22), "%2d  %s" % [p + 1, e.at_wheel().left(18)], 15, col)
 		if sim.pits.enabled and int(e.pit.get("stops", 0)) > 0:
 			_text(Vector2(x0 + 172, 55 + p * 22), str(e.pit["stops"]), 12, Color(1, 1, 1, 0.55))
 		if e.penalty_s > 0.0:
@@ -579,7 +635,7 @@ func _draw_tower(vp: Vector2, me: int) -> void:
 		draw_rect(Rect2(x + 4, y + 3, 4, TOWER_ROW - 6), sim.defs[i].colour)
 		_text(Vector2(x + 12, base), str(p + 1), 16, col, HORIZONTAL_ALIGNMENT_RIGHT, 26)
 		draw_badge(Rect2(x + 44, y + 3, 36, TOWER_ROW - 6), sim.defs[i])
-		_text(Vector2(x + 86, base), short_name(e.driver_name), 15, col)
+		_text(Vector2(x + 86, base), short_name(e.at_wheel()), 15, col)
 		var tc: CarTelemetry = tel.cars[i] if tel != null and i < tel.cars.size() else null
 		var last := e.lap_times[-1] if e.lap_times.size() > 0 else 0.0
 		var last_col := Color(1, 1, 1, 0.8)
@@ -675,7 +731,7 @@ func _draw_gap(r: Rect2, label: String, car: int, pos: int, gap: String, trend: 
 		_text(r.position + Vector2(0, 22), label, 12, Color(1, 1, 1, 0.45), align, r.size.x)
 		_text(r.position + Vector2(0, 50), "LEADING" if label == "AHEAD" else "—", 20, Color(1, 1, 1, 0.5), align, r.size.x)
 		return
-	_text(r.position + Vector2(0, 22), "%s  P%d  %s" % [label, pos, short_name(sim.entries[car].driver_name)], 13, Color(1, 1, 1, 0.65), align, r.size.x)
+	_text(r.position + Vector2(0, 22), "%s  P%d  %s" % [label, pos, short_name(sim.entries[car].at_wheel())], 13, Color(1, 1, 1, 0.65), align, r.size.x)
 	var col := Color.WHITE
 	if trend > 0.05:
 		col = SECTOR_GREEN

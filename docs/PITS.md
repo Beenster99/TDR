@@ -11,9 +11,10 @@ tyre wear in physics (`CarPhysics`), the AI's decisions in the ai module
 | Fuel use | Off, Real, 2x, 3x, 5x | `fuel_enabled`, `fuel_rate` |
 | Tyre wear | Off, Real, 2x, 3x, 5x | `tyre_wear_enabled`, `tyre_wear_rate` |
 | Mandatory pit stops | 0-3 | `mandatory_pit_stops` |
+| Drivers per car | 1-3 | `drivers_per_car` (menu default 2) |
 | Pit window | automatic (no menu yet) | `pit_window_open_lap`, `pit_window_close_lap` (0 = automatic) |
 
-Command line: `--fuel 2 --tyre-wear 2 --pit-stops 1`.
+Command line: `--fuel 2 --tyre-wear 2 --pit-stops 1 --drivers 2`.
 
 - **Fuel**: cars start full. Consumption follows engine power; "Real" is about
   3-4 L a lap for a GT3. Out of fuel = no power.
@@ -31,7 +32,8 @@ Command line: `--fuel 2 --tyre-wear 2 --pit-stops 1`.
    button, or (co-op, wave 5) a pit crew / strategist via
    `RaceSession.request_pit(car, changes)`. The plan says what to do:
    `tyre` (`auto` = suit the weather, `dry`, `intermediate`, `full_wet`,
-   `keep`), `fuel` (litres, -1 = enough to finish, 0 = none), `repair`, and
+   `keep`), `wheels` (which tyres: `all`, `front`, `rear`, `left`, `right`,
+   or one tyre `fl`, `fr`, `rl`, `rr`), `driver_change` (AI line-ups), `fuel` (litres, -1 = enough to finish, 0 = none), `repair`, and
    (co-op pit crew, when the host allows car setups) `setup`: new values for
    the front splitter, rear wing and tyre pressures, applied in the box (see
    docs/PIT_WALL_ROLES.md).
@@ -41,15 +43,38 @@ Command line: `--fuel 2 --tyre-wear 2 --pit-stops 1`.
    lane themselves: they must be down to the limit (60 km/h) at the limit
    line or get a 5 s penalty; the pit limiter button cuts the power above
    the limit. From the limit line the guide takes the car to its box.
-3. **The stop.** Stop time = 2.5 s (car up and down) + the slower of a tyre
-   change (6 s) and refuelling (3 L/s) + repairs (`CarDamage.repair_time`,
-   parts one after another). New tyres arrive warm and fix punctures.
+3. **The stop.** Stop time = 2.5 s (car up and down) + the slower of the tyre
+   change and refuelling (3 L/s) + repairs (`CarDamage.repair_time`, parts
+   one after another). Tyres take 1.5 s + 1.125 s a tyre: all four 6 s, a
+   pair 3.75 s, one 2.6 s. New tyres arrive warm and fix punctures. A change
+   to a different compound always fits all four (compounds aren't mixed), and
+   with repairs on a punctured tyre is always changed, even on a "no tyres"
+   stop. A driver change keeps the car in the box for at least 5 s.
 4. **Leaving.** The guide drives to the end of the speed limit; AI cars are
    driven to the end of the lane, players take over at the limit line.
 
 Speed-limit zones are about 330-440 m around the garages by the start/finish
 line (`modules/tracks/tools/pit_limit_zone.py`), so a stop costs roughly
 30-40 s in the game's current pace.
+
+## Driver changes
+
+With **Drivers per car** at 2 or 3:
+
+- **Every AI car** has a line-up (`RaceEntry.lineup`): its lead driver and
+  one or two co-drivers (names from `modules/race/data/co_drivers.json`,
+  traits a little below the lead's). An AI car changes driver at a stop once
+  the driver at the wheel has done about half their share of the race or
+  more; from there the new driver's traits drive the car (`AIDriver`
+  follows `pit["driver_idx"]`). The timing tower shows who is at the wheel;
+  results stay under the lead driver's name.
+- **A player racing alone** gets an AI co-driver in their crew
+  (`RaceEntry.AI_PEER`). Press **N** (pad: **Y** on the pit wall) and the
+  co-driver takes over at the next stop; you move to the pit wall (pit crew
+  and strategist) while they drive, and can call them in and take the wheel
+  back from the crew console ("Driver change"). In multiplayer the host runs
+  the co-driver.
+- **Co-op crews** change drivers between themselves (docs/COOP.md).
 
 ## AI strategy (`modules/ai/pit_strategy.gd`)
 
@@ -64,6 +89,9 @@ Decided once a lap, a little before the pit entry:
   the wrong tyres for the weather (wet skill decides how long to stay out on
   slicks; forecast rain keeps them on wets).
 - damage worth repairing.
+- which tyres: when the compound stays the same and one axle has worn much
+  more than the other (still fresh), only that axle, which is quicker.
+- driver changes for cars with a line-up (see above).
 - safety car: a stop that's needed anyway is taken while it's cheap
   (`RaceSim.pit_time_saving()`, from the safety car work).
 
@@ -92,3 +120,5 @@ Events: `pit_request`, `pit_entry`, `pit_box` (with the work), `pit_stop`
 | Pit limiter | L | L3 |
 | Next stop's tyres | T | B (when the pit wall is closed) |
 | Next stop's fuel | F | (auto: to the end) |
+| Which tyres the next stop changes | Y | LB / RB on the pit wall |
+| Driver change at the next stop (toggle) | N | Y on the pit wall |
