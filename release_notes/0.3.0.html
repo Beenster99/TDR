@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Top Down Racer Release Notes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<style>
+/* Same layout as the Torque Shed release notes, every release: masthead, at a glance,
+   one entry per feature (rail on the left: area, day, part of the game), then Try it / Known limits / Coming next. */
+:root {
+  --paper: #efede7; --sheet: #ffffff; --ink: #1b1d20; --muted: #5b6168; --rule: #d5d2c9;
+  --accent: #c0341d; --link: #1d6b8a;
+  --display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --body: "Literata", Georgia, "Times New Roman", serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #121417; --sheet: #1b1e22; --ink: #e5e6e8; --muted: #9ca3aa; --rule: #2d3238;
+    --accent: #ff7552; --link: #6cc3e0; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #121417; --sheet: #1b1e22; --ink: #e5e6e8; --muted: #9ca3aa; --rule: #2d3238;
+  --accent: #ff7552; --link: #6cc3e0; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--paper); color: var(--ink); font-family: var(--body); font-size: 17px; line-height: 1.6; margin: 0;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.wrap { max-width: 1060px; margin: 0 auto; padding-block: 40px 72px; }
+h1, h2, h3 { font-family: var(--display); font-weight: 700; line-height: 1.05; text-wrap: balance; margin: 0; letter-spacing: 0.01em; }
+a { color: var(--link); text-underline-offset: 3px; }
+header.top { display: grid; gap: 18px; padding-bottom: 28px; border-bottom: 2px solid var(--ink); }
+.kicker { font-family: var(--mono); font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px 18px; }
+h1 { font-size: clamp(46px, 8vw, 84px); text-transform: uppercase; }
+h1 span { color: var(--accent); }
+.lede { max-width: 64ch; font-size: 19px; margin: 0; }
+.cta { display: flex; flex-wrap: wrap; gap: 10px; }
+.play { font-family: var(--display); font-size: 19px; letter-spacing: 0.04em; text-transform: uppercase; padding: 8px 16px; border: 2px solid var(--ink); color: var(--ink); background: var(--sheet); overflow-wrap: anywhere; }
+.play.main { background: var(--accent); border-color: var(--accent); color: #fff; }
+.glance { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); margin-block: 28px 8px; }
+.glance div { background: var(--sheet); padding: 14px 16px; min-width: 0; }
+.glance b { display: block; font-family: var(--display); font-size: 21px; letter-spacing: 0.02em; text-transform: uppercase; }
+.glance p { margin: 4px 0 0; font-size: 15px; color: var(--muted); }
+.log { margin-top: 44px; display: grid; }
+.entry { display: grid; grid-template-columns: 118px minmax(0, 1fr); gap: 28px; padding-block: 34px; border-top: 1px solid var(--rule); }
+.rail .m { font-family: var(--display); font-size: 40px; color: var(--accent); line-height: 1; text-transform: uppercase; }
+.rail .d { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-top: 6px; letter-spacing: 0.04em; }
+.rail .area { font-family: var(--mono); font-size: 11px; color: var(--link); margin-top: 10px; letter-spacing: 0.06em; text-transform: uppercase; }
+.body { min-width: 0; }
+.body h2 { font-size: clamp(28px, 4vw, 38px); text-transform: uppercase; }
+.body .sum { margin: 8px 0 14px; max-width: 66ch; }
+.body ul { margin: 0 0 18px; padding-left: 1.2em; max-width: 68ch; }
+.body li { margin-block: 3px; }
+.body li::marker { color: var(--accent); }
+.after { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 28px; margin-top: 40px; padding-top: 30px; border-top: 2px solid var(--ink); }
+.after h3 { font-size: 26px; text-transform: uppercase; margin-bottom: 8px; }
+.after ul { margin: 0; padding-left: 1.1em; }
+.after li { margin-block: 4px; }
+.after li::marker { color: var(--link); }
+footer { margin-top: 44px; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+@media (max-width: 720px) {
+  .entry { grid-template-columns: 1fr; gap: 10px; }
+  .rail { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  .rail .d, .rail .area { margin-top: 0; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="kicker"><span>Release notes</span><span>2 Nov 2026</span><span>v0.3.0</span><span>Wave 3: race weekend rules</span></div>
+    <h1>Top Down <span>Racer</span></h1>
+    <p class="lede">Races now play out like real ones. Cars burn fuel and wear their tyres, and you pit for new rubber, fuel and repairs on each circuit's real pit lane, with a speed limit and a limiter. Crashes bend the cars and hurt how they drive. Yellow flags, the virtual safety car and a real safety car come out when someone stops on track. The host can set a number of mandatory pit stops, and the AI makes them too, picking its moment.</p>
+    <div class="cta">
+      <span class="play main">Download TopDownRacer-v0.3.0-windows.zip</span>
+    </div>
+    <section class="glance" aria-label="At a glance">
+      <div><b>Pit stops</b><p>Tyres (dry, intermediate, full wet), fuel and repairs, on all 22 real pit lanes with a speed limit.</p></div>
+      <div><b>Fuel and wear</b><p>Host options: off, real, or 2x to 5x faster to force more stops in short races.</p></div>
+      <div><b>Mandatory stops</b><p>0 to 3 stops inside a pit window. AI drivers choose when, from their traits, tyres, weather and gaps.</p></div>
+      <div><b>Damage</b><p>Hits bend the bodywork and hurt aero, suspension, steering, engine and gearbox. Tyres can puncture.</p></div>
+      <div><b>Safety car</b><p>Yellow flags, a virtual safety car and a real safety car, with penalties for passing.</p></div>
+      <div><b>Barriers</b><p>Walls, tyre walls, armco and fencing from real maps, plus gravel traps that slow you down.</p></div>
+    </section>
+  </header>
+
+  <main class="log">
+
+    <article class="entry" id="pits">
+      <div class="rail"><div class="m">Pits</div><div class="d">2 Nov</div><div class="area">Race rules</div></div>
+      <div class="body">
+        <h2>Pit stops on the real pit lanes</h2>
+        <p class="sum">Press B (or D-pad left on a controller) to call yourself in. Once you turn into the pit lane, the car drives itself to your garage at the speed limit, stops for the work, and drives you back out to the track.</p>
+        <ul>
+          <li>Every circuit uses its real pit lane, with a speed-limit zone around the garages. Drive in on your own and go over the limit and you get a 5 s penalty. L (or L3) turns on the pit limiter.</li>
+          <li>Choose the tyres with T (or B on a controller): automatic, dry, intermediate, full wet, or keep the ones on. Choose fuel with F: automatic fills just enough for the rest of the race, or pick 10 to 80 litres.</li>
+          <li>A stop takes 2.5 s, plus the slower of the tyre change (6 s) and refuelling (3 litres a second), plus time to repair any damage. The pit panel on the HUD shows your plan and how long the stop will take.</li>
+          <li>The results show how many stops each car made, and any penalties.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="fuel">
+      <div class="rail"><div class="m">Fuel</div><div class="d">2 Nov</div><div class="area">Host options</div></div>
+      <div class="body">
+        <h2>Fuel use and tyre wear</h2>
+        <p class="sum">Two new lobby settings: Fuel use and Tyre wear. Each can be Off, Real, 2x, 3x or 5x. The faster rates make stops matter in a short race.</p>
+        <ul>
+          <li>Tyres wear faster when they slide and when they run too hot, so wet tyres on a drying track go off quickly. Worn tyres lose grip, gently at first and then faster near the end.</li>
+          <li>The HUD shows how worn each tyre is and how many laps of fuel you have left. Fuel use is measured as you drive, lap by lap.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="mandatory">
+      <div class="rail"><div class="m">Stops</div><div class="d">2 Nov</div><div class="area">AI strategy</div></div>
+      <div class="body">
+        <h2>Mandatory stops and the pit window</h2>
+        <p class="sum">The host can set 0 to 3 mandatory stops. They must be made inside the pit window, which opens about a fifth of the way into the race and closes before the last lap. Each missed stop costs 60 s.</p>
+        <ul>
+          <li>AI drivers make the same number of stops and choose their own moment. Their choice depends on their personality, how worn their tyres are, how much fuel they have, the weather, damage, and the gaps around them (they look for clear air, try the undercut, and dive in when the safety car makes a stop cheap).</li>
+          <li>They tell you about it on the team radio, and the pit wall screen shows each car's stop, its pit window and where it would rejoin.</li>
+          <li>Rain makes them switch to intermediates or full wets, and they go back to slicks as the track dries.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="damage">
+      <div class="rail"><div class="m">Damage</div><div class="d">2 Nov</div><div class="area">Cars</div></div>
+      <div class="body">
+        <h2>Damage that changes how the car drives</h2>
+        <p class="sum">A new lobby setting: Damage Off, Visual only, or Full. On Full, every hit lands on the front, rear or a side of the car and damages what's behind it.</p>
+        <ul>
+          <li>A damaged nose or wing loses downforce and upsets the balance. Side hits bend the suspension and knock the steering out, so the car pulls to one side.</li>
+          <li>The engine can lose power, get worse under load and finally fail. The gearbox can shift slowly and lose its top gears.</li>
+          <li>A hit near a wheel, or kerbs taken flat out, can puncture a tyre.</li>
+          <li>The HUD damage panel shows what's hurt. Repairs happen at your pit stop and add to its time.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="safety">
+      <div class="rail"><div class="m">Flags</div><div class="d">2 Nov</div><div class="area">Race control</div></div>
+      <div class="body">
+        <h2>Yellow flags, VSC and the safety car</h2>
+        <p class="sum">Race control watches for crashes and stopped cars. A new lobby setting turns the VSC and safety car on or off (yellow flags always apply).</p>
+        <ul>
+          <li>A local yellow flag covers an incident. A stopped car brings out the virtual safety car, where everyone keeps to a slower pace shown as a delta on the HUD. A bigger incident brings out the safety car, a Mercedes-AMG GT Black Series.</li>
+          <li>The field queues behind the safety car, lapped cars are waved past, and then the leader controls the restart. Marshals recover stopped cars.</li>
+          <li>Overtaking under yellows, the VSC or the safety car means giving the place back within 12 s, or taking a 5 s penalty.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="barriers">
+      <div class="rail"><div class="m">Walls</div><div class="d">2 Nov</div><div class="area">Tracks</div></div>
+      <div class="body">
+        <h2>Real barriers and gravel traps</h2>
+        <p class="sum">Each circuit now knows what lines it: concrete walls, tyre walls, armco or catch fencing, taken from real maps where they exist.</p>
+        <ul>
+          <li>A concrete wall hurts more than armco, and a tyre wall soaks up much of the hit.</li>
+          <li>Gravel traps slow a car down fast and can leave it beached. Paved run-off lets you rejoin.</li>
+        </ul>
+      </div>
+    </article>
+
+  </main>
+
+  <section class="after">
+    <div>
+      <h3>Try it</h3>
+      <ul>
+        <li>Unzip the folder and double-click TopDownRacer.exe, as before.</li>
+        <li>Host a 6-lap race at Spa with Fuel use 3x, Tyre wear 3x and 1 mandatory stop, then watch the AI choose when to pit.</li>
+        <li>Turn on weather changes and see who gambles on intermediates when the rain comes.</li>
+        <li>Online, everyone in the lobby needs v0.3.0.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Known limits</h3>
+      <ul>
+        <li>Once you're in the pit lane, the car drives itself to and from the garage.</li>
+        <li>The pit crew doesn't appear in 3D yet.</li>
+        <li>A car that loses a lap stuck in the gravel can miss its mandatory stop and get the 60 s penalty.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Coming next</h3>
+      <ul>
+        <li>Wave 4: seasons and championships, car upgrades and setup for each track.</li>
+        <li>Wave 5: co-op, where players share a car as driver, pit crew and strategist.</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>Build of main with wave 3: damage (PR #12), barriers (PR #14), race control and safety car (PR #15), fuel and pit stops.</footer>
+</div>
+</body>
+</html>
