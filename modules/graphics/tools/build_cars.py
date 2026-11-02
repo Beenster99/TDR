@@ -1086,6 +1086,87 @@ class Car:
         bpy.context.scene.collection.objects.link(tl)
         tl.location = (self.x_rear + 0.1, 0, self.s.get("taillight_z", 0.75))
 
+    # ---------------------------------------------------- upgrade parts
+
+    def _renamed(self, ob, name):
+        ob.name = name
+        ob.data.name = name
+        return ob
+
+    def build_upgrade_parts(self):
+        """Aero upgrade parts, hidden in the game until the car has the
+        upgrade (business module): splitter_up (aero 1+), wing_rear_up2
+        (aero 2), wing_rear_up3 (aero 3) and canards (aero 3). A shape can
+        tune them with an "upgrades" block: {"wing2": {...}, "wing3": {...},
+        "splitter": {...}} merged over the generated settings."""
+        up = self.s.get("upgrades") if isinstance(self.s.get("upgrades"), dict) else {}
+        base_wing = dict(self.s.get("wing") or {})
+        orig_split = self.s.get("splitter")
+        base_split = dict(orig_split or {"depth": 0.06, "extend": 0.02, "width": 0.85, "z": 0.1})
+        # Deeper, wider splitter.
+        sp = dict(base_split)
+        sp["depth"] = base_split.get("depth", 0.18) + 0.08
+        sp["extend"] = base_split.get("extend", 0.04) + 0.05
+        sp["width"] = min(base_split.get("width", 0.92) + 0.03, 0.98)
+        sp.update(up.get("splitter", {}))
+        self.s["splitter"] = sp
+        ob = self.build_splitter()
+        self._renamed(ob, "splitter_up")
+        self.s["splitter"] = orig_split
+        # Rear wings.
+        deck = self.deck_height(0.93, 0.0)
+        if not base_wing or base_wing.get("type") == "ducktail":
+            w2 = {"type": "gt3", "t": 0.985, "z": deck + 0.24, "chord": 0.24, "span": 0.8, "angle": 8,
+                  "mount": "pillar", "mount_y": 0.36, "endplate_h": 0.14, "endplate_len": 1.25}
+            w3 = {"type": "gt3", "t": 1.0, "z": deck + 0.36, "chord": 0.32, "span": 0.88, "angle": 11,
+                  "mount": "swan", "mount_y": 0.3, "endplate_h": 0.24, "endplate_len": 1.6, "gurney": 0.03}
+        else:
+            w2 = dict(base_wing)
+            w2["chord"] = base_wing.get("chord", 0.34) * 1.15
+            w2["z"] = base_wing.get("z", 1.22) + 0.05
+            w2["angle"] = base_wing.get("angle", 9.0) + 3
+            w2["endplate_h"] = base_wing.get("endplate_h", 0.3) * 1.25
+            w3 = dict(base_wing)
+            w3["chord"] = base_wing.get("chord", 0.34) * 1.3
+            w3["z"] = base_wing.get("z", 1.22) + 0.1
+            w3["angle"] = base_wing.get("angle", 9.0) + 6
+            w3["span"] = min(base_wing.get("span", 0.88) * 1.04, 0.96)
+            w3["gurney"] = 0.04
+            w3["endplate_h"] = max(base_wing.get("endplate_h", 0.3) * 1.5, 0.24)
+            w3["endplate_len"] = max(base_wing.get("endplate_len", 1.7), 1.8)
+            w3["mount"] = "swan"
+        w2.update(up.get("wing2", {}))
+        w3.update(up.get("wing3", {}))
+        for cfg, name in ((w2, "wing_rear_up2"), (w3, "wing_rear_up3")):
+            self.s["wing"] = cfg
+            self._renamed(self.build_wing(), name)
+        self.s["wing"] = base_wing if base_wing else None
+        self.build_canards(sp)
+
+    def build_canards(self, sp):
+        """Two dive planes on each front corner."""
+        bm = bmesh.new()
+        hw = self.W * 0.5
+        for k, (dx, dz) in enumerate(((0.14, 0.0), (0.26, 0.11))):
+            x0 = self.x_front - dx
+            t = self.t_of(x0)
+            z = max(self.deck_height(min(max(t, 0.0), 1.0), hw * 0.85) * 0.55, sp.get("z", 0.08) + 0.12) + dz
+            for s in (-1, 1):
+                y_in = s * (hw - 0.07)
+                y_out = s * (hw + 0.035)
+                pts = ((x0 + 0.02, y_in, z - 0.03), (x0 - 0.2, y_in, z + 0.02),
+                       (x0 - 0.17, y_out, z + 0.05), (x0 + 0.0, y_out, z))
+                bm.faces.new([bm.verts.new(p) for p in pts])
+        me = bpy.data.meshes.new("canards")
+        bm.to_mesh(me)
+        bm.free()
+        me.materials.append(MATS["carbon"])
+        ob = new_object("canards", me)
+        mod = ob.modifiers.new("thick", "SOLIDIFY")
+        mod.thickness = 0.01
+        bake_modifiers(ob)
+        return ob
+
     # ---------------------------------------------------- assemble
 
     def build(self):
@@ -1101,6 +1182,8 @@ class Car:
         for f in (self.build_splitter, self.build_diffuser, self.build_wing, self.build_interior):
             f()
         self.build_mirrors()
+        if self.s.get("upgrades", True) and not self.s.get("light_bar"):
+            self.build_upgrade_parts()
         if self.s.get("light_bar"):
             self.build_light_bar()
         for axle in (0, 1):

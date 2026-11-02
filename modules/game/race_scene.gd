@@ -45,6 +45,8 @@ func _ready() -> void:
 		var k: int = seen.get(def.id, 0)
 		seen[def.id] = k + 1
 		var livery := {} if i == session.local_car else WorldView.livery_variant(k)
+		if not session.sim.entries[i].livery.is_empty():   # the player's own paint scheme
+			livery = session.sim.entries[i].livery
 		car_views.append(world.add_car(def, session.sim.cars[i], session.sim.entries[i].driver_name,
 			i == session.local_car, i + 1, livery))
 	race_audio = RaceAudio.new()
@@ -322,7 +324,17 @@ func _on_race_finished() -> void:
 			extra += "  +%d s pen" % int(e.penalty_s)
 		lines.append("P%-2d %-18s %-16s %s  best %s%s" % [p + 1, e.driver_name, sim.defs[i].display_name,
 			"DNF" if e.dnf else RaceHud.fmt_time(e.finish_time + e.penalty_s), RaceHud.fmt_time(e.best_lap), extra])
+	var prize := _pay_prize()
+	if prize > 0:
+		lines.append("")
+		lines.append("Prize money: +%s  (team budget %s)" % [UpgradeCatalog.format_money(prize),
+			UpgradeCatalog.format_money(TeamProfile.load_or_new().money)])
 	if DisplayServer.get_name() == "headless" or GameData.arg("quit-after-race"):
+		for e in sim.entries:
+			if not e.is_ai and not e.setup.is_empty():
+				var keys: Array = e.setup.keys()
+				keys.sort()
+				print("[setup] %s: %s" % [e.driver_name, ", ".join(keys)])
 		print("[results]\n" + "\n".join(lines))
 		var heard := []
 		for i in session.timelines:
@@ -336,6 +348,22 @@ func _on_race_finished() -> void:
 		get_tree().create_timer(10.0).timeout.connect(func(): Net.end_race())
 		return
 	_show_results(lines)
+
+
+## Prize money for this player's own car, into their team budget (business
+## module). Season rounds are paid by the season's own end-of-round hook.
+func _pay_prize() -> int:
+	var sim := session.sim
+	if session.local_car < 0 or session.start_data.has("season"):
+		return 0
+	var e := sim.entries[session.local_car]
+	var pos := 0 if e.dnf else sim.running_order.find(session.local_car) + 1
+	var km := sim.settings.laps * sim.track.length / 1000.0
+	var amount := Economy.race_prize(pos, sim.car_count(), km)
+	var profile := TeamProfile.load_or_new()
+	profile.earn(amount, "P%d at %s" % [pos, sim.track.display_name] if pos > 0 else "DNF at %s" % sim.track.display_name)
+	profile.save()
+	return amount
 
 
 ## Every race's data (lap log, sectors, gaps, feed, weather) is kept as JSON
