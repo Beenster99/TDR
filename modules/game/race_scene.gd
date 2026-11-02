@@ -85,6 +85,14 @@ func _ready() -> void:
 	layer.add_child(crew)
 	crew.setup(session)
 	crew.open_pit_wall.connect(pit_wall.open)
+	if DisplayServer.get_name() != "headless":
+		# The strategist's picture-in-picture onboard camera on any car.
+		var onboard := OnboardCamera.new()
+		onboard.name = "OnboardCamera"
+		add_child(onboard)
+		onboard.setup(world)
+		crew.onboard = onboard
+		pit_wall.onboard = onboard
 	crew.cover = pit_wall
 	crew.car_screen_pos = func(i: int) -> Vector2:
 		if not _camera_placed or world.camera == null or world.camera.is_position_behind(car_views[i].global_position):
