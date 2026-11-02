@@ -20,6 +20,7 @@ func _init() -> void:
 	test_race_settings_and_grid()
 	test_damage()
 	test_elevation()
+	test_barriers()
 	var replay := test_ai_race_completes()
 	test_deterministic_replay(replay)
 	test_snapshot_restore(replay)
@@ -274,6 +275,44 @@ func test_elevation() -> void:
 	var crest := _car_at(spa, crest_s, 60.0)
 	CarPhysics.step(crest, none, def, tc, env, spa, 1.0 / 60.0, 0.0, [], 0)
 	check(crest.load_factor < 0.95, "over the sharpest crest at 216 km/h the car goes light (%.2f g)" % crest.load_factor)
+
+
+## Barriers: every track says what's at the edge of its run-off, gravel slows
+## a car more than grass, and a tyre wall throws a car back less than a wall.
+func test_barriers() -> void:
+	print("barriers")
+	for info in TrackCatalog.list_all():
+		var t := TrackCatalog.load_track(info["id"])
+		var n := t.point_count()
+		var kinds := {}
+		var gravel := 0
+		for k in n:
+			kinds[t.barrier_left[k] if t.barrier_left.size() == n else -1] = true
+			kinds[t.barrier_right[k] if t.barrier_right.size() == n else -1] = true
+			if t.runoff_left.size() == n and t.runoff_left[k] == TrackData.Surface.GRAVEL:
+				gravel += 1
+		var names := []
+		for kd in kinds:
+			names.append(TrackData.BARRIER_NAMES.get(kd, "none"))
+		check(t.barrier_left.size() == n and t.runoff_right.size() == n and not kinds.has(-1),
+			"%-34s %s; %d%% gravel on the left" % [t.display_name, ", ".join(names), 100 * gravel / n])
+	var d := _data()
+	var def: CarDefinition = d["cars"]["porsche_911_gt3_r"]
+	var tc: TyreCompound = d["tyres"].values()[0]
+	var env := SimEnvironment.from_dict({})
+	var spa := TrackCatalog.load_track("spa")
+	var speeds := {}
+	for kind in [TrackData.Barrier.WALL, TrackData.Barrier.TYRES]:
+		spa.barrier_right.fill(kind)
+		var c := _car_at(spa, 2000.0, 0.0)
+		c.pos = spa.position_at(2000.0, spa.width_right[spa.index_at(2000.0)] + spa.runoff + 0.5)
+		c.vel = Vector2(-spa.seg_dir[spa.index_at(2000.0)].y, spa.seg_dir[spa.index_at(2000.0)].x) * 20.0
+		var evs := []
+		CarPhysics.step(c, CarInput.new(), def, tc, env, spa, 1.0 / 60.0, 0.0, evs, 0)
+		speeds[kind] = c.vel.length()
+		check(evs.size() > 0 and evs[0].get("barrier", -1) == kind, "a hit reports the barrier type (%s)" % TrackData.BARRIER_NAMES[kind])
+	check(speeds[TrackData.Barrier.TYRES] < speeds[TrackData.Barrier.WALL], "a tyre wall bounces the car back less than a concrete wall (%.1f vs %.1f m/s)" % [speeds[TrackData.Barrier.TYRES], speeds[TrackData.Barrier.WALL]])
+	check(TrackData.BARRIER_HARDNESS[TrackData.Barrier.TYRES] < TrackData.BARRIER_HARDNESS[TrackData.Barrier.ARMCO] and TrackData.BARRIER_HARDNESS[TrackData.Barrier.ARMCO] < TrackData.BARRIER_HARDNESS[TrackData.Barrier.WALL], "damage: tyre wall < armco < concrete wall")
 
 
 func _car_at(t: TrackData, s: float, speed: float) -> CarState:
@@ -778,9 +817,16 @@ func _accel_test(d: Dictionary, def: CarDefinition, s: CarState) -> Dictionary:
 	var inp := CarInput.new()
 	inp.throttle = 1.0
 	var ev := []
+	var drift := INF
 	for k in 240 * 7:
 		CarPhysics.step(s, inp, def, tc, env, track, 1.0 / 240.0, 0.0, ev, 0)
-	return {"speed": s.speed(), "gear": s.gear, "drift": wrapf(s.heading - g["heading"], -PI, PI)}
+		# Heading drift is measured while the car is still on the road: once a
+		# pulling car runs off (into a gravel trap, say) it can spin round.
+		if drift == INF and s.surface >= TrackData.Surface.GRASS:
+			drift = wrapf(s.heading - g["heading"], -PI, PI)
+	if drift == INF:
+		drift = wrapf(s.heading - g["heading"], -PI, PI)
+	return {"speed": s.speed(), "gear": s.gear, "drift": drift}
 
 
 ## Race data for the pit wall: lap logs, averages, gaps, pit windows, feed, sync.

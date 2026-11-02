@@ -73,7 +73,7 @@ func update(delta: float, throttle: float, volume_scale: float) -> void:
 		slip = maxf(slip, 0.6)
 	if state.ax < -9.0:
 		slip = maxf(slip, (absf(state.ax) - 9.0) * 0.15)
-	var on_tarmac := state.surface <= 1
+	var on_tarmac := state.surface <= 1 or state.surface == 5  # 5 = paved run-off (TrackData.Surface.RUNOFF)
 	var target := clampf(slip, 0.0, 1.0) * clampf(speed / 8.0, 0.0, 1.0) * (1.0 if on_tarmac else 0.0)
 	_squeal_level = lerpf(_squeal_level, target, 1.0 - exp(-15.0 * delta))
 	_squeal.volume_db = linear_to_db(maxf(_squeal_level * 0.7, 0.0001)) + vs

@@ -5,7 +5,18 @@ extends RefCounted
 ## run in race direction.
 
 ## What's under a car at a point (on track, kerb, grass run-off, barrier).
-enum Surface { TRACK, KERB, GRASS, BARRIER }
+## GRAVEL (gravel trap) and RUNOFF (paved run-off) are off the track like
+## GRASS; anything >= GRASS counts as off the track.
+enum Surface { TRACK, KERB, GRASS, BARRIER, GRAVEL, RUNOFF }
+## What the barrier at the edge of the run-off is made of.
+enum Barrier { WALL, TYRES, ARMCO, FENCE }
+## Barrier severity in a crash: how much of the impact reaches the car
+## (1 = armco) and how much it bounces back.
+const BARRIER_HARDNESS := {Barrier.WALL: 1.3, Barrier.TYRES: 0.55, Barrier.ARMCO: 1.0, Barrier.FENCE: 0.75}
+const BARRIER_REBOUND := {Barrier.WALL: 1.35, Barrier.TYRES: 1.05, Barrier.ARMCO: 1.25, Barrier.FENCE: 1.0}
+const BARRIER_NAMES := {Barrier.WALL: "concrete wall", Barrier.TYRES: "tyre wall", Barrier.ARMCO: "armco", Barrier.FENCE: "catch fencing"}
+const _BARRIER_CODES := {"W": Barrier.WALL, "T": Barrier.TYRES, "A": Barrier.ARMCO, "F": Barrier.FENCE}
+const _RUNOFF_CODES := {"G": Surface.GRASS, "R": Surface.GRAVEL, "P": Surface.RUNOFF}
 
 var id: String = ""
 var display_name: String = ""
@@ -27,6 +38,12 @@ var default_environment: Dictionary = {}
 ## Optional weather hints: {ambient_day_c, ambient_night_c, rain_chance}.
 var climate: Dictionary = {}
 var pit_lane = null  ## raw pit_lane object from the JSON (null = none)
+## Per centre-line point: barrier type (Barrier) and run-off surface
+## (Surface.GRASS / GRAVEL / RUNOFF) on each side. Empty = armco and grass.
+var barrier_left: PackedByteArray = []
+var barrier_right: PackedByteArray = []
+var runoff_left: PackedByteArray = []
+var runoff_right: PackedByteArray = []
 
 ## Pit lane (used from wave 3). The lane is a path from where it leaves the
 ## track (entry) to where it rejoins (exit), in race direction. Distances
@@ -88,6 +105,7 @@ static func from_dict(d: Dictionary) -> TrackData:
 	t.pit_lane = d.get("pit_lane")
 	t._build()
 	t._load_elevation(d.get("elevation"), start)
+	t._load_barriers(d.get("barriers"), start)
 	if t.pit_lane is Dictionary and t.pit_lane.get("path", []).size() >= 2:
 		t._build_pit(t.pit_lane)
 	return t
@@ -197,6 +215,22 @@ static func _box_blur(v: PackedFloat64Array, r: int) -> PackedFloat64Array:
 	return out
 
 
+func _load_barriers(b, start: int) -> void:
+	if not (b is Dictionary):
+		return
+	var n := points.size()
+	var sets := [["left", barrier_left, _BARRIER_CODES, Barrier.ARMCO], ["right", barrier_right, _BARRIER_CODES, Barrier.ARMCO],
+		["runoff_left", runoff_left, _RUNOFF_CODES, Surface.GRASS], ["runoff_right", runoff_right, _RUNOFF_CODES, Surface.GRASS]]
+	for st in sets:
+		var codes: String = b.get(st[0], "")
+		if codes.length() != n:
+			continue
+		var arr: PackedByteArray = st[1]
+		arr.resize(n)
+		for k in n:
+			arr[k] = st[2].get(codes[(k + start) % n], st[3])
+
+
 func point_count() -> int:
 	return points.size()
 
@@ -264,7 +298,8 @@ func surface_for(q: Dictionary) -> int:
 	if a <= edge + kerb_width:
 		return TrackData.Surface.KERB
 	if a <= edge + runoff:
-		return TrackData.Surface.GRASS
+		var ro := runoff_right if off >= 0.0 else runoff_left
+		return ro[q["idx"]] if ro.size() == points.size() else TrackData.Surface.GRASS
 	return TrackData.Surface.BARRIER
 
 
@@ -498,3 +533,24 @@ func height_range() -> Vector2:
 		lo = minf(lo, h)
 		hi = maxf(hi, h)
 	return Vector2(lo, hi)
+
+
+# --- Barriers and run-off ------------------------------------------------------
+
+## Barrier type at distance s on one side (side >= 0: right of the race
+## direction, < 0: left).
+func barrier_at(s: float, side: float) -> int:
+	var arr := barrier_right if side >= 0.0 else barrier_left
+	return arr[index_at(s)] if arr.size() == points.size() else Barrier.ARMCO
+
+
+## Barrier type nearest a projected point (from project()).
+func barrier_for(q: Dictionary) -> int:
+	var arr := barrier_right if q["offset"] >= 0.0 else barrier_left
+	return arr[q["idx"]] if arr.size() == points.size() else Barrier.ARMCO
+
+
+## Run-off surface at distance s on one side: Surface.GRASS, GRAVEL or RUNOFF.
+func runoff_at(s: float, side: float) -> int:
+	var arr := runoff_right if side >= 0.0 else runoff_left
+	return arr[index_at(s)] if arr.size() == points.size() else Surface.GRASS
