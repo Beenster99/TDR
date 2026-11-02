@@ -53,6 +53,7 @@ func _ready() -> void:
 	race_audio = RaceAudio.new()
 	add_child(race_audio)
 	race_audio.setup(session.sim.cars, session.sim.defs, session.local_car)
+	race_audio.set_environment(session.sim.env)
 	camera = Camera2D.new()
 	_zoom_setup()
 	camera.zoom = Vector2(7, 7)
@@ -150,6 +151,7 @@ func _on_role_changed(role: String) -> void:
 	race_audio = RaceAudio.new()
 	add_child(race_audio)
 	race_audio.setup(session.sim.cars, session.sim.defs, session.local_car)
+	race_audio.set_environment(session.sim.env)
 	_apply_role()
 	hud.flash("You're driving!" if session.local_car >= 0 else "You're on the pit wall: " + CrewConsole.role_title(session.local_role).to_lower(), 3.0)
 
