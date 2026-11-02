@@ -1,7 +1,7 @@
 {
   "id": "physics",
   "name": "Physics",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "status": "active",
   "summary": "How cars move: the vehicle model, tyre grip and temperatures, air and track temperature, weather: clock, temperatures, rain, standing water, drying line and rubber (SimEnvironment); slopes, crests and banking from the track elevation. Tyre compounds are JSON in data/.",
   "depends": {
@@ -14,8 +14,9 @@
     "CarPhysics",
     "TyreCompound",
     "TyreCatalog",
-    "SimEnvironment"
+    "SimEnvironment",
+    "CarDamage"
   ],
   "internal": [],
-  "notes": "Pure data, no nodes, deterministic. Damage values are read here; wave 3 writes them."
+  "notes": "Pure data, no nodes, deterministic. CarDamage (wave 3): damage from hits and kerbs, its effect on the car, repair times for the pits, and visual_parts() for the 3D car."
 }

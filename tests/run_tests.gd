@@ -18,6 +18,7 @@ func _init() -> void:
 	test_weather_and_time()
 	test_wet_grip()
 	test_race_settings_and_grid()
+	test_damage()
 	test_elevation()
 	var replay := test_ai_race_completes()
 	test_deterministic_replay(replay)
@@ -345,6 +346,7 @@ func test_ai_race_completes() -> Dictionary:
 	settings.laps = 2
 	settings.ai_count = 8
 	settings.seed = 777
+	settings.set_damage_level("full")  # determinism / snapshot tests cover damage too
 	var race := _race(settings, d)
 	var sim: RaceSim = race["sim"]
 	var ai: Dictionary = race["ai"]
@@ -384,7 +386,8 @@ func test_ai_race_completes() -> Dictionary:
 			finishers += 1
 		print("       P%d %-15s %-18s laps %d best %s  tyres %s fuel %.1f" % [e.position, e.driver_name,
 			sim.defs[i].display_name, e.laps_done, _laptime(e.best_lap), _fmt(c.tyre_temp), c.fuel_l])
-	check(finishers == sim.car_count(), "all %d cars finish (%d)" % [sim.car_count(), finishers])
+	# Full damage is on: a badly damaged car may limp home too late (DNF).
+	check(finishers >= sim.car_count() - 2, "%d of %d cars finish with full damage on" % [finishers, sim.car_count()])
 	var t_start := lerpf(sim.env.ambient_c, sim.env.track_c, 0.4)
 	var warm := 0
 	var left_hotter := 0
@@ -611,6 +614,173 @@ func test_ai_drivers() -> void:
 		vs += slow.target_speed[k]
 		vf += fast.target_speed[k]
 	check(vf > vs * 1.03, "pace trait: faster plan for the faster driver (%.1f vs %.1f m/s avg)" % [vf / slow.target_speed.size(), vs / slow.target_speed.size()])
+
+
+## Wave 3: hits bend the car and hurt the systems behind them, the car
+## drives worse, the pits can fix it, incidents reach race control, and the
+## damage survives the trip over the network.
+func test_damage() -> void:
+	print("damage")
+	var d := _data()
+	var def: CarDefinition = d["cars"]["ferrari_296_gt3"] if d["cars"].has("ferrari_296_gt3") else d["cars"].values()[0]
+	var nose := Vector2(def.length * 0.5, 0.0)
+	# Levels
+	var off := CarState.new()
+	CarDamage.apply_impact(off, def, 15.0, nose, CarDamage.Level.OFF, 1)
+	check(CarDamage.body_total(off) == 0.0 and off.damage_aero == 0.0, "damage off: hits do nothing")
+	var vis := CarState.new()
+	CarDamage.apply_impact(vis, def, 15.0, nose, CarDamage.Level.VISUAL, 1)
+	check(vis.body_damage[CarDamage.FRONT] > 0.5 and vis.damage_aero == 0.0 and vis.damage_engine == 0.0,
+		"visual damage: the nose bends but the car is unhurt")
+	check(CarDamage.repair_time(vis) == 0.0 and CarDamage.repair_plan(vis).has("aero"), "visual damage: fixed for free in the pits")
+	var full := CarState.new()
+	full.damage_level = CarDamage.Level.FULL
+	CarDamage.apply_impact(full, def, 15.0, nose, CarDamage.Level.FULL, 1)
+	check(full.damage_aero > 0.3 and full.damage_engine > 0.1 and full.damage_gearbox == 0.0,
+		"front hit: aero %.2f, engine %.2f, gearbox untouched" % [full.damage_aero, full.damage_engine])
+	var rear := CarState.new()
+	CarDamage.apply_impact(rear, def, 15.0, Vector2(-def.length * 0.5, 0.2), CarDamage.Level.FULL, 1)
+	check(rear.damage_gearbox > 0.2 and rear.body_damage[CarDamage.REAR] > 0.5, "rear hit: gearbox %.2f" % rear.damage_gearbox)
+	var side := CarState.new()
+	CarDamage.apply_impact(side, def, 12.0, Vector2(0.0, def.width * 0.5), CarDamage.Level.FULL, 1)
+	check(side.damage_suspension > 0.15 and side.alignment > 0.1, "right side hit: suspension %.2f, pulls right %.2f" % [side.damage_suspension, side.alignment])
+	check(CarDamage.apply_impact(CarState.new(), def, 1.0, nose, CarDamage.Level.FULL, 1)["amount"] == 0.0, "a nudge does no damage")
+	var punctured := 0
+	for k in 40:
+		var p := CarState.new()
+		CarDamage.apply_impact(p, def, 18.0, CarDamage.wheel_pos(CarState.FR, def) + Vector2(0.0, 0.3), CarDamage.Level.FULL, k)
+		punctured += int(p.puncture[CarState.FR] > 0.5)
+	check(punctured > 10 and punctured < 40, "hard hits next to a wheel sometimes puncture it (%d/40)" % punctured)
+	# Effect on the car
+	var base := _accel_test(d, def, CarState.new())
+	var engine := CarState.new()
+	engine.damage_level = CarDamage.Level.FULL
+	engine.damage_engine = 0.45
+	var slow := _accel_test(d, def, engine)
+	check(slow["speed"] < base["speed"] - 3.0, "engine damage: slower (%.0f vs %.0f km/h after 7 s)" % [slow["speed"] * 3.6, base["speed"] * 3.6])
+	var gbox := CarState.new()
+	gbox.damage_level = CarDamage.Level.FULL
+	gbox.damage_gearbox = 0.95
+	var g := _accel_test(d, def, gbox)
+	check(g["speed"] < base["speed"] - 3.0 and g["gear"] < base["gear"], "gearbox damage: lost top gears (gear %d vs %d)" % [g["gear"], base["gear"]])
+	var flat := CarState.new()
+	flat.damage_level = CarDamage.Level.FULL
+	flat.puncture[CarState.FR] = 1.0
+	var pf := _accel_test(d, def, flat)
+	check(pf["drift"] > base["drift"] + 0.03, "right front puncture pulls the car right (%.2f vs %.2f rad)" % [pf["drift"], base["drift"]])
+	var bent := CarState.new()
+	bent.damage_level = CarDamage.Level.FULL
+	bent.alignment = -0.8
+	var pb := _accel_test(d, def, bent)
+	check(pb["drift"] < base["drift"] - 0.03, "bent steering pulls left (%.2f rad)" % pb["drift"])
+	var visual_only := CarState.new()
+	visual_only.damage_level = CarDamage.Level.VISUAL
+	visual_only.body_damage = PackedFloat64Array([1.0, 1.0, 1.0, 1.0])
+	check(absf(_accel_test(d, def, visual_only)["speed"] - base["speed"]) < 0.01, "visual damage drives like new")
+	# Repairs
+	var plan := CarDamage.repair_plan(full)
+	check(plan.has("aero") and plan.has("engine") and not plan.has("gearbox"), "repair plan lists the damaged parts %s" % str(plan.keys()))
+	var t_all := CarDamage.repair_time(full)
+	var t_aero := CarDamage.repair_time(full, ["aero"])
+	check(t_all > t_aero and t_aero >= 8.0, "repair time %.0f s (aero alone %.0f s)" % [t_all, t_aero])
+	CarDamage.repair(full, ["aero"])
+	check(full.damage_aero == 0.0 and full.damage_engine > 0.0 and CarDamage.body_total(full) == 0.0, "repairing aero leaves the engine")
+	CarDamage.repair(full)
+	check(CarDamage.worst(full) == 0.0 and CarDamage.repair_plan(full).is_empty(), "full repair: as new")
+	# Network: damage survives pack/unpack
+	var a := CarState.new()
+	CarDamage.apply_impact(a, def, 16.0, Vector2(0.0, -def.width * 0.5), CarDamage.Level.FULL, 3)
+	a.puncture[CarState.RL] = 1.0
+	a.damage_gearbox = 0.4
+	var buf := PackedFloat32Array()
+	a.pack_net(buf)
+	check(buf.size() == CarState.NET_SIZE, "net packet is NET_SIZE floats")
+	var b := CarState.new()
+	b.unpack_net(buf, 0)
+	check(b.puncture[CarState.RL] == 1.0 and is_equal_approx(b.damage_gearbox, 0.4) and is_equal_approx(b.alignment, a.alignment)
+		and is_equal_approx(b.body_damage[CarDamage.LEFT], a.body_damage[CarDamage.LEFT]), "damage survives the network")
+	var snap := CarState.new()
+	snap.deserialize(a.serialize())
+	check(snap.puncture == a.puncture and snap.body_damage == a.body_damage, "damage survives snapshots")
+	# In a race: a barrier hit and a car-to-car crash raise incidents
+	var st := RaceSettings.new()
+	st.ai_count = 3
+	st.seed = 5
+	st.countdown_s = 0.0
+	st.set_damage_level("full")
+	var sim: RaceSim = _race(st, d)["sim"]
+	sim.step([])
+	var c0 := sim.cars[0]
+	var q := sim.track.project(c0.pos, c0.track_idx)
+	var dirv: Vector2 = q["dir"]
+	var nrm := Vector2(-dirv.y, dirv.x)
+	c0.pos = sim.track.position_at(q["s"], q["w_right"] + sim.track.runoff - 1.0)
+	c0.heading = nrm.angle()
+	c0.vel = nrm * 30.0
+	var incidents := []
+	for k in 120:
+		sim.step([])
+		for e in sim.events:
+			if e["type"] == "incident":
+				incidents.append(e)
+	check(incidents.size() > 0 and incidents[0]["car"] == 0 and incidents[0]["kind"] == "barrier",
+		"driving into the wall raises a barrier incident (%s)" % str(incidents.slice(0, 1)))
+	check(c0.body_damage[CarDamage.FRONT] > 0.3, "the nose is bent after hitting the wall (%.2f)" % c0.body_damage[CarDamage.FRONT])
+	var c1 := sim.cars[1]
+	var c2 := sim.cars[2]
+	var s_crash := sim.track.length * 0.5
+	var fwd := Vector2.from_angle(sim.track.heading_at(s_crash))
+	c1.pos = sim.track.position_at(s_crash)
+	c2.pos = c1.pos + fwd * (sim.defs[1].length * 0.5 + sim.defs[2].length * 0.5 + 0.1)
+	c1.heading = fwd.angle()
+	c2.heading = (-fwd).angle()
+	c1.vel = fwd * 15.0
+	c2.vel = -fwd * 15.0
+	var crash := []
+	for k in 10:
+		sim.step([])
+		for e in sim.events:
+			if e["type"] == "incident" and e["kind"] == "collision":
+				crash.append(e)
+	check(crash.size() >= 2 and crash[0]["severity"] > 0.5, "head-on crash: both cars report a serious incident (%d)" % crash.size())
+	check(c1.body_damage[CarDamage.FRONT] > 0.5 and c2.body_damage[CarDamage.FRONT] > 0.5, "both noses smashed")
+	c1.damage_engine = 1.0
+	sim.step([])
+	check(sim.is_retired(1) and sim.entries[1].dnf, "a failed engine retires the car")
+	# Remote cars: the host sees damage that arrived from their owner
+	for k in 70:
+		sim.step([])
+	sim.external[2] = 1
+	c2.body_damage[CarDamage.LEFT] = 0.8
+	c2.puncture[CarState.RR] = 1.0
+	var remote := []
+	sim.step([])
+	for e in sim.events:
+		if e["type"] == "incident" and e["car"] == 2:
+			remote.append(e["kind"])
+	check("impact" in remote and "puncture" in remote, "host reports incidents for a remote player's car %s" % str(remote))
+
+
+## Full throttle, no steering, 7 s from a rolling start off the grid down
+## the main straight. Returns speed, gear and how far the heading drifted.
+func _accel_test(d: Dictionary, def: CarDefinition, s: CarState) -> Dictionary:
+	var track: TrackData = d["track"]
+	var env := SimEnvironment.create(track.default_environment, {}, 1)
+	env.bind_track(track)
+	var tc: TyreCompound = d["tyres"][def.tyre_compound_id]
+	var g := track.grid_slot(0)
+	s.pos = g["pos"]
+	s.heading = g["heading"]
+	s.vel = Vector2.from_angle(s.heading) * 20.0
+	s.track_idx = track.project(s.pos)["idx"]
+	s.tyre_temp = PackedFloat64Array([tc.optimal_temp_c, tc.optimal_temp_c, tc.optimal_temp_c, tc.optimal_temp_c])
+	s.assist_stability = false
+	var inp := CarInput.new()
+	inp.throttle = 1.0
+	var ev := []
+	for k in 240 * 7:
+		CarPhysics.step(s, inp, def, tc, env, track, 1.0 / 240.0, 0.0, ev, 0)
+	return {"speed": s.speed(), "gear": s.gear, "drift": wrapf(s.heading - g["heading"], -PI, PI)}
 
 
 ## Race data for the pit wall: lap logs, averages, gaps, pit windows, feed, sync.
