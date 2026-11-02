@@ -1,20 +1,77 @@
 class_name SoundBank
 extends RefCounted
-## Makes every sound in code, once, and caches it. Loops are a whole number
-## of cycles long so they repeat without clicks. Mono 16-bit, 22.05 kHz.
+## Every sound in the game. Two kinds:
+## - Baked: engines (one set of loops per engine family, at many rpm bands),
+##   turbo/supercharger/hybrid/gearbox whines, tyres, road, kerbs, gravel,
+##   grass, wind, rain spray, exhaust pops and gearshift sounds. These are
+##   synthesised offline by tools/engine_synth.py into baked/ (no recordings,
+##   nothing to license) and loaded here.
+## - Made here in code on first use: crashes, start lights, chimes, menu sounds.
+## Loops are a whole number of cycles long so they repeat without clicks.
 
 const RATE := 22050
-## Engine loops are made at this firing frequency; players set pitch_scale
-## to (firing frequency / ENGINE_BASE_HZ).
+## Kept for older callers: the firing frequency the old single engine loop
+## was made at.
 const ENGINE_BASE_HZ := 110.0
+const BAKED_DIR := "res://modules/audio/baked/"
+## Engine families baked by tools/engine_synth.py (see docs/AUDIO.md).
+const FAMILIES := ["i4_turbo", "i6_turbo", "v6_turbo", "v6_na", "flat6_na", "v8_cross_na",
+	"v8_cross_turbo", "v8_flat_na", "v8_flat_turbo", "v10_na", "v12_na"]
 
 static var _cache: Dictionary = {}
+static var _manifest: Dictionary = {}
 
 
-static func get_sound(name: String) -> AudioStreamWAV:
+static func get_sound(name: String) -> AudioStream:
 	if not _cache.has(name):
-		_cache[name] = _make(name)
+		var baked := _load_baked(name)
+		_cache[name] = baked if baked != null else _make(name)
 	return _cache[name]
+
+
+## The rpm bands an engine family was baked at: [[nominal, exact rpm], ...],
+## low to high. Empty if the family is unknown.
+static func engine_bands(family: String) -> Array:
+	if _manifest.is_empty():
+		var f := FileAccess.open(BAKED_DIR + "manifest.json", FileAccess.READ)
+		if f:
+			var parsed = JSON.parse_string(f.get_as_text())
+			if parsed is Dictionary:
+				_manifest = parsed
+	var fam: Dictionary = _manifest.get("families", {}).get(family, {})
+	return fam.get("bands", [])
+
+
+## One engine loop: family, on throttle (true) or overrun (false), band (nominal rpm).
+static func engine_loop(family: String, on_load: bool, band: int) -> AudioStream:
+	return get_sound("%s_%s_%d" % [family, "on" if on_load else "off", band])
+
+
+## Loads a baked sound, making sure loops loop (the .import files aren't in
+## git, so the WAV's own loop points are used and re-applied here).
+static func _load_baked(name: String) -> AudioStream:
+	var path := BAKED_DIR + name + ".wav"
+	if not ResourceLoader.exists(path):
+		return null
+	var s = load(path)
+	if s is AudioStreamWAV and _is_loop(name):
+		var w := s as AudioStreamWAV
+		if w.loop_mode == AudioStreamWAV.LOOP_DISABLED:
+			w.loop_mode = AudioStreamWAV.LOOP_FORWARD
+			w.loop_begin = 0
+			w.loop_end = _frames(w)
+	return s
+
+
+static func _is_loop(name: String) -> bool:
+	return not (name.begins_with("pop_") or name in ["crackle", "shift", "flutter", "blowoff"])
+
+
+static func _frames(w: AudioStreamWAV) -> int:
+	var b := 2 if w.format == AudioStreamWAV.FORMAT_16_BITS else 1
+	if w.format == AudioStreamWAV.FORMAT_16_BITS or w.format == AudioStreamWAV.FORMAT_8_BITS:
+		return w.data.size() / (b * (2 if w.stereo else 1))
+	return int(w.get_length() * w.mix_rate)
 
 
 static func _make(name: String) -> AudioStreamWAV:
@@ -23,6 +80,8 @@ static func _make(name: String) -> AudioStreamWAV:
 		"engine_off": return _engine(false)
 		"squeal": return _squeal()
 		"rumble": return _rumble()
+		"tyre_squeal": return _squeal()
+		"gravel", "grass": return _rumble()
 		"crash": return _crash(0.55, 0.9)
 		"bump": return _crash(0.18, 0.5)
 		"beep": return _tone([880.0], 0.18, 0.5)
