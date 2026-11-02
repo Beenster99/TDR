@@ -183,8 +183,8 @@ func _draw() -> void:
 	# --- Speed / gear / rpm (bottom right)
 	var br := Vector2(vp.x - 260, vp.y - 130)
 	_panel(Rect2(br, Vector2(250, 120)))
-	_text(br + Vector2(14, 56), "%3d" % int(c.speed() * 3.6), 48)
-	_text(br + Vector2(120, 56), "km/h", 16, Color(1, 1, 1, 0.7))
+	_text(br + Vector2(14, 56), "%3d" % int(Units.speed_value(c.speed())), 48)
+	_text(br + Vector2(120, 56), Units.speed_unit(), 16, Color(1, 1, 1, 0.7))
 	_text(br + Vector2(190, 58), "R" if c.gear < 0 else str(c.gear), 44, Color(1, 0.9, 0.3))
 	var d := sim.defs[me]
 	var frac := clampf(c.rpm / d.redline_rpm, 0.0, 1.0)
@@ -204,13 +204,13 @@ func _draw() -> void:
 		var t := c.tyre_temp[k]
 		var r := Rect2(bl + pos[k], Vector2(48, 48))
 		draw_rect(r, _temp_colour(t, tc))
-		_text(r.position + Vector2(0, 30), "%d°" % int(t), 16, Color.BLACK, HORIZONTAL_ALIGNMENT_CENTER, 48)
+		_text(r.position + Vector2(0, 30), "%d°" % roundi(Units.temp_value(t)), 16, Color.BLACK, HORIZONTAL_ALIGNMENT_CENTER, 48)
 		if sim.settings.tyre_wear_enabled:
 			_text(r.position + Vector2(0, 46), "%d%%" % roundi((1.0 - c.tyre_wear[k]) * 100.0), 11, Color(0, 0, 0, 0.75), HORIZONTAL_ALIGNMENT_CENTER, 48)
 	var env := sim.env
 	var h := env.time_of_day_h
 	_text(bl + Vector2(146, 50), "%02d:%02d  %s" % [int(h), int(fmod(h, 1.0) * 60.0), SimEnvironment.weather_name(env.weather)], 15)
-	_text(bl + Vector2(146, 72), "Air %d°  Track %d°" % [roundi(env.ambient_c), roundi(env.track_c)], 15)
+	_text(bl + Vector2(146, 72), "Air %s  Track %s" % [Units.temp(env.ambient_c), Units.temp(env.track_c)], 15)
 	_text(bl + Vector2(146, 94), _surface_text(env), 15, Color(0.6, 0.85, 1) if env.wetness > 0.05 else Color.WHITE)
 	var forecast := _forecast_text(env)
 	if forecast != "":
@@ -223,7 +223,7 @@ func _draw() -> void:
 	_text(bl + Vector2(146, 138), "Grip %d%%" % int(grip * 100.0), 15, Color(0.6, 1, 0.6) if grip > 0.85 else Color(1, 0.7, 0.4))
 	if sim.settings.fuel_enabled:
 		var fl := sim.pits.fuel_laps(me)
-		_text(bl + Vector2(146, 160), "Fuel %.1f L  %s" % [c.fuel_l, "(%.1f laps)" % fl if fl < 99.0 else ""], 15,
+		_text(bl + Vector2(146, 160), "Fuel %s  %s" % [Units.fuel(c.fuel_l), "(%.1f laps)" % fl if fl < 99.0 else ""], 15,
 			Color(1, 0.5, 0.3) if fl < 1.5 else Color.WHITE)
 	if sim.pits.enabled:
 		_draw_pit_panel(Vector2(lx, 170), me)
