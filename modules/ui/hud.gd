@@ -95,6 +95,7 @@ func _draw() -> void:
 	if show_elevation_profile and not _profile.is_empty():
 		_draw_profile(Rect2(vp.x * 0.5 - 230, vp.y - 92, 460, 70))
 
+	_text(Vector2(0, vp.y - 14), "P / D-pad →  Pit wall", 13, Color(1, 1, 1, 0.45), HORIZONTAL_ALIGNMENT_CENTER, vp.x)
 	if me < 0:
 		_text(Vector2(20, 40), "SPECTATING", 22)
 		return
