@@ -2809,6 +2809,20 @@ func test_hud_layout() -> void:
 	for id in RaceHud.CAR_ITEMS:
 		check(ids.has(id), "car item %s is a HUD item" % id)
 	check(InputMap.has_action("hud_edit") or InputSetup.KEYS.has("hud_edit"), "F2 opens the HUD layout editor")
+	# Co-op drivers: their own layout, minimal until they change it.
+	var all_ids := RaceHud.item_ids()
+	var co := HudLayout.load_from({}, true, all_ids)
+	var shown := all_ids.filter(func(id): return co.is_on(id))
+	check(shown.size() == HudLayout.COOP_SHOWN.size() and "speed" in shown and not co.is_on("tower") and not co.is_on("map"),
+		"a co-op driver starts with a minimal HUD (%s)" % ", ".join(shown))
+	for id in HudLayout.COOP_SHOWN:
+		check(id in all_ids, "co-op item %s is a HUD item" % id)
+	co.set_on("map", true)
+	var saved := {HudLayout.PREF_COOP: co.to_value(), HudLayout.PREF: {"hint": {"on": false}}}
+	check(HudLayout.load_from(saved, true, all_ids).is_on("map") and not HudLayout.load_from(saved, true, all_ids).is_on("tower"),
+		"the co-op layout keeps the driver's changes")
+	check(not HudLayout.load_from(saved, false, all_ids).is_on("hint") and HudLayout.load_from(saved, false, all_ids).is_on("map"),
+		"the solo layout is separate from the co-op one")
 
 
 ## Race HUD: the timing tower fits big grids (top three plus a window round

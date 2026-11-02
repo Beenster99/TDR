@@ -11,6 +11,11 @@ extends RefCounted
 ## 100 % size, shown.
 
 const PREF := "hud_layout"
+## Co-op drivers (sharing the car with team mates, who give them the
+## information over voice) have a layout of their own, minimal by default.
+const PREF_COOP := "hud_layout_coop"
+## What a co-op driver's HUD shows until they change it.
+const COOP_SHOWN := ["speed", "pitguide", "lights", "flags", "radio", "messages"]
 const MIN_SCALE := 0.5
 const MAX_SCALE := 2.0
 
@@ -24,6 +29,24 @@ static func from_value(v) -> HudLayout:
 			if v[id] is Dictionary:
 				l.items[str(id)] = (v[id] as Dictionary).duplicate()
 	return l
+
+
+## The co-op driver's layout as designed: every item in `ids` hidden except
+## COOP_SHOWN.
+static func coop_default(ids: Array) -> HudLayout:
+	var l := HudLayout.new()
+	for id in ids:
+		if not (id in COOP_SHOWN):
+			l.set_on(id, false)
+	return l
+
+
+## The saved layout from the prefs (solo or co-op); a co-op driver who never
+## saved one gets coop_default.
+static func load_from(prefs: Dictionary, coop: bool, ids: Array) -> HudLayout:
+	if coop:
+		return HudLayout.from_value(prefs[PREF_COOP]) if prefs.get(PREF_COOP) is Dictionary else coop_default(ids)
+	return HudLayout.from_value(prefs.get(PREF, {}))
 
 
 ## A copy for saving (prefs), with items left as designed dropped.

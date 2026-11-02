@@ -3,6 +3,8 @@ extends Node
 ##   edit    - a race with the editor open, the track map picked
 ##   custom  - a race with a moved and resized layout, editor closed
 ##   preview - the editor from Settings, over its own preview race
+##   coop    - a co-op driver's race screen (minimal HUD), team mate on the pit wall
+##   coopedit - the Settings editor showing the co-op driver layout
 ##   godot --path . res://tests/hud_editor_shot.tscn -- <out.png> <mode> [race seconds] --autodrive --zoom 0.3
 
 var out := "user://hud_editor.png"
@@ -29,7 +31,7 @@ func _ready() -> void:
 			"timing": {"x": 0.0, "y": 0.0},
 			"hint": {"on": false},
 		}
-	if mode == "preview":
+	if mode == "preview" or mode == "coopedit":
 		var bg := ColorRect.new()
 		bg.color = Color(0.12, 0.14, 0.16)
 		bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -39,6 +41,8 @@ func _ready() -> void:
 		var root := HudEditor.open_preview(bg)
 		await _frames(20)
 		var hud: RaceHud = root.get_child(1)
+		if mode == "coopedit":
+			hud.editor.set_coop(true)
 		hud.editor.select("speed")
 		await _frames(10)
 		_save()
@@ -56,6 +60,11 @@ func _ready() -> void:
 	s.environment = {"time_h": 15.0, "weather": "dry"}
 	var start := RaceFactory.plan(s, [{"name": "You", "car_id": "bmw_m4_gt3"}], GameData.cars, GameData.drivers)
 	var session := RaceSession.create(RaceSession.Mode.OFFLINE, start, 0)
+	if mode == "coop":   # a team mate on the pit wall makes this a shared car
+		var e := session.sim.entries[session.local_car]
+		if e.crew.is_empty():
+			e.crew.append({"peer_id": session.local_peer, "name": "You", "role": RaceEntry.ROLE_DRIVER})
+		e.crew.append({"peer_id": 77, "name": "Sam", "role": RaceEntry.ROLE_PIT_WALL})
 	GameData.active_session = session
 	var scene: Node = load("res://modules/game/race.tscn").instantiate()
 	add_child(scene)

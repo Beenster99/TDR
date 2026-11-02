@@ -32,6 +32,10 @@ var _drag_start_len := 1.0
 var _guides: Array = []     ## [from, to] lines shown while snapping
 var _undo: Array = []
 var _start: Dictionary      ## layout + tower when the editor opened (Cancel)
+## Settings preview: the layout not being shown (solo or co-op driver), so
+## both can be edited and saved together.
+var _other: HudLayout = null
+var _mode_buttons := {}     ## coop (bool) -> Button
 var _panel: PanelContainer
 var _checks := {}           ## id -> CheckBox
 var _sel_label: Label
@@ -47,6 +51,9 @@ func setup(p_hud: RaceHud) -> void:
 	set_anchors_and_offsets_preset(PRESET_FULL_RECT)
 	mouse_filter = MOUSE_FILTER_STOP
 	focus_mode = FOCUS_ALL
+	if hud.drives_session:
+		var gd := get_node_or_null("/root/GameData")
+		_other = HudLayout.load_from(gd.prefs if gd != null else {}, not hud.coop, RaceHud.item_ids())
 	_start = _snapshot()
 	_build_panel()
 	_refresh_panel()
@@ -101,12 +108,30 @@ static func preview_session() -> RaceSession:
 # --- Saving, undo -------------------------------------------------------------------
 
 func _snapshot() -> Dictionary:
-	return {"layout": hud.layout.to_value(), "tower": hud.show_tower()}
+	return {"layout": hud.layout.to_value(), "tower": hud.show_tower(), "coop": hud.coop,
+		"other": _other.to_value() if _other != null else {}}
 
 
 func _restore(snap: Dictionary) -> void:
+	hud.coop = bool(snap["coop"])
 	hud.layout = HudLayout.from_value(snap["layout"])
 	hud.set_show_tower(bool(snap["tower"]))
+	if _other != null:
+		_other = HudLayout.from_value(snap["other"])
+	_refresh_panel()
+
+
+## Settings preview: edit the solo layout or the co-op driver's.
+func set_coop(on: bool) -> void:
+	if _other == null or hud.coop == on:
+		_refresh_panel()
+		return
+	_push_undo()
+	var shown := hud.layout
+	hud.layout = _other
+	_other = shown
+	hud.coop = on
+	selected = ""
 	_refresh_panel()
 
 
@@ -123,9 +148,10 @@ func undo() -> void:
 
 
 func save_and_close() -> void:
+	hud.save_layout()
 	var gd := get_node_or_null("/root/GameData")
-	if gd != null and gd.has_method("set_pref"):
-		gd.call("set_pref", HudLayout.PREF, hud.layout.to_value())
+	if _other != null and gd != null and gd.has_method("set_pref"):
+		gd.call("set_pref", HudLayout.PREF if hud.coop else HudLayout.PREF_COOP, _other.to_value())
 	_close(true)
 
 
@@ -436,6 +462,27 @@ func _build_panel() -> void:
 		live.add_theme_font_size_override("font_size", 13)
 		live.add_theme_color_override("font_color", Color(1, 0.7, 0.35))
 		box.add_child(live)
+	if _other != null:
+		# Settings: pick which layout to edit.
+		var modes := HBoxContainer.new()
+		modes.add_theme_constant_override("separation", 6)
+		box.add_child(modes)
+		var l := Label.new()
+		l.text = "Layout for"
+		modes.add_child(l)
+		for c in [false, true]:
+			var b := _button("Co-op driver" if c else "Solo and online", set_coop.bind(c))
+			b.toggle_mode = true
+			b.tooltip_text = "When you drive a car shared with team mates, who tell you what you need over voice: a minimal HUD." if c \
+				else "Your normal race screen."
+			modes.add_child(b)
+			_mode_buttons[c] = b
+	elif hud.coop:
+		var note := Label.new()
+		note.text = "Co-op driver layout: used while you drive a car shared with team mates."
+		note.add_theme_font_size_override("font_size", 13)
+		note.add_theme_color_override("font_color", Color(0.6, 0.85, 1))
+		box.add_child(note)
 	var grid := GridContainer.new()
 	grid.columns = 2
 	grid.add_theme_constant_override("h_separation", 18)
@@ -469,8 +516,7 @@ func _build_panel() -> void:
 	row.add_child(_button("Undo", undo))
 	row.add_child(_button("Reset all", func():
 		_push_undo()
-		hud.layout.reset_all()
-		hud.set_show_tower(true)
+		hud.reset_layout()
 		_refresh_panel()))
 	var gap := Control.new()
 	gap.size_flags_horizontal = SIZE_EXPAND_FILL
@@ -525,11 +571,14 @@ func _refresh_panel() -> void:
 	if _panel == null:
 		return
 	_refreshing = true
+	for c in _mode_buttons:
+		_mode_buttons[c].button_pressed = c == hud.coop
+		_mode_buttons[c].modulate = Color(1, 0.86, 0.82) if c == hud.coop else Color.WHITE
 	for id in _checks:
 		var cb: CheckBox = _checks[id]
 		cb.button_pressed = hud.item_on(id)
 		var note := ""
-		if id == "standings" and hud.item_on(id) and hud.show_tower():
+		if id == "standings" and hud.item_on(id) and hud.item_on("tower"):
 			note = "  (when the tower is off)"
 		cb.text = RaceHud.item_name(id) + note
 		cb.modulate = Color(1, 0.86, 0.82) if id == selected else Color.WHITE
