@@ -67,7 +67,7 @@ func _physics_process(_delta: float) -> void:
 				_armed = true
 				_t0 = sim.race_time
 				var t := sim.track
-				var s0 := me.track_s + 30.0
+				var s0 := me.track_s + 7.0
 				var levels := [0.0, 0.25, 0.45, 0.6, 0.75, 0.9, 1.0]
 				var k := 0
 				for i in sim.car_count():
@@ -84,13 +84,13 @@ func _physics_process(_delta: float) -> void:
 					c.track_idx = t.index_at(s0 + k * 3.2)
 					c.body_damage = PackedFloat64Array([lv, lv * 0.7, lv * (0.9 if k % 2 == 0 else 0.3), lv * (0.3 if k % 2 == 0 else 0.9)])
 					c.damage_engine = minf(lv * 1.05, 0.99)
-					sim.entries[i].dnf = true
+					sim.external[i] = 1   # parked: not driven or pushed about
 					k += 1
 				me.vel = Vector2.ZERO
 			if _armed:
 				me.vel = Vector2.ZERO
 				for i in sim.car_count():
-					if i != mine and sim.entries[i].dnf:
+					if i != mine and sim.external[i]:
 						sim.cars[i].vel = Vector2.ZERO
 						sim.cars[i].yaw_rate = 0.0
 			if _armed and sim.race_time - _t0 >= wait:
