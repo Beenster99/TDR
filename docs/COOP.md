@@ -87,3 +87,14 @@ puts you in your car's crew with the AI driving it.
 pit wall player asks for the wheel, the change happens at the mandatory
 stop, and the new driver brings the car home. `test_coop_roles` in
 `tests/run_tests.gd` checks role sharing and the driver change in the box.
+
+## The driver's HUD
+
+The driver of a shared car uses the co-op driver HUD layout
+(`GameData.prefs["hud_layout_coop"]`, `HudLayout.PREF_COOP`), separate from
+their solo layout. Until they change it, it shows only speed and gear, the
+pit lane guide, start lights, flags, team radio and messages
+(`HudLayout.COOP_SHOWN`): the rest comes from the pit crew over voice. They
+can change it in the HUD layout editor (F2 while driving a shared car, or
+Settings > Gameplay > Edit HUD layout, "Co-op driver"). A driver change
+switches layouts on the spot.
