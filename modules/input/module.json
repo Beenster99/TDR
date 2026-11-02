@@ -1,9 +1,9 @@
 {
   "id": "input",
   "name": "Input",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "status": "active",
-  "summary": "Keyboard and game controller: action bindings and turning them into CarInput (deadzones, steering curve, smoothing).",
+  "summary": "Keyboard and game controller: action bindings and turning them into CarInput (deadzones, steering curve, smoothing). The player's own bindings from Settings > Controller (two keys and two pad inputs per control, saved in GameData.prefs[\"controls\"]) and the stick dead zone.",
   "depends": {
     "core": "1"
   },
@@ -12,5 +12,5 @@
     "InputSetup"
   ],
   "internal": [],
-  "notes": "A rebinding screen and vibration belong here."
+  "notes": "Vibration belongs here."
 }

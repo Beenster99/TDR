@@ -1,16 +1,20 @@
 class_name SettingsScreen
 extends Control
-## Settings: Gameplay, Graphics, Sound, Garage and Debug. Options come from
+## Settings: Gameplay, Controller, Graphics, Sound, Garage and Debug. Options come from
 ## GameData.settings_catalog (any module adds its own with
 ## GameData.register_setting), so this screen never needs to know them.
 ## Every change is applied and saved at once (GameData.set_pref).
 ##
 ## Controller: up/down picks a row, left/right changes it, LB/RB (or Q/E)
 ## switch section, B leaves. The section list on the left takes focus too.
+##
+## Controller also lists every control with two keyboard and two controller
+## bindings: pick one, then press the new key or button (InputSetup turns it
+## into a binding; saved in GameData.prefs["controls"]).
 
 signal closed
 
-const TITLES := {"gameplay": "Gameplay", "graphics": "Graphics", "sound": "Sound", "garage": "Garage", "debug": "Debug"}
+const TITLES := {"gameplay": "Gameplay", "controller": "Controller", "graphics": "Graphics", "sound": "Sound", "garage": "Garage", "debug": "Debug"}
 const ACCENT := Color(0.94, 0.26, 0.2)
 
 var profile: TeamProfile
@@ -21,6 +25,9 @@ var _help: Label
 var _title: Label
 ## Garage actions are handed in by the menu (it owns the garage screen).
 var open_garage: Callable
+## Waiting for a new key or button: {action, kind, slot, index, from, until}.
+var _listen := {}
+const LISTEN_TIME := 6.0
 
 
 func open(p_profile: TeamProfile, section := "gameplay") -> void:
@@ -112,6 +119,8 @@ func _show_section(id: String, focus_list := false) -> void:
 		_build_garage()
 	for e in GameData.settings_in(id):
 		_list.add_child(_row(e))
+	if id == "controller":
+		_build_controls()
 	if id == "debug":
 		_build_debug()
 	if id == "sound":
@@ -215,6 +224,122 @@ func _build_garage() -> void:
 		"Puts back the garage from your last backup.")
 	var where := ProjectSettings.globalize_path(profile.path) if profile else ""
 	_note("Your garage is saved automatically after every change, in %s" % where, Color(1, 1, 1, 0.45))
+
+
+# --- Controller: key and button bindings --------------------------------------
+
+func _controls() -> Dictionary:
+	var c = GameData.prefs.get("controls", {})
+	return c if c is Dictionary else {}
+
+
+func _build_controls() -> void:
+	_note("Pick a binding, then press the new key or controller button.  Backspace clears it, Esc cancels.",
+		Color(1, 1, 1, 0.6))
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 6)
+	for h in [["", 250], ["Keyboard", 306], ["Controller", 306]]:
+		var l := Label.new()
+		l.text = h[0]
+		l.custom_minimum_size = Vector2(h[1], 0)
+		l.modulate = Color(1, 0.86, 0.82)
+		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		head.add_child(l)
+	_list.add_child(head)
+	var overrides := _controls()
+	for r in InputSetup.REBINDABLE:
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		var l := Label.new()
+		l.text = r[1]
+		l.custom_minimum_size = Vector2(250, 0)
+		l.clip_text = true
+		row.add_child(l)
+		var lists := {"keys": InputSetup.keys_of(overrides, r[0]), "pad": InputSetup.pads_of(overrides, r[0])}
+		for kind in ["keys", "pad"]:
+			for slot in InputSetup.SLOTS:
+				var v = lists[kind][slot] if slot < lists[kind].size() else null
+				var b := Button.new()
+				b.text = InputSetup.describe(kind, v)
+				b.custom_minimum_size = Vector2(150, 40)
+				b.clip_text = true
+				b.set_meta("help", "%s: %s %d is %s. Press it, then the new %s." % [r[1],
+					"key" if kind == "keys" else "controller button", slot + 1, b.text,
+					"key" if kind == "keys" else "button, trigger or stick direction"])
+				b.pressed.connect(_start_listen.bind(r[0], kind, slot, b))
+				row.add_child(b)
+		_list.add_child(row)
+	_confirm_action("Reset controls to default", func():
+		GameData.set_pref("controls", {})
+		_show_section("controller", true)
+		_help.text = "Controls reset to default.",
+		"Puts every key and controller button back as it came.")
+
+
+func _start_listen(action: String, kind: String, slot: int, b: Button) -> void:
+	var now := Time.get_ticks_msec() / 1000.0
+	var buttons := _list.find_children("*", "BaseButton", true, false)
+	# A short pause first, so the press that picked this row isn't taken as the new binding.
+	_listen = {"action": action, "kind": kind, "slot": slot, "index": buttons.find(b), "from": now + 0.2,
+		"until": now + LISTEN_TIME, "button": b}
+	b.text = "press a key..." if kind == "keys" else "press a button..."
+	_help.text = "Press the new %s now (%d s).  Backspace clears it, Esc cancels." % [
+		"key" if kind == "keys" else "controller button, trigger or stick direction", int(LISTEN_TIME)]
+
+
+func _process(_dt: float) -> void:
+	if not _listen.is_empty() and Time.get_ticks_msec() / 1000.0 > float(_listen["until"]):
+		_end_listen("No change.")
+
+
+func _input(event: InputEvent) -> void:
+	if _listen.is_empty():
+		return
+	if event is InputEventMouseMotion:
+		return
+	get_viewport().set_input_as_handled()
+	if Time.get_ticks_msec() / 1000.0 < float(_listen["from"]):
+		return
+	if event is InputEventMouseButton and event.pressed:
+		_end_listen("No change.")
+		return
+	if event is InputEventKey and event.pressed and not event.echo:
+		var code: int = event.physical_keycode if event.physical_keycode != KEY_NONE else event.keycode
+		if code == KEY_ESCAPE:
+			_end_listen("No change.")
+			return
+		if code == KEY_BACKSPACE:
+			_bind(null)
+			return
+	var got := InputSetup.binding_from_event(event)
+	if got.is_empty() or got["kind"] != _listen["kind"]:
+		return
+	_bind(got["value"])
+
+
+func _bind(value) -> void:
+	var l := _listen
+	var overrides := InputSetup.with_binding(_controls(), l["action"], l["kind"], l["slot"], value)
+	var also := InputSetup.used_by(overrides, l["action"], l["kind"], value) if value != null else []
+	GameData.set_pref("controls", overrides)
+	_end_listen(("Cleared." if value == null else "Set to %s." % InputSetup.describe(l["kind"], value))
+		+ ("  Also used for: %s." % ", ".join(also) if not also.is_empty() else ""))
+
+
+func _end_listen(message: String) -> void:
+	var index := int(_listen.get("index", -1))
+	_listen = {}
+	_show_section("controller", false)
+	var buttons := _list.find_children("*", "BaseButton", true, false)
+	if index >= 0 and index < buttons.size():
+		(buttons[index] as Control).grab_focus.call_deferred()
+	_help.text = message
+	_set_help_later.call_deferred(message)
+
+
+## Focusing the row shows its own help; put the result back over it.
+func _set_help_later(message: String) -> void:
+	_help.text = message
 
 
 func _build_debug() -> void:
