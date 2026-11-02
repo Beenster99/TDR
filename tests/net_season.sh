@@ -13,9 +13,9 @@ COMMON=(--headless --path "$DIR")
 "$GODOT" "${COMMON[@]}" -- --server --port "$PORT" --laps 1 --ai 2 --min-players 2 --season 1 --qualifying driven --quit-after-season >"$LOG/server.log" 2>&1 &
 S=$!
 sleep 2
-"$GODOT" "${COMMON[@]}" -- --join 127.0.0.1 --port "$PORT" --name Alice --car mclaren_720s_gt3 --autodrive --ready --quit-after-season >"$LOG/alice.log" 2>&1 &
+"$GODOT" "${COMMON[@]}" -- --join 127.0.0.1 --port "$PORT" --name Alice --profile user://test_alice_profile.json --car mclaren_720s_gt3 --autodrive --ready --quit-after-season >"$LOG/alice.log" 2>&1 &
 A=$!
-"$GODOT" "${COMMON[@]}" -- --join 127.0.0.1 --port "$PORT" --name Bob --car bmw_m4_gt3 --autodrive --ready --quit-after-season >"$LOG/bob.log" 2>&1 &
+"$GODOT" "${COMMON[@]}" -- --join 127.0.0.1 --port "$PORT" --name Bob --profile user://test_bob_profile.json --car bmw_m4_gt3 --autodrive --ready --quit-after-season >"$LOG/bob.log" 2>&1 &
 B=$!
 ( sleep "${TIMEOUT:-700}"; kill $S $A $B 2>/dev/null ) &
 W=$!
