@@ -77,6 +77,8 @@ func analyse(cars: Array, sim: RaceSim) -> void:
 		if sim.pits != null and sim.pits.enabled:
 			stop = sim.pits.service_for(i, e.pit["plan"])["total_s"]
 		var loss := loss_for(c, sim.track.length, stop)
+		# Under the safety car / VSC the field is slow, so a stop costs less.
+		loss *= 1.0 - sim.pit_time_saving()
 		# Time gaps to every running car behind, nearest first.
 		var lost := 0
 		var ahead_after := -1.0

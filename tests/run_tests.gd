@@ -27,6 +27,9 @@ func _init() -> void:
 	test_snapshot_restore(replay)
 	test_telemetry(replay)
 	test_weather_forecast()
+	test_race_control_rules()
+	test_safety_car_race()
+	test_safety_car_off()
 	print("\n%s (%d failures, %.1fs)" % ["PASS" if failures == 0 else "FAIL", failures, (Time.get_ticks_msec() - t0) / 1000.0])
 	quit(1 if failures > 0 else 0)
 
@@ -491,9 +494,11 @@ func test_ai_race_completes() -> Dictionary:
 	for i in sim.car_count():
 		var c := sim.cars[i]
 		var avg := (c.tyre_temp[0] + c.tyre_temp[1] + c.tyre_temp[2] + c.tyre_temp[3]) / 4.0
-		if avg > t_start + 20.0 or sim.entries[i].dnf: warm += 1
+		# Cars still racing at the end (a crippled car crawling round, or the
+		# field behind the safety car, runs cooler).
+		if avg > t_start + 20.0 or not sim.entries[i].finished: warm += 1
 		if c.tyre_temp[CarState.FL] > c.tyre_temp[CarState.FR]: left_hotter += 1
-	check(warm == sim.car_count(), "tyres warm up from %.0f C during the race" % t_start)
+	check(warm == sim.car_count(), "tyres warm up from %.0f C during the race (finishers)" % t_start)
 	check(left_hotter > sim.car_count() / 2, "left tyres run hotter on a clockwise track (%d/%d)" % [left_hotter, sim.car_count()])
 	var best := INF
 	for e in sim.entries:
@@ -821,6 +826,194 @@ func test_ai_drivers() -> void:
 	check(vf > vs * 1.03, "pace trait: faster plan for the faster driver (%.1f vs %.1f m/s avg)" % [vf / slow.target_speed.size(), vs / slow.target_speed.size()])
 
 
+# --- Wave 3: race control (flags, VSC, safety car, penalties) -------------
+
+## Runs an AI race in which one car stops and retires at stop_at seconds.
+## force_sc deploys the safety car straight away (so the whole procedure is
+## covered whatever the stopped car's spot). Returns a summary.
+func _sc_race(settings: RaceSettings, stop_at: float, force_sc: bool, snapshot_at := -1.0) -> Dictionary:
+	var d := _data()
+	var race := _race(settings, d)
+	var sim: RaceSim = race["sim"]
+	var ai: Dictionary = race["ai"]
+	var out := {"events": {}, "penalties": 0, "inputs": [], "sc_seen": false, "max_queue": 0.0,
+		"queue_at_call_in": INF, "start_hash": sim.state_hash(), "snap": {}, "snap_tick": -1, "victim": -1}
+	var victim := -1
+	while sim.phase != RaceSim.Phase.FINISHED and sim.tick < 60 * 60 * 15:
+		if snapshot_at > 0.0 and out["snap_tick"] < 0 and sim.race_time >= snapshot_at:
+			out["snap"] = sim.snapshot()
+			out["snap_tick"] = sim.tick
+		var inputs := []
+		for i in sim.car_count():
+			inputs.append(ai[i].get_input(sim, i))
+		if victim < 0 and sim.phase == RaceSim.Phase.RACING and sim.race_time >= stop_at:
+			victim = sim.running_order[sim.car_count() / 2]
+			out["victim"] = victim
+			out["victim_tick"] = sim.tick
+			if force_sc:
+				sim.race_control._deploy_sc("test")
+		if victim >= 0:
+			var stop := CarInput.new()
+			stop.brake = 1.0
+			inputs[victim] = stop
+			if sim.cars[victim].speed() < 1.0:
+				sim.entries[victim].dnf = true  # retired (the damage module does this in a real race)
+		out["inputs"].append(inputs)
+		sim.step(inputs)
+		var rc := sim.race_control
+		for e in sim.events:
+			var key: String = e["type"] + ":" + str(e.get("state", e.get("flag", "")))
+			out["events"][key] = out["events"].get(key, 0) + 1
+			if e["type"] == "penalty":
+				out["penalties"] += 1
+				print("       penalty: %s %s" % [sim.entries[e["car"]].driver_name, e["reason"]])
+			if e["type"] == "safety_car" and e["state"] == "in_this_lap":
+				out["queue_at_call_in"] = _lead_lap_queue(sim, 4)
+		if rc.sc_visible:
+			out["sc_seen"] = true
+	out["sim"] = sim
+	out["end_hash"] = sim.state_hash()
+	return out
+
+
+## Length of the queue formed by the first n lead-lap cars (metres).
+func _lead_lap_queue(sim: RaceSim, n: int) -> float:
+	var lead := sim.entries[sim.running_order[0]].distance
+	var count := 0
+	var last := 0.0
+	for i in sim.running_order:
+		var e := sim.entries[i]
+		if e.dnf or lead - e.distance > sim.track.length * 0.5:
+			continue
+		last = lead - e.distance
+		count += 1
+		if count >= n:
+			break
+	return last
+
+
+func test_safety_car_race() -> void:
+	print("safety car")
+	var settings := RaceSettings.new()
+	settings.laps = 4
+	settings.ai_count = 7
+	settings.seed = 4242
+	var r := _sc_race(settings, 45.0, true, 120.0)
+	var sim: RaceSim = r["sim"]
+	var ev: Dictionary = r["events"]
+	check(r["sc_seen"] and sim.race_control.deployments == 1, "the safety car comes out")
+	check(ev.has("flag:yellow"), "the stopped car gets a local yellow flag")
+	check(ev.has("flag:recovered") and sim.race_control.recovered[r["victim"]] == 1, "marshals recover the retired car")
+	check(r["queue_at_call_in"] < 120.0, "the field bunches up behind the safety car (first 4 within %.0f m)" % r["queue_at_call_in"])
+	check(ev.has("safety_car:in_this_lap") and ev.has("safety_car:restart") and ev.has("safety_car:green"),
+		"safety car in this lap, into the pits, restart, green flag")
+	check(not sim.race_control.sc_visible and sim.race_control.mode == RaceControl.Mode.GREEN, "safety car gone after the restart")
+	check(r["penalties"] <= 1, "AI keeps to the rules behind the safety car (%d penalties)" % r["penalties"])
+	check(sim.phase == RaceSim.Phase.FINISHED, "race finishes after the safety car (%.0f s)" % sim.race_time)
+	# Same inputs, same race: race control is part of the deterministic sim.
+	var replay := _fresh_sim(settings)
+	check(replay.state_hash() == r["start_hash"], "safety car race: identical start")
+	var inputs: Array = r["inputs"]
+	for k in inputs.size():
+		if k == r["victim_tick"]:
+			replay.race_control._deploy_sc("test")
+		_retire_like(replay, k >= r["victim_tick"], r["victim"])
+		replay.step(inputs[k])
+	check(replay.state_hash() == r["end_hash"], "safety car race replays exactly")
+	# Resync mid safety car from a snapshot.
+	var late := _fresh_sim(settings)
+	late.apply_snapshot(r["snap"])
+	check(late.race_control.mode == RaceControl.Mode.SC, "snapshot taken under the safety car carries it")
+	for k in range(r["snap_tick"], inputs.size()):
+		_retire_like(late, k >= r["victim_tick"], r["victim"])
+		late.step(inputs[k])
+	check(late.state_hash() == r["end_hash"], "snapshot restore under the safety car matches the original race")
+
+
+## Replays the test's retirement (the stopped car is marked retired once still).
+func _retire_like(sim: RaceSim, stopped: bool, victim: int) -> void:
+	if stopped and sim.cars[victim].speed() < 1.0:
+		sim.entries[victim].dnf = true
+
+
+func test_safety_car_off() -> void:
+	print("safety car off")
+	var settings := RaceSettings.new()
+	settings.laps = 2
+	settings.ai_count = 5
+	settings.seed = 99
+	settings.safety_car_enabled = false
+	var r := _sc_race(settings, 30.0, false)
+	var ev: Dictionary = r["events"]
+	check(ev.has("flag:yellow"), "a stopped car still brings out yellow flags")
+	check(not ev.has("safety_car:sc") and not ev.has("safety_car:vsc") and not r["sc_seen"], "no VSC or safety car when the host turns it off")
+	check(r["sim"].phase == RaceSim.Phase.FINISHED, "race finishes")
+
+
+## Rules without driving: penalties, classification, overtaking rules, sync.
+func test_race_control_rules() -> void:
+	print("race control rules")
+	var d := _data()
+	var settings := RaceSettings.new()
+	settings.ai_count = 4
+	settings.laps = 1
+	var sim: RaceSim = _race(settings, d)["sim"]
+	var rc := sim.race_control
+	check(rc.neutralisation() == "green" and not sim.safety_car_active() and sim.pit_time_saving() == 0.0, "starts green")
+	# Penalties count in the classification.
+	sim.phase = RaceSim.Phase.RACING
+	for i in 4:
+		var e := sim.entries[i]
+		e.finished = true
+		e.laps_done = 1
+		e.finish_time = 100.0 + i
+		sim.finish_order.append(i)
+	sim.add_penalty(0, 5.0, "test")
+	sim._update_positions()
+	check(sim.entries[0].penalty_s == 5.0 and sim.entries[0].position == 4, "a 5 s penalty drops the winner from P1 to P4")
+	check(sim.events.back()["type"] == "penalty", "penalty event for the race feed")
+	# Overtaking rules.
+	var sim2: RaceSim = _race(settings, d)["sim"]
+	var rc2 := sim2.race_control
+	sim2.phase = RaceSim.Phase.RACING
+	for c in sim2.cars:
+		c.vel = Vector2.from_angle(c.heading) * 40.0
+	check(rc2.may_pass(1, 0), "racing: overtaking allowed")
+	rc2._deploy_sc("test")
+	check(sim2.safety_car_active() and sim2.neutralisation() == "sc" and sim2.pit_time_saving() > 0.4, "safety car out: cheap pit stop")
+	check(not rc2.may_pass(1, 0), "no overtaking behind the safety car")
+	rc2.unlapping[1] = 1
+	check(rc2.may_pass(1, 0), "a waved-by lapped car may overtake")
+	rc2.unlapping[1] = 0
+	sim2.cars[0].vel = Vector2.ZERO
+	rc2.stranded_t[0] = 3.0
+	check(rc2.may_pass(1, 0), "passing a stopped car is allowed")
+	# Give the place back, or take a penalty.
+	rc2.stranded_t[0] = 0.0
+	sim2.cars[0].vel = Vector2.from_angle(sim2.cars[0].heading) * 40.0
+	rc2._prev_order = [0, 1, 2, 3]
+	sim2.entries[1].distance = sim2.entries[0].distance + 10.0
+	sim2._update_positions()
+	rc2._check_overtakes()
+	check(rc2.give_back.has(1), "overtaking under the safety car: told to give the place back")
+	check(rc2.instruction_for(1).begins_with("Give the place back"), "HUD tells the driver: %s" % rc2.instruction_for(1))
+	sim2.race_time += RaceControl.GIVE_BACK_S + 1.0
+	rc2._check_overtakes()
+	check(sim2.entries[1].penalty_s == RaceControl.PENALTY_S, "not given back in time: %d s penalty" % int(RaceControl.PENALTY_S))
+	# Clients get race control with the race state.
+	var client: RaceSim = _race(settings, d)["sim"]
+	client.follower = true
+	client.apply_race_state(sim2.race_state())
+	check(client.race_control.mode == RaceControl.Mode.SC and client.race_control.sc_visible
+		and client.race_control.sc_pos.distance_to(rc2.sc_pos) < 0.01 and client.entries[1].penalty_s == RaceControl.PENALTY_S,
+		"clients get the safety car, its position and penalties")
+	var before := client.race_control.sc_s
+	client.step([])
+	check(client.race_control.sc_s != before, "clients move the safety car along between updates")
+	# The safety car model data (graphics builds it from real dimensions).
+	var sc_def := CarCatalog.load_safety_car()
+	check(sc_def != null and is_equal_approx(sc_def.length, 4.546) and not d["cars"].has(sc_def.id),
+		"safety car: AMG GT Black Series dimensions, never in the race car list")
 ## Wave 3: hits bend the car and hurt the systems behind them, the car
 ## drives worse, the pits can fix it, incidents reach race control, and the
 ## damage survives the trip over the network.

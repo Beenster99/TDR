@@ -103,6 +103,7 @@ func _draw() -> void:
 			draw_circle(c, 18, Color(0.9, 0.1, 0.1) if k < lit else Color(0.25, 0.05, 0.05))
 	if message_time > 0.0:
 		_text(Vector2(0, 150), message, 40, Color(1, 0.9, 0.3), HORIZONTAL_ALIGNMENT_CENTER, vp.x)
+	_draw_race_control(vp, me)
 
 	# --- Standings (top right)
 	var x0 := vp.x - 330
@@ -128,6 +129,8 @@ func _draw() -> void:
 		_text(Vector2(x0 + 14, 55 + p * 22), "%2d  %s" % [p + 1, e.driver_name.left(18)], 15, col)
 		if sim.pits.enabled and int(e.pit.get("stops", 0)) > 0:
 			_text(Vector2(x0 + 172, 55 + p * 22), str(e.pit["stops"]), 12, Color(1, 1, 1, 0.55))
+		if e.penalty_s > 0.0:
+			_text(Vector2(x0 + 140, 55 + p * 22), "+%ds" % int(e.penalty_s), 13, Color(1, 0.55, 0.3))
 		_text(Vector2(x0 + 200, 55 + p * 22), right, 15, col, HORIZONTAL_ALIGNMENT_RIGHT, 110)
 
 	# --- Minimap
@@ -150,6 +153,8 @@ func _draw() -> void:
 	_text(Vector2(24, 82), "Time  " + fmt_time(cur), 18)
 	_text(Vector2(24, 106), "Last  " + fmt_time(e.lap_times[-1] if e.lap_times.size() > 0 else 0.0), 18, Color(1, 1, 1, 0.8))
 	_text(Vector2(24, 130), "Best  " + fmt_time(e.best_lap), 18, Color(0.6, 1, 0.6))
+	if e.penalty_s > 0.0:
+		_text(Vector2(170, 82), "+%d s penalty" % int(e.penalty_s), 16, Color(1, 0.55, 0.3))
 
 	# --- Speed / gear / rpm (bottom right)
 	var br := Vector2(vp.x - 260, vp.y - 130)
@@ -347,6 +352,45 @@ func _temp_colour(t: float, tc: TyreCompound) -> Color:
 	return Color(0.3, 0.9, 0.4).lerp(Color(1.0, 0.3, 0.2), clampf(x, 0.0, 1.0))
 
 
+## Flag board (top centre): yellow flags, VSC, safety car, restart, and what
+## the player has to do (keep the delta, give a place back...).
+func _draw_race_control(vp: Vector2, me: int) -> void:
+	var sim := session.sim
+	var rc := sim.race_control
+	var state := rc.neutralisation()
+	var line := rc.instruction_for(me) if me >= 0 else ""
+	var title := ""
+	var col := Color(1, 0.85, 0.1)
+	match state:
+		"sc":
+			title = "SAFETY CAR"
+			if rc.stage == "in_this_lap":
+				title = "SAFETY CAR IN THIS LAP"
+			elif rc.stage == "restart":
+				title = "RESTART"
+				col = Color(0.3, 0.9, 0.4)
+		"vsc":
+			title = "VSC ENDING" if rc.stage == "ending" else "VIRTUAL SAFETY CAR"
+		"yellow":
+			if me >= 0 and rc.yellow_at(sim.cars[me].track_s):
+				title = "YELLOW FLAG"
+	if title == "" and line == "":
+		return
+	var w := 520.0
+	var r := Rect2(vp.x * 0.5 - w * 0.5, 96, w, 58 if line != "" and title != "" else 34)
+	if title != "":
+		draw_rect(r, Color(0, 0, 0, 0.6))
+		var flash := int(Time.get_ticks_msec() / 400) % 2 == 0 or state == "sc"
+		draw_rect(Rect2(r.position, Vector2(w, 34)), col if flash else col.darkened(0.35))
+		_text(r.position + Vector2(0, 25), title, 22, Color.BLACK, HORIZONTAL_ALIGNMENT_CENTER, w)
+	if line != "" and line.to_upper() != title:
+		var y := r.position.y + (52 if title != "" else 24)
+		if title == "":
+			draw_rect(r, Color(0, 0, 0, 0.6))
+		var warn := rc.give_back.has(me)
+		_text(Vector2(r.position.x, y), line, 17, Color(1, 0.5, 0.3) if warn else Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, w)
+
+
 func _leader_lap() -> int:
 	var sim := session.sim
 	if sim.running_order.is_empty():
@@ -380,6 +424,21 @@ func _draw_minimap(origin: Vector2) -> void:
 		pts.append(origin + p)
 	draw_polyline(pts, Color(1, 1, 1, 0.7), 3.0)
 	var sim := session.sim
+	var rc := sim.race_control
+	var t := sim.track
+	# Yellow flag zones along the track, and the safety car.
+	for y in rc.yellows:
+		var zone := PackedVector2Array()
+		var from: float = y["from"]
+		var to: float = y["to"]
+		var span_m := fposmod(to - from, t.length)
+		for k in 9:
+			zone.append(origin + (t.position_at(from + span_m * k / 8.0) - _mm_rect.position) * scale_f)
+		draw_polyline(zone, Color(1, 0.85, 0.1), 5.0)
+	if rc.sc_visible:
+		var sp := origin + (rc.sc_pos - _mm_rect.position) * scale_f
+		draw_rect(Rect2(sp - Vector2(5, 5), Vector2(10, 10)), Color(1, 0.6, 0.1))
+		_text(sp + Vector2(7, 4), "SC", 11, Color(1, 0.75, 0.3))
 	for i in sim.car_count():
 		var p := origin + (sim.cars[i].pos - _mm_rect.position) * scale_f
 		draw_circle(p, 5.0 if i == session.local_car else 3.5, sim.defs[i].colour)

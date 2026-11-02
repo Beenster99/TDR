@@ -15,6 +15,7 @@ var pit_wall: StrategistScreen
 var results: PanelContainer
 var rotate_camera := false
 var _results_shown := false
+var _forced := {}
 
 
 func _ready() -> void:
@@ -104,6 +105,15 @@ func _physics_process(delta: float) -> void:
 		else:
 			inp = local_input.read(delta, session.sim.cars[session.local_car].speed())
 	session.tick(inp)
+	# Testing: --force-sc 30 sends the safety car out after 30 s (--force-vsc too).
+	for opt in ["force-sc", "force-vsc"]:
+		if GameData.arg(opt) and not _forced.has(opt) and session.is_authority() \
+				and session.sim.race_time >= float(GameData.arg(opt)):
+			_forced[opt] = true
+			if opt == "force-sc":
+				session.sim.race_control.deploy_safety_car("Test")
+			else:
+				session.sim.race_control.deploy_vsc("Test")
 
 
 ## Camera zoom: GameData.prefs["zoom"] runs from 0 (close up) to 1 (the
@@ -180,6 +190,8 @@ func _process(delta: float) -> void:
 	camera.position = follow.lerp(_track_rect.get_center(), centre_mix)
 	camera.position_smoothing_enabled = centre_mix < 0.01
 	camera.zoom = Vector2(z, z)
+	for i in car_views.size():
+		car_views[i].visible = not session.sim.race_control.recovered[i]
 	race_audio.update(delta, camera.position, local_input.last_throttle if autodrive == null else _autodrive_throttle, _zoom)
 	var rot := rotate_camera and _zoom < 0.5
 	camera.ignore_rotation = not rot
@@ -283,6 +295,12 @@ func _on_events(evs: Array) -> void:
 			"pit_stop":
 				if e["car"] == session.local_car:
 					hud.flash("Pit stop %.1f s" % e["stationary_s"], 2.5)
+			"safety_car":
+				var says := {"sc": "SAFETY CAR DEPLOYED", "vsc": "VIRTUAL SAFETY CAR", "vsc_ending": "VSC ENDING",
+					"lapped_may_overtake": "LAPPED CARS MAY OVERTAKE", "in_this_lap": "SAFETY CAR IN THIS LAP",
+					"restart": "SAFETY CAR IN - RESTART", "green": "GREEN FLAG"}
+				if says.has(e.get("state", "")):
+					hud.flash(says[e["state"]], 2.5)
 			"penalty":
 				if e["car"] == session.local_car:
 					hud.flash("+%d s penalty: %s" % [int(e["seconds"]), e["reason"]], 4.0)

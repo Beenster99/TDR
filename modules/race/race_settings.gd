@@ -31,7 +31,7 @@ var damage_enabled: bool = false  ## true unless damage_level is "off"
 ## Damage (CarDamage): "off", "visual" (bodywork bends, car drives as new)
 ## or "full" (aero, suspension, alignment, engine, gearbox, punctures).
 var damage_level: String = "off"
-var safety_car_enabled: bool = false
+var safety_car_enabled: bool = true  ## VSC + safety car (yellow flags always)
 var mandatory_pit_stops: int = 0   ## stops each car must make inside the pit window
 ## Pit window (laps, inclusive) in which mandatory stops count. 0 = automatic:
 ## from about a fifth of the race in to a fifth before the end.

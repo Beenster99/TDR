@@ -314,7 +314,7 @@ attribution is in `modules/tracks/data/ATTRIBUTION.md`.
 |---|---|
 | Weather / time of day | Done in wave 2: `SimEnvironment` (physics), settings in `RaceSettings.environment`, `WeatherView` (graphics). Pit stops for tyre changes plug into `RaceEntry.setup["tyre_compound"]` |
 | Damage + repairs | write `CarState.damage_*` from `collision`/`barrier_impact` events (impulse); repairs reset them during a pit stop |
-| Safety car | consume `collision` events → `RaceSim` phase `SAFETY_CAR`; a scripted SC car follows `AIDriver`-style line; overtaking rule via positions |
+| Safety car | Done in wave 3: `RaceControl` (race) reads `incident`/`collision` events and stopped cars, raises local yellows, then a VSC or the safety car; overtaking checks on the running order with give-back warnings and `RaceSim.add_penalty`; state in `race_state()["race_control"]`; AI obeys via `RaceControl.may_pass`, `gap_to_sc`, `vsc_speed_at`. See docs/RACE_CONTROL.md |
 | Fuel + pit stops | `RaceSettings.fuel_enabled/fuel_rate/mandatory_pit_stops`; `track.pit_lane` geometry; `CarInput.pit_request`; RaceEntry gains `pit_stops_done`; AI strategy picks a lap within the pit window |
 | Co-op crews (wave 5) | `RaceEntry.crew` roles; new reliable RPCs for pit-crew/strategist commands (`pit_plan`, tyre choice, fuel amount); role swap during stops |
 | AI traits | `AIDriver` reads `traits`; `aggression`, `racecraft`, `tyre_management` reserved |

@@ -370,7 +370,10 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 				behind_lx = lx
 			if lx > -maxf(speed, 10.0) * 1.0:
 				pressure = maxf(pressure, 0.7)
-			if lapped_by and lx > -40.0 and not cool_down:
+			if lapped_by and lx > -40.0 and not cool_down and not sim.race_control.safety_car_active():
+				yielding = true  # blue flag (not behind the safety car)
+			# Behind the safety car: make room for lapped cars unlapping themselves.
+			if sim.race_control.unlapping[j] and not sim.race_control.unlapping[me] and lx > -40.0 and not cool_down:
 				yielding = true
 		# Alongside: leave racing room.
 		elif lx < o_len * 0.9:
@@ -392,6 +395,41 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 				var room_m := maxf(lx - o_len - gap, 0.0)
 				follow_limit = minf(follow_limit, sqrt(maxf(o_v, 0.0) ** 2 + 2.0 * decel * room_m))
 
+	# Race control: yellow flags, VSC, safety car (no overtaking, follow the
+	# safety car, lapped cars unlap themselves when waved by).
+	var rc := sim.race_control
+	var unlapping := rc.unlapping[me] == 1
+	var giving_back := rc.give_back.has(me)
+	var sc_bias := INF
+	if rc.sc_visible and not rc.sc_in_pit and not cool_down:
+		var sc_gap := rc.gap_to_sc(me)
+		var sc_rel := rc.sc_pos - car.pos
+		if sc_gap < 160.0 and sc_rel.dot(fwd) > 0.0:
+			if unlapping:
+				# Pass the safety car on the side away from its line.
+				if sc_gap < 50.0:
+					var sc_oly := _line_offset(rc.sc_pos, (idx + int(sc_gap / SPACING)) % n)
+					var side := 1 if sc_oly < 0.0 else -1
+					sc_bias = sc_oly + side * (half_w + 2.4)
+			else:
+				var decel := _mu * _brake_frac * CarPhysics.G * 0.5
+				var room_m := maxf(sc_gap - def.length - RaceControl.SC_GAP_TARGET, 0.0)
+				var sc_limit := sqrt(rc.sc_speed ** 2 + 2.0 * decel * room_m)
+				if sc_gap < RaceControl.SC_GAP_TARGET * 0.5:
+					sc_limit = rc.sc_speed * 0.8  # far too close: drop back
+				follow_limit = minf(follow_limit, sc_limit)
+	if _pass_target >= 0 and not rc.may_pass(me, _pass_target):
+		_pass_timer = 0.0
+	if rc.mode != RaceControl.Mode.GREEN or not rc.released[me] or rc.yellow_at(car.track_s):
+		# No creeping past a car alongside when overtaking isn't allowed.
+		for j in sim.cars.size():
+			if j == me:
+				continue
+			var rel := sim.cars[j].pos - car.pos
+			var lx := rel.dot(fwd)
+			if lx > -1.0 and lx < 12.0 and absf(rel.dot(rgt)) < 5.0 and not rc.may_pass(me, j):
+				follow_limit = minf(follow_limit, maxf(sim.cars[j].vel.dot(fwd) - 0.5, 0.0) if lx < 6.0 else sim.cars[j].vel.dot(fwd))
+
 	# Attack: pick a side and commit until the pass is done or it times out.
 	_pass_timer -= RaceSim.TICK_DT
 	_pass_cooldown -= RaceSim.TICK_DT
@@ -404,7 +442,8 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 			_pass_side = 0
 			_pass_target = -1
 			_pass_cooldown = 1.0
-	if _pass_target < 0 and ahead >= 0 and not cool_down and ahead_lx < 30.0 and _pass_cooldown <= 0.0:
+	if _pass_target < 0 and ahead >= 0 and not cool_down and ahead_lx < 30.0 and _pass_cooldown <= 0.0 \
+			and rc.may_pass(me, ahead):
 		var o := sim.cars[ahead]
 		var closing := speed - o.vel.dot(fwd)
 		if closing > 0.3 or ahead_lx < 14.0:
@@ -413,8 +452,8 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 			var chance := 0.15 + 0.45 * p.overtaking + 0.3 * p.aggression
 			if sim.entries[me].laps_done == 0:
 				chance *= 0.35  # opening lap: everyone is close, keep it clean
-			if sim.entries[ahead].distance < my_dist - sim.track.length * 0.5:
-				chance = 1.0  # backmarker
+			if sim.entries[ahead].distance < my_dist - sim.track.length * 0.5 or unlapping:
+				chance = 1.0  # backmarker, or unlapping behind the safety car
 			if rng.randf() < chance * 0.5:
 				var oly := _line_offset(o.pos, (idx + int(ahead_lx / SPACING)) % n)
 				var need := half_w + sim.defs[ahead].width * 0.5 + 1.3
@@ -466,6 +505,9 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 		var side := -corner_dir if corner_dir != 0 else 1
 		want_bias = side * minf(_room(side, idx), 3.0)
 		yield_scale = 0.93
+
+	if sc_bias < INF:
+		want_bias = sc_bias
 
 	# Mistakes: running wide.
 	if _mistake_kind == "wide" and _mistake_until >= 0:
@@ -547,6 +589,9 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 		if behind >= 0 and behind_lx > -25.0:
 			v_target = minf(v_target, 18.0)
 	v_target = minf(v_target, follow_limit)
+	v_target = minf(v_target, _race_control_limit(sim, me, rc, unlapping))
+	if giving_back:
+		v_target *= 0.8  # let the car we passed back through
 	if cool_down:
 		v_target = minf(v_target, 35.0)
 	var err := v_target - speed
@@ -573,6 +618,47 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 	return inp.quantized()
 
 
+## Speed race control allows: the VSC reference, closing up to the safety
+## car queue, the leader holding the pace until the restart, lifting for
+## yellow flags. INF = no limit.
+func _race_control_limit(sim: RaceSim, me: int, rc: RaceControl, unlapping: bool) -> float:
+	var car := sim.cars[me]
+	if sim.entries[me].finished:
+		return INF
+	match rc.mode:
+		RaceControl.Mode.VSC:
+			_block_clean = false
+			return rc.vsc_speed_at(car.track_s) * 0.95
+		RaceControl.Mode.SC:
+			_block_clean = false
+			if rc.stage == "restart":
+				if rc.controls_restart(me):
+					var go_at := sim.track.length - RaceControl.RESTART_GO_BEFORE_LINE * lerpf(0.5, 1.3, profile.aggression)
+					if car.track_s < go_at and car.track_s > sim.track.length * 0.3:
+						return rc.sc_speed_at(car.track_s)
+				return INF
+			# Close up to the queue quickly, then match its pace.
+			if _queue_gap(sim, me) > 120.0 and not rc.yellow_at(car.track_s):
+				return INF
+			return rc.vsc_speed_at(car.track_s) * (1.3 if unlapping else 1.15)
+	if rc.yellow_at(car.track_s):
+		_block_clean = false
+		return target_speed[idx] * 0.9
+	return INF
+
+
+## Track distance to the next car (or the safety car) ahead, metres.
+func _queue_gap(sim: RaceSim, me: int) -> float:
+	var L := sim.track.length
+	var my_s := sim.cars[me].track_s
+	var best := sim.race_control.gap_to_sc(me)
+	for j in sim.cars.size():
+		if j == me or sim.entries[j].dnf or sim.entries[j].finished:
+			continue
+		best = minf(best, fposmod(sim.cars[j].track_s - my_s, L))
+	return best
+
+
 ## Leaving a section: learn from how it went, then roll for this section's
 ## lap-to-lap variation and for a mistake.
 func _end_block(new_block: int, sim: RaceSim, me: int, dark: float, wetness: float) -> void:
@@ -595,7 +681,7 @@ func _end_block(new_block: int, sim: RaceSim, me: int, dark: float, wetness: flo
 	speed_noise = -absf(rng.randfn(0.0, variability))
 	# Mistakes only matter where there is a corner to get wrong.
 	var n := line.size()
-	if _mistake_until >= 0 or sim.phase != RaceSim.Phase.RACING:
+	if _mistake_until >= 0 or sim.phase != RaceSim.Phase.RACING or sim.race_control.safety_car_active():
 		return
 	var corner_ahead := false
 	var v_now := target_speed[idx]
