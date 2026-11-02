@@ -64,6 +64,6 @@ for i in $(seq 1 "$n"); do
 done
 ffmpeg -y -loglevel error "${inputs[@]}" -filter_complex "${filter%;}" -map "$prev" -an \
   -ss "$FADE" -t "$(python3 -c "print(round($offset, 3))")" \
-  -c:v libtheora -q:v 7 -g 60 "$OUT"
+  -c:v libtheora -q:v 5 -g 90 "$OUT"
 ls -la "$OUT"
 echo "[highlights] done: $OUT"
