@@ -61,6 +61,10 @@ var layout := HudLayout.new()
 ## drawn, with sample content when there's nothing to show right now.
 var editing := false
 var editor: HudEditor = null
+## Co-op driver (sharing the car with team mates): the co-op layout is in use
+## (HudLayout.PREF_COOP, minimal by default), and it keeps the timing tower's
+## on/off in the layout instead of the solo pref.
+var coop := false
 ## Settings preview: the HUD runs its own (all-AI) race session.
 var drives_session := false
 ## The editor was closed (saved: true, or cancelled).
@@ -72,8 +76,44 @@ func setup(p_session: RaceSession) -> void:
 	font = ThemeDB.fallback_font
 	set_anchors_preset(PRESET_FULL_RECT)
 	mouse_filter = MOUSE_FILTER_IGNORE
-	layout = HudLayout.from_value(_prefs().get(HudLayout.PREF, {}))
+	coop = is_coop_driver()
+	load_layout()
 	_build_minimap()
+
+
+static func item_ids() -> Array:
+	return ITEMS.map(func(it): return it[0])
+
+
+## Driving a car shared with other players (co-op crew).
+func is_coop_driver() -> bool:
+	if session == null or drives_session or session.local_car < 0:
+		return false
+	return session.sim.entries[session.local_car].human_crew().size() > 1
+
+
+## The pref the layout in use is saved in.
+func layout_pref() -> String:
+	return HudLayout.PREF_COOP if coop else HudLayout.PREF
+
+
+func load_layout() -> void:
+	layout = HudLayout.load_from(_prefs(), coop, item_ids())
+
+
+## Back to the designed layout (solo: everything; co-op: the minimal set).
+func reset_layout() -> void:
+	if coop:
+		layout = HudLayout.coop_default(item_ids())
+	else:
+		layout.reset_all()
+		set_show_tower(true)
+
+
+func save_layout() -> void:
+	var gd := get_node_or_null("/root/GameData")
+	if gd != null and gd.has_method("set_pref"):
+		gd.call("set_pref", layout_pref(), layout.to_value())
 
 
 ## The player's prefs (GameData autoload, looked up by path so this class
@@ -102,8 +142,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("hud_tower"):
 		if get_node_or_null("/root/GameData") == null:
 			return
-		set_show_tower(not show_tower())
-		flash("Timing tower " + ("on" if show_tower() else "off"), 1.2)
+		set_item_on("tower", not item_on("tower"))
+		if coop:
+			save_layout()
+		flash("Timing tower " + ("on" if item_on("tower") else "off"), 1.2)
 
 
 ## Opens the HUD layout editor over the race.
@@ -132,25 +174,25 @@ static func item_name(id: String) -> String:
 ## Switched on by the player (the tower follows its own pref; the compact
 ## standings only show while the tower is off).
 func item_on(id: String) -> bool:
-	if id == "tower":
+	if id == "tower" and not coop:
 		return show_tower()
 	return layout.is_on(id)
 
 
 func set_item_on(id: String, on: bool) -> void:
-	if id == "tower":
+	if id == "tower" and not coop:
 		set_show_tower(on)
 		return
 	layout.set_on(id, on)
 	if id == "standings" and on:
-		set_show_tower(false)
+		set_item_on("tower", false)
 
 
 ## Drawn now: switched on, and (outside the editor) something to show.
 func item_shown(id: String) -> bool:
 	if session == null or not item_on(id):
 		return false
-	if id == "standings" and show_tower():
+	if id == "standings" and item_on("tower"):
 		return false
 	if editing:
 		return true
@@ -277,6 +319,11 @@ func _process(delta: float) -> void:
 	size = get_viewport_rect().size
 	message_time -= delta
 	radio_time -= delta
+	# A driver change can put this player at the wheel of a shared car (or take
+	# them out of it): switch to the matching layout.
+	if not editing and is_coop_driver() != coop:
+		coop = not coop
+		load_layout()
 	_watch_damage()
 	queue_redraw()
 
