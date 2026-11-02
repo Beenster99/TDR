@@ -15,7 +15,7 @@ const SCENE_SPLASH := "res://modules/ui/splash.tscn"
 ## Where prefs are saved (--settings user://other.cfg uses another file).
 const SETTINGS_PATH := "user://settings.cfg"
 ## Settings screen sections, in order.
-const SECTIONS := ["gameplay", "graphics", "sound", "garage", "debug"]
+const SECTIONS := ["gameplay", "controller", "graphics", "sound", "garage", "debug"]
 
 ## A pref changed through set_pref() (the Settings screen uses it), so
 ## anything showing or applying that pref can follow along.
@@ -93,7 +93,7 @@ func _notification(what: int) -> void:
 # --- Settings ----------------------------------------------------------------
 
 ## Adds an option with a fixed list of choices to a Settings section
-## ("gameplay", "graphics", "sound", "garage", "debug"). options: [[value, label], ...].
+## ("gameplay", "controller", "graphics", "sound", "garage", "debug"). options: [[value, label], ...].
 ## Any module may call this at start-up; the Settings screen shows it, prefs
 ## holds its value (the default until the player changes it) and it's saved.
 func register_setting(section: String, key: String, label: String, options: Array, default, help := "") -> void:
@@ -189,6 +189,9 @@ func _register_defaults() -> void:
 		"How speeds, temperatures, distances and fuel are shown.")
 	register_setting("gameplay", "power_unit", "Power", [["hp", "Horsepower (hp)"], ["kw", "Kilowatts (kW)"],
 		["ps", "Metric horsepower (PS)"]], "hp", "How engine power is shown in the garage and car lists.")
+	# Controller (the key and button bindings are listed under these, see InputSetup)
+	register_number("controller", "pad_deadzone", "Stick dead zone", 2, 30, 2, 12, "%",
+		"How far a stick has to move before it counts. Raise it if the car or the menus drift on their own.")
 	# Graphics
 	register_setting("graphics", "display_mode", "Display", [["fullscreen", "Fullscreen"],
 		["exclusive", "Exclusive fullscreen"], ["windowed", "Window"]], "fullscreen")

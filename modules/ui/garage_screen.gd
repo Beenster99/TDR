@@ -19,6 +19,7 @@ var profile: TeamProfile
 var car_id := ""
 var _pending := {}                ## category -> level picked but not paid for
 var _car_stepper: Stepper
+var _class_stepper: Stepper       ## filters the car list: a class, all, or your own cars
 var _upgrade_steppers := {}       ## category -> Stepper
 var _livery_steppers := {}        ## pattern / primary / secondary / accent -> Stepper
 var _money_label: Label
@@ -115,12 +116,16 @@ func _build() -> void:
 	# Right: money, car, upgrades, livery, buttons.
 	var right := VBoxContainer.new()
 	right.custom_minimum_size = Vector2(560, 0)
-	right.add_theme_constant_override("separation", 5)
+	right.add_theme_constant_override("separation", 3)
 	cols.add_child(right)
 	_money_label = Label.new()
 	_money_label.add_theme_font_size_override("font_size", 28)
 	_money_label.add_theme_color_override("font_color", Color(0.55, 0.95, 0.6))
 	right.add_child(_money_label)
+	_class_stepper = Stepper.choice("Class", _class_options(), _def().class_tag)
+	_class_stepper.value_changed.connect(func(_v): _filter_changed())
+	_class_stepper.custom_minimum_size = Vector2(560, 36)
+	right.add_child(_class_stepper)
 	_car_stepper = Stepper.choice("Car", _car_options(), car_id)
 	_car_stepper.value_changed.connect(func(v): _select_car(v))
 	right.add_child(_car_stepper)
@@ -138,7 +143,7 @@ func _build() -> void:
 	for cat in UpgradeCatalog.category_ids():
 		var info := UpgradeCatalog.category(cat)
 		var st := Stepper.choice(info.get("name", cat), [], 0)
-		st.custom_minimum_size = Vector2(560, 40)
+		st.custom_minimum_size = Vector2(560, 36)
 		st.tooltip_text = info.get("blurb", "")
 		st.value_changed.connect(func(v): _pick_level(cat, int(v)))
 		right.add_child(st)
@@ -171,7 +176,7 @@ func _build() -> void:
 	_livery_steppers["sponsor_pack"] = Stepper.choice("Sponsors", sponsor_opts, 0)
 	for k in _livery_steppers:
 		var st: Stepper = _livery_steppers[k]
-		st.custom_minimum_size = Vector2(560, 40)
+		st.custom_minimum_size = Vector2(560, 36)
 		st.value_changed.connect(func(_v): _livery_changed())
 		right.add_child(st)
 	var spacer := Control.new()
@@ -189,16 +194,51 @@ func _build() -> void:
 	help.text = "Up/down: choose  ·  Left/right: change  ·  A: buy  ·  B: leave\nBought cars, upgrades and liveries are saved straight away. Picked levels are a preview until you buy them. Selling refunds half."
 	help.modulate = Color(1, 1, 1, 0.45)
 	help.add_theme_font_size_override("font_size", 13)
+	help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART   # never wider than the column
 	right.add_child(help)
+	# Slimmer rows so the whole column fits a 900-high screen (after add_child:
+	# a Stepper sets its own size when it enters the tree).
+	for c in right.get_children():
+		if c is Stepper:
+			c.custom_minimum_size = Vector2(560, 36)
 	Sound.wire_buttons(self)
+
+
+## The class filter: every class with its number of cars, all cars, and the cars you own.
+func _class_options() -> Array:
+	var opts := []
+	for cls in CarCatalog.classes(GameData.cars):
+		opts.append([cls, "%s  (%d cars)" % [cls, CarCatalog.ids_in_class(GameData.cars, cls).size()]])
+	opts.append(["", "All classes"])
+	opts.append(["*owned", "My garage (%d)" % profile.owned_ids().size()])
+	return opts
+
+
+## The cars the class filter lets through (all of them if none would be).
+func _filtered_ids() -> Array:
+	var f: String = _class_stepper.value if is_instance_valid(_class_stepper) else ""
+	var ids := _all_car_ids().filter(func(id):
+		return f == "" or (profile.owns(id) if f == "*owned" else GameData.cars[id].class_tag == f))
+	return ids if not ids.is_empty() else _all_car_ids()
 
 
 func _car_options() -> Array:
 	var opts := []
-	for id in _all_car_ids():
+	var ids := _filtered_ids()
+	if car_id != "" and not car_id in ids and _class_stepper and _class_stepper.value == "*owned":
+		ids.push_front(car_id)   # just sold: stays shown until you pick another
+	for id in ids:
 		var c: CarDefinition = GameData.cars[id]
 		opts.append([id, "%s%s  (%s)" % ["★ " if profile.owns(id) else "", c.display_name, c.class_tag]])
 	return opts
+
+
+func _filter_changed() -> void:
+	var ids := _filtered_ids()
+	if not car_id in ids:
+		_select_car(ids[0])
+	_car_stepper.options = _car_options()
+	_car_stepper.set_value(car_id)
 
 
 func _buy_or_sell_car() -> void:
@@ -218,6 +258,8 @@ func _buy_or_sell_car() -> void:
 		else:
 			profile.save()
 			_message = "The %s is in your garage." % def.display_name
+	_class_stepper.options = _class_options()
+	_class_stepper.set_value(_class_stepper.value)
 	_car_stepper.options = _car_options()
 	_car_stepper.set_value(car_id)
 	_pending.clear()
@@ -243,8 +285,8 @@ func _button(parent: Node, text: String, cb: Callable) -> Button:
 
 
 func _focus_first() -> void:
-	if is_instance_valid(_car_stepper):
-		_car_stepper.grab_focus()
+	if is_instance_valid(_class_stepper):
+		_class_stepper.grab_focus()
 
 
 ## A lit stand with a camera looking down at three quarters, like the race

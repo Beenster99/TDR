@@ -1,7 +1,9 @@
 class_name Stepper
 extends Button
 ## Controller-friendly value picker: "Laps   < 3 >". Left/right (D-pad, stick,
-## arrow keys) changes the value; A / click steps forward and wraps.
+## arrow keys) changes the value both ways; A steps forward and wraps. With the
+## mouse, clicking the "<" arrow steps back, anywhere else steps forward, and
+## a right click steps back.
 
 signal value_changed(value)
 
@@ -52,7 +54,14 @@ func _ready() -> void:
 func _gui_input(event: InputEvent) -> void:
 	if disabled:
 		return
-	if event.is_action_pressed("ui_left"):
+	var mb := event as InputEventMouseButton
+	if mb and mb.pressed and (mb.button_index == MOUSE_BUTTON_RIGHT \
+			or mb.button_index == MOUSE_BUTTON_LEFT and is_back_click(mb.position.x)):
+		# Handled here, so the button never sees the press and doesn't also step forward.
+		grab_focus()
+		_nudge(-1, false)
+		accept_event()
+	elif event.is_action_pressed("ui_left"):
 		_nudge(-1, false)
 		accept_event()
 	elif event.is_action_pressed("ui_right"):
@@ -79,6 +88,32 @@ func _nudge(dir: int, wrap: bool) -> void:  # wrap: numeric values loop when pre
 	_refresh()
 	Sound.ui("ui_tick")
 	value_changed.emit(value)
+
+
+## True when a click at x (local) lands on the "<" arrow, or left of the
+## middle of the value, so the arrow is easy to hit.
+func is_back_click(x: float) -> bool:
+	var lx := back_arrow_x()
+	var mid := lx + 26.0 + _value_width() * 0.5
+	return x >= lx - 24.0 and x < mid
+
+
+## Where the "<" arrow starts (local x).
+func back_arrow_x() -> float:
+	if value_column > 0.0:
+		return value_column
+	var font := get_theme_font("font")
+	var fs := get_theme_font_size("font_size")
+	var left := 0.0
+	var sb := get_theme_stylebox("normal")
+	if sb:
+		left = sb.get_margin(SIDE_LEFT)
+	return left + font.get_string_size("%-16s " % label_text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+
+
+func _value_width() -> float:
+	var font := get_theme_font("font")
+	return font.get_string_size(_shown, HORIZONTAL_ALIGNMENT_LEFT, -1, get_theme_font_size("font_size")).x
 
 
 func set_value(v) -> void:

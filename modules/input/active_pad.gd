@@ -25,7 +25,7 @@ static var _started := false
 
 
 ## Picks the starting pad and follows controllers being plugged in or out.
-## Called once by InputSetup.register_actions().
+## Called by InputSetup.apply_bindings() (only the first call does anything).
 static func start() -> void:
 	if _started:
 		return

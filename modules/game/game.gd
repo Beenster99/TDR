@@ -7,7 +7,9 @@ extends Node
 
 
 func _ready() -> void:
-	InputSetup.register_actions()
+	# The player's own bindings and stick dead zone (Settings > Controller).
+	var controls = GameData.prefs.get("controls", {})
+	InputSetup.register_actions(controls if controls is Dictionary else {}, float(GameData.prefs.get("pad_deadzone", 12)) / 100.0)
 	reload_content()
 
 
