@@ -4,6 +4,8 @@ shader_type spatial;
 //   COLOR.a  : 1 = asphalt, 0.75 = kerb, 0.5 = tarmac run-off, 0.25 = gravel, 0 = pit lane
 //   UV.x     : distance along the track (m), UV.y : lateral offset (m)
 //   UV2.x    : offset from the racing line (m), UV2.y : distance to the track edge (m)
+//   (pit lane: UV.y = offset, + towards the garages; UV2.x = 1 where hatched;
+//    UV2.y = distance inside the lane's painted edge)
 // Height cues for elevation (vertex height): rungs every rung_step metres.
 
 uniform sampler2D noise : filter_linear_mipmap, repeat_enable;
@@ -66,9 +68,19 @@ void fragment() {
 		c = vec3(0.5, 0.4, 0.26) * (0.8 + 0.35 * n3) * (0.9 + 0.15 * n1);
 		rough = 0.97;
 	} else {
-		// pit lane asphalt (smoother, a touch lighter)
+		// pit lane asphalt (smoother, a touch lighter), with painted edge
+		// lines (UV2.y = distance inside the lane's edge) and white hatching
+		// on the track side where the lane splits off or merges (UV2.x = 1,
+		// UV.y < 0 = track side of the lane, UV.x = metres along the lane)
 		c = vec3(0.13, 0.127, 0.123) * (0.9 + 0.15 * n1);
-		rough = 0.75;
+		float paa = fwidth(UV2.y) * 1.2 + 0.001;
+		float pline = smoothstep(0.1 - paa, 0.1 + paa, UV2.y) * (1.0 - smoothstep(0.35 - paa, 0.35 + paa, UV2.y));
+		float gore = step(0.5, UV2.x) * step(UV.y, 0.0) * smoothstep(0.6, 0.9, -UV2.y);
+		float hx = fract((UV.x + UV.y * 1.2) / 3.0);
+		float haa = fwidth(UV.x) / 3.0 + 0.002;
+		float hatch = gore * smoothstep(0.0, haa, hx) * (1.0 - smoothstep(0.22 - haa, 0.22 + haa, hx));
+		c = mix(c, vec3(0.8, 0.8, 0.78) * (0.92 + 0.08 * n3), max(pline, hatch * 0.9));
+		rough = 0.75 - 0.05 * pline;
 	}
 	vec3 L = normalize(light_dir);
 	c *= clamp(1.0 + hillshade * 0.6 * (dot(normalize(wn), L) - L.y), 0.5, 1.5);

@@ -60,6 +60,10 @@ var pit_limit_start: float = 0.0   ## pit metres where the speed limit starts
 var pit_limit_end: float = 0.0     ## and ends
 var pit_box_count: int = 30
 var _pit_bounds := Rect2()
+## Pit lane surface: how far beside the lane the ground eases into it, and
+## how far from the track's edge the lane still follows the track's height.
+const PIT_VERGE_M := 10.0
+const PIT_JOIN_GAP_M := 30.0
 
 ## Elevation (empty / zero when a track has none: everything below then
 ## returns flat values, so callers can use it unconditionally).
@@ -487,16 +491,53 @@ func surface_height_at(pos: Vector2, hint: int = -1) -> float:
 	var q := project(pos, hint)
 	var off: float = q["offset"]
 	var edge: float = q["w_right"] if off >= 0.0 else q["w_left"]
-	if has_pit_lane() and pit_height.size() == pit_path.size() and in_pit_lane(pos):
-		return pit_height_at(project_pit(pos)["d"])
 	if absf(off) <= edge + kerb_width:
 		return height_at(q["s"], off)
 	var road := height_at(q["s"], signf(off) * (edge + kerb_width))
-	if terrain_size == Vector2i.ZERO:
-		return road
-	# Run-off follows the road's edge, then eases into the hillside.
-	var t := clampf((absf(off) - edge - kerb_width) / (runoff + 60.0), 0.0, 1.0)
-	return lerpf(road, ground_height_at(pos), t * t * (3.0 - 2.0 * t))
+	var h := road
+	if terrain_size != Vector2i.ZERO:
+		# Run-off follows the road's edge, then eases into the hillside.
+		var t := clampf((absf(off) - edge - kerb_width) / (runoff + 60.0), 0.0, 1.0)
+		h = lerpf(road, ground_height_at(pos), t * t * (3.0 - 2.0 * t))
+	# The pit lane and the ground just around it (so it sits in a smooth
+	# verge, not on a step).
+	if has_pit_lane() and _pit_bounds.grow(PIT_VERGE_M).has_point(pos):
+		var pp := project_pit(pos)
+		var out: float = pp["dist"] - pit_width * 0.5
+		if out < PIT_VERGE_M:
+			var lane := pit_surface_height(pos, pp["d"], q)
+			h = lerpf(h, lane, 1.0 - smoothstep(1.5, PIT_VERGE_M, out))
+	return h
+
+
+## Height of the pit lane's surface at a point on (or beside) it, d pit metres
+## along. Away from the track it is the lane's own surveyed height; where the
+## lane leaves and rejoins the circuit it eases into the height of the
+## track's edge, so the two meet without a step. q = project(pos) if known.
+func pit_surface_height(pos: Vector2, d: float, q := {}) -> float:
+	if not has_elevation():
+		return 0.0
+	var own := pit_height_at(d)
+	var w := pit_join_weight(d)
+	if w <= 0.0:
+		return own
+	if q.is_empty():
+		q = project(pos)
+	var off: float = q["offset"]
+	var edge: float = q["w_right"] if off >= 0.0 else q["w_left"]
+	if absf(off) <= edge:
+		return height_at(q["s"], off)
+	var road := height_at(q["s"], signf(off) * edge)
+	var gap := absf(off) - edge
+	return lerpf(own, road, w * (1.0 - smoothstep(0.0, PIT_JOIN_GAP_M, gap)))
+
+
+## How much the lane follows the track's height d pit metres along: 1 at the
+## ends, easing to 0 by the speed-limit zone (garages and boxes stay level).
+func pit_join_weight(d: float) -> float:
+	var a := maxf(pit_limit_start, 30.0)
+	var b := minf(pit_limit_end, pit_length - 30.0)
+	return maxf(1.0 - smoothstep(0.0, a, d), smoothstep(b, pit_length, d))
 
 
 ## Terrain height (bilinear on the grid); 0 without terrain data.

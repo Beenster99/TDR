@@ -107,11 +107,24 @@ static func clock() -> float:
 	return float(Engine.get_physics_frames()) / Engine.physics_ticks_per_second
 
 
+## The race clock shared by every machine: the host's clock (this machine's
+## clock plus Net.clock_offset). Car states are stamped with it.
+func net_clock() -> float:
+	return clock() + (net.clock_offset if net else 0.0)
+
+
+## True when net_clock() is the host's clock (the host itself, or a client
+## that has synced), so remote cars can be placed in the present.
+func clock_synced() -> bool:
+	return net == null or mode != Mode.CLIENT or net.clock_synced
+
+
 ## Called once per physics tick by the race scene with this player's input.
 func tick(local_input: CarInput) -> void:
-	var now := clock()
+	var now := net_clock()
+	var synced := clock_synced()
 	for i in timelines:
-		timelines[i].apply(sim.cars[i], now)
+		timelines[i].apply(sim.cars[i], now, synced)
 	if local_car >= 0 and local_input != null:
 		inputs[local_car] = local_input.quantized()
 	for i in ai:
@@ -220,7 +233,7 @@ func _race_state() -> Dictionary:
 ## Car states from the peer that simulates them. Only a car's owner may move it.
 func on_car_states(sender: int, sent: float, data: PackedFloat32Array) -> void:
 	var stride := 1 + CarState.NET_SIZE
-	var now := clock()
+	var now := net_clock()
 	var o := 0
 	while o + stride <= data.size():
 		var i := int(data[o])

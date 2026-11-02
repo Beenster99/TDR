@@ -184,6 +184,10 @@ func _register_defaults() -> void:
 		"Manual: change gear yourself with the shift buttons.")
 	register_setting("gameplay", "hud_timing_tower", "Timing tower", [[true, "Show"], [false, "Hide"]], true,
 		"The column on the left of the race screen: position, make, driver, last lap and gap to the car ahead.")
+	register_setting("gameplay", "highlight_me", "Highlight my car", [[true, "On"], [false, "Off"]], true,
+		"A soft gold outline on the ground round your own car (or your team's car on the pit wall), so you can find it at any zoom.")
+	register_setting("gameplay", "highlight_players", "Highlight other players", [[true, "On"], [false, "Off"]], true,
+		"Online: a faint blue outline round cars driven by other people, so you can tell them from the AI.")
 	register_setting("gameplay", "units", "Units of measure", [["metric", "Metric (km/h, °C, km, litres)"],
 		["uk", "UK (mph, °C, miles, litres)"], ["imperial", "US (mph, °F, miles, gallons)"]], "metric",
 		"How speeds, temperatures, distances and fuel are shown.")
