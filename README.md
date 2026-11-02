@@ -49,6 +49,13 @@ address into the join box and pick **Connect**. The game uses UDP port
 | Zoom in / out (hold) | E / Q, + / -, mouse wheel | LB / RB, right stick up / down, D-pad up / down |
 | Whole track and back | Z or Tab | Click the right stick |
 
+**Co-op pit wall (wave 5):** players who share a car but aren't driving run
+the pit wall: the pit crew calls the stops (tyres, fuel, repairs, wing and
+tyre pressure changes) and the strategist reads the race (gaps, pace, pit
+window, weather, rivals); with two players these are one role. Both watch
+the whole track in 3D and radio the driver (X / V). See
+[docs/PIT_WALL_ROLES.md](docs/PIT_WALL_ROLES.md).
+
 **Driving help** (main menu): Full adds a stability assist that catches
 slides and counter-steers for you, on top of traction control and ABS. Some
 is traction control and ABS only. Off is the raw car.
