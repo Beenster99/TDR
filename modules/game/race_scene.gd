@@ -40,17 +40,24 @@ func _ready() -> void:
 	add_child(world)
 	world.setup(session.sim.track, session.sim.env)
 	_add_driving_aids()
-	var seen := {}
+	# Painted from the race's start data only, never from which car is this
+	# machine's, so the host and every guest see the same colours.
+	var ids := []
+	var own := []
+	var players := []
 	for i in session.sim.car_count():
-		var def: CarDefinition = session.sim.defs[i]
-		# Same model more than once: give the others their own colours.
-		var k: int = seen.get(def.id, 0)
-		seen[def.id] = k + 1
-		var livery := {} if i == session.local_car else WorldView.livery_variant(k, def.id)
-		if not session.sim.entries[i].livery.is_empty():   # the player's own paint scheme
-			livery = session.sim.entries[i].livery
-		car_views.append(world.add_car(def, session.sim.cars[i], session.sim.entries[i].driver_name,
-			i == session.local_car, i + 1, livery))
+		ids.append(session.sim.defs[i].id)
+		own.append(session.sim.entries[i].livery)
+		players.append(not session.sim.entries[i].is_ai)
+	var liveries := WorldView.field_liveries(ids, own, players)
+	for i in session.sim.car_count():
+		car_views.append(world.add_car(session.sim.defs[i], session.sim.cars[i], session.sim.entries[i].driver_name,
+			i == session.local_car, i + 1, liveries[i]))
+	_refresh_highlights()
+	session.crew_changed.connect(func(_car): _refresh_highlights())
+	GameData.pref_changed.connect(func(key, _v):
+		if str(key).begins_with("highlight_"):
+			_refresh_highlights())
 	if session.sim.pits.enabled:
 		for i in session.sim.car_count():
 			world.add_pit_crew(i, session.sim.pits.box_index(i))
@@ -128,6 +135,22 @@ func _add_driving_aids() -> void:
 		bool(GameData.prefs.get("aid_braking_zones", true)))
 
 
+## Outlines on the ground: gold round this player's own car (or the team's
+## car on the pit wall), a fainter blue round cars other people are driving.
+## Settings > Gameplay turns each on or off.
+func _refresh_highlights() -> void:
+	var show_me := bool(GameData.prefs.get("highlight_me", true))
+	var show_others := bool(GameData.prefs.get("highlight_players", true))
+	var mine := session.local_car if session.local_car >= 0 else session.team_car
+	for i in car_views.size():
+		var kind := CarView.Highlight.NONE
+		if i == mine:
+			kind = CarView.Highlight.SELF if show_me else CarView.Highlight.NONE
+		elif session.mode != RaceSession.Mode.OFFLINE and show_others and session.sim.entries[i].is_player_driving():
+			kind = CarView.Highlight.PLAYER
+		car_views[i].set_highlight(kind)
+
+
 ## Testing: --autodrive lets the AI drive this player's car.
 func _make_autodrive() -> void:
 	autodrive = null
@@ -178,6 +201,7 @@ func _on_role_changed(role: String) -> void:
 	race_audio.setup(session.sim.cars, session.sim.defs, session.local_car)
 	race_audio.set_environment(session.sim.env)
 	_apply_role()
+	_refresh_highlights()
 	hud.flash("You're driving!" if session.local_car >= 0 else "You're on the pit wall: " + CrewConsole.role_title(session.local_role).to_lower(), 3.0)
 
 
@@ -594,6 +618,12 @@ func _on_race_finished() -> void:
 			heard.append("%s=%d" % [sim.entries[i].driver_name, session.timelines[i].received])
 		if not heard.is_empty():
 			print("[net] car states received: " + ", ".join(heard))
+			var present := 0
+			for i in session.timelines:
+				if session.timelines[i].clocks_agree():
+					present += 1
+			print("[net] clock synced %s (ping %d ms), %d of %d remote cars placed in the present" % [
+				session.clock_synced(), roundi(Net.clock.rtt * 1000.0), present, session.timelines.size()])
 	var final_session := not season_info.is_empty() and not quali \
 		and int(season_info.get("round", 0)) + 1 >= int(season_info.get("rounds", 0))
 	if GameData.arg("quit-after-race") or (GameData.arg("quit-after-season") and final_session):

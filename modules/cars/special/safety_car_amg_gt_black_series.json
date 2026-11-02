@@ -14,6 +14,7 @@
   "track_width_m": 1.68,
   "length_m": 4.546,
   "width_m": 2.049,
+  "body_offset_m": 0.04,
   "height_m": 1.286,
   "inertia_factor": 1.0,
   "engine": {
