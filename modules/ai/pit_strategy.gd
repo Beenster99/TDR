@@ -150,7 +150,37 @@ func _plan(sim: RaceSim, me: int) -> Dictionary:
 		"dry":
 			tyre = PitRules.TYRE_DRY if not _rain_soon(sim) else PitRules.TYRE_INTER
 	var damage := maxf(c.damage_engine, maxf(c.damage_aero, c.damage_suspension))
-	return {"tyre": tyre, "fuel": PitRules.FUEL_AUTO, "repair": damage > 0.08}
+	var plan := {"tyre": tyre, "wheels": _wheels(sim, me, tyre), "fuel": PitRules.FUEL_AUTO, "repair": damage > 0.08}
+	plan["driver_change"] = _driver_change_due(sim, me)
+	return plan
+
+
+## Which tyres to change: when the compound stays the same and one axle has
+## worn much more than the other (still good), only that axle, which is quicker.
+func _wheels(sim: RaceSim, me: int, tyre: String) -> String:
+	var pits := sim.pits
+	if tyre != PitRules.TYRE_AUTO or pits.compound_for_conditions(me) != sim.compounds[me].id:
+		return PitRules.WHEELS_ALL
+	var w := sim.cars[me].tyre_wear
+	var front := (w[0] + w[1]) * 0.5
+	var rear := (w[2] + w[3]) * 0.5
+	var laps_after := pits.laps_after_this(me)
+	# The fresher pair must last to the end (or the next stop) too.
+	var fresh := minf(front, rear)
+	if absf(front - rear) > 0.22 and fresh < 0.25 - 0.01 * laps_after:
+		return "front" if front > rear else "rear"
+	return PitRules.WHEELS_ALL
+
+
+## Cars that share the car between drivers hand over at a stop once the
+## driver at the wheel has done about half their share of the race or more
+## (a stop is rarely exactly where the shares meet).
+func _driver_change_due(sim: RaceSim, me: int) -> bool:
+	var e := sim.entries[me]
+	if e.lineup.size() < 2 or sim.pits.laps_after_this(me) < 1:
+		return false
+	var share := float(sim.settings.laps) / e.lineup.size()
+	return sim.pits.driver_stint_laps(me) >= share * 0.5
 
 
 func _avg_wear(c: CarState) -> float:

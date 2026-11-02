@@ -48,6 +48,7 @@ func _init() -> void:
 	test_points_systems()
 	test_seasons()
 	test_coop_roles()
+	test_tyre_choice_and_line_ups()
 	test_race_start()
 	test_driving_aids()
 	test_active_pad()
@@ -1890,6 +1891,113 @@ func test_rebinding() -> void:
 	InputSetup.register_actions()
 	ev.physical_keycode = KEY_W
 	check(InputMap.event_is_action(ev, "accelerate"), "defaults come back on a reset")
+
+
+## Pit stops that change only some tyres, and drivers sharing a car: AI
+## line-ups that change at a stop, a solo player's AI co-driver.
+func test_tyre_choice_and_line_ups() -> void:
+	print("tyre choice and driver line-ups")
+	check(PitRules.wheels_of("front") == [0, 1] and PitRules.wheels_of("rr") == [3] and PitRules.wheels_of("left") == [0, 2]
+		and PitRules.wheels_of("nonsense") == [0, 1, 2, 3], "wheel choices map to the right wheels")
+	check(is_equal_approx(PitRules.tyre_time(4), PitRules.TYRE_CHANGE_S) and PitRules.tyre_time(2) < PitRules.tyre_time(4)
+		and PitRules.tyre_time(1) < PitRules.tyre_time(2) and PitRules.tyre_time(0) == 0.0, "fewer tyres are quicker to change")
+	var d := _data()
+	var st := RaceSettings.new()
+	st.laps = 8
+	st.ai_count = 3
+	st.mandatory_pit_stops = 1
+	st.damage_enabled = true
+	st.set_damage_level("full")
+	var sim: RaceSim = _race(st, d)["sim"]
+	var pits := sim.pits
+	var c := sim.cars[0]
+	var same := sim.compounds[0].id
+	c.tyre_wear = PackedFloat64Array([0.6, 0.6, 0.2, 0.2])
+	var plan := {"tyre": PitRules.TYRE_DRY, "wheels": "front", "fuel": 0.0, "repair": true}
+	var w := pits.service_for(0, plan)
+	check(w["tyre"] == same and w["wheels"] == [0, 1] and is_equal_approx(w["tyre_s"], PitRules.tyre_time(2)),
+		"fronts only: two tyres, %.2f s" % w["tyre_s"])
+	var other := PitRules.TYRE_WET if same != "full_wet" else PitRules.TYRE_INTER
+	var w2 := pits.service_for(0, {"tyre": other, "wheels": "front", "fuel": 0.0, "repair": true})
+	check(w2["wheels"] == [0, 1, 2, 3], "a new compound always goes on all four")
+	c.puncture[3] = 1.0
+	var w3 := pits.service_for(0, {"tyre": PitRules.TYRE_KEEP, "wheels": "all", "fuel": 0.0, "repair": true})
+	check(w3["tyre"] == same and w3["wheels"] == [3], "a punctured tyre is changed even on a 'no tyres' stop")
+	var w4 := pits.service_for(0, plan)
+	check(w4["wheels"] == [0, 1, 3], "and alongside the planned fronts (%s)" % str(w4["wheels"]))
+	# Run the stop: only those tyres are new.
+	var p: Dictionary = sim.entries[0].pit
+	pits.set_plan(0, {"tyre": PitRules.TYRE_DRY, "wheels": "front", "fuel": 0.0, "repair": true})
+	check(p["plan"]["wheels"] == "front", "the plan keeps the wheel choice")
+	pits.set_plan(0, {"wheels": "bogus"})
+	check(p["plan"]["wheels"] == "front", "an unknown wheel choice is ignored")
+	p["work"] = pits.service_for(0, p["plan"])
+	pits._finish_service(0)
+	check(c.tyre_wear[0] == 0.0 and c.tyre_wear[1] == 0.0 and is_equal_approx(c.tyre_wear[2], 0.2) and c.puncture[3] == 0.0
+		and c.tyre_wear[3] == 0.0, "after the stop: new fronts and a new rear right, old rear left (%s)" % str(c.tyre_wear))
+	check(p["last_stop"]["wheels"] == [0, 1, 3], "the stop records which tyres were changed")
+
+	# Driver line-ups: two drivers per car.
+	st.drivers_per_car = 2
+	var start := RaceFactory.plan(st, [{"name": "Solo", "car_id": "bmw_m4_gt3"}], d["cars"], d["drivers"])
+	var names := {}
+	var ok := true
+	var solo := {}
+	for e in start["entries"]:
+		if e["is_ai"]:
+			ok = ok and e.get("lineup", []).size() == 2 and e["lineup"][0]["name"] == e["driver_name"]
+			for m in e.get("lineup", []):
+				ok = ok and not names.has(m["name"])
+				names[m["name"]] = true
+		else:
+			solo = e
+	check(ok, "every AI car has a line-up of two different drivers, its lead driver first")
+	var crew: Array = solo.get("crew", [])
+	check(crew.size() == 2 and int(crew[1]["peer_id"]) == RaceEntry.AI_PEER and crew[1]["ai"] and crew[1]["role"] == RaceEntry.ROLE_PIT_WALL
+		and not names.has(crew[1]["name"]), "a solo player gets an AI co-driver on the pit wall")
+	var again := RaceFactory.plan(st, [{"name": "Solo", "car_id": "bmw_m4_gt3"}], d["cars"], d["drivers"])
+	check(str(again["entries"]) == str(start["entries"]), "line-ups come from the seed (every machine builds the same)")
+	st.drivers_per_car = 1
+	var plain := RaceFactory.plan(st, [{"name": "Solo", "car_id": "bmw_m4_gt3"}], d["cars"], d["drivers"])
+	var no_lineups := true
+	for e in plain["entries"]:
+		no_lineups = no_lineups and not e.has("lineup") and e.get("crew", []).size() <= 1
+	check(no_lineups, "one driver per car: no line-ups or co-drivers")
+	var co := RaceEntry.from_description(solo)
+	check(RaceEntry.is_ai_peer(co.crew[1]["peer_id"]) and co.human_crew().size() == 1 and co.at_wheel() == "Solo", "the player is at the wheel")
+	co.crew[0]["role"] = RaceEntry.ROLE_PIT_WALL
+	co.crew[1]["role"] = RaceEntry.ROLE_DRIVER
+	check(co.driver_peer() == RaceEntry.AI_PEER and co.at_wheel() == crew[1]["name"], "after a change the co-driver is at the wheel")
+
+	# An AI race with line-ups: the AI hand over at their stop, and the new
+	# driver's traits take over the car.
+	st.drivers_per_car = 2
+	st.laps = 4
+	st.ai_count = 4
+	var r := _race(st, d)
+	sim = r["sim"]
+	var ai: Dictionary = r["ai"]
+	var changes := 0
+	var traits_follow := true
+	for _t in 60 * 60 * 12:
+		var ins := []
+		for i in sim.car_count():
+			ins.append(ai[i].get_input(sim, i))
+		sim.step(ins)
+		for ev in sim.events:
+			if ev["type"] == "pit_stop" and str(ev.get("driver", "")) != "":
+				changes += 1
+				var e: RaceEntry = sim.entries[ev["car"]]
+				traits_follow = traits_follow and e.at_wheel() == ev["driver"] and e.traits == e.lineup[1]["traits"]
+		if sim.phase == RaceSim.Phase.FINISHED:
+			break
+	check(sim.phase == RaceSim.Phase.FINISHED, "a race with driver line-ups finishes")
+	check(changes >= 3, "the AI change drivers at their stops (%d of %d cars)" % [changes, sim.car_count()])
+	var followed := true
+	for i in sim.car_count():
+		if sim.entries[i].pit["driver_idx"] == 1:
+			followed = followed and ai[i].stint_driver == 1 and ai[i].traits == sim.entries[i].lineup[1]["traits"]
+	check(traits_follow and followed, "the new driver's traits drive the car")
 
 
 ## Settings registry, saved prefs and units (core).

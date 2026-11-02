@@ -25,6 +25,8 @@ const KEYS := {
 	"pit_limiter": [KEY_L],
 	"pit_tyres": [KEY_T],
 	"pit_fuel": [KEY_F],
+	"pit_wheels": [KEY_Y],     # which tyres the next stop changes (all, fronts, rears, a side, one)
+	"pit_driver": [KEY_N],     # driver change at the next stop (co-driver / team mate)
 	"team_radio": [KEY_V],     # radio / pings between the driver and the pit wall (co-op)
 	"crew_tab": [KEY_C],       # pit wall roles: switch between pit crew and strategy
 	"shift_up": [KEY_SHIFT, KEY_PERIOD],      # manual gearbox (Settings > Gameplay)
@@ -68,6 +70,7 @@ const REBINDABLE := [
 	["shift_up", "Shift up (manual gears)"], ["shift_down", "Shift down (manual gears)"],
 	["zoom_in", "Zoom in"], ["zoom_out", "Zoom out"], ["zoom_full", "Whole track"], ["camera_toggle", "Camera"],
 	["pit_box", "Box this lap"], ["pit_limiter", "Pit limiter"], ["pit_tyres", "Next tyres"], ["pit_fuel", "Next fuel"],
+	["pit_wheels", "Which tyres to change"], ["pit_driver", "Driver change"],
 	["strategy_screen", "Pit wall"], ["crew_tab", "Pit wall: switch tab"], ["team_radio", "Team radio"],
 	["hud_tower", "Timing tower"], ["restart_race", "Restart race"], ["back_to_menu", "Pause / menu"],
 ]

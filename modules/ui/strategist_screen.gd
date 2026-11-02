@@ -27,6 +27,8 @@ var selected: int = -1          ## car index
 var filter: int = 0
 var font: Font
 var _sweep := 0.0
+var _note := ""                 ## a short line after a pit call (driver change)
+var _note_time := 0.0
 var _track_pts := PackedVector2Array()
 
 
@@ -80,6 +82,17 @@ func _input(event: InputEvent) -> void:
 		filter = posmod(filter - 1, FILTERS.size())
 	elif event.is_action_pressed("ui_right"):
 		filter = posmod(filter + 1, FILTERS.size())
+	elif event is InputEventJoypadButton and session.local_car >= 0 and session.sim.pits.enabled \
+			and event.button_index in [JOY_BUTTON_LEFT_SHOULDER, JOY_BUTTON_RIGHT_SHOULDER]:
+		# The driver's next stop: which tyres to change.
+		var me := session.local_car
+		var ch := PitRules.WHEEL_CHOICES
+		var now := ch.find(str(session.sim.entries[me].pit["plan"].get("wheels", PitRules.WHEELS_ALL)))
+		var step := 1 if event.button_index == JOY_BUTTON_RIGHT_SHOULDER else -1
+		session.request_pit(me, {"wheels": ch[posmod(now + step, ch.size())]})
+	elif event is InputEventJoypadButton and event.button_index == JOY_BUTTON_Y and session.local_car >= 0:
+		_note = RaceHud.toggle_driver_change(session, session.local_car)
+		_note_time = 3.0
 	else:
 		return
 	get_viewport().set_input_as_handled()
@@ -90,6 +103,7 @@ func _process(delta: float) -> void:
 		return
 	size = get_viewport_rect().size
 	_sweep = fmod(_sweep + delta * 1.6, TAU)
+	_note_time = maxf(_note_time - delta, 0.0)
 	queue_redraw()
 
 
@@ -169,7 +183,12 @@ func _draw() -> void:
 	_draw_car(Rect2(rx, 58 + radar_h + 10, rw, car_h), sim, tel)
 	var fy := 58 + radar_h + 10 + car_h + 10
 	_draw_feed(Rect2(rx, fy, rw, vp.y - fy - 34), tel)
-	_text(Vector2(16, vp.y - 12), "D-pad ↑↓ choose car    ←→ filter feed    B / P close    The race keeps running", 13, DIM)
+	var keys := "D-pad ↑↓ choose car    ←→ filter feed    B / P close"
+	if session.local_car >= 0 and sim.pits.enabled:
+		keys += "    LB / RB (Y key) tyres to change    Y (N key) driver change"
+	_text(Vector2(16, vp.y - 12), keys + "    The race keeps running", 13, DIM)
+	if _note_time > 0.0:
+		_text(Vector2(vp.x - 16, vp.y - 12), _note, 14, YELLOW, HORIZONTAL_ALIGNMENT_RIGHT, vp.x * 0.4)
 
 
 func _draw_header(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
@@ -322,7 +341,7 @@ func _draw_car(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 	var x := r.position.x + 10
 	var w := r.size.x - 20
 	draw_rect(Rect2(x, r.position.y + 30, 6, 22), sim.defs[i].colour)
-	_text(Vector2(x + 14, r.position.y + 48), "P%d  %s" % [e.position, e.driver_name], 19, YELLOW if i == _our_car() else Color.WHITE, HORIZONTAL_ALIGNMENT_LEFT, w * 0.6)
+	_text(Vector2(x + 14, r.position.y + 48), "P%d  %s" % [e.position, e.at_wheel()], 19, YELLOW if i == _our_car() else Color.WHITE, HORIZONTAL_ALIGNMENT_LEFT, w * 0.6)
 	_text(Vector2(x + w * 0.6, r.position.y + 48), sim.defs[i].display_name, 14, DIM, HORIZONTAL_ALIGNMENT_LEFT, w * 0.4)
 	var trend := c.trend()
 	var trend_s := "steady" if absf(trend) < 0.05 else ("%+.2f s/lap" % trend)
@@ -332,7 +351,17 @@ func _draw_car(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 		int(temps[0]), int(temps[1]), int(temps[2]), int(temps[3]), int(c.tyre_grip * 100.0)], 14,
 		{"hot": Color(1, 0.5, 0.4), "cold": Color(0.55, 0.7, 1.0)}.get(c.tyre_state, GREEN), HORIZONTAL_ALIGNMENT_LEFT, w)
 	var strat: Dictionary = tel.strategies.get(i, {})
-	_text(Vector2(x, r.position.y + 118), "Strategy: " + (strat.get("text", "no calls heard") as String), 14, Color(1.0, 0.75, 0.4), HORIZONTAL_ALIGNMENT_LEFT, w)
+	if i == session.local_car and sim.pits.enabled:
+		# Our own car: what the next stop will do.
+		var plan: Dictionary = e.pit["plan"]
+		var work := sim.pits.service_for(i, plan)
+		var line := "Next stop: tyres " + RaceHud.stop_tyres_text(sim, i, plan, work)
+		var pend := session.pending_swap(i)
+		if not pend.is_empty():
+			line += ", driver change"
+		_text(Vector2(x, r.position.y + 118), line, 14, Color(1.0, 0.75, 0.4), HORIZONTAL_ALIGNMENT_LEFT, w)
+	else:
+		_text(Vector2(x, r.position.y + 118), "Strategy: " + (strat.get("text", "no calls heard") as String), 14, Color(1.0, 0.75, 0.4), HORIZONTAL_ALIGNMENT_LEFT, w)
 	# Pit window.
 	var pa := c.pit
 	if pa.is_empty():

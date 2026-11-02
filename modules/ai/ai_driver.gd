@@ -37,6 +37,10 @@ enum Mood { RACING, ATTACKING, DEFENDING, YIELDING, MISTAKE, RECOVERING }
 
 var traits: Dictionary         ## as given (RaceEntry.traits)
 var profile: DriverTraits      ## after difficulty
+var _difficulty := DEFAULT_DIFFICULTY
+## Line-up driver at the wheel (RaceEntry.pit "driver_idx"): when it changes at
+## a stop, the new driver's traits take over.
+var stint_driver := 0
 var rng := RandomNumberGenerator.new()
 var mood: int = Mood.RACING
 
@@ -95,12 +99,17 @@ var pit_strategy: AIPitStrategy
 ## host's difficulty setting (if the race settings carry one).
 static func for_car(sim: RaceSim, i: int) -> AIDriver:
 	var t := sim.entries[i].traits
+	var m := sim.entries[i].driver_member()
+	if m.get("ai", false) and m.get("traits", {}) is Dictionary and not (m["traits"] as Dictionary).is_empty():
+		t = m["traits"]  # a player's AI co-driver
 	if t.is_empty():
 		t = {"pace": 0.9, "consistency": 0.9}
 	var difficulty := DEFAULT_DIFFICULTY
 	if "ai_difficulty" in sim.settings:
 		difficulty = float(sim.settings.get("ai_difficulty"))
-	return AIDriver.new(sim.track, sim.defs[i], sim.compounds[i], t, sim.settings.seed * 31 + i, difficulty)
+	var d := AIDriver.new(sim.track, sim.defs[i], sim.compounds[i], t, sim.settings.seed * 31 + i, difficulty)
+	d.stint_driver = int(sim.entries[i].pit.get("driver_idx", 0))
+	return d
 
 
 ## car index -> AIDriver, for every AI entry in the race.
@@ -115,12 +124,23 @@ static func for_all_ai(sim: RaceSim) -> Dictionary:
 func _init(track: TrackData, def: CarDefinition, compound: TyreCompound, p_traits: Dictionary,
 		seed: int, difficulty: float = DEFAULT_DIFFICULTY) -> void:
 	traits = p_traits
+	_difficulty = difficulty
 	profile = DriverTraits.from_dict(p_traits).with_difficulty(difficulty)
 	rng.seed = seed
 	pit_strategy = AIPitStrategy.new(profile, seed * 7 + 3)
 	_build_line(track)
 	_setup_car(def, compound)
 	_build_speed_profile()
+
+
+## A driver change at a stop: the new driver's traits (pace, racecraft, pit
+## calls) take over the car from here.
+func change_driver(p_traits: Dictionary, def: CarDefinition, compound: TyreCompound) -> void:
+	traits = p_traits
+	profile = DriverTraits.from_dict(p_traits).with_difficulty(_difficulty)
+	pit_strategy.profile = profile
+	_setup_car(def, compound)
+	_profile_dirty = true
 
 
 # --- Racing line -------------------------------------------------------------
@@ -285,6 +305,10 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 	var def := sim.defs[me]
 	var inp := CarInput.new()
 	var n := line.size()
+	var at_wheel := int(sim.entries[me].pit.get("driver_idx", 0))
+	if at_wheel != stint_driver:
+		stint_driver = at_wheel
+		change_driver(sim.entries[me].traits, def, sim.compounds[me])
 	pit_strategy.update(sim, me)
 	if sim.pit_controls(me):
 		# The pit lane guide drives; pick the line up again afterwards.
