@@ -9,6 +9,10 @@ extends Node3D
 
 const MAX_PIECES := 260
 const LIE_S := 50.0            ## how long a piece lies on the ground
+## How long pieces lie and how many there can be (WorldView keeps them for
+## the whole race in a Demolition Derby: the arena fills with wreckage).
+var lie_s := LIE_S
+var max_pieces := MAX_PIECES
 const CLEAR_S := 3.0           ## then it shrinks away over this long
 const GRAVITY := 9.81
 
@@ -100,7 +104,7 @@ func _add(node: Node3D, vel: Vector3, rest_h: float, shard: bool) -> void:
 	var spin := 12.0 if shard else 5.0
 	_pieces.append([node, vel, Vector3(_rng.randf_range(-spin, spin), _rng.randf_range(-spin, spin), _rng.randf_range(-spin, spin)),
 		0.0, false, node.scale, rest_h, shard])
-	while _pieces.size() > MAX_PIECES:
+	while _pieces.size() > max_pieces:
 		var old: Array = _pieces.pop_front()
 		(old[0] as Node).queue_free()
 
@@ -113,12 +117,12 @@ func _process(delta: float) -> void:
 		var node: Node3D = pc[0]
 		pc[3] += delta
 		var age: float = pc[3]
-		if age > LIE_S + CLEAR_S:
+		if age > lie_s + CLEAR_S:
 			node.queue_free()
 			_pieces.remove_at(i)
 			continue
-		if age > LIE_S:
-			node.scale = (pc[5] as Vector3) * clampf(1.0 - (age - LIE_S) / CLEAR_S, 0.01, 1.0)
+		if age > lie_s:
+			node.scale = (pc[5] as Vector3) * clampf(1.0 - (age - lie_s) / CLEAR_S, 0.01, 1.0)
 		if not pc[4]:
 			var v: Vector3 = pc[1]
 			v.y -= GRAVITY * delta

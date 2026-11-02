@@ -1,0 +1,100 @@
+{
+ "format": 1,
+ "id": "derby_corrigan_trailmaster",
+ "name": "Corrigan Trailmaster 4x4",
+ "description": "Body-on-frame off-roader with a 5.0 V8 and four-wheel drive. Loves the dirt.",
+ "class_tag": "Derby",
+ "discipline": "derby",
+ "body_style": "suv",
+ "toughness": 2.0,
+ "colour": "#3b4a3a",
+ "mass_kg": 2200,
+ "weight_front": 0.56,
+ "wheelbase_m": 2.9,
+ "cg_height_m": 0.72,
+ "track_width_m": 1.65,
+ "length_m": 4.95,
+ "width_m": 1.98,
+ "body_offset_m": 0.0,
+ "inertia_factor": 1.1,
+ "engine": {
+  "idle_rpm": 800,
+  "redline_rpm": 5200,
+  "shift_up_rpm": 4940,
+  "shift_down_rpm": 2340,
+  "torque_curve": [
+   [
+    800,
+    248
+   ],
+   [
+    1560,
+    382
+   ],
+   [
+    2860,
+    450
+   ],
+   [
+    4160,
+    418
+   ],
+   [
+    5200,
+    351
+   ]
+  ],
+  "engine_brake_nm": 54,
+  "cylinders": 8
+ },
+ "gearbox": {
+  "ratios": [
+   2.6,
+   1.6,
+   1.0,
+   0.75
+  ],
+  "final_drive": 3.55,
+  "efficiency": 0.84
+ },
+ "drivetrain": "AWD",
+ "awd_front_split": 0.4,
+ "wheel_radius_m": 0.36,
+ "brakes": {
+  "max_force_n": 18700,
+  "bias_front": 0.64
+ },
+ "steering": {
+  "max_angle_deg": 36,
+  "rate_deg_s": 230
+ },
+ "aero": {
+  "cda": 1.05,
+  "cla": 0.05,
+  "balance_front": 0.5
+ },
+ "tyre_compound": "road_semi_slick",
+ "fuel": {
+  "capacity_l": 60,
+  "bsfc_l_per_kwh": 0.36
+ },
+ "tuning_ranges": {
+  "brake_bias_front": [
+   0.55,
+   0.72
+  ],
+  "aero_cla": [
+   0.0,
+   0.1
+  ],
+  "final_drive": [
+   3.0,
+   4.6
+  ]
+ },
+ "chassis": {
+  "front_grip": 0.94,
+  "rear_grip": 1.0,
+  "roll_stiffness_front": 0.6
+ }
+}

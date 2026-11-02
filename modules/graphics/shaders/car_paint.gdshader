@@ -42,12 +42,15 @@ uniform vec4 number_box = vec4(0.0, 0.55, 0.17, 0.17);   // x, y, half width, ha
 uniform vec3 number_fg : source_color = vec3(0.04);
 uniform vec3 number_bg : source_color = vec3(0.95);
 
+#include "res://modules/graphics/shaders/car_deform.gdshaderinc"
+
 varying vec3 lp;
 varying vec3 ln;
 
 void vertex() {
 	lp = VERTEX;
 	ln = NORMAL;
+	apply_crumple(VERTEX, NORMAL);
 }
 
 // The door number (both sides, reads nose-wards).

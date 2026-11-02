@@ -37,6 +37,10 @@ var body_damage: PackedFloat64Array = [0.0, 0.0, 0.0, 0.0]
 var damage_level: int = 0
 var shift_cut: float = 0.0     ## seconds of power cut left from a slow (damaged) gearshift
 ## Track tracking
+## In the air off a jump: height above the ground under the car (m) and
+## vertical speed (m/s, + = up). Both 0 on the ground.
+var air_h: float = 0.0
+var vz: float = 0.0
 var track_idx: int = 0
 var track_s: float = 0.0
 var lateral_offset: float = 0.0
@@ -105,11 +109,12 @@ func serialize() -> PackedFloat64Array:
 	a.append_array(body_damage)
 	a.append_array(PackedFloat64Array([assist_track, int(manual_gears), int(shift_held)]))
 	a.append_array(PackedFloat64Array([int(in_joker), dirt]))
+	a.append_array(PackedFloat64Array([air_h, vz]))
 	return a
 
 
 ## Compact float32 form streamed by the car's owner ~30 times a second.
-const NET_SIZE := 28
+const NET_SIZE := 30
 
 
 func pack_net(out: PackedFloat32Array) -> void:
@@ -119,7 +124,7 @@ func pack_net(out: PackedFloat32Array) -> void:
 			| (int(puncture[0] > 0.5) << 4) | (int(puncture[1] > 0.5) << 5)
 			| (int(puncture[2] > 0.5) << 6) | (int(puncture[3] > 0.5) << 7),
 		tyre_temp[0], tyre_temp[1], tyre_temp[2], tyre_temp[3], fy_front, fy_rear,
-		damage_gearbox, alignment, body_damage[0], body_damage[1], body_damage[2], body_damage[3]]))
+		damage_gearbox, alignment, body_damage[0], body_damage[1], body_damage[2], body_damage[3], air_h, vz]))
 
 
 func unpack_net(a: PackedFloat32Array, o: int) -> void:
@@ -136,6 +141,7 @@ func unpack_net(a: PackedFloat32Array, o: int) -> void:
 	fy_front = a[o + 20]; fy_rear = a[o + 21]
 	damage_gearbox = a[o + 22]; alignment = a[o + 23]
 	body_damage = PackedFloat64Array([a[o + 24], a[o + 25], a[o + 26], a[o + 27]])
+	air_h = a[o + 28]; vz = a[o + 29]
 
 
 func deserialize(a: PackedFloat64Array) -> void:
@@ -156,3 +162,5 @@ func deserialize(a: PackedFloat64Array) -> void:
 		assist_track = int(a[44]); manual_gears = a[45] != 0.0; shift_held = a[46] != 0.0
 	if a.size() >= 49:
 		in_joker = a[47] != 0.0; dirt = a[48]
+	if a.size() >= 51:
+		air_h = a[49]; vz = a[50]

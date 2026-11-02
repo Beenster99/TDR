@@ -94,6 +94,14 @@ const DIRT_ROLL := 0.012
 const GRAVEL_CRAWL_ROLL := 0.1
 const GRAVEL_CRAWL_SPEED := 5.0
 const GRAVEL_DIG_SPEED := 18.0
+## Jumps: off the lip of a ramp (TrackData.jumps) the car leaves the ground
+## TAKEOFF_GAP (m) up; landings faster than LANDING_HARD (m/s,
+## downwards relative to the ground) hurt the suspension and tyres.
+const TAKEOFF_GAP := 0.02
+## How much of the ramp's climb the car carries off the lip (the springs
+## unload and add a little kick).
+const JUMP_KICK := 1.15
+const LANDING_HARD := 5.0
 
 
 ## wear_rate: tyre wear multiplier (0 = tyres never wear, 1 = normal).
@@ -131,6 +139,11 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 		surf_roll += DIRT_ROLL * s.dirt
 	if s.surface == TrackData.Surface.GRAVEL:
 		surf_roll = lerpf(GRAVEL_CRAWL_ROLL, surf_roll, smoothstep(GRAVEL_CRAWL_SPEED, GRAVEL_DIG_SPEED, s.vel.length()))
+	# In the air (off a jump): no tyre forces until it lands.
+	var air := track.allows_air()
+	if air and s.air_h > 0.0:
+		_fly(s, inp, d, track, q, track.surface_height_at(s.pos, s.track_idx), dt, events, car_index)
+		return
 	# Slopes, banking and crests (all zero on a flat track).
 	var slope := track.surface_gradient(q)          # uphill vector, rise per metre
 	var slope_cos := 1.0 / sqrt(1.0 + slope.length_squared())
@@ -444,21 +457,20 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 			s.yaw_rate *= 0.8
 	s.pos += s.vel * dt
 	s.heading = wrapf(s.heading + s.yaw_rate * dt, -PI, PI)
+	# Take-off: over the lip of a jump the car carries on with the ramp's
+	# climb and flies.
+	if air and v_along > 6.0:
+		var jump := track.jump_lip(s.track_s, s.track_s + v_along * dt)
+		var edge: float = q["w_right"] if s.lateral_offset >= 0.0 else q["w_left"]
+		if not jump.is_empty() and absf(s.lateral_offset) <= edge + track.kerb_width:
+			# Off the lip with the ramp's climb; the table is flat, so the car
+			# starts just above it.
+			s.vz = v_along * TrackData.jump_slope(jump) * JUMP_KICK
+			s.air_h = TAKEOFF_GAP
+			events.append({"type": "takeoff", "car": car_index, "speed": speed})
 
 	# --- Outer barrier (soft wall at the edge of the run-off) ---------------
-	if s.surface == TrackData.Surface.BARRIER:
-		var side := 1.0 if s.lateral_offset >= 0.0 else -1.0
-		var dirv: Vector2 = q["dir"]
-		var normal := Vector2(-dirv.y, dirv.x) * side  # points away from track
-		var vn := s.vel.dot(normal)
-		if vn > 0.0:
-			# Walls throw the car back, tyre walls and fencing soak it up.
-			var kind := track.barrier_for(q)
-			s.vel -= normal * vn * float(TrackData.BARRIER_REBOUND[kind])
-			s.vel *= 0.85 if kind == TrackData.Barrier.WALL or kind == TrackData.Barrier.ARMCO else 0.7
-			s.yaw_rate *= 0.6
-			events.append({"type": "barrier_impact", "car": car_index, "speed": vn, "normal": normal, "barrier": kind})
-		s.pos -= normal * 0.2
+	_barrier(s, q, track, events, car_index)
 
 	# --- Kerbs taken flat out wear the suspension, and can cut a tyre ------
 	if full_damage and s.surface == TrackData.Surface.KERB and speed > KERB_WEAR_SPEED:
@@ -509,6 +521,62 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 
 
 ## Grip left on a tyre with this much wear (0 = new .. 1 = worn out).
+
+## One step in the air: gravity, a little air drag, the wheels spin free,
+## and no tyre grip, so the car keeps its line and spin until it lands.
+static func _fly(s: CarState, inp: CarInput, d: CarDefinition, track: TrackData, q: Dictionary,
+		ground_here: float, dt: float, events: Array, car_index: int) -> void:
+	var z := ground_here + s.air_h
+	s.steer_angle = move_toward(s.steer_angle, clampf(inp.steer, -1.0, 1.0) * d.max_steer, d.steer_rate * dt)
+	s.vel *= 1.0 - 0.02 * dt
+	s.yaw_rate *= 1.0 - 0.4 * dt
+	s.ax = 0.0
+	s.ay = 0.0
+	s.wheelspin = false
+	s.rpm = move_toward(s.rpm, lerpf(d.idle_rpm, d.redline_rpm * 0.97, inp.throttle), d.redline_rpm * 2.0 * dt)
+	s.pos += s.vel * dt
+	s.heading = wrapf(s.heading + s.yaw_rate * dt, -PI, PI)
+	s.vz -= G * dt
+	z += s.vz * dt
+	var q2 := track.project(s.pos, s.track_idx)
+	s.track_idx = q2["idx"]
+	s.track_s = q2["s"]
+	s.lateral_offset = q2["offset"]
+	s.surface = track.surface_for(q2)
+	var ground := track.surface_height_at(s.pos, s.track_idx)
+	s.air_h = z - ground
+	if s.air_h <= 0.0:
+		# Landing: how hard depends on the fall against the slope met.
+		var v_along := s.vel.dot(q2["dir"])
+		var impact := maxf(v_along * track.grade_at(s.track_s) - s.vz, 0.0)
+		s.air_h = 0.0
+		s.vz = 0.0
+		s.vel *= 1.0 - clampf(impact * 0.012, 0.0, 0.18)
+		events.append({"type": "landing", "car": car_index, "speed": impact})
+		if impact > LANDING_HARD and s.damage_level == CarDamage.Level.FULL:
+			var k := (impact - LANDING_HARD) / 10.0 / d.toughness
+			s.damage_suspension = minf(s.damage_suspension + 0.25 * k, 1.0)
+			s.alignment = clampf(s.alignment + 0.2 * k * (1.0 if s.yaw_rate >= 0.0 else -1.0), -1.0, 1.0)
+	_barrier(s, q2, track, events, car_index)
+
+
+## The car hits the wall at the edge of the run-off.
+static func _barrier(s: CarState, q: Dictionary, track: TrackData, events: Array, car_index: int) -> void:
+	if s.surface == TrackData.Surface.BARRIER:
+		var side := 1.0 if s.lateral_offset >= 0.0 else -1.0
+		var dirv: Vector2 = q["dir"]
+		var normal := Vector2(-dirv.y, dirv.x) * side  # points away from track
+		var vn := s.vel.dot(normal)
+		if vn > 0.0:
+			# Walls throw the car back, tyre walls and fencing soak it up.
+			var kind := track.barrier_for(q)
+			s.vel -= normal * vn * float(TrackData.BARRIER_REBOUND[kind])
+			s.vel *= 0.85 if kind == TrackData.Barrier.WALL or kind == TrackData.Barrier.ARMCO else 0.7
+			s.yaw_rate *= 0.6
+			events.append({"type": "barrier_impact", "car": car_index, "speed": vn, "normal": normal, "barrier": kind})
+		s.pos -= normal * 0.2
+
+
 static func wear_grip_factor(wear: float) -> float:
 	return 1.0 - WEAR_GRIP_LOSS * pow(clampf(wear, 0.0, 1.0), 1.6)
 

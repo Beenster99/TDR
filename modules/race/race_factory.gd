@@ -17,8 +17,8 @@ static func plan(settings: RaceSettings, humans: Array, cars: Dictionary, driver
 		track: TrackData = null) -> Dictionary:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = settings.seed
-	# Only the cars built for this kind of racing (rallycross cars race
-	# rallycross, circuit cars race on circuits).
+	# Only the cars built for this kind of racing (circuit, rallycross or
+	# Demolition Derby cars each race only their own kind).
 	var all_ids: Array = []
 	for id in cars:
 		if cars[id].discipline == settings.discipline:
@@ -41,6 +41,8 @@ static func plan(settings: RaceSettings, humans: Array, cars: Dictionary, driver
 		ai_classes = [settings.car_class]
 	elif settings.car_class == RaceSettings.CLASS_MULTI or humans.is_empty():
 		ai_classes = CarCatalog.classes(cars, settings.discipline)
+		if ai_classes.is_empty():
+			ai_classes = CarCatalog.classes(cars)
 	else:
 		for id in human_cars:
 			if not cars[id].class_tag in ai_classes:

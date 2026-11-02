@@ -8,7 +8,7 @@ extends Control
 ##   --host / --join 127.0.0.1 [--port 7777] [--name Bob]            skip the menu
 ##   --single [--laps 1] [--ai 3] [--car id]                         skip to a race
 ##   --track id  --class GT3|Road|multi|open                         pick track / car class
-##   --race-type circuit|rallycross                                  race type (before --track)
+##   --race-type circuit|rallycross|derby                            race type (before --track)
 ##   --autodrive --ready --quit-after-race --time-scale 3            test bots
 ##   --resume-season id|latest  --menu-page season_new  --menu-shot out.png   (screenshots)
 ##   --season 2 [--qualifying driven|simulated|off] [--points f1]     a quick season of N rounds
@@ -32,12 +32,15 @@ var class_stepper: Stepper
 ## Race type (RaceSettings.discipline): circuit racing, rallycross ... It
 ## narrows the track and class lists and hides settings that don't apply.
 var race_type_stepper: Stepper
-const RACE_TYPE_NAMES := {"circuit": "Circuit racing", "rallycross": "Rallycross", "derby": "Demolition derby"}
+const RACE_TYPE_NAMES := {"circuit": "Circuit racing", "rallycross": "Rallycross", "derby": "Demolition Derby"}
 ## Settings that rallycross doesn't use (no pit stops, fuel, safety car,
 ## shared cars or tyre choice), hidden while it's picked.
 var _circuit_only: Array[Control] = []
 var car_filter_stepper: Stepper   ## narrows the car list to one class (multi-class / open races)
 var track_stepper: Stepper
+## Settings a Demolition Derby doesn't have on top of those (damage is
+## always full; no upgrades or setups), hidden while it's picked.
+var _derby_hidden: Array[Control] = []
 var laps_stepper: Stepper
 var ai_stepper: Stepper
 var tyre_stepper: Stepper
@@ -461,6 +464,7 @@ func _build_ui() -> void:
 		[RaceSettings.UPGRADES_BOP, "BoP (looks only)"], [RaceSettings.UPGRADES_STOCK, "Off (stock cars)"]],
 		RaceSettings.UPGRADES_ON)
 	_circuit_only.append_array([fuel_stepper, wear_stepper, stops_stepper, drivers_stepper, safety_car_stepper])
+	_derby_hidden = [damage_stepper, upgrades_stepper, tuning_stepper]
 	_settings_steppers = [laps_stepper, ai_stepper, difficulty_stepper, tod_stepper, clock_stepper, weather_stepper,
 		weather_change_stepper, grid_stepper, damage_stepper, safety_car_stepper, fuel_stepper, wear_stepper, stops_stepper,
 		drivers_stepper, upgrades_stepper, tuning_stepper]
@@ -766,7 +770,9 @@ func _on_race_type_changed(push := true) -> void:
 		if dsc == RaceSettings.DISCIPLINE_RALLYCROSS:
 			laps_stepper.set_value(6)   # a World RX final: 6 laps, 6 cars
 			ai_stepper.set_value(5)
-		elif int(laps_stepper.value) == 6:
+		elif dsc == RaceSettings.DISCIPLINE_DERBY:
+			laps_stepper.set_value(8)   # long enough for the field to wreck itself
+		elif int(laps_stepper.value) in [6, 8]:
 			laps_stepper.set_value(3)
 	_apply_race_type_rules()
 	_rebuild_car_options()
@@ -780,6 +786,8 @@ func _apply_race_type_rules() -> void:
 	var circuit := _race_type() == RaceSettings.DISCIPLINE_CIRCUIT
 	for c in _circuit_only:
 		c.visible = circuit
+	for c in _derby_hidden:
+		c.visible = _race_type() != RaceSettings.DISCIPLINE_DERBY
 	if crew_box:
 		crew_box.visible = circuit
 	_circuit_card.get_meta("heading").text = "CIRCUIT" if circuit else RACE_TYPE_NAMES.get(_race_type(), "CIRCUIT").to_upper()
@@ -812,6 +820,7 @@ func _show(id: String) -> void:
 	if id != "lobby":  # host-only settings are editable again off-line
 		class_stepper.disabled = false
 		track_stepper.disabled = false
+		race_type_stepper.disabled = false
 		for st in _settings_steppers:
 			st.disabled = false
 		_settings_change_label.visible = false
@@ -956,6 +965,12 @@ func _refresh_cards() -> void:
 		facts.append("%d%% dirt" % roundi(loose / L * 100.0))
 		if float(t.get("joker_length_m", 0.0)) > 0.0:
 			facts.append("joker lap")
+	if int(t.get("crossovers", 0)) > 0:
+		facts.append("%d crossover%s" % [t["crossovers"], "s" if int(t["crossovers"]) > 1 else ""])
+	if int(t.get("jumps", 0)) > 0:
+		facts.append("%d jump%s" % [t["jumps"], "s" if int(t["jumps"]) > 1 else ""])
+	if float(t.get("dirt_m", 0.0)) > 0.0 and str(t.get("discipline", "")) == RaceSettings.DISCIPLINE_DERBY:
+		facts.append("%d%% dirt" % roundi(100.0 * float(t["dirt_m"]) / maxf(float(t.get("length_m", 1.0)), 1.0)))
 	_track_facts.text = "  ·  ".join(facts)
 	_track_desc.text = str(t.get("description", ""))
 	var c: CarDefinition = GameData.cars.get(str(car_stepper.value))
@@ -1059,6 +1074,8 @@ func _settings_from_ui() -> RaceSettings:
 		s.fuel_enabled = false
 		s.safety_car_enabled = false
 		s.tyre_wear_enabled = false
+	if s.is_derby():
+		s.apply_derby_rules()
 	return s
 
 
@@ -1448,6 +1465,7 @@ func _refresh_lobby() -> void:
 	lobby_season_label.visible = in_season
 	if in_season:
 		lobby_season_label.text = _season_info_text(Net.season_info)
+	race_type_stepper.disabled = not host or in_season
 	if not host or in_season:
 		if race_type_stepper.value != Net.settings.discipline:
 			race_type_stepper.set_value(Net.settings.discipline)
@@ -1565,7 +1583,8 @@ func _build_season_pages(root: Node) -> void:
 			draft_rounds.pop_back()
 		_refresh_calendar())
 	_button(cal, "Random calendar (6 rounds)", func(): _quick_calendar(6))
-	_button(cal, "Every track (%d rounds)" % GameData.tracks.size(), func(): _quick_calendar(GameData.tracks.size()))
+	var n_circuits := TrackCatalog.ids_for(GameData.tracks, RaceSettings.DISCIPLINE_CIRCUIT).size()
+	_button(cal, "Every track (%d rounds)" % n_circuits, func(): _quick_calendar(n_circuits))
 	_button(cal, "Start season", _on_create_season)
 	_button(cal, "Back", func(): _show("season_list"))
 	var shared := _settings_grid()
@@ -1653,9 +1672,7 @@ func _add_round() -> void:
 ## A calendar from the tracks, in a random order, using the Laps, Weather and
 ## Start time settings for every round.
 func _quick_calendar(n: int) -> void:
-	var ids := []
-	for t in GameData.tracks:
-		ids.append(t["id"])
+	var ids := Array(TrackCatalog.ids_for(GameData.tracks, RaceSettings.DISCIPLINE_CIRCUIT))
 	ids.shuffle()
 	draft_rounds.clear()
 	var r := _round_from_ui()

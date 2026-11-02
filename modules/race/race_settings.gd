@@ -6,11 +6,14 @@ extends RefCounted
 var track_id: String = "spielberg"
 ## Kind of racing (the race type): DISCIPLINE_CIRCUIT (road racing),
 ## DISCIPLINE_RALLYCROSS (mixed tarmac and dirt, short races, a joker lap,
-## no pit stops, no co-op) or "derby" (demolition derby). Tracks and car
+## no pit stops, no co-op) or DISCIPLINE_DERBY (Demolition Derby: derby arenas
+## and cars, damage always full, no safety car, no pit stops, no co-op car
+## shares; see docs/DERBY.md). Tracks and car
 ## classes carry the same word.
 var discipline: String = "circuit"
 const DISCIPLINE_CIRCUIT := "circuit"
 const DISCIPLINE_RALLYCROSS := "rallycross"
+const DISCIPLINE_DERBY := "derby"
 ## Rallycross: joker laps each car must take in a race (taking the joker lane
 ## once), and the time added at the finish for each one missed.
 var joker_laps: int = 1
@@ -124,6 +127,24 @@ func effective_damage_level() -> String:
 	if damage_level == "off" and damage_enabled:
 		return "full"
 	return damage_level
+
+
+func is_derby() -> bool:
+	return discipline == DISCIPLINE_DERBY
+
+
+## Makes the settings fit a Demolition Derby: full damage, no safety car,
+## no pit stops, fuel or tyre wear, one driver per car, the Derby class.
+func apply_derby_rules() -> void:
+	discipline = DISCIPLINE_DERBY
+	car_class = "Derby"
+	set_damage_level("full")
+	safety_car_enabled = false
+	mandatory_pit_stops = 0
+	drivers_per_car = 1
+	fuel_enabled = false
+	tyre_wear_enabled = false
+	session_type = SESSION_RACE
 
 
 func is_qualifying() -> bool:

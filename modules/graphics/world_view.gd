@@ -55,6 +55,9 @@ func setup(p_track: TrackData, p_env: SimEnvironment = null) -> void:
 	skid_marks.setup(track_view.bounds)
 	debris = Debris.new()
 	debris.ground = track_view.surface_height
+	if track.discipline == "derby":
+		debris.lie_s = 1.0e9
+		debris.max_pieces = 520
 	add_child(debris)
 	if DisplayServer.get_name() != "headless" and track.has_pit_lane():
 		pit_crews = PitCrews.new()
@@ -139,6 +142,12 @@ func add_car(def: CarDefinition, state: CarState, label: String, is_local: bool,
 	add_child(v)
 	cars.append(v)
 	return v
+
+
+## Car i was hit at a world point (Demolition Derby cars crumple around it).
+func car_hit(i: int, at: Vector2) -> void:
+	if i >= 0 and i < cars.size() and cars[i]:
+		cars[i].note_hit(at)
 
 
 ## The safety car (Mercedes-AMG GT Black Series with a roof light bar).

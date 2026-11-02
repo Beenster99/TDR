@@ -522,6 +522,10 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 	var ahead_lx := INF
 	var behind := -1
 	var behind_lx := -INF
+	# Demolition Derby: no braking for the car ahead; go for it instead.
+	var derby := sim.settings.is_derby()
+	var ram := -1
+	var ram_lx := INF
 	for j in sim.cars.size():
 		if j == me:
 			continue
@@ -559,7 +563,10 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 			if lx < ahead_lx and absf(ly) < half_w + o_half + 2.5:
 				ahead = j
 				ahead_lx = lx
-			if absf(ly) < half_w + o_half + 0.4:
+			if derby and not sim.entries[j].dnf and lx < 40.0 and absf(ly) < 7.0 and lx < ram_lx:
+				ram = j
+				ram_lx = lx
+			if absf(ly) < half_w + o_half + 0.4 and not (derby and not sim.entries[j].dnf):
 				var gap := 3.0 + speed * lerpf(0.32, 0.16, p.aggression)
 				if sim.entries[me].laps_done == 0:
 					gap *= 1.5  # opening lap: brake a little earlier in the pack
@@ -649,6 +656,15 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 			_pass_timer = 0.0
 	elif ahead >= 0 and ahead_lx < 20.0 and target_speed[idx] > sim.cars[ahead].vel.length() + 2.0:
 		pressure = maxf(pressure, 0.5)
+	# Demolition Derby: aim at a rear corner of the car ahead to spin it.
+	if derby and ram >= 0 and not cool_down:
+		mood = Mood.ATTACKING
+		_pass_target = -1
+		_pass_side = 0
+		var o := sim.cars[ram]
+		var oly := _line_offset(o.pos, (idx + int(maxf(ram_lx, 0.0) / SPACING)) % n)
+		var corner := sim.defs[ram].width * 0.35 * (1.0 if (ram + me) % 2 == 0 else -1.0)
+		want_bias = oly + corner
 
 	# Defend: cover the inside once when a faster car is right behind.
 	_defend_timer -= RaceSim.TICK_DT

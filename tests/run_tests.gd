@@ -27,6 +27,7 @@ func _init() -> void:
 	test_ai_drivers()
 	test_car_classes()
 	test_every_track()
+	test_derby()
 	test_weather_and_time()
 	test_wet_grip()
 	test_race_settings_and_grid()
@@ -216,7 +217,7 @@ func test_car_classes() -> void:
 	var spn = JSON.parse_string(FileAccess.get_file_as_string("res://modules/graphics/data/sponsors.json"))
 	var slots_ok := true
 	for id in d["cars"]:
-		if d["cars"][id].class_tag != "Road":
+		if d["cars"][id].class_tag != "Road" and d["cars"][id].discipline == "circuit":
 			var roles := {}
 			for sl in liv.get(id, {}).get("decal_slots", []):
 				roles[sl["role"]] = true
@@ -256,6 +257,8 @@ func test_every_track() -> void:
 	var list := TrackCatalog.list_all()
 	check(list.size() >= 5, "%d tracks listed" % list.size())
 	for info in list:
+		if info.get("discipline", "circuit") != "circuit":
+			continue  # Demolition Derby arenas: see test_derby
 		var t := TrackCatalog.load_track(info["id"])
 		if t == null:
 			check(false, "%s loads" % info["id"])
@@ -299,6 +302,163 @@ func test_every_track() -> void:
 			t.length, t.pit_length, "right" if t.pit_side > 0 else "left", _laptime(lap["time"]), lap["offs"]])
 
 
+## Demolition Derby: the arenas (crossovers, jumps, dirt), the 20 cars, a
+## lap in the air, and a full derby race with its rules.
+func test_derby() -> void:
+	print("demolition derby")
+	var d := _data()
+	var arenas := TrackCatalog.ids_for(TrackCatalog.list_all(), "derby")
+	check(arenas.size() == 5, "%d derby arenas" % arenas.size())
+	var ids := CarCatalog.ids_in_class(d["cars"], "Derby")
+	var models_ok := true
+	for id in ids:
+		var c: CarDefinition = d["cars"][id]
+		models_ok = models_ok and ResourceLoader.exists("res://modules/graphics/cars/%s.glb" % id) \
+			and c.discipline == "derby" and c.toughness >= 1.0
+	check(ids.size() == 20 and models_ok, "%d derby cars, each with a 3D model and a toughness" % ids.size())
+	check(not "Derby" in CarCatalog.classes(d["cars"]) and CarCatalog.classes(d["cars"], "derby") == ["Derby"],
+		"derby cars stay out of circuit classes, seasons and multi-class grids")
+	var multi := RaceSettings.new()
+	multi.car_class = RaceSettings.CLASS_MULTI
+	multi.ai_count = 30
+	var any_derby := false
+	for e in RaceFactory.plan(multi, [], d["cars"], d["drivers"])["entries"]:
+		any_derby = any_derby or d["cars"][e["car_id"]].discipline == "derby"
+	check(not any_derby, "a multi-class circuit race has no derby cars")
+	# Each arena: crossovers really cross, jumps and dirt, and a derby car
+	# gets round in the AI's hands, flying off the jumps.
+	for id in arenas:
+		var t := TrackCatalog.load_track(id)
+		var problems: Array[String] = []
+		if t.crossovers.is_empty():
+			problems.append("no crossover")
+		for cx in t.crossovers:
+			if t.position_at(cx.x).distance_to(t.position_at(cx.y)) > 1.0:
+				problems.append("crossover at %.0f m doesn't meet" % cx.x)
+			if absf(t.height_at(cx.x) - t.height_at(cx.y)) > 0.05:
+				problems.append("crossover at %.0f m isn't flat" % cx.x)
+		if t.jumps.is_empty() or not t.allows_air():
+			problems.append("no jumps")
+		if t.dirt.is_empty() or t.dirt_at((float(t.dirt[0][0]) + float(t.dirt[0][1])) * 0.5) < 0.99:
+			problems.append("no dirt")
+		var lap := _derby_lap(t, d)
+		if lap["time"] <= 0.0:
+			problems.append("AI didn't finish a lap")
+		if lap["air"] < 0.25:
+			problems.append("never left the ground (%.2f m)" % lap["air"])
+		for pr in problems:
+			printerr("       ", t.id, ": ", pr)
+		check(problems.is_empty(), "%-26s %5.0f m, %d crossovers, %d jumps, AI lap %s, %.1f m up, %d offs" % [t.display_name,
+			t.length, t.crossovers.size(), t.jumps.size(), _laptime(lap["time"]), lap["air"], lap["offs"]])
+	# Dirt has less grip than tarmac.
+	var t2 := TrackCatalog.load_track("derby_mudflat_infinity")
+	var grip := []
+	for at in [float(t2.dirt[0][0]) - 40.0, (float(t2.dirt[0][0]) + float(t2.dirt[0][1])) * 0.5]:
+		var c := CarState.new()
+		c.pos = t2.position_at(at)
+		c.heading = t2.heading_at(at)
+		c.vel = Vector2.from_angle(c.heading) * 20.0
+		var q := t2.project(c.pos)
+		c.track_idx = q["idx"]
+		var inp := CarInput.new()
+		inp.steer = 1.0
+		var env := SimEnvironment.create({}, {}, 1)
+		var def: CarDefinition = d["cars"]["derby_brannock_sovereign"]
+		for k in 30:
+			CarPhysics.step(c, inp, def, d["tyres"][def.tyre_compound_id], env, t2, 1.0 / 120.0, 0.0, [], 0)
+		grip.append(absf(c.ay))
+	check(grip[1] < grip[0] * 0.9, "dirt grips less than tarmac (%.1f vs %.1f m/s2 sideways)" % [grip[1], grip[0]])
+	# A derby race: derby cars only, damage on, no safety car, wrecks retire,
+	# and it ends.
+	var s := RaceSettings.new()
+	s.track_id = "derby_rustbelt_eight"
+	s.ai_count = 14
+	s.laps = 6
+	s.seed = 4242
+	s.apply_derby_rules()
+	var track := TrackCatalog.load_track(s.track_id)
+	var start := RaceFactory.plan(s, [], d["cars"], d["drivers"], track)
+	var sim := RaceFactory.build_sim(start, d["cars"], d["tyres"], track)
+	var ai := AIDriver.for_all_ai(sim)
+	var hits := 0
+	var flights := 0
+	var landings := 0
+	var retired := {}
+	while sim.phase != RaceSim.Phase.FINISHED and sim.tick < 60 * 600:
+		var inputs := []
+		for i in sim.cars.size():
+			inputs.append(ai[i].get_input(sim, i) if ai.has(i) else null)
+		sim.step(inputs)
+		for e in sim.events:
+			match e["type"]:
+				"collision": hits += 1
+				"takeoff": flights += 1
+				"landing": landings += 1
+				"retired": retired[e["reason"]] = retired.get(e["reason"], 0) + 1
+	var only_derby := true
+	var body := 0.0
+	for i in sim.cars.size():
+		only_derby = only_derby and sim.defs[i].class_tag == "Derby"
+		body += CarDamage.body_total(sim.cars[i])
+	check(only_derby and sim.damage_level == CarDamage.Level.FULL and not sim.settings.safety_car_enabled
+		and sim.settings.drivers_per_car == 1, "derby race: derby cars, full damage, no safety car, no co-op")
+	check(sim.phase == RaceSim.Phase.FINISHED and hits > 20 and flights > 0 and landings > 0 and body > 2.0,
+		"derby race ends: %d contacts, %d jumps, %.1f of bodywork bent, retired %s (%.0f s)" % [hits, flights, body, retired, sim.race_time])
+	check(not sim.race_control.safety_car_active() and sim.race_control.recoveries.is_empty(),
+		"no safety car or recovery trucks in a derby (wrecks stay put)")
+	# Last car standing wins.
+	var s2 := RaceSettings.new()
+	s2.track_id = "derby_rustbelt_eight"
+	s2.ai_count = 4
+	s2.laps = 20
+	s2.apply_derby_rules()
+	var start2 := RaceFactory.plan(s2, [], d["cars"], d["drivers"], track)
+	var sim2 := RaceFactory.build_sim(start2, d["cars"], d["tyres"], track)
+	sim2.phase = RaceSim.Phase.RACING
+	for i in [0, 1, 2]:
+		sim2.cars[i].damage_engine = 1.0
+	sim2.step([null, null, null, null])
+	check(sim2.phase == RaceSim.Phase.FINISHED and sim2.entries[3].finished and sim2.running_order[0] == 3,
+		"last car still running wins the derby")
+	# Wire format carries flight.
+	var cs := CarState.new()
+	cs.air_h = 1.25
+	cs.vz = -3.5
+	var packed := PackedFloat32Array()
+	cs.pack_net(packed)
+	var back := CarState.new()
+	back.unpack_net(packed, 0)
+	var back2 := CarState.new()
+	back2.deserialize(cs.serialize())
+	check(packed.size() == CarState.NET_SIZE and is_equal_approx(back.air_h, 1.25) and is_equal_approx(back.vz, -3.5)
+		and is_equal_approx(back2.air_h, 1.25), "cars in the air go over the network and into snapshots")
+
+
+## One AI lap of a derby arena in a derby car: {time, air (highest m off the ground), offs}.
+func _derby_lap(track: TrackData, d: Dictionary) -> Dictionary:
+	var s := RaceSettings.new()
+	s.track_id = track.id
+	s.ai_count = 0
+	s.laps = 2
+	s.countdown_s = 0.5
+	s.apply_derby_rules()
+	var start := RaceFactory.plan(s, [{"name": "bot", "car_id": "derby_brannock_sovereign"}], d["cars"], [], track)
+	var sim := RaceFactory.build_sim(start, d["cars"], d["tyres"], track)
+	var ai := AIDriver.new(track, sim.defs[0], sim.compounds[0], {"skill": 0.95, "consistency": 1.0}, 1)
+	var offs := 0
+	var was_off := false
+	var air := 0.0
+	while sim.entries[0].laps_done < 2 and sim.tick < 60 * 300:
+		sim.step([ai.get_input(sim, 0)])
+		air = maxf(air, sim.cars[0].air_h)
+		var off := sim.cars[0].surface >= TrackData.Surface.GRASS
+		if off and not was_off:
+			offs += 1
+		was_off = off
+	var e := sim.entries[0]
+	return {"time": e.lap_times[1] if e.lap_times.size() > 1 else -1.0, "air": air, "offs": offs}
+
+
 ## Elevation: every track has real heights in the right range, and physics
 ## feels them (rolls back on a hill, slower uphill, light over a crest).
 func test_elevation() -> void:
@@ -307,6 +467,8 @@ func test_elevation() -> void:
 	var real := {"spa": [85, 125], "spielberg": [50, 80], "interlagos": [30, 55], "austin": [28, 55],
 		"mugello": [32, 60], "monza": [5, 25], "silverstone": [5, 25], "bahrain": [8, 30], "melbourne": [0, 12]}
 	for info in TrackCatalog.list_all():
+		if info.get("discipline", "circuit") != "circuit":
+			continue  # flat derby arenas with built ramps
 		var t := TrackCatalog.load_track(info["id"])
 		var r := t.height_range()
 		var ok := t.has_elevation() and t.terrain_size.x > 10 and t.terrain_size.y > 10
