@@ -1,7 +1,7 @@
 {
   "id": "ui",
   "name": "UI",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "status": "active",
   "summary": "Screens and overlays: main menu, lobby, race settings, the in-race HUD, and controller-friendly widgets (Stepper), and the pit wall (StrategistScreen: timing, gaps, pit windows, weather radar, team radio feed).",
   "depends": {
@@ -12,12 +12,15 @@
     "race": "1",
     "multiplayer": "1",
     "audio": "1",
-    "telemetry": "1"
+    "telemetry": "1",
+    "business": "1",
+    "graphics": "2"
   },
   "api": [
     "RaceHud",
     "Stepper",
-    "StrategistScreen"
+    "StrategistScreen",
+    "GarageScreen"
   ],
   "internal": [],
   "notes": "Main menu scene: main_menu.tscn."
