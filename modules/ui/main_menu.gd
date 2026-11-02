@@ -1160,6 +1160,8 @@ func _cmdline_season(base: RaceSettings) -> Season:
 func _menu_shot(path: String) -> void:
 	for _i in 30:
 		await get_tree().process_frame
+	if GameData.arg("menu-shot-wait"):  # e.g. let friends join the lobby first
+		await get_tree().create_timer(float(GameData.arg("menu-shot-wait"))).timeout
 	await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png(path)
 	print("[screenshot] saved")
