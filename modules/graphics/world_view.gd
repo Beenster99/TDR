@@ -14,6 +14,8 @@ var env: SimEnvironment
 var track_view: TrackView
 var trackside: Trackside
 var cars: Array[CarView] = []
+var safety_car: CarView           ## made on first use
+var _sc_state: CarState
 var camera: Camera3D
 var sun: DirectionalLight3D
 var world_env: WorldEnvironment
@@ -58,6 +60,35 @@ func add_car(def: CarDefinition, state: CarState, label: String, is_local: bool,
 	add_child(v)
 	cars.append(v)
 	return v
+
+
+## The safety car (Mercedes-AMG GT Black Series with a roof light bar).
+## pos/heading as CarState, speed in m/s, lights "off", "amber" or "green".
+## Call every frame from race_control.sc_visible / sc_pos / sc_heading /
+## sc_speed / sc_lights.
+func set_safety_car(p_visible: bool, pos: Vector2, p_heading: float, speed: float, lights: String) -> void:
+	if safety_car == null:
+		if not p_visible:
+			return
+		var def := CarCatalog.load_safety_car()
+		if def == null:
+			return
+		_sc_state = CarState.new()
+		safety_car = CarView.new()
+		safety_car.setup(def, _sc_state, "Safety car", false)
+		safety_car.set_environment(env)
+		safety_car.ground = track_view.surface_height
+		safety_car.ground_normal = track_view.surface_normal
+		add_child(safety_car)
+		safety_car.add_roof_text("SAFETY\nCAR")
+	safety_car.visible = p_visible
+	if not p_visible:
+		return
+	_sc_state.track_idx = track_view.nearest_index(pos)
+	_sc_state.pos = pos
+	_sc_state.heading = p_heading
+	_sc_state.vel = Vector2.from_angle(p_heading) * speed
+	safety_car.set_light_bar(lights)
 
 
 ## A different colour scheme for the k-th car of the same model in a field,
