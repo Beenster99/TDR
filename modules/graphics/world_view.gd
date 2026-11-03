@@ -25,6 +25,7 @@ var pit_crews: PitCrews          ## null on a dedicated server or a track withou
 var cars: Array[CarView] = []
 var safety_car: CarView           ## made on first use
 var driving_line: DrivingLineView ## the driving line aid (add_driving_aids)
+var joker_line: DrivingLineView   ## rallycross: the line through the joker lane (add_joker_line)
 var brake_boards: BrakeBoards
 var rejoin_marker: RejoinMarker  ## where a pit stop rejoins (made on first use)
 var recovery: RecoveryVehicles   ## made on first use
@@ -113,6 +114,20 @@ func update_pit_guide(progress: float, speed: float, stopping: bool, on_marks: b
 func update_driving_line(pos: Vector2, speed: float) -> void:
 	if driving_line:
 		driving_line.update(pos, speed)
+	if joker_line:
+		joker_line.update(pos, speed)
+
+
+## Rallycross: the driving line through the joker lane (DrivingLine.build_joker),
+## with the same settings as the lap's line. Replaces any earlier one.
+func add_joker_line(line: DrivingLine, line_mode, show_brake: bool) -> void:
+	if joker_line:
+		joker_line.queue_free()
+	joker_line = DrivingLineView.new()
+	joker_line.name = "JokerLineAid"
+	add_child(joker_line)
+	joker_line.setup(line, track_view, line_mode, show_brake)
+	joker_line.set_branch_only(true)
 
 
 ## The band on the circuit where our car would rejoin after a clean pit

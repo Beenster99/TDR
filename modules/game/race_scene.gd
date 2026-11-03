@@ -26,6 +26,7 @@ var planner: PitPlanner
 var pause_menu: PauseMenu
 ## The driving line aid's data, kept so Settings can turn it on and off mid-race.
 var _driving_line: DrivingLine
+var _joker_line: DrivingLine   ## rallycross: the line through the joker lane
 var results: PanelContainer
 var rotate_camera := false
 var _results_shown := false
@@ -169,6 +170,36 @@ func _add_driving_aids() -> void:
 	_driving_line = DrivingLine.build(session.sim.track, session.sim.defs[i], session.sim.compounds[i])
 	world.add_driving_aids(_driving_line, int(GameData.prefs.get("aid_driving_line", DrivingLineView.LINE_FULL)),
 		bool(GameData.prefs.get("aid_braking_zones", true)))
+	if session.sim.settings.is_rallycross() and session.sim.track.has_joker():
+		_joker_line = DrivingLine.build_joker(session.sim.track, session.sim.defs[i], session.sim.compounds[i])
+		if _joker_line:
+			world.add_joker_line(_joker_line, int(GameData.prefs.get("aid_driving_line", DrivingLineView.LINE_FULL)),
+				bool(GameData.prefs.get("aid_braking_zones", true)))
+
+
+## Rallycross: while the player still owes the joker, the joker line shows
+## where it leaves the lap, beside the lap's line, so they can see which way
+## to go; on the joker lane it takes over from the lap's line. Once the
+## joker is done it goes away (unless they drive the joker again).
+func _update_joker_line(car: CarState) -> void:
+	var jl := world.joker_line
+	if jl == null:
+		return
+	var sim := session.sim
+	var me := session.local_car
+	if me < 0 or not jl.enabled:
+		jl.visible = false
+		return
+	var e: RaceEntry = sim.entries[me]
+	var owed := not sim.settings.is_qualifying() and e.jokers < sim.settings.joker_laps and not e.finished
+	if car.in_joker:
+		jl.visible = true
+		jl.set_branch_only(false)
+		if world.driving_line:
+			world.driving_line.visible = false
+	else:
+		jl.visible = owed
+		jl.set_branch_only(true)
 
 
 ## Settings changed mid-race (the pause menu's Settings): apply the ones the
@@ -187,6 +218,9 @@ func _on_pref_changed(key, _v) -> void:
 		view.setup(_driving_line, world.track_view, int(GameData.prefs.get("aid_driving_line", DrivingLineView.LINE_FULL)),
 			bool(GameData.prefs.get("aid_braking_zones", true)))
 		world.driving_line = view
+		if _joker_line:
+			world.add_joker_line(_joker_line, int(GameData.prefs.get("aid_driving_line", DrivingLineView.LINE_FULL)),
+				bool(GameData.prefs.get("aid_braking_zones", true)))
 	elif k == "aid_pit_guide":
 		hud.pit_guide_on = bool(GameData.prefs.get("aid_pit_guide", true))
 
@@ -604,6 +638,7 @@ func _process(delta: float) -> void:
 	_update_pit_guide(delta)
 	if world.driving_line:
 		world.driving_line.visible = world.driving_line.enabled and session.local_car >= 0
+	_update_joker_line(car)
 	race_audio.update(delta, camera.position, local_input.last_throttle if autodrive == null else _autodrive_throttle, _zoom)
 	var rot := rotate_camera and _zoom < 0.5 and _box_mix <= 0.0
 	camera.ignore_rotation = not rot
