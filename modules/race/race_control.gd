@@ -9,9 +9,10 @@ extends RefCounted
 ## safety car along between updates so it looks smooth.
 ##
 ## How it works:
-##  * Incidents (the damage module's "incident" events, big "collision"
-##    events) and stranded cars (stopped on the circuit) raise local yellow
-##    flags for that part of the track: no overtaking there.
+##  * Real incidents raise local yellow flags for that part of the track (no
+##    overtaking there): a car into the barrier, a heavy crash between cars,
+##    a car spun or crawling off the track, a stranded car (stopped on the
+##    circuit). Ordinary contact between cars (rubbing, a tap) does not.
 ##  * A car stopped on the racing surface, a retired car, a big crash or
 ##    several stranded cars escalate to a VSC (everyone keeps above a
 ##    reference lap, shown as a delta) or a full SC.
@@ -43,6 +44,20 @@ const MOVING_AGAIN := 8.0
 const YELLOW_HALF_M := 120.0     ## a local yellow covers this much track either side
 const YELLOW_HOLD_S := 12.0      ## stays out this long after the hazard is gone
 const STRANDED_YELLOW_S := 2.0
+## Car to car contact (an incident's severity, 0..1): below CONTACT_DEBRIS_SEV
+## it's racing (nothing happens); from there it leaves bits on the track that
+## build up for the marshals; from CONTACT_YELLOW_SEV it's a crash that
+## brings out a local yellow by itself.
+const CONTACT_DEBRIS_SEV := 0.35
+const CONTACT_YELLOW_SEV := 0.6
+## Spun: going slower than this and facing more than ~105 degrees away from
+## the track direction, or still rotating fast.
+const SPUN_MAX_SPEED := 25.0
+const SPUN_DOT := -0.25
+const SPIN_YAW_RATE := 2.5
+## Off: crawling on the grass / in the gravel (or against the barrier).
+const OFF_MAX_SPEED := 12.0
+const HAZARD_YELLOW_S := 0.75     ## spun or off this long: local yellow
 const RX_PUSH_OFF_S := 6.0     ## rallycross: a retired car is pushed off after resting this long
 const RX_PUSH_GAP_S := 8.0     ## ... once the next car is at least this many seconds away
 const STRANDED_VSC_S := 6.0
@@ -88,6 +103,7 @@ var sc_lights: String = "off"    ## "off", "amber" (out), "green" (coming in)
 var yellows: Array = []
 ## Per car
 var stranded_t: PackedFloat64Array = []   ## seconds stopped on the circuit
+var _hazard_t: PackedFloat64Array = []    ## seconds spun or off and slow
 var recovered: PackedByteArray = []       ## marshals have dealt with it (ignored from now on)
 var carried: PackedByteArray = []         ## a recovery vehicle has it (lifted or on the strap)
 ## Recovery vehicles at work (CarRecovery jobs, one per retired car out on the
@@ -122,6 +138,7 @@ func _init(p_sim: RaceSim) -> void:
 	enabled = sim.settings.safety_car_enabled
 	var n := sim.cars.size()
 	stranded_t.resize(n)
+	_hazard_t.resize(n)
 	recovered.resize(n)
 	carried.resize(n)
 	_cleared.resize(n)
@@ -396,6 +413,7 @@ func step(dt: float, prev_s: PackedFloat64Array) -> void:
 	if not racing:
 		return
 	_read_incidents()
+	_track_hazards(dt)
 	_track_stranded(dt)
 	_update_recoveries(dt)
 	_update_marshals(dt, prev_s)
@@ -433,26 +451,64 @@ func _step_rallycross(dt: float) -> void:
 
 
 func _read_incidents() -> void:
+	# Contact between cars is not an incident by itself: rubbing, a tap or a
+	# bump-and-run raise nothing. A flag comes from what the contact leads
+	# to: a car spun, off or stopped (_track_hazards, _track_stranded), or a
+	# heavy shunt that leaves bits on the racing line.
 	for e in sim.events:
-		var t: String = e.get("type", "")
-		var sev := 0.0
-		if t == "incident":
-			sev = float(e.get("severity", 0.0))
-		elif t == "collision":
-			sev = clampf(float(e.get("impulse", 0.0)) / 16000.0, 0.0, 1.0)
-		else:
+		if e.get("type", "") != "incident":
 			continue
-		if sev < 0.25:
-			continue
-		var car := int(e.get("car", e.get("a", -1)))
+		var kind: String = e.get("kind", "")
+		var sev := float(e.get("severity", 0.0))
+		var car := int(e.get("car", -1))
 		var s: float = sim.cars[car].track_s if car >= 0 and car < sim.cars.size() else 0.0
 		if e.has("pos") and e["pos"] is Vector2:
 			s = sim.track.project(e["pos"])["s"]
-		_add_yellow(s, car, "Incident")
 		var at: Vector2 = e["pos"] if e.has("pos") and e["pos"] is Vector2 else sim.track.position_at(s)
-		TrackMarshals.add_debris(debris, sim.track.length, s, at, sev)
+		match kind:
+			"collision", "impact":
+				# Car to car: only a real crash counts.
+				if sev < CONTACT_DEBRIS_SEV:
+					continue
+				TrackMarshals.add_debris(debris, sim.track.length, s, at, sev)
+				if sev >= CONTACT_YELLOW_SEV:
+					_add_yellow(s, car, "Crash")
+			"puncture", "gearbox_failure":
+				# The car limps on: a flag only if it stops (_track_stranded).
+				continue
+			_:
+				# Into the barrier, an engine letting go (oil, smoke)...
+				if sev < 0.25:
+					continue
+				_add_yellow(s, car, "Incident")
+				TrackMarshals.add_debris(debris, sim.track.length, s, at, sev)
 		if sev >= 0.85:
 			_big_incident_until = sim.race_time + 8.0
+
+
+## Cars that have spun, or gone off and are crawling on the grass or in the
+## gravel: a local yellow while it lasts (plus the usual hold). Running wide
+## at speed and carrying on doesn't count.
+func _track_hazards(dt: float) -> void:
+	for i in sim.cars.size():
+		var c := sim.cars[i]
+		var e := sim.entries[i]
+		if recovered[i] or e.finished or e.dnf or _pitting(i) or c.air_h > 0.0:
+			_hazard_t[i] = 0.0
+			continue
+		var hazard := false
+		var v := c.speed()
+		if v < SPUN_MAX_SPEED and v >= STOPPED_SPEED:
+			var facing := Vector2.from_angle(c.heading)
+			var along := Vector2.from_angle(sim.track.heading_at(c.track_s))
+			if facing.dot(along) < SPUN_DOT or absf(c.yaw_rate) > SPIN_YAW_RATE:
+				hazard = true
+		if not hazard and v < OFF_MAX_SPEED and (c.surface == TrackData.Surface.GRAVEL
+				or c.surface == TrackData.Surface.GRASS or c.surface == TrackData.Surface.BARRIER):
+			hazard = true
+		_hazard_t[i] = _hazard_t[i] + dt if hazard else 0.0
+		if _hazard_t[i] >= HAZARD_YELLOW_S:
+			_add_yellow(c.track_s, i, "Car off" if c.surface != TrackData.Surface.TRACK and c.surface != TrackData.Surface.KERB else "Car spun")
 
 
 func _track_stranded(dt: float) -> void:
@@ -1136,7 +1192,7 @@ func to_dict(full := false) -> Dictionary:
 		"marshal_jobs": marshal_jobs.duplicate(true),
 	}
 	if full:
-		d["full"] = {"stranded_t": stranded_t.duplicate(), "cleared": _cleared.duplicate(),
+		d["full"] = {"stranded_t": stranded_t.duplicate(), "hazard_t": _hazard_t.duplicate(), "cleared": _cleared.duplicate(),
 			"vsc_warned": vsc_warned.duplicate(), "vsc_penalised": vsc_penalised.duplicate(),
 			"unlap_from": unlap_from.duplicate(), "prev_order": _prev_order.duplicate(),
 			"sc_behind": _sc_behind.duplicate(), "big_until": _big_incident_until,
@@ -1170,6 +1226,8 @@ func apply_dict(d: Dictionary) -> void:
 	if d.has("full"):
 		var f: Dictionary = d["full"]
 		stranded_t = f["stranded_t"].duplicate()
+		if f.has("hazard_t") and f["hazard_t"].size() == stranded_t.size():
+			_hazard_t = f["hazard_t"].duplicate()
 		_cleared = f["cleared"].duplicate()
 		vsc_warned = f["vsc_warned"].duplicate()
 		vsc_penalised = f["vsc_penalised"].duplicate()

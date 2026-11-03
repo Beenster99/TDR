@@ -8,7 +8,10 @@ race state and just move the safety car along between updates.
 
 | Situation | Result |
 |---|---|
-| Incident (damage `incident` event, or a big `collision`) with severity >= 0.25 | Local yellow flag over that part of the track (about 120 m before to 60 m after), held 12 s after the hazard is gone |
+| Contact between cars (rubbing, a tap, a bump: `collision` events, or a car-to-car `incident` under severity 0.6) | Nothing: it's racing. From severity 0.35 it leaves debris for the marshals (below) |
+| A heavy crash between cars (car-to-car `incident` severity >= 0.6), a car into the barrier or an engine failure (severity >= 0.25) | Local yellow flag over that part of the track (about 120 m before to 60 m after), held 12 s after the hazard is gone |
+| A car spun (under 25 m/s and facing more than ~105 degrees away from the track direction, or still rotating fast) or crawling off the track (under 12 m/s on grass or gravel) for 0.75 s | Local yellow at the car |
+| Puncture or gearbox failure | Nothing until the car stops (then the stopped-car rule) |
 | Car stopped (< 3 m/s) for 2 s | Local yellow at the car |
 | Car stopped on the racing surface for 6 s, a retired car stopped for 6 s, or two cars stopped | Virtual safety car (VSC) |
 | Car stopped on the racing surface for 16 s, three or more stopped cars, or a crash with severity >= 0.85 and a stopped car | Safety car (SC) |
@@ -21,8 +24,8 @@ SC, but yellow flags still apply.
 
 ## Marshals clearing debris (double yellows)
 
-`TrackMarshals` (modules/race/track_marshals.gd). Every incident (severity >= 0.25)
-leaves debris where it happened; debris within 60 m piles up (`RaceControl.debris`).
+`TrackMarshals` (modules/race/track_marshals.gd). Every barrier hit or engine failure
+(severity >= 0.25) and every car-to-car hit from severity 0.35 leaves debris where it happened; debris within 60 m piles up (`RaceControl.debris`).
 When a pile reaches 1.4 (summed severity, e.g. two or three decent crashes in one
 place), a crew of 4 marshals goes to the barrier there (`RaceControl.marshal_jobs`).
 
