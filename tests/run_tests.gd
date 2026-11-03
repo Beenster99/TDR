@@ -3206,6 +3206,12 @@ func test_pause_menu() -> void:
 	check(PauseOptions.button_ids(true, true).has("lobby"), "online host can also end the race for everyone")
 	check(not PauseOptions.button_ids(true, false).has("lobby"), "a guest can't end the race")
 	check(PauseOptions.label_for("restart", true, true).contains("everyone"), "the host's restart says it restarts for everyone")
+	for id in ["restart", "lobby", "menu", "desktop"]:
+		check(PauseOptions.confirm_text(id, true, true).size() == 3 and PauseOptions.confirm_text(id, false, false).size() == 3,
+			"%s asks \"are you sure?\" (Yes / No popup)" % id)
+	check(PauseOptions.confirm_text("resume", false, false).is_empty() and PauseOptions.confirm_text("settings", false, false).is_empty(),
+		"resume and settings don't ask")
+	check(PauseOptions.confirm_text("menu", true, true)[1].contains("everyone"), "the host is told quitting closes the race for everyone")
 	var gd = load("res://modules/core/game_data.gd").new()
 	gd.persist_prefs = false
 	gd._register_defaults()
