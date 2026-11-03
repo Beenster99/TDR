@@ -11,9 +11,15 @@ extends Control
 ## The player's own row is gold, the fastest lap and each sector's best time
 ## in the field are purple.
 ##
-## Mouse: scroll the table with the wheel, click a button. Controller and
-## keys: up / down (stick, D-pad, arrows) scroll, left / right pick a button,
-## A / Enter press it.
+## Click a driver's row (or A on it) for their whole race (ResultsDriver:
+## every lap's position, time, sectors, gap, tyre and fuel, a lap time graph,
+## stints and stops). Race analysis (ResultsAnalysis) shows how the
+## positions changed lap by lap, the gaps to the leader, places won and lost
+## and everyone's tyre strategy. Esc / B goes back.
+##
+## Mouse: scroll the table with the wheel, click a row or a button.
+## Controller and keys: up / down (stick, D-pad, arrows) move through the
+## rows, A / Enter opens one, left / right pick a button.
 ##
 ## The race scene builds the data (ResultsTable.build) and the buttons, and
 ## listens for `chosen`.
@@ -45,6 +51,15 @@ var _standings_box: VBoxContainer
 var _buttons: Array[Button] = []
 var _t := 0.0
 var _shown := false
+var _table_view: Control
+var _analysis: ResultsAnalysis
+var _driver_view: Control
+var _driver_box: VBoxContainer
+var _driver_car := -1
+var _analysis_btn: Button
+var _views_parent: VBoxContainer
+var _from_analysis := false
+var _row_nodes := {}            ## car -> row panel (to focus it again)
 
 
 func _ready() -> void:
@@ -124,6 +139,17 @@ func is_shown() -> bool:
 func _unhandled_input(event: InputEvent) -> void:
 	if not visible or _scroll == null:
 		return
+	if event.is_action_pressed("ui_cancel") and _shown:
+		if _driver_view and _driver_view.visible:
+			close_driver()
+			get_viewport().set_input_as_handled()
+			return
+		if _analysis and _analysis.visible:
+			toggle_analysis()
+			get_viewport().set_input_as_handled()
+			return
+	if not _table_view.visible:
+		return
 	var step := 0
 	if event.is_action_pressed("ui_down"):
 		step = 1
@@ -146,8 +172,14 @@ func _build(d: Dictionary, opts: Dictionary) -> Control:
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 12)
 	root.add_child(v)
+	_views_parent = v
 	v.add_child(_header(d, opts))
 	var mid := HBoxContainer.new()
+	_table_view = mid
+	_row_nodes.clear()
+	_analysis = null
+	_driver_view = null
+	_driver_car = -1
 	mid.size_flags_vertical = SIZE_EXPAND_FILL
 	mid.add_theme_constant_override("separation", 16)
 	v.add_child(mid)
@@ -159,7 +191,7 @@ func _build(d: Dictionary, opts: Dictionary) -> Control:
 	_scroll = ScrollContainer.new()
 	_scroll.size_flags_vertical = SIZE_EXPAND_FILL
 	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-	_scroll.follow_focus = false
+	_scroll.follow_focus = true
 	left.add_child(_scroll)
 	var rows := VBoxContainer.new()
 	rows.add_theme_constant_override("separation", 2)
@@ -195,6 +227,15 @@ func _build(d: Dictionary, opts: Dictionary) -> Control:
 	foot.add_child(notes)
 	for n in opts.get("notes", []):
 		notes.add_child(_label(str(n), 16, Color(1, 0.86, 0.6)))
+	if has_analysis(d):
+		_analysis_btn = Button.new()
+		_analysis_btn.text = "Race analysis"
+		_analysis_btn.custom_minimum_size = Vector2(200, 46)
+		_analysis_btn.add_theme_font_size_override("font_size", 19)
+		_analysis_btn.pressed.connect(toggle_analysis)
+		foot.add_child(_analysis_btn)
+	else:
+		_analysis_btn = null
 	for b in opts.get("buttons", []):
 		var btn := Button.new()
 		btn.text = str(b[1])
@@ -302,8 +343,26 @@ func _row(d: Dictionary, r: Dictionary) -> Control:
 	sb.content_margin_top = 3
 	sb.content_margin_bottom = 3
 	p.add_theme_stylebox_override("panel", sb)
+	# A row opens the driver's race data: click it, or A / Enter on it.
+	var car := int(r["car"])
+	_row_nodes[car] = p
+	p.focus_mode = FOCUS_ALL
+	p.mouse_filter = MOUSE_FILTER_STOP
+	p.mouse_default_cursor_shape = CURSOR_POINTING_HAND
+	p.tooltip_text = ""
+	var base_bg := sb.bg_color
+	var lit := func(on: bool) -> void:
+		sb.bg_color = base_bg.lerp(Color(1, 1, 1, 0.16), 0.6) if on else base_bg
+		sb.border_color = GOLD if on or me else sb.border_color
+		sb.border_width_left = 4 if on or me else 0
+	p.mouse_entered.connect(lit.bind(true))
+	p.mouse_exited.connect(func(): lit.call(p.has_focus()))
+	p.focus_entered.connect(lit.bind(true))
+	p.focus_exited.connect(lit.bind(false))
+	p.gui_input.connect(_on_row_input.bind(p, car))
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", SEP)
+	h.mouse_filter = MOUSE_FILTER_IGNORE
 	p.add_child(h)
 	var field_best: Array = d.get("best_sectors", [])
 	for c in _columns(d):
@@ -361,10 +420,143 @@ func _row(d: Dictionary, r: Dictionary) -> Control:
 						col = PURPLE
 		var l := _label(text, ROW_FONT, col)
 		l.custom_minimum_size = Vector2(c[2], 0)
+		l.mouse_filter = MOUSE_FILTER_IGNORE
 		l.clip_text = true
 		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT if c[3] == 2 else HORIZONTAL_ALIGNMENT_LEFT
 		h.add_child(l)
 	return p
+
+
+# --- Driver data and race analysis ------------------------------------------------
+
+func _focus(c: Control) -> void:
+	if c and c.is_inside_tree():
+		c.grab_focus()
+
+
+func _on_row_input(ev: InputEvent, row: Control, car: int) -> void:
+	var click: bool = ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT
+	if click or ev.is_action_pressed("ui_accept"):
+		row.accept_event()
+		open_driver(car)
+
+
+## True when the race has laps to analyse (not a derby).
+static func has_analysis(d: Dictionary) -> bool:
+	if d.get("derby", false):
+		return false
+	for r in d.get("rows", []):
+		if not (r.get("lap_log", []) as Array).is_empty():
+			return true
+	return false
+
+
+## Shows or hides the race analysis graphs in place of the table.
+func toggle_analysis() -> void:
+	if _analysis_btn == null:
+		return
+	if _driver_view and _driver_view.visible:
+		close_driver()
+	if _analysis == null:
+		_analysis = ResultsAnalysis.new()
+		_analysis.setup(data)
+		_analysis.car_opened.connect(open_driver)
+		_views_parent.add_child(_analysis)
+		_views_parent.move_child(_analysis, _table_view.get_index() + 1)
+		_analysis.visible = false
+	var on := not _analysis.visible
+	_analysis.visible = on
+	_table_view.visible = not on
+	_analysis_btn.text = "Results table" if on else "Race analysis"
+	if on:
+		_focus(_analysis.focus_target())
+	else:
+		_focus(_analysis_btn)
+
+
+func is_analysis_open() -> bool:
+	return _analysis != null and _analysis.visible
+
+
+## Opens one driver's whole race (ResultsDriver) in place of the table or the
+## analysis; prev / next step through the field.
+func open_driver(car: int) -> void:
+	var rows: Array = data.get("rows", [])
+	var k := rows.find_custom(func(r): return int(r["car"]) == car)
+	if k < 0:
+		return
+	if _driver_view == null:
+		_driver_view = VBoxContainer.new()
+		(_driver_view as VBoxContainer).add_theme_constant_override("separation", 8)
+		_driver_view.size_flags_vertical = SIZE_EXPAND_FILL
+		_views_parent.add_child(_driver_view)
+		_views_parent.move_child(_driver_view, _table_view.get_index() + 1)
+		var bar := HBoxContainer.new()
+		bar.add_theme_constant_override("separation", 10)
+		_driver_view.add_child(bar)
+		for b in [["back", "‹  Back"], ["prev", "‹ Previous driver"], ["next", "Next driver ›"]]:
+			var btn := Button.new()
+			btn.name = b[0]
+			btn.text = b[1]
+			btn.custom_minimum_size = Vector2(150, 34)
+			btn.add_theme_font_size_override("font_size", 16)
+			btn.pressed.connect(_driver_nav.bind(b[0]))
+			bar.add_child(btn)
+		var hint := _label("Esc / B to go back", 13, DIM)
+		hint.size_flags_vertical = SIZE_SHRINK_CENTER
+		bar.add_child(hint)
+		var snd := get_node_or_null("/root/Sound") if is_inside_tree() else null
+		if snd:
+			snd.wire_buttons(bar)
+	if not _driver_view.visible:
+		_from_analysis = is_analysis_open()
+	if _driver_box:
+		_driver_box.queue_free()
+	var dv := ResultsDriver.new()
+	dv.setup(data, rows[k])
+	_driver_box = dv
+	_driver_view.add_child(dv)
+	_driver_car = car
+	_driver_view.visible = true
+	_table_view.visible = false
+	if _analysis:
+		_analysis.visible = false
+	if _analysis_btn:
+		_analysis_btn.visible = false
+	var back: Button = _driver_view.get_child(0).get_node("back")
+	_focus(back)
+
+
+func is_driver_open() -> bool:
+	return _driver_view != null and _driver_view.visible
+
+
+func _driver_nav(what: String) -> void:
+	if what == "back":
+		close_driver()
+		return
+	var rows: Array = data.get("rows", [])
+	var k := rows.find_custom(func(r): return int(r["car"]) == _driver_car)
+	var nk := wrapi(k + (1 if what == "next" else -1), 0, rows.size())
+	open_driver(int(rows[nk]["car"]))
+	_focus((_driver_view.get_child(0).get_node(what) as Button))
+
+
+## Back from a driver to where they were opened from.
+func close_driver() -> void:
+	if _driver_view == null:
+		return
+	_driver_view.visible = false
+	if _analysis_btn:
+		_analysis_btn.visible = true
+	if _from_analysis and _analysis:
+		_analysis.visible = true
+		_focus(_analysis.focus_target())
+	else:
+		_table_view.visible = true
+		var row: Control = _row_nodes.get(_driver_car)
+		if row:
+			_focus(row)
 
 
 func _quali_gap(d: Dictionary, r: Dictionary) -> String:

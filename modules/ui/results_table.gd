@@ -13,7 +13,12 @@ extends RefCounted
 ##   {pos, car, name, car_name, is_ai, is_me, status ("" | "DNF" | "OUT"),
 ##    laps, time (incl. penalties, 0 = not classified), gap ("+12.345" / "+1 lap"),
 ##    best_lap, best_lap_no, avg_lap, best_sectors: [..], potential, stops,
-##    penalty_s, points, fastest (bool)}
+##    penalty_s, points, fastest (bool),
+##    grid (start position, 0 = unknown), gained (grid - pos, + = places won),
+##    lap_log: [{lap, time, sectors, pos, gap (s to the leader's crossing of
+##      that lap), compound, pitted, fuel_l, tyre_c, weather}],
+##    stints: [{compound, from, to, laps}], stop_log: [{lap, stationary_s, tyre, fuel_l, driver}]}
+## and for the analysis charts: max_laps, compounds: {id -> short name}.
 
 const SINGLE_RACE_POINTS := "f1"
 
@@ -41,6 +46,19 @@ static func build(sim: RaceSim, telemetry: RaceTelemetry, opts := {}) -> Diction
 		field_best.append(telemetry.best_sectors[s] if telemetry and s < telemetry.best_sectors.size() else 0.0)
 	var fastest := {}
 	var rows := []
+	# When the first car crossed the line at the end of each lap (the leader).
+	var lead_t := []
+	if telemetry:
+		for ct0 in telemetry.cars:
+			for l in ct0.laps:
+				var k := int(l.get("lap", 0)) - 1
+				if k < 0:
+					continue
+				while lead_t.size() <= k:
+					lead_t.append(INF)
+				lead_t[k] = minf(lead_t[k], float(l.get("race_time", INF)))
+	var compounds := {}
+	var max_laps := 0
 	var leader_laps := 0
 	var leader_time := 0.0
 	for p in sim.running_order.size():
@@ -79,12 +97,46 @@ static func build(sim: RaceSim, telemetry: RaceTelemetry, opts := {}) -> Diction
 				gap = "+%d lap%s" % [down, "" if down == 1 else "s"]
 			elif time > 0.0 and leader_time > 0.0:
 				gap = "+%.3f" % (time - leader_time)
+		var lap_log := []
+		var stints := []
+		# The laps the car came into the pits on (a stop counts in its in-lap).
+		var stop_laps := {}
+		for st0 in (ct.stops if ct else []):
+			stop_laps[int(st0.get("lap", 0))] = true
+		if ct and ct.stops.is_empty():
+			for l0 in ct.laps:   # no stop log (old data): the lap the count went up, less one
+				if l0.get("pitted", false):
+					stop_laps[maxi(int(l0.get("lap", 1)) - 1, 1)] = true
+		for l in (ct.laps if ct else []):
+			var k := int(l.get("lap", 0))
+			var cid := str(l.get("compound", ""))
+			if cid != "" and not compounds.has(cid):
+				compounds[cid] = short_compound(sim, cid)
+			var lt := float(l.get("race_time", 0.0))
+			var gap_s := lt - float(lead_t[k - 1]) if k >= 1 and k <= lead_t.size() and lead_t[k - 1] < INF else 0.0
+			lap_log.append({"lap": k, "time": float(l.get("time", 0.0)), "sectors": l.get("sectors", []),
+				"pos": int(l.get("position", 0)), "gap": maxf(gap_s, 0.0), "compound": cid,
+				"pitted": stop_laps.has(k), "fuel_l": float(l.get("fuel_l", 0.0)),
+				"tyre_c": float(l.get("tyre_avg_c", 0.0)), "weather": str(l.get("weather", ""))})
+			# A new stint after a stop or when the tyre on the car changes.
+			if stints.is_empty() or stop_laps.has(k - 1) or (cid != "" and cid != str(stints[-1]["compound"])):
+				if not stints.is_empty() and int(stints[-1]["to"]) >= k:
+					stints[-1]["to"] = k - 1
+				stints.append({"compound": cid, "from": k, "to": k})
+			else:
+				stints[-1]["to"] = k
+			max_laps = maxi(max_laps, k)
+		for st in stints:
+			st["laps"] = int(st["to"]) - int(st["from"]) + 1
+		var grid := ct.grid_pos if ct else 0
 		var key := SeasonResults.key_for(e.is_ai, e.driver_name)
 		var row := {"pos": p + 1, "car": i, "name": e.driver_name, "car_name": sim.defs[i].display_name,
 			"is_ai": e.is_ai, "is_me": i == me, "status": status, "laps": e.laps_done, "time": time, "gap": gap,
 			"best_lap": e.best_lap, "best_lap_no": best_no, "avg_lap": avg, "best_sectors": bs,
 			"potential": potential, "stops": int(e.pit.get("stops", 0)), "penalty_s": e.penalty_s,
-			"points": int(pts.get(key, 0)) if has_points else 0, "fastest": false, "jokers": e.jokers}
+			"points": int(pts.get(key, 0)) if has_points else 0, "fastest": false, "jokers": e.jokers,
+			"grid": grid, "gained": grid - (p + 1) if grid > 0 else 0, "lap_log": lap_log, "stints": stints,
+			"stop_log": (ct.stops.duplicate(true) if ct else [])}
 		rows.append(row)
 		if e.best_lap > 0.0 and (fastest.is_empty() or e.best_lap < float(fastest["time"])):
 			fastest = {"car": i, "name": e.driver_name, "time": e.best_lap, "lap": best_no}
@@ -101,7 +153,31 @@ static func build(sim: RaceSim, telemetry: RaceTelemetry, opts := {}) -> Diction
 		"best_sectors": field_best, "sector_count": sector_count, "penalties": pens, "has_points": has_points,
 		"points_name": points_name, "quali": quali, "derby": derby,
 		"rallycross": sim.settings.is_rallycross() and sim.track.has_joker(), "joker_laps": sim.settings.joker_laps,
-		"pits": sim.pits.enabled}
+		"pits": sim.pits.enabled, "max_laps": max_laps, "compounds": compounds}
+
+
+## A tyre's colour on the results graphs (the pit planner's: wets blue,
+## intermediates green, dry tyres white).
+static func compound_colour(id: String) -> Color:
+	if id.contains("wet"):
+		return Color(0.35, 0.55, 1.0)
+	if id.contains("inter"):
+		return Color(0.35, 0.85, 0.4)
+	return Color(0.92, 0.92, 0.92)
+
+
+## A tyre's short name for the tables ("Slick", "Inter", "Wet").
+static func short_compound(sim: RaceSim, id: String) -> String:
+	if id.contains("inter"):
+		return "Inter"
+	if id.contains("wet"):
+		return "Wet"
+	var short := {"race_slick": "Slick", "road_semi_slick": "Semi-slick", "rx_tyre": "RX", "derby_tyre": "Derby"}
+	if short.has(id):
+		return short[id]
+	if sim.tyre_defs.has(id):
+		return str(sim.tyre_defs[id].display_name)
+	return id.capitalize()
 
 
 static func _fastest_key(sim: RaceSim, telemetry: RaceTelemetry) -> String:
