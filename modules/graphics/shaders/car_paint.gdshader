@@ -46,11 +46,14 @@ uniform vec3 number_bg : source_color = vec3(0.95);
 
 varying vec3 lp;
 varying vec3 ln;
+varying float bent;
 
 void vertex() {
 	lp = VERTEX;
 	ln = NORMAL;
-	apply_crumple(VERTEX, NORMAL);
+	float b;
+	apply_crumple_k(VERTEX, NORMAL, b);
+	bent = b;
 }
 
 // The door number (both sides, reads nose-wards).
@@ -190,6 +193,10 @@ void fragment() {
 	float scratch = fract(sin(dot(floor(lp.xz * vec2(9.0, 23.0) + lp.y * 7.0), vec2(12.9898, 78.233))) * 43758.5453);
 	float hurt = clamp(zone * 1.4, 0.0, 1.0) * step(0.55 - zone * 0.4, scratch);
 	c = mix(c, vec3(0.04), hurt * 0.85);
+	// creased metal: darker and duller in the folds, so dents read from above
+	float fold = smoothstep(0.1, 0.7, bent);
+	c *= 1.0 - 0.4 * fold;
+	hurt = max(hurt, fold * 0.6);
 	ALBEDO = c;
 	float base_metal = base_mode == 1 ? 0.2 : metallic_flake;
 	float base_rough = base_mode == 1 ? 0.32 : roughness_paint;
