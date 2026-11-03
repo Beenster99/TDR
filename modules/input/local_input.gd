@@ -20,8 +20,8 @@ var _throttle := 0.0
 var _brake := 0.0
 ## The throttle sent last tick (for engine sound).
 var last_throttle := 0.0
-## Manual gearbox on: the shift buttons change gear, and on a pad A / X stop
-## working as throttle / brake (the triggers do that).
+## Manual gearbox on: the shift buttons change gear, and on a pad X stops
+## working as the brake (the trigger does that).
 var manual_gears := false
 
 
@@ -31,6 +31,7 @@ func read(dt: float, speed_mps: float) -> CarInput:
 	var steer_target := Input.get_axis("steer_left", "steer_right")
 	var thr_target := Input.get_action_strength("accelerate")
 	var brk_target := Input.get_action_strength("brake")
+	inp.handbrake = Input.is_action_pressed("handbrake")
 	if manual_gears:
 		inp.shift_up = Input.is_action_just_pressed("shift_up")
 		inp.shift_down = Input.is_action_just_pressed("shift_down")
@@ -68,7 +69,7 @@ static func key_steer(current: float, target: float, speed_mps: float, dt: float
 	return move_toward(current, target, rate * dt)
 
 
-## A pedal from the pad trigger only (plus the keyboard keys), not the A / X buttons.
+## A pedal from the pad trigger only (plus the keyboard keys), not the face buttons.
 func _trigger(axis: JoyAxis, action: String) -> float:
 	var v := ActivePad.axis(axis)
 	for ev in InputMap.action_get_events(action):
