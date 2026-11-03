@@ -1209,7 +1209,10 @@ func _draw_standings(me: int) -> void:
 	for p in rows:
 		var i := sim.running_order[p]
 		var e := sim.entries[i]
-		var col := Color(1, 0.9, 0.3) if i == me else (Color(0.75, 0.85, 1) if not e.is_ai else Color.WHITE)
+		var kind := row_kind(i, me)
+		var col := row_text_colour(kind)
+		if kind != ROW_AI:
+			_draw_player_row(Rect2(x0 - 6, 30 + p * 22, 320, 20), kind)
 		var right := _status_text(i)
 		if right == "" and p > 0:
 			var gap := sim.entries[sim.running_order[0]].distance - e.distance
@@ -1295,19 +1298,27 @@ func _draw_tower(me: int) -> void:
 		prev = p
 		var i := sim.running_order[p]
 		var e := sim.entries[i]
-		var mine := i == me
+		var kind := row_kind(i, me)
+		var mine := kind == ROW_ME
+		var row := Rect2(x + 2, y, TOWER_W - 4, TOWER_ROW)
 		if mine:
-			draw_rect(Rect2(x + 2, y, TOWER_W - 4, TOWER_ROW), Color(1, 0.85, 0.2, 0.22))
+			_draw_player_row(row, kind)
 		elif i == give_back_to and _giving_back(me):
-			draw_rect(Rect2(x + 2, y, TOWER_W - 4, TOWER_ROW), Color(GIVE_BACK_COL, 0.3))
+			draw_rect(row, Color(GIVE_BACK_COL, 0.3))
+		elif kind != ROW_AI:
+			_draw_player_row(row, kind)
 		elif p % 2 == 1:
-			draw_rect(Rect2(x + 2, y, TOWER_W - 4, TOWER_ROW), Color(1, 1, 1, 0.04))
-		var col := Color(1, 0.92, 0.45) if mine else (Color(0.75, 0.85, 1) if not e.is_ai else Color.WHITE)
+			draw_rect(row, Color(1, 1, 1, 0.04))
+		var col := row_text_colour(kind)
 		var base := y + TOWER_ROW - 6.0
 		draw_rect(Rect2(x + 4, y + 3, 4, TOWER_ROW - 6), sim.defs[i].colour)
-		_text(Vector2(x + 12, base), str(p + 1), 16, col, HORIZONTAL_ALIGNMENT_RIGHT, 26)
+		if kind != ROW_AI:   # position in a solid tag, like a TV graphic
+			draw_rect(Rect2(x + 11, y + 2, 30, TOWER_ROW - 4), ROW_ME_COLOUR if mine else ROW_PLAYER_COLOUR)
+			draw_string(font, Vector2(x + 12, base), str(p + 1), HORIZONTAL_ALIGNMENT_RIGHT, 26, 16, Color(0.05, 0.05, 0.08))
+		else:
+			_text(Vector2(x + 12, base), str(p + 1), 16, col, HORIZONTAL_ALIGNMENT_RIGHT, 26)
 		draw_badge(Rect2(x + 44, y + 3, 36, TOWER_ROW - 6), sim.defs[i])
-		_text(Vector2(x + 86, base), short_name(e.at_wheel()), 15, col)
+		_text(Vector2(x + 86, base), short_name(e.at_wheel()), 16 if mine else 15, col)
 		var tc: CarTelemetry = tel.cars[i] if tel != null and i < tel.cars.size() else null
 		var last := e.lap_times[-1] if e.lap_times.size() > 0 else 0.0
 		var last_col := Color(1, 1, 1, 0.8)
@@ -1326,6 +1337,45 @@ func _draw_tower(me: int) -> void:
 		if e.penalty_s > 0.0:
 			_text(Vector2(x + 166, base), "+%ds" % int(e.penalty_s), 11, Color(1, 0.55, 0.3))
 		y += TOWER_ROW
+
+
+## Tower and standings rows: this player's car (or the team's car on the pit
+## wall), a car another person online is driving, or an AI car.
+const ROW_AI := 0
+const ROW_ME := 1
+const ROW_PLAYER := 2
+const ROW_ME_COLOUR := Color(1.0, 0.8, 0.22)
+const ROW_PLAYER_COLOUR := Color(0.3, 0.75, 1.0)
+
+
+func row_kind(i: int, me: int) -> int:
+	var mine := me if me >= 0 else session.team_car
+	if i == mine:
+		return ROW_ME
+	var e := session.sim.entries[i]
+	if not e.is_ai or e.is_player_driving():
+		return ROW_PLAYER
+	return ROW_AI
+
+
+static func row_text_colour(kind: int) -> Color:
+	match kind:
+		ROW_ME: return Color(1, 0.95, 0.7)
+		ROW_PLAYER: return Color(0.8, 0.92, 1)
+	return Color.WHITE
+
+
+## A player's row stands right out: a strong tinted band with a bright frame
+## and a solid edge stripe, gold for you (gently breathing so the eye finds
+## it), blue for other people online.
+func _draw_player_row(r: Rect2, kind: int) -> void:
+	var c := ROW_ME_COLOUR if kind == ROW_ME else ROW_PLAYER_COLOUR
+	var glow := 1.0
+	if kind == ROW_ME:
+		glow = 0.85 + 0.15 * sin(Time.get_ticks_msec() * 0.004)
+	draw_rect(r, Color(c, 0.42 * glow))
+	draw_rect(r.grow(-1.0), Color(c, 0.95), false, 2.0)
+	draw_rect(Rect2(r.end.x - 7.0, r.position.y, 7.0, r.size.y), c)
 
 
 ## Gap from car `behind` to car `ahead`: whole laps when it's been lapped,

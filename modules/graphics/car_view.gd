@@ -753,6 +753,12 @@ var highlight: int = Highlight.NONE
 var _hl: MeshInstance3D
 var _hl_mat: ShaderMaterial
 var _hl_zoom := -1.0
+var _hl_strength := 0.6
+## Settings > Gameplay "highlight_fade": seconds the outline stays before it
+## fades away (0 = always on). wake_highlight() brings it back.
+var highlight_fade_s := 0.0
+var _hl_age := 0.0
+const HIGHLIGHT_FADE_TIME := 2.0   ## seconds the fade itself takes
 var _let_past: Label3D   ## "LET PAST" tag over the car (GIVE_BACK)
 
 
@@ -784,13 +790,46 @@ func set_highlight(kind: int) -> void:
 	var mine := kind == Highlight.SELF
 	var give := kind == Highlight.GIVE_BACK
 	_hl_mat.set_shader_parameter("tint", HIGHLIGHT_GIVE_BACK if give else (HIGHLIGHT_SELF if mine else HIGHLIGHT_PLAYER))
-	_hl_mat.set_shader_parameter("strength", 1.0 if give else (0.6 if mine else 0.38))
+	_hl_strength = 1.0 if give else (0.6 if mine else 0.38)
 	_hl_mat.set_shader_parameter("pulse", 1.0 if mine or give else 0.0)
 	_hl_mat.set_shader_parameter("pulse_rate", 7.0 if give else 3.0)
 	if kind == Highlight.SAFETY:   # the safety car: a strong, fast-flashing amber ring
 		_hl_mat.set_shader_parameter("tint", BEACON_AMBER)
-		_hl_mat.set_shader_parameter("strength", 0.95)
+		_hl_strength = 0.95
 		_hl_mat.set_shader_parameter("pulse", 2.0)
+	_apply_highlight_fade()
+
+
+## Shows a faded outline again, at full strength, and restarts its timer.
+func wake_highlight() -> void:
+	_hl_age = 0.0
+	_apply_highlight_fade()
+
+
+## How much of the outline is left (1 = full, 0 = faded away).
+func highlight_alpha() -> float:
+	if highlight == Highlight.NONE:
+		return 0.0
+	if highlight_fade_s <= 0.0 or highlight == Highlight.GIVE_BACK or highlight == Highlight.SAFETY:   # race control's call and the safety car never fade
+		return 1.0
+	return 1.0 - smoothstep(highlight_fade_s, highlight_fade_s + HIGHLIGHT_FADE_TIME, _hl_age)
+
+
+func _tick_highlight(delta: float) -> void:
+	if _hl == null or highlight == Highlight.NONE or highlight_fade_s <= 0.0:
+		return
+	if _hl_age > highlight_fade_s + HIGHLIGHT_FADE_TIME:
+		return
+	_hl_age += delta
+	_apply_highlight_fade()
+
+
+func _apply_highlight_fade() -> void:
+	if _hl == null:
+		return
+	var a := highlight_alpha()
+	_hl.visible = a > 0.001
+	_hl_mat.set_shader_parameter("strength", _hl_strength * a)
 
 
 ## The floating "LET PAST" tag: drawn over everything, facing the camera, a
@@ -1335,6 +1374,7 @@ func _process(delta: float) -> void:
 	if state == null or not visible:
 		return
 	_update_light_bar(delta)
+	_tick_highlight(delta)
 	if not _init_done or pos2.distance_to(state.pos) > 6.0:
 		pos2 = state.pos
 		heading = state.heading
