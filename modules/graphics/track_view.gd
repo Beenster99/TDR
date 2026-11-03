@@ -644,6 +644,63 @@ func _in_pit_area(q: Vector2) -> bool:
 	return pr.get("dist", INF) < track.pit_width * 0.5 + 6.0 if pr.has("dist") else false
 
 
+## The pit wall (TrackData.pit_wall): a concrete wall in blocks as thick as
+## the one cars hit, with a dark debris fence along its track side, so it
+## reads as solid from above.
+const PIT_WALL_H := 1.0
+const PIT_FENCE_H := 2.6
+
+func _build_pit_wall() -> void:
+	var pts := track.pit_wall
+	var half := TrackData.PIT_WALL_HALF
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var fence := Color(0.13, 0.15, 0.15)
+	var n := pts.size()
+	var ys := PackedFloat32Array()
+	for p in pts:
+		ys.append(maxf(terrain_height(p), surface_height(p)) - 0.05)
+	for j in n - 1:
+		var a := pts[j]
+		var b := pts[j + 1]
+		var d := b - a
+		if d.length() < 0.01:
+			continue
+		# side normal pointing at the track (away from the lane)
+		var nrm := d.orthogonal().normalized()
+		var lane := track.pit_position_at(track.project_pit(a)["d"])
+		if nrm.dot(lane - a) > 0.0:
+			nrm = -nrm
+		var ya := ys[j]
+		var yb := ys[j + 1]
+		var shade: float = 0.78 if (int(j * TrackData.PIT_WALL_STEP / 6.0) % 2 == 0) else 0.86
+		var top := Color(shade, shade, shade * 0.98)
+		var face := Color(shade * 0.82, shade * 0.82, shade * 0.81)
+		var t0 := a + nrm * half
+		var t1 := b + nrm * half
+		var l0 := a - nrm * half
+		var l1 := b - nrm * half
+		var h := PIT_WALL_H
+		_quad(st, Vector3(t0.x, ya, t0.y), Vector3(t1.x, yb, t1.y), Vector3(t1.x, yb + h, t1.y), Vector3(t0.x, ya + h, t0.y), face)
+		_quad(st, Vector3(l0.x, ya, l0.y), Vector3(l1.x, yb, l1.y), Vector3(l1.x, yb + h, l1.y), Vector3(l0.x, ya + h, l0.y), face)
+		_quad(st, Vector3(t0.x, ya + h, t0.y), Vector3(t1.x, yb + h, t1.y), Vector3(l1.x, yb + h, l1.y), Vector3(l0.x, ya + h, l0.y), top)
+		# the debris fence on top, along the track side
+		var f0 := a + nrm * (half - 0.08)
+		var f1 := b + nrm * (half - 0.08)
+		_quad(st, Vector3(f0.x, ya + h, f0.y), Vector3(f1.x, yb + h, f1.y), Vector3(f1.x, yb + PIT_FENCE_H, f1.y), Vector3(f0.x, ya + PIT_FENCE_H, f0.y), fence)
+	# closed ends
+	for e in [[0, 1], [n - 1, n - 2]]:
+		var p := pts[e[0]]
+		var nn := (pts[e[1]] - p).normalized().orthogonal() * half
+		var y := ys[e[0]]
+		_quad(st, Vector3(p.x - nn.x, y, p.y - nn.y), Vector3(p.x + nn.x, y, p.y + nn.y),
+			Vector3(p.x + nn.x, y + PIT_WALL_H, p.y + nn.y), Vector3(p.x - nn.x, y + PIT_WALL_H, p.y - nn.y), Color(0.66, 0.66, 0.65))
+	var mat := StandardMaterial3D.new()
+	mat.vertex_color_use_as_albedo = true
+	mat.roughness = 0.85
+	_mesh_node(st, mat, "PitWall", true)
+
+
 ## One run of barrier of a single type: concrete wall (grey blocks), armco
 ## (low steel rail), catch fencing (armco with a tall dark mesh above), tyre
 ## wall (a concrete wall behind the tyre stacks).
@@ -946,20 +1003,9 @@ func _build_pit_lane() -> void:
 				st.add_index(b)
 	_mesh_node(st, road_material, "PitLane")
 	# pit wall on the track side, speed-limit lines and the boxes
-	var wall: Array = []
-	var dd := track.pit_limit_start
-	while dd <= track.pit_limit_end:
-		var off := -track.pit_side * (w * 0.5 + 0.6)
-		wall.append([track.pit_position_at(dd, off), 0.0, 0.0, -1])
-		dd += 4.0
-	if wall.size() >= 2:
-		var ws := SurfaceTool.new()
-		ws.begin(Mesh.PRIMITIVE_TRIANGLES)
-		_wall(ws, wall)
-		var mat := StandardMaterial3D.new()
-		mat.vertex_color_use_as_albedo = true
-		mat.roughness = 0.85
-		_mesh_node(ws, mat, "PitWall", true)
+	# (TrackData.pit_wall: between the track's edge and the lane, solid)
+	if track.has_pit_wall():
+		_build_pit_wall()
 	var mk := SurfaceTool.new()
 	mk.begin(Mesh.PRIMITIVE_TRIANGLES)
 	for lim in [track.pit_limit_start, track.pit_limit_end]:

@@ -253,6 +253,7 @@ func step(inputs: Array) -> void:
 			var inp: CarInput = inputs[i] if i < inputs.size() and inputs[i] != null else CarInput.neutral()
 			CarPhysics.step(cars[i], inp, defs[i], compounds[i], env, track, sub_dt, fuel_rate, events, i, wear_rate, wheel_compounds[i])
 		_resolve_collisions()
+		_resolve_pit_wall()
 	_apply_damage()
 
 	if follower:
@@ -596,6 +597,44 @@ static func body_contact(pos_a: Vector2, heading_a: float, da: CarDefinition,
 			deepest = db_k
 			point = qb[k]
 	return {"normal": n2, "depth": float(sep["depth"]) + radius, "point": point}
+
+
+# --- The pit wall: solid, like the barriers -------------------------------------
+
+func _resolve_pit_wall() -> void:
+	if not track.has_pit_wall():
+		return
+	for i in cars.size():
+		if external[i] or race_control.out_of_play(i):
+			continue
+		var c := cars[i]
+		var hit := pit_wall_contact(c.pos, c.heading, defs[i], track)
+		if hit.is_empty():
+			continue
+		var nrm: Vector2 = hit["normal"]   # out of the wall, towards the car
+		c.pos += nrm * float(hit["depth"])
+		var vn := -c.vel.dot(nrm)
+		if vn > 0.0:
+			c.vel += nrm * vn * float(TrackData.BARRIER_REBOUND[TrackData.Barrier.WALL])
+			c.vel *= 0.85
+			c.yaw_rate *= 0.6
+			events.append({"type": "barrier_impact", "car": i, "speed": vn, "normal": -nrm,
+				"barrier": TrackData.Barrier.WALL, "pit_wall": true})
+
+
+## How far a car's body is into the pit wall: {normal (out of the wall,
+## towards the car), depth} or {} if it's clear. The body is the rounded box
+## used for car contact, tested at its corners and the middle of each side.
+static func pit_wall_contact(pos: Vector2, heading: float, d: CarDefinition, track: TrackData) -> Dictionary:
+	var r := minf(BODY_CORNER_R, d.width * 0.5)
+	var q := _core_box(pos, heading, d, r)
+	var best := {}
+	for k in 8:
+		var p: Vector2 = q[k / 2] if k % 2 == 0 else (q[k / 2] + q[(k / 2 + 1) % 4]) * 0.5
+		var hit := track.pit_wall_contact(p, r, pos)
+		if not hit.is_empty() and (best.is_empty() or float(hit["depth"]) > float(best["depth"])):
+			best = hit
+	return best
 
 
 ## The four corners of a car's footprint shrunk by the corner radius r.

@@ -55,6 +55,15 @@ arenas keep their own widths. To widen track files built before that, run
 the new racing lines and `modules/graphics/tools/fit_scenery.py` to drop
 scenery that now stands on the road or in the run-off.
 
+The pit wall stands between the track and the pit lane, and cars can't drive
+through it (`TrackData.pit_wall`). The mapped lanes are often too close to the
+track for one, so `tools/pit_clearance.py` moves the lane out until its edge
+is 3.5 m off the track's edge along the garages, easing off towards the entry
+and exit. `build_tracks.py` runs it for every new circuit; for older track
+files run `python3 modules/tracks/tools/pit_clearance.py [ids]`, then
+`fit_scenery.py`. The wall goes wherever the gap between the track and the
+lane is at least 3.4 m (and not across the grass where the lane is far off).
+
 Elevation is added by the same run: `tools/elevation.py` reads heights from
 the free Terrarium elevation tiles (AWS Open Data) for the centre line, the
 pit lane and a 20 m terrain grid around the circuit, and smooths them. To
