@@ -31,6 +31,9 @@ import numpy as np
 
 SR = 32000  # loops; the pass-by renders at 44.1 kHz
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "baked")
+# Loop length. Long enough that the ear doesn't catch the loop repeating
+# (0.75 s loops fluttered at about 1.3 Hz).
+LOOP_SECONDS = 1.5
 BANDS = [900, 1500, 2200, 3000, 3800, 4600, 5400, 6200, 7000, 7800, 8600, 9400, 10200, 11000]
 
 # Firing events: (crank angle in a 720-degree cycle, cylinder, bank).
@@ -47,46 +50,57 @@ FAMILIES = {
     "v8_cross_na": dict(fire=CROSS_V8, pipe=[140, 182], bank_gain=[1.0, 0.5], header_skew=9.0,
                         peaks=[(70, 0.9, 8), (240, 0.9, 4), (520, 1.0, 1), (1400, 1.0, -4)],
                         lp=3200, lp_order=2, rasp=0.22, drive=2.2, jitter=0.10, mech=0.03,
+                        tail=2.4, intake=(260, 0.30),
                         label="cross-plane V8, no turbos: deep, lumpy burble (AMG 6.2)"),
     "v8_cross_turbo": dict(fire=CROSS_V8, pipe=[165, 200], bank_gain=[1.0, 0.7], header_skew=5.0,
                            peaks=[(110, 0.8, 6), (300, 0.9, 3), (1100, 1.0, -3)],
                            lp=2000, lp_order=2, rasp=0.14, drive=1.7, jitter=0.07, mech=0.02, turbo=True,
+                           tail=2.6, intake=(300, 0.10),
                            label="cross-plane V8 with twin turbos: muffled thunder (AMG 4.0)"),
     "v8_flat_na": dict(fire=even(8, [0, 1]), pipe=[260, 268], bank_gain=[1.0, 0.95], header_skew=1.0,
                        peaks=[(480, 0.8, 3), (1900, 0.7, 6), (3400, 0.6, 3)],
                        lp=6000, lp_order=2, rasp=0.32, drive=2.4, jitter=0.05, mech=0.05,
+                       tail=1.6, intake=(420, 0.34),
                        label="flat-plane V8, no turbos: hard, high scream (LMP2 / 458)"),
     "v8_flat_turbo": dict(fire=even(8, [0, 1]), pipe=[240, 252], bank_gain=[1.0, 0.92], header_skew=1.5,
                           peaks=[(380, 0.8, 4), (1400, 0.8, 3), (2600, 0.7, -2)],
                           lp=2800, lp_order=2, rasp=0.24, drive=1.9, jitter=0.05, mech=0.03, turbo=True,
+                          tail=1.8, intake=(380, 0.12),
                           label="flat-plane V8 with twin turbos: rough, rising howl (McLaren 720S, Ferrari F8)"),
     "v10_na": dict(fire=even(10, [0, 1]), pipe=[300, 318], bank_gain=[1.0, 0.9], header_skew=1.0,
                    peaks=[(330, 0.8, 2), (1750, 0.6, 7), (3100, 0.6, 4)],
                    lp=7500, lp_order=2, rasp=0.34, drive=2.4, jitter=0.05, mech=0.05,
+                   tail=1.5, intake=(480, 0.36),
                    label="V10, no turbos: shrieking wail (Huracan)"),
     "v12_na": dict(fire=even(12, [0, 1]), pipe=[340, 350], bank_gain=[1.0, 0.95], header_skew=0.5,
                    peaks=[(600, 0.8, 3), (2300, 0.6, 6), (4200, 0.6, 3)],
                    lp=8500, lp_order=2, rasp=0.22, drive=1.8, jitter=0.03, mech=0.04,
+                   tail=1.4, intake=(520, 0.30),
                    label="V12, no turbos: smooth, silky howl"),
     "flat6_na": dict(fire=even(6, [0, 1]), pipe=[290, 300], bank_gain=[1.0, 0.95], header_skew=1.5,
                      peaks=[(650, 0.7, 3), (1550, 0.5, 5), (2750, 0.35, 7), (4300, 0.5, 2)],
                      lp=7000, lp_order=2, rasp=0.55, drive=2.8, jitter=0.06, mech=0.14,
+                     tail=1.3, intake=(440, 0.40),
                      label="flat-six, no turbos: metallic, raspy scream (Porsche 911 GT3)"),
     "v6_turbo": dict(fire=even(6, [0, 1]), pipe=[250, 262], bank_gain=[1.0, 0.92], header_skew=1.0,
                      peaks=[(430, 0.8, 3), (1650, 0.7, 4), (2900, 0.6, 1)],
                      lp=2600, lp_order=2, rasp=0.24, drive=1.8, jitter=0.05, mech=0.03, turbo=True,
+                     tail=1.7, intake=(400, 0.10),
                      label="V6 with twin turbos: raspy, busy hum (Ferrari 296, hypercars)"),
     "v6_na": dict(fire=even(6, [0, 1]), pipe=[210, 222], bank_gain=[1.0, 0.9], header_skew=2.0,
                   peaks=[(300, 0.8, 4), (1150, 0.8, 3), (2400, 0.7, 0)],
                   lp=4000, lp_order=2, rasp=0.3, drive=2.0, jitter=0.06, mech=0.05,
+                  tail=1.9, intake=(330, 0.30),
                   label="V6, no turbos: throaty growl (Lotus V6)"),
     "i6_turbo": dict(fire=even(6, [0, 1]), pipe=[205, 215], bank_gain=[1.0, 0.97], header_skew=0.5,
                      peaks=[(240, 0.8, 3), (880, 0.8, 4), (1900, 0.7, 2)],
                      lp=2300, lp_order=2, rasp=0.16, drive=1.6, jitter=0.035, mech=0.03, turbo=True,
+                     tail=2.0, intake=(340, 0.10),
                      label="straight-six with twin turbos: smooth, deep rasp (BMW M4)"),
     "i4_turbo": dict(fire=even(4, [0]), pipe=[190], bank_gain=[1.0], header_skew=0.0,
                      peaks=[(190, 0.8, 4), (700, 0.8, 3), (1700, 0.7, -1)],
                      lp=2400, lp_order=2, rasp=0.2, drive=1.9, jitter=0.05, mech=0.04, turbo=True,
+                     tail=1.9, intake=(300, 0.12),
                      label="four-cylinder with a turbo: buzzy drone"),
 }
 
@@ -181,7 +195,7 @@ def render_engine(fam, rpm, load, sr, seed, circular, n_samples=None):
     rng = np.random.default_rng(seed)
     if np.isscalar(rpm):
         cyc = int(round(sr * 120.0 / rpm))
-        n_cycles = max(3, int(round(0.75 * sr / cyc)))
+        n_cycles = max(3, int(round(LOOP_SECONDS * sr / cyc)))
         n = cyc * n_cycles
         phase = np.arange(n) / cyc  # engine cycles (720 deg)
         rpm_mean = sr * 120.0 / cyc
@@ -203,6 +217,11 @@ def render_engine(fam, rpm, load, sr, seed, circular, n_samples=None):
     amp_load = 0.18 + 0.82 * load
     imps = [np.zeros(n) for _ in range(n_banks)]
     env = np.zeros(n)
+    intake_imp = np.zeros(n)
+    # Combustion varies slowly from one firing to the next (mixture, heat),
+    # not as white noise: a correlated wander makes the engine sound alive
+    # rather than a static buzz.
+    wander = 0.0
     for c in range(n_cycles if circular else n_cycles + 1):
         for ang, cyl, bank in p["fire"]:
             target = c + (ang + cyl_skew[cyl]) / 720.0 + 0.002 * rng.standard_normal()
@@ -212,7 +231,8 @@ def render_engine(fam, rpm, load, sr, seed, circular, n_samples=None):
                 pos = float(np.searchsorted(phase, target))
                 if pos >= n - 2:
                     continue
-            a = amp_load * cyl_gain[cyl] * max(0.05, 1.0 + jit * rng.standard_normal())
+            wander = 0.9 * wander + 0.436 * rng.standard_normal()
+            a = amp_load * cyl_gain[cyl] * max(0.05, 1.0 + jit * (0.6 * rng.standard_normal() + 0.8 * wander))
             if load < 0.5 and rng.random() < 0.06:
                 a *= rng.uniform(1.5, 2.6)  # uneven overrun pulse
             i0 = int(pos)
@@ -222,6 +242,10 @@ def render_engine(fam, rpm, load, sr, seed, circular, n_samples=None):
             imps[bank][i1] += a * fr * p["bank_gain"][bank]
             env[i0] += a * (1 - fr)
             env[i1] += a * fr
+            # Intake: each cylinder draws its charge half a cycle away from
+            # its firing, harder with the throttle open.
+            j0 = int((i0 + n // max(1, n_cycles) // 2) % n) if circular else min(n - 1, i0 + int(sr * 60.0 / rpm_mean))
+            intake_imp[j0] += amp_load * cyl_gain[cyl] * load
     # Pulse shape per bank: blow-down pressure bump + ringing header + a crack.
     L = int(0.045 * sr)
     t = np.arange(L) / sr
@@ -251,7 +275,20 @@ def render_engine(fam, rpm, load, sr, seed, circular, n_samples=None):
     # Mechanical: valve train and gear chatter, more at high revs.
     mech = bandnoise(n, sr, 2500, 9000, rng, circular) * renv
     mech *= sig_rms / (math.sqrt(float(np.mean(mech ** 2))) + 1e-9) * p["mech"] * (0.3 + rev)
-    x = out + rasp + mech
+    # Induction roar: the airbox and trumpets ring at their own pitch with
+    # each intake pulse, plus the rush of air. Big on engines without
+    # turbos (the compressor silences the intake), and only on throttle.
+    ihz, ilevel = p.get("intake", (350, 0.2))
+    if ilevel > 0 and load > 0.05:
+        ik = np.exp(-t / 0.006) * np.sin(2 * np.pi * ihz * t) + 0.5 * np.exp(-t / 0.004) * np.sin(2 * np.pi * ihz * 2.07 * t)
+        honk = fft_convolve(intake_imp, ik, circular)
+        air = rng.standard_normal(n) * fft_convolve(intake_imp, np.exp(-t / 0.005), circular)
+        air = fft_filter(air, lambda f: highpass(f, 250, 1) * lowpass(f, 2500, 1), sr, circular)
+        intake = honk + 0.6 * air * (math.sqrt(float(np.mean(honk ** 2))) + 1e-9) / (math.sqrt(float(np.mean(air ** 2))) + 1e-9)
+        intake *= sig_rms / (math.sqrt(float(np.mean(intake ** 2))) + 1e-9) * ilevel * load * (0.5 + 0.6 * min(rev, 1.0))
+    else:
+        intake = 0.0
+    x = out + rasp + mech + intake
     # Hot gas is loud enough to be non-linear: soft-clip before the silencer,
     # so the clipping's extra harmonics get shaped by the voice too.
     x = normalise(x, 0.25)
@@ -261,8 +298,16 @@ def render_engine(fam, rpm, load, sr, seed, circular, n_samples=None):
     lp = p["lp"] * (1.0 if load > 0.5 else 0.55)
     if p.get("turbo"):
         lp *= 1.0 + 0.25 * rev  # more gas, a little more bark up top
+    # The tailpipe is a tube: pressure waves bounce between its ends and give
+    # it standing-wave resonances (the hollow "boom" of a real exhaust),
+    # spaced by the pipe length (hot gas, ~500 m/s).
+    tau = 2.0 * p.get("tail", 1.8) / 500.0
+    def tube(f):
+        g = 0.32
+        h = 1.0 / np.abs(1.0 - g * np.exp(-2j * np.pi * f * tau))
+        return h / (1.0 / (1.0 - g)) * 1.6
     def voice(f):
-        return highpass(f, 35, 2) * lowpass(f, lp, p["lp_order"]) * peak_eq(f, p["peaks"])
+        return highpass(f, 35, 2) * lowpass(f, lp, p["lp_order"]) * peak_eq(f, p["peaks"]) * tube(f)
     x = fft_filter(x, voice, sr, circular)
     if not circular:
         return x, rpm_mean
