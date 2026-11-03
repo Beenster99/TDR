@@ -97,8 +97,9 @@ Grab and use are rebindable (Settings > Controller, "Pit crew: ...").
 - A stop never lasts longer than the crew's give-up time (`CREW_GIVE_UP` x
   the standard stop, or a driver change's minimum), whatever the players did.
 - Single player has no crew game: the AI crew do the whole stop.
-- Your crew member has a pulsing ring, an arrow overhead and a "YOU" tag; a
-  team mate's is blue. Tips name your real buttons (`PitCrewGame.with_keys`).
+- Your crew member has a yellow hoop on the ground; a team mate's is blue.
+  Tips name the buttons you mapped, on the device you touched last: keyboard
+  and mouse, or the controller (`PitCrewGame.with_keys`, `note_device`).
   With no fuel to put in, the fuel man stands by at the rig.
 - Before the car stops, each player's screen sends `crew: {job, play: true,
   lane_auto}` for each of its jobs (`PitRules.JOBS`: fuel, screen, lance,

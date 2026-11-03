@@ -98,10 +98,9 @@ class Person:
 	var walk := 0.0
 	var fidget := 0.0
 	var next_wander := 0.0
-	var marker: Node3D           ## a player's crew member: ring and disc on the ground, arrow overhead
+	var marker: Node3D           ## a player's crew member: a hoop on the ground
 	var marker_mat: StandardMaterial3D
 	var marker_ring: Node3D
-	var marker_arrow: Node3D
 
 
 class Crew:
@@ -333,16 +332,6 @@ func drive_member(car: int, job: String, pos, face := 0.0, pose := Pose.STAND, c
 		c.driven[k] = [pos, face, pose, carry, ring]
 
 
-## Where a player's crew member is in the world (for a label on screen),
-## null when nobody plays that job for car.
-func member_world_pos(car: int, job: String):
-	var c := _crew_for(car)
-	if c == null or not JOB_MEMBER.has(job) or not c.driven.has(JOB_MEMBER[job]):
-		return null
-	var p: Person = c.people[JOB_MEMBER[job]]
-	return p.root.global_position if p.root.is_inside_tree() else null
-
-
 ## Where players have put things in car's box, overriding where the crew
 ## timeline would have them (keys left out keep the timeline's):
 ##   new_tyres: {wheel: Vector2 laid out at, or null (picked up / not out)}
@@ -519,11 +508,6 @@ func _plan(c: Crew) -> void:
 			p.marker.visible = true
 			var col: Color = d[4]
 			p.marker_mat.albedo_color = Color(col, 0.95)
-			((p.marker_ring.get_meta("disc") as MeshInstance3D).material_override as StandardMaterial3D).albedo_color = Color(col, 0.22 + 0.12 * sin(_t * 6.0))
-			var pulse := 1.0 + 0.18 * sin(_t * 6.0)
-			p.marker_ring.scale = Vector3(pulse, 0.3, pulse)
-			p.marker_arrow.position.y = 2.75 + 0.22 * sin(_t * 4.0)
-			p.marker_arrow.rotation.y = _t * 2.0
 			continue
 		p.carry = _default_carry(i)
 		if not active:
@@ -1090,9 +1074,8 @@ func _person(c: Crew, suit: Color, helmet: Color, holds: Array = []) -> Person:
 		p.items[Carry.EXTINGUISHER] = ext
 	for k in p.items:
 		(p.items[k] as Node3D).visible = false
-	# A player's crew member: a pulsing ring and disc on the ground and a
-	# bobbing arrow over their head, drawn over everything so the eye finds
-	# them at once.
+	# A player's crew member: a yellow hoop on the ground, drawn over
+	# everything so the eye finds them at once.
 	if not _meshes.has("ring"):
 		var ring := TorusMesh.new()
 		ring.inner_radius = 0.62
@@ -1100,38 +1083,16 @@ func _person(c: Crew, suit: Color, helmet: Color, holds: Array = []) -> Person:
 		ring.rings = 24
 		ring.ring_segments = 6
 		_meshes["ring"] = ring
-		var disc := CylinderMesh.new()
-		disc.top_radius = 0.62
-		disc.bottom_radius = 0.62
-		disc.height = 0.02
-		disc.radial_segments = 24
-		_meshes["ring_disc"] = disc
-		var arrow := CylinderMesh.new()
-		arrow.top_radius = 0.34
-		arrow.bottom_radius = 0.0
-		arrow.height = 0.55
-		arrow.radial_segments = 4
-		_meshes["ring_arrow"] = arrow
-		var stem := BoxMesh.new()
-		stem.size = Vector3(0.16, 0.42, 0.16)
-		_meshes["ring_stem"] = stem
 	var rm := StandardMaterial3D.new()
 	rm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	rm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	rm.albedo_color = Color(1.0, 0.85, 0.2, 0.95)
 	rm.no_depth_test = true
 	rm.render_priority = 2
-	var dm := rm.duplicate() as StandardMaterial3D
-	dm.albedo_color = Color(1.0, 0.85, 0.2, 0.3)
-	dm.render_priority = 1
 	p.marker_mat = rm
 	p.marker = _joint(p.root, Vector3.ZERO)
 	p.marker_ring = _part(p.marker, _meshes["ring"], rm, Vector3(0, 0.08, 0))
 	p.marker_ring.scale = Vector3(1, 0.3, 1)
-	p.marker_ring.set_meta("disc", _part(p.marker, _meshes["ring_disc"], dm, Vector3(0, 0.06, 0)))
-	p.marker_arrow = _joint(p.marker, Vector3(0, 2.75, 0))
-	_part(p.marker_arrow, _meshes["ring_arrow"], rm, Vector3.ZERO)
-	_part(p.marker_arrow, _meshes["ring_stem"], rm, Vector3(0, 0.45, 0))
 	p.marker.visible = false
 	return p
 

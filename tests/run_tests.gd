@@ -1699,8 +1699,28 @@ func test_pit_crew_game() -> void:
 	check(g0.cur == 0 and g0._no_fuel() and g0._auto()[2] == false, "no fuel this stop: the fuel man stays on his job and stands by")
 	if not InputMap.has_action("crew_grab"):
 		InputSetup.register_actions()
-	check(PitCrewGame.with_keys("Pull the old wheel off (grab)").contains("(G") and PitCrewGame.with_keys("Hold USE at the windscreen").begins_with("Hold Space"),
-		"crew tips name the real buttons: %s / %s" % [PitCrewGame.with_keys("Pull the old wheel off (grab)"), PitCrewGame.with_keys("Hold USE at the windscreen")])
+	var kb := PitCrewGame.with_keys("Pull the old wheel off ({grab})", false)
+	var kb2 := PitCrewGame.with_keys("Hold {gun} at the windscreen", false)
+	var pd := PitCrewGame.with_keys("Pull the old wheel off ({grab})", true)
+	check(kb == "Pull the old wheel off (G)" and kb2 == "Hold Space at the windscreen" and pd == "Pull the old wheel off (X)",
+		"crew tips name the buttons of the device in use: %s / %s / %s" % [kb, kb2, pd])
+	var remap := InputSetup.with_binding({}, "crew_grab", "keys", 0, KEY_H)
+	remap = InputSetup.with_binding(remap, "crew_grab", "pad", 0, {"button": JOY_BUTTON_Y})
+	InputSetup.apply_bindings(remap)
+	var rk := PitCrewGame.with_keys("({grab})", false)
+	var rp := PitCrewGame.with_keys("({grab})", true)
+	InputSetup.apply_bindings({})
+	check(rk == "(H)" and rp == "(Y)", "crew tips follow the player's own bindings: %s / %s" % [rk, rp])
+	var was := PitCrewGame.using_pad
+	var jb := InputEventJoypadButton.new()
+	jb.pressed = true
+	PitCrewGame.note_device(jb)
+	var on_pad := PitCrewGame.using_pad
+	var kev := InputEventKey.new()
+	kev.pressed = true
+	PitCrewGame.note_device(kev)
+	check(on_pad and not PitCrewGame.using_pad, "crew tips follow the device touched last (pad, then keyboard)")
+	PitCrewGame.using_pad = was
 	g0.free()
 
 

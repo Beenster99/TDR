@@ -140,10 +140,6 @@ func _ready() -> void:
 	crew_game = PitCrewGame.new()   # after the consoles, so it hears its buttons first
 	layer.add_child(crew_game)
 	crew_game.setup(session, world.pit_crews)
-	crew_game.screen_pos = func(wp: Vector3) -> Vector2:
-		if not _camera_placed or world.camera == null or world.camera.is_position_behind(wp):
-			return Vector2(-1000, -1000)
-		return world.camera.unproject_position(wp)
 	crew_game.autoplay = bool(GameData.arg("crew-autoplay", false))
 	_add_pause_menu(layer)
 	_apply_role()
