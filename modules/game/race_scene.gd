@@ -631,8 +631,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event.is_action_pressed("hud_edit") and session.local_car >= 0 and not _results_shown and not pit_wall.visible:
 		hud.open_editor()
-	elif event.is_action_pressed("strategy_screen") and not _results_shown:
-		pit_wall.toggle()
+	elif event.is_action_pressed("strategy_screen") and not _results_shown and not session.sim.settings.is_rallycross():
+		pit_wall.toggle()   # no pit wall in rallycross: no stops, flags or safety car
 	elif event is InputEventMouseButton and event.pressed:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
 			_set_zoom(_zoom_target - ZOOM_WHEEL_STEP)

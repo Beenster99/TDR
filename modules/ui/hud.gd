@@ -207,6 +207,7 @@ func item_shown(id: String) -> bool:
 		"radio": return radio_time > 0.0 and not radio_msg.is_empty()
 		"messages": return message_time > 0.0
 		"lights": return sim.phase == RaceSim.Phase.COUNTDOWN
+		"hint": return not sim.settings.is_rallycross()   # no pit wall in rallycross
 		"pitguide": return pit_guide_on and sim.pits.self_drives(me) and str(sim.pits.guide_info(me)["stage"]) != ""
 	return true
 
@@ -473,6 +474,34 @@ func _draw_timing(me: int) -> void:
 		var last_lap := sim.settings.laps - (1 if sim.track.joker_entry_s > sim.track.joker_exit_s and sim.settings.laps > 1 else 0)
 		var col := Color(0.45, 1.0, 0.55) if done else (Color(1, 0.35, 0.25) if lap_now >= last_lap else Color(1, 0.75, 0.3))
 		_text(Vector2(160, 120), "JOKER " + ("DONE" if done else ("NOW!" if lap_now >= last_lap else "TO DO")), 16, col)
+
+
+const JOKER_COLOUR := Color(1.0, 0.55, 0.1)
+
+## Rallycross: the joker lane on the minimap, in orange, with where it leaves
+## the lap and "J". It pulses while the local car still has to take it.
+func _draw_minimap_joker(origin: Vector2, scale_f: float) -> void:
+	var sim := session.sim
+	var t := sim.track
+	var js := PackedVector2Array()
+	for p in t.joker_path:
+		js.append(origin + (p - _mm_rect.position) * scale_f)
+	var col := JOKER_COLOUR
+	var me := session.local_car
+	if me >= 0 and not editing and sim.entries[me].jokers < sim.settings.joker_laps:
+		col.a = 0.65 + 0.35 * sin(Time.get_ticks_msec() * 0.006)
+	draw_polyline(js, Color(0, 0, 0, 0.7), 7.0)
+	draw_polyline(js, col, 4.0)
+	var entry := js[0]
+	draw_circle(entry, 5.0, Color(0, 0, 0, 0.7))
+	draw_circle(entry, 3.5, JOKER_COLOUR)
+	# "J" beside the middle of the lane, on the side away from the lap.
+	var mid := js[js.size() / 2]
+	var lap_mid := origin + (t.position_at(t.joker_entry_s + fposmod(t.joker_exit_s - t.joker_entry_s, t.length) * 0.5) - _mm_rect.position) * scale_f
+	var away := (mid - lap_mid).normalized() if mid.distance_to(lap_mid) > 0.5 else Vector2.UP
+	var span := _mm_rect.size * scale_f
+	var at := (mid + away * 12.0).clamp(origin + Vector2(6, 8), origin + span - Vector2(6, 2))
+	_text(at + Vector2(-5, 5), "J", 14, JOKER_COLOUR)
 
 
 ## Speed, gear and the rev bar.
@@ -986,6 +1015,9 @@ func _build_minimap() -> void:
 	for p in t.points:
 		lo = lo.min(p)
 		hi = hi.max(p)
+	for p in t.joker_path:
+		lo = lo.min(p)
+		hi = hi.max(p)
 	var span := hi - lo
 	var scale_f := 200.0 / maxf(span.x, span.y)
 	_mm_rect = Rect2(lo, span)
@@ -1006,6 +1038,8 @@ func _draw_minimap(origin: Vector2) -> void:
 	var sim := session.sim
 	var rc := sim.race_control
 	var t := sim.track
+	if t.has_joker():
+		_draw_minimap_joker(origin, scale_f)
 	# Yellow flag zones along the track, and the safety car.
 	for y in rc.yellows:
 		var zone := PackedVector2Array()
@@ -1026,8 +1060,8 @@ func _draw_minimap(origin: Vector2) -> void:
 				for k in 7:
 					band.append(origin + (t.position_at(float(rj["s"]) - v * 0.8 + v * k / 6.0) - _mm_rect.position) * scale_f)
 				draw_polyline(band, rejoin_colour(rj), 6.0)
-	# Double yellows where marshals are out: a thicker band.
-	for job in rc.marshal_jobs:
+	# Double yellows where marshals are out: a thicker band (circuits only).
+	for job in (rc.marshal_jobs if rc.flags_used() else []):
 		var zone := PackedVector2Array()
 		var from := float(job["s"]) - TrackMarshals.DOUBLE_BEFORE_M
 		var span_m := TrackMarshals.DOUBLE_BEFORE_M + TrackMarshals.DOUBLE_AFTER_M
