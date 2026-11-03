@@ -94,6 +94,9 @@ static func _make(name: String) -> AudioStreamWAV:
 		"radio_open": return _radio_burst(0.2, true, 11)
 		"radio_close": return _radio_burst(0.26, false, 13)
 		"radio_static": return _radio_static(1.6)
+		"cork_pop": return _cork_pop()
+		"champagne_spray": return _champagne_spray()
+		"crowd_cheer": return _crowd_cheer()
 	push_error("SoundBank: no sound called " + name)
 	return _tone([440.0], 0.1, 0.1)
 
@@ -293,4 +296,102 @@ static func _radio_static(length_s: float) -> AudioStreamWAV:
 		v += pop
 		pop *= 0.82
 		out[i] = v + 0.02 * sin(TAU * 50.0 * t)
+	return _to_wav(out, true)
+
+
+## The podium: a champagne cork popping, a sharp knock with a hollow
+## "thoonk" falling in pitch and a little fizz after it.
+static func _cork_pop() -> AudioStreamWAV:
+	var n := int(RATE * 0.45)
+	var out := PackedFloat32Array()
+	out.resize(n)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 31
+	var hp := 0.0
+	var prev := 0.0
+	var ph := 0.0
+	for i in n:
+		var t := float(i) / RATE
+		var noise := rng.randf_range(-1.0, 1.0)
+		hp = 0.7 * (hp + noise - prev)
+		prev = noise
+		ph += TAU * (820.0 * exp(-t * 9.0) + 260.0) / RATE
+		var knock := noise * exp(-t * 260.0) * 1.1
+		var thoonk := sin(ph) * exp(-t * 32.0) * 0.8
+		var fizz := hp * exp(-t * 6.0) * 0.12 * minf(1.0, t / 0.03)
+		out[i] = tanh(knock + thoonk + fizz) * 0.9
+	return _to_wav(out, false)
+
+
+## The podium: champagne spraying, a loop of bright hiss that gusts, with
+## the crackle of bubbles in it.
+static func _champagne_spray() -> AudioStreamWAV:
+	var n := int(RATE * 2.0)
+	var out := PackedFloat32Array()
+	out.resize(n)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 37
+	var hp := 0.0
+	var prev := 0.0
+	var lp := 0.0
+	for i in n:
+		var t := float(i) / RATE
+		var noise := rng.randf_range(-1.0, 1.0)
+		hp = 0.92 * (hp + noise - prev)
+		prev = noise
+		lp += (hp - lp) * 0.55
+		var gust := 0.7 + 0.2 * sin(TAU * 1.5 * t) + 0.1 * sin(TAU * 4.0 * t + 1.0)
+		var bubble := 0.0
+		if rng.randf() < 0.004:
+			bubble = rng.randf_range(-0.5, 0.5)
+		out[i] = (lp * 0.55 * gust + bubble) * 0.8
+	return _to_wav(out, true)
+
+
+## The podium: a crowd cheering and clapping, a loop. A bed of many voices
+## (noise shaped like voices, swelling and fading), whoops that rise in
+## pitch, and claps.
+static func _crowd_cheer() -> AudioStreamWAV:
+	var n := int(RATE * 4.0)
+	var out := PackedFloat32Array()
+	out.resize(n)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 41
+	# The bed: band-limited noise, swelling.
+	var a := 0.0
+	var b := 0.0
+	for i in n:
+		var t := float(i) / RATE
+		var noise := rng.randf_range(-1.0, 1.0)
+		a += (noise - a) * 0.25
+		b += (a - b) * 0.08
+		var swell := 0.75 + 0.15 * sin(TAU * 0.5 * t) + 0.1 * sin(TAU * 1.25 * t + 2.0)
+		out[i] = (a - b) * 0.9 * swell
+	# Voices: whoops and "hey"s at random pitches, each a buzzy tone through a soft vowel.
+	for v in 26:
+		var start := rng.randi_range(0, n - 1)
+		var length := int(RATE * rng.randf_range(0.25, 0.8))
+		var f0 := rng.randf_range(170.0, 420.0)
+		var rise := rng.randf_range(0.0, 0.6)
+		var vol := rng.randf_range(0.04, 0.1)
+		var ph := 0.0
+		var lpv := 0.0
+		for k in length:
+			var i := (start + k) % n   # wraps so the loop has no seam
+			var x := float(k) / length
+			var env := sin(PI * x) * (1.0 - 0.5 * x)
+			ph += TAU * f0 * (1.0 + rise * x + 0.02 * sin(TAU * 6.0 * x)) / RATE
+			var buzz := sin(ph) + 0.5 * sin(2.0 * ph) + 0.3 * sin(3.0 * ph) + 0.15 * sin(5.0 * ph)
+			lpv += (buzz - lpv) * 0.3
+			out[i] += lpv * env * vol
+	# Claps: short bursts of noise.
+	for c in 90:
+		var start := rng.randi_range(0, n - 1)
+		var vol := rng.randf_range(0.08, 0.22)
+		var clap_n := int(RATE * 0.03)
+		for k in clap_n:
+			var i := (start + k) % n
+			out[i] += rng.randf_range(-1.0, 1.0) * exp(-float(k) / clap_n * 5.0) * vol
+	for i in n:
+		out[i] = tanh(out[i] * 1.1) * 0.8
 	return _to_wav(out, true)
