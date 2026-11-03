@@ -46,9 +46,9 @@ crossfaded by the pedal. On top:
   in and out (about 14 times a second for engines without turbos, 9 with),
   so a 9,400 rpm Porsche and a 7,500 rpm AMG hit very different walls.
 - **Gearshifts:** an upshift cuts the ignition for 85 ms with a paddle-shift
-  clack; a downshift blips the throttle and may crackle.
-- **Pops and crackles** when you lift off at high revs (most on cross-plane
-  V8s).
+  clack; a downshift blips the throttle.
+- **No exhaust pops or crackles** on the overrun, limiter or downshifts
+  (removed in audio 1.5.0: they sounded like constant banging).
 - **Turbo:** whistle that builds with boost (with lag), wastegate flutter
   when you lift. **Supercharger** whine with revs. **Hybrid** motor whine
   with speed (deploying and harvesting). **Straight-cut gearbox** whine on
@@ -66,7 +66,7 @@ Add an optional `sound` block to the car's `engine` in its JSON:
 ```
 
 Keys: `family`, `turbo`, `supercharged`, `hybrid`, `gear_whine` (default on
-for race classes), `limiter_hz`, `pops` (0 none .. 1 lots). Without it the
+for race classes), `limiter_hz`. Without it the
 family is worked out from `cylinders` and the description ("twin-turbo",
 "flat-six", "straight-six", "Mid-engined ... V8" = flat-plane, etc.).
 
