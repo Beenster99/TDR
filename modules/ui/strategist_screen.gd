@@ -3,7 +3,9 @@ extends Control
 ## The pit wall: a full-screen strategist view over the race. Timing tower
 ## with every car's sector and lap times, last-5-lap average, gaps,
 ## intervals, tyres and where a stop now would rejoin; weather radar and
-## forecast; the selected car's details and pit window; and the feed of
+## forecast (WeatherRadar: rain radar over a map with range rings, where
+## the rain is heading, a 30-minute forecast loop and the coming changes);
+## the selected car's details and pit window; and the feed of
 ## other teams' radio and strategy calls.
 ##
 ## Mouse and keyboard first: click a car in the timing to look at it, click
@@ -14,6 +16,13 @@ extends Control
 ## camera (OnboardCamera) above the feed: Y / C switches front, rear, off.
 ## Drawn immediate-mode at 1600x900 and scaled by
 ## the window's stretch, so it stays sharp at 4K.
+##
+## The panels (timing, weather radar, selected car, feed and the onboard
+## picture) move: drag a title bar (or the picture) to move one, the grip in
+## its bottom right corner to zoom it (text and all), its right or bottom
+## edge to make it wider or taller (PanelLayout). Where they were left
+## is saved in GameData.prefs["pit_wall_layout"]["full"]. "Reset layout" in
+## the header puts them back.
 
 const FILTERS := [["All", []], ["Radio", ["radio"]], ["Strategy", ["strategy"]], ["Pit", ["pit"]],
 	["Timing", ["timing"]], ["Tyres", ["tyres"]], ["Weather", ["weather"]], ["Incidents", ["incident"]], ["Race control", ["race_control"]]]
@@ -33,7 +42,6 @@ var session: RaceSession
 var selected: int = -1          ## car index
 var filter: int = 0
 var font: Font
-var _sweep := 0.0
 var _note := ""                 ## a short line after a pit call (driver change)
 var _note_time := 0.0
 var _track_pts := PackedVector2Array()
@@ -44,6 +52,11 @@ var _hover := Vector2(-1, -1)
 ## Onboard camera for the selected car (set by the race scene; null = none).
 var onboard: OnboardCamera
 var cam_mode := 0               ## 0 off, 1 front, 2 rear
+## Where the player has moved the panels.
+var layout := PanelLayout.new("full")
+var _cursor := Input.CURSOR_ARROW
+## The weather radar panel (zoom, forecast loop).
+var radar := WeatherRadar.new()
 
 
 func setup(p_session: RaceSession) -> void:
@@ -57,6 +70,14 @@ func setup(p_session: RaceSession) -> void:
 	for i in range(0, t.point_count(), 3):
 		_track_pts.append(t.points[i])
 	_track_pts.append(t.points[0])
+	layout.spec("timing", Vector2(700, 300), Vector2(1400, 4000))
+	layout.spec("weather", Vector2(300, 200), Vector2(1600, 900))
+	layout.spec("car", Vector2(340, 236), Vector2(900, 420))
+	layout.spec("feed", Vector2(280, 120))
+	layout.spec("pip", Vector2(240, 135), Vector2(1120, 630), 16.0 / 9.0, true)
+	var gd := get_node_or_null("/root/GameData")
+	if gd:
+		layout.load_from(gd.prefs)
 
 
 func open() -> void:
@@ -86,11 +107,21 @@ func _input(event: InputEvent) -> void:
 		return
 	if event is InputEventMouseMotion:
 		_hover = event.position
+		layout.motion(event.position, event.button_mask & MOUSE_BUTTON_MASK_LEFT != 0)
+		_set_cursor(layout.cursor_at(event.position))
 		return
 	if event is InputEventMouseButton:
+		get_viewport().set_input_as_handled()
+		if event.button_index == MOUSE_BUTTON_LEFT:
+			# A title bar moves its panel; a press there that doesn't move is a click.
+			if event.pressed and layout.press(event.position):
+				return
+			if not event.pressed:
+				if layout.release() == "click":
+					_click(layout.press_position(), MOUSE_BUTTON_LEFT)
+				return
 		if event.pressed:
 			_click(event.position, event.button_index)
-		get_viewport().set_input_as_handled()
 		return
 	if not event.is_pressed() or event.is_echo() and not (event.is_action("ui_up") or event.is_action("ui_down")):
 		return
@@ -156,6 +187,15 @@ func _click(pos: Vector2, button: int) -> void:
 			"close":
 				if dir == 1:
 					close()
+			"reset_layout":
+				if dir == 1:
+					layout.reset_all()
+					layout.save()
+			"radar":
+				# The time bar is in the panel's own (unzoomed) units.
+				var wr := layout.rect_of("weather", Rect2(), layout.bounds) if layout.is_moved("weather") else Rect2()
+				var x := wr.position.x + (pos.x - wr.position.x) / layout.scale_of("weather")
+				radar.click(h[2], dir, x)
 		if absi(dir) == 1:
 			Sound.ui("ui_select", -6.0)
 		return
@@ -169,11 +209,23 @@ func _button(r: Rect2, label: String, action: String, fs := 15, col := Color.WHI
 	_hits.append([r, action, null])
 
 
+func _set_cursor(c: Input.CursorShape) -> void:
+	if c != _cursor:
+		_cursor = c
+		Input.set_default_cursor_shape(c)
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_VISIBILITY_CHANGED and not is_visible_in_tree():
+		layout.release()
+		_set_cursor(Input.CURSOR_ARROW)
+
+
 func _process(delta: float) -> void:
 	if not visible:
 		return
 	size = get_viewport_rect().size
-	_sweep = fmod(_sweep + delta * 1.6, TAU)
+	radar.process(delta)
 	_note_time = maxf(_note_time - delta, 0.0)
 	if _pip_on():
 		OnboardPip.feed(self, onboard, _pip_rect(), selected, cam_mode == 2)
@@ -197,6 +249,26 @@ func _pip_rect() -> Rect2:
 
 
 # --- Drawing helpers ------------------------------------------------------------
+
+
+## Draws one panel through f(content rect), scaled by the player's zoom for
+## it: hover and clicks are mapped to match.
+func _in_panel(id: String, r: Rect2, f: Callable) -> void:
+	var sc := layout.scale_of(id)
+	var lr := layout.content_rect(id, r)
+	if absf(sc - 1.0) < 0.001:
+		f.call(lr)
+		return
+	var n0 := _hits.size()
+	var hov := _hover
+	_hover = r.position + (hov - r.position) / sc
+	draw_set_transform(r.position * (1.0 - sc), 0.0, Vector2(sc, sc))
+	f.call(lr)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	_hover = hov
+	for k in range(n0, _hits.size()):
+		var hr: Rect2 = _hits[k][0]
+		_hits[k][0] = Rect2(r.position + (hr.position - r.position) * sc, hr.size * sc)
 
 func _text(pos: Vector2, s: String, fs := 15, col := Color.WHITE, align := HORIZONTAL_ALIGNMENT_LEFT, width := -1.0) -> void:
 	if width > 0.0 and align == HORIZONTAL_ALIGNMENT_LEFT:
@@ -229,6 +301,7 @@ func _wrap(s: String, width: float, fs: int) -> PackedStringArray:
 
 
 func _panel(r: Rect2, title := "") -> void:
+	draw_rect(r, BG)      # solid, so a panel moved over another hides it
 	draw_rect(r, PANEL)
 	draw_rect(r, Color(1, 1, 1, 0.08), false, 1.0)
 	if title != "":
@@ -264,22 +337,41 @@ func _draw() -> void:
 	var tel := session.telemetry
 	var table_w := clampf(vp.x * 0.66, 900.0, 1080.0)
 	_draw_header(Rect2(16, 10, vp.x - 32, 40), sim, tel)
-	_draw_timing(Rect2(16, 58, table_w, vp.y - 58 - 34), sim, tel)
+	layout.begin(Rect2(8, 54, vp.x - 16, vp.y - 54 - 26))
+	# As designed: timing on the left; radar, selected car, then the picture
+	# and the feed down the right. A moved panel goes where it was left, and
+	# panels drawn later sit on top.
+	var d := {"timing": Rect2(16, 58, table_w, vp.y - 58 - 34)}
 	var rx := 16 + table_w + 14
 	var rw := vp.x - rx - 16
 	var radar_h := minf(rw * 0.62, 280.0)
-	_draw_weather(Rect2(rx, 58, rw, radar_h), tel)
+	d["weather"] = Rect2(rx, 58, rw, radar_h)
 	var car_h := 236.0
-	_draw_car(Rect2(rx, 58 + radar_h + 10, rw, car_h), sim, tel)
+	d["car"] = Rect2(rx, 58 + radar_h + 10, rw, car_h)
 	var fy := 58 + radar_h + 10 + car_h + 10
 	# The picture takes the feed's place (the feed is back when it's off).
 	var ph := minf(rw * 9.0 / 16.0, vp.y - fy - 40)
-	_pip_at = Rect2(rx + (rw - ph * 16.0 / 9.0) * 0.5, fy + 3, ph * 16.0 / 9.0, ph)
-	if _pip_on():
-		OnboardPip.draw(self, font, onboard, _pip_at, session, selected, cam_mode == 2)
+	_pip_at = layout.rect_of("pip", Rect2(rx + (rw - ph * 16.0 / 9.0) * 0.5, fy + 3, ph * 16.0 / 9.0, ph))
+	if _pip_on() and not layout.is_moved("pip"):
 		fy += _pip_at.size.y + 12
-	_draw_feed(Rect2(rx, fy, rw, vp.y - fy - 34), tel)
-	var keys := "Click a car to look at it    ↑↓ choose car    ←→ or wheel filter feed    P / Esc close"
+	d["feed"] = Rect2(rx, fy, rw, vp.y - fy - 34)
+	var draws := {"timing": func(r: Rect2): _draw_timing(r, sim, tel), "weather": func(r: Rect2): _draw_weather(r, tel),
+		"car": func(r: Rect2): _draw_car(r, sim, tel), "feed": func(r: Rect2): _draw_feed(r, tel)}
+	for id in layout.draw_order(["timing", "weather", "car", "feed"]):
+		_in_panel(id, layout.place(id, d[id]), draws[id])
+	if _pip_on():
+		layout.place("pip", _pip_at)
+		_hits.append([_pip_at, "pip", null])
+		OnboardPip.draw(self, font, onboard, _pip_at, session, selected, cam_mode == 2)
+	layout.draw_handles(self, _hover, font)
+	if layout.customised():
+		var rb := Rect2(vp.x - 196, 14, 132, 32)
+		var hot := rb.has_point(_hover)
+		draw_rect(rb, Color(1, 1, 1, 0.14 if hot else 0.06))
+		draw_rect(rb, Color(1, 1, 1, 0.5 if hot else 0.25), false, 1.0)
+		_text(Vector2(rb.position.x, rb.position.y + 21), "Reset layout", 14, Color.WHITE if hot else DIM, HORIZONTAL_ALIGNMENT_CENTER, rb.size.x)
+		_hits.append([rb, "reset_layout", null])
+	var keys := "Click a car to look at it    ↑↓ choose car    ←→ or wheel filter feed    Drag a title bar to move, the corner to zoom    P / Esc close"
 	if _can_plan():
 		keys += "    Enter plan the stop"
 	if _cam_allowed():
@@ -297,7 +389,7 @@ func _draw_header(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 	_text(r.position + Vector2(150, 26), "%s   ·   Lap %d / %d   ·   %s" % [sim.track.display_name, lap,
 		sim.settings.laps, fmt_lap(sim.race_time).trim_suffix("0")], 18)
 	var f := tel.forecast
-	_text(r.position + Vector2(r.size.x - 580, 26), "%02d:%02d   %s   Air %d°   Track %d°   Wet %d%%" % [
+	_text(r.position + Vector2(r.size.x - 580 - (150.0 if layout.customised() else 0.0), 26), "%02d:%02d   %s   Air %d°   Track %d°   Wet %d%%" % [
 		int(f.time_of_day_h), int(fmod(f.time_of_day_h, 1.0) * 60.0), WeatherForecast.weather_label(f.weather),
 		int(f.ambient_c), int(f.track_c), int(f.wetness * 100.0)], 16, Color(0.75, 0.85, 1.0),
 		HORIZONTAL_ALIGNMENT_RIGHT, 520)
@@ -326,6 +418,8 @@ func _draw_timing(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 		var e := sim.entries[i]
 		var c := tel.cars[i]
 		var y := r.position.y + 32 + p * rh
+		if y + rh > r.end.y + 2:
+			break      # a panel made too short for the whole field
 		var row := Rect2(r.position.x + 2, y, r.size.x - 4, rh - 2)
 		if i == selected:
 			draw_rect(row, Color(1, 0.88, 0.35, 0.16))
@@ -384,53 +478,7 @@ func _draw_timing(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 
 func _draw_weather(r: Rect2, tel: RaceTelemetry) -> void:
 	_panel(r, "WEATHER RADAR")
-	var f := tel.forecast
-	var R := minf(r.size.y * 0.5 - 14, r.size.x * 0.28)
-	var rc := r.position + Vector2(R + 16, r.size.y * 0.5 + 6)
-	draw_circle(rc, R, Color(0.02, 0.08, 0.06))
-	for ring in [0.5, 1.0]:
-		draw_arc(rc, R * ring, 0, TAU, 48, Color(0.3, 1.0, 0.6, 0.25), 1.0)
-	var to_radar := func(p: Vector2) -> Vector2: return rc + (p - f.centre) / f.radar_range * R
-	for cell in f.radar_cells:
-		var cp: Vector2 = to_radar.call(cell["pos"])
-		var cr: float = cell["radius"] / f.radar_range * R
-		if cp.distance_to(rc) - cr > R:
-			continue
-		var col: Color
-		if cell["rain"] < 0.05:
-			col = Color(0.7, 0.75, 0.8, 0.12)
-		else:
-			var x: float = cell["rain"]
-			col = Color(0.2, 0.85, 0.3).lerp(Color(1.0, 0.9, 0.2), clampf(x * 1.6, 0.0, 1.0))
-			col = col.lerp(Color(1.0, 0.25, 0.2), clampf((x - 0.6) * 2.5, 0.0, 1.0))
-			col.a = 0.35
-		draw_circle(cp, minf(cr, R), col)
-	var pts := PackedVector2Array()
-	for p in _track_pts:
-		pts.append(to_radar.call(p))
-	draw_polyline(pts, Color(1, 1, 1, 0.9), 1.5)
-	draw_line(rc, rc + Vector2.from_angle(_sweep) * R, Color(0.4, 1.0, 0.6, 0.5), 1.5)
-	draw_arc(rc, R, 0, TAU, 64, Color(0.4, 1.0, 0.6, 0.5), 1.5)
-	# Wind: where the weather comes from.
-	var wa := rc - f.wind_dir * (R + 2)
-	draw_line(wa, wa + f.wind_dir * 16, Color(1, 1, 1, 0.7), 2.0)
-	_text(rc + Vector2(-R, R + 2), "outer ring ≈ %d min" % int(WeatherForecast.RADAR_LEAD_S / 60.0 * 1.2), 11, DIM)
-	# Forecast.
-	var tx := rc.x + R + 18
-	var tw := r.end.x - tx - 8
-	_text(Vector2(tx, r.position.y + 44), "Now: " + WeatherForecast.weather_label(f.weather), 17)
-	_text(Vector2(tx, r.position.y + 66), "Air %d°C  Track %d°C" % [int(f.ambient_c), int(f.track_c)], 14, DIM, HORIZONTAL_ALIGNMENT_LEFT, tw)
-	_text(Vector2(tx, r.position.y + 86), "Rain %d%%  Track wet %d%%" % [int(f.rain * 100.0), int(f.wetness * 100.0)], 14, DIM, HORIZONTAL_ALIGNMENT_LEFT, tw)
-	_text(Vector2(tx, r.position.y + 118), "FORECAST", 12, DIM)
-	if f.changes.is_empty():
-		_text(Vector2(tx, r.position.y + 140), f.summary(), 15, Color(0.75, 0.85, 1.0), HORIZONTAL_ALIGNMENT_LEFT, tw)
-	for n in mini(f.changes.size(), 4):
-		var ch: Dictionary = f.changes[n]
-		var y := r.position.y + 140 + n * 24
-		_text(Vector2(tx, y), WeatherForecast.weather_label(ch["weather"]), 15,
-			Color(0.5, 0.75, 1.0) if ch["rain"] > 0.05 else Color.WHITE, HORIZONTAL_ALIGNMENT_LEFT, tw * 0.45)
-		_text(Vector2(tx + tw * 0.45, y), WeatherForecast.eta_text(ch), 14, Color.WHITE, HORIZONTAL_ALIGNMENT_LEFT, tw * 0.35)
-		_text(Vector2(tx + tw * 0.8, y), "%d%%" % int(ch["confidence"] * 100.0), 14, DIM)
+	radar.draw(self, font, r, tel.forecast, _track_pts, session.sim.track.short_name, _hover, _hits)
 
 
 func _draw_car(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:

@@ -14,7 +14,7 @@ extends SubViewport
 
 enum View { FRONT, REAR }
 
-const MAX_PX := Vector2i(1280, 720)   ## render size cap (a 4K screen's PiP)
+const MAX_PX := Vector2i(1920, 1080)  ## render size cap (a 4K screen's PiP, or a full-screen spectator onboard at 1080p)
 const MIN_PX := Vector2i(160, 90)
 
 var world: WorldView
@@ -39,6 +39,9 @@ func setup(p_world: WorldView) -> void:
 	camera.fov = 62.0
 	camera.near = 0.1
 	camera.far = 2500.0
+	# No player highlight rings in the onboard picture: they're for the
+	# view from above.
+	camera.cull_mask &= ~CarView.HIGHLIGHT_LAYER
 	add_child(camera)
 	camera.current = true
 

@@ -1500,6 +1500,15 @@ func guide_line(i: int) -> Dictionary:
 		pts.append(route[k])
 		dist.append(GUIDE_LEAD + route_cum[k])
 	var box_d := GUIDE_LEAD + _box_d(i)
+	# A point right on the box, so the guide's speed comes down to 0 there
+	# (the route's points are ROUTE_STEP apart and could straddle it).
+	for k in range(1, pts.size()):
+		if dist[k] > box_d:
+			if dist[k] - box_d > 0.05 and box_d - dist[k - 1] > 0.05:
+				var f := (box_d - dist[k - 1]) / (dist[k] - dist[k - 1])
+				pts.insert(k, pts[k - 1].lerp(pts[k], f))
+				dist.insert(k, box_d)
+			break
 	# Near the box the line swings over from the fast lane onto the box
 	# (the garage side), and back out after it.
 	for k in pts.size():
