@@ -62,6 +62,7 @@ func _init() -> void:
 	test_race_start()
 	test_driving_aids()
 	test_active_pad()
+	test_pointer_hider()
 	test_hud_timing()
 	test_hud_layout()
 	test_graphics_effects()
@@ -3508,6 +3509,35 @@ func test_race_start() -> void:
 ## A second "controller" with an axis stuck off centre (a pedal set, a
 ## motion sensor, a virtual pad) must not steer or zoom: only the pad in use
 ## feeds the stick and trigger actions.
+func test_pointer_hider() -> void:
+	print("mouse pointer while driving")
+	var p := PointerHider.new()
+	p.step(1.0, true)
+	check(not p.hidden, "the pointer stays a moment after the race starts")
+	p.step(1.0, true)
+	check(p.hidden, "driving: the pointer hides when the mouse is left alone")
+	var wheel := InputEventMouseButton.new()
+	wheel.button_index = MOUSE_BUTTON_WHEEL_UP
+	wheel.pressed = true
+	p._input(wheel)
+	check(p.hidden, "zooming with the wheel keeps it hidden")
+	var jitter := InputEventMouseMotion.new()
+	jitter.relative = Vector2(1, 0)
+	p._input(jitter)
+	check(p.hidden, "a pixel of jitter keeps it hidden")
+	var move := InputEventMouseMotion.new()
+	move.relative = Vector2(20, 5)
+	p._input(move)
+	check(not p.hidden, "moving the mouse brings it back")
+	p.step(2.0, true)
+	check(p.hidden, "... and it hides again when the mouse stops")
+	p.step(0.1, false)
+	check(not p.hidden, "a menu, pit wall or crew job shows it straight away")
+	p.step(5.0, false)
+	check(not p.hidden, "... and keeps it while not driving")
+	p.free()
+
+
 func test_active_pad() -> void:
 	print("active controller")
 	if not InputMap.has_action("steer_right"):
