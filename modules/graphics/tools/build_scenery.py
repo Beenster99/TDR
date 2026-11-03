@@ -650,6 +650,29 @@ def has_elevation(track):
     return len(e.get("height_m", [])) == len(track["centerline"]) and len(track["centerline"]) > 0
 
 
+def circuit_band(track, extra):
+    """The road (each side's own width) plus `extra` metres, as polygons:
+    one quad per centre-line step, and the pit lane."""
+    from shapely.geometry import Polygon, LineString
+    cl = np.array(track["centerline"])
+    p, wl, wr = cl[:, :2], cl[:, 2], cl[:, 3]
+    d = np.roll(p, -1, 0) - np.roll(p, 1, 0)
+    d /= np.maximum(np.hypot(d[:, 0], d[:, 1]), 1e-9)[:, None]
+    nrm = np.stack([-d[:, 1], d[:, 0]], -1)
+    kerb = track.get("kerb_width_m", 1.0)
+    left = p - nrm * (wl + kerb + extra)[:, None]
+    right = p + nrm * (wr + kerb + extra)[:, None]
+    out = []
+    n = len(p)
+    for i in range(n):
+        j = (i + 1) % n
+        q = Polygon([left[i], left[j], right[j], right[i]])
+        out.append(q if q.is_valid else q.buffer(0))
+    if track.get("pit_lane"):
+        out.append(LineString(track["pit_lane"]["path"]).buffer(track["pit_lane"].get("width_m", 12.0) * 0.5 + 1.0))
+    return out
+
+
 def build(tid, cfg, cache, use_lidar, land_only=False):
     path = os.path.join(TRACKS, tid + ".json")
     track = json.load(open(path))
@@ -955,15 +978,17 @@ def build(tid, cfg, cache, use_lidar, land_only=False):
         if any("LIDAR" in x for x in old.get("sources", [])):
             lidar = True
 
-    # the circuit itself (and its pit lane) is the game's: keep it clear
-    from shapely.geometry import LineString
-    cl = np.array(track["centerline"])
-    hw = float(np.max(np.maximum(cl[:, 2], cl[:, 3]))) + track.get("kerb_width_m", 1.0)
-    band = [LineString(np.vstack([cl[:, :2], cl[:1, :2]])).buffer(hw, quad_segs=4)]
-    if track.get("pit_lane"):
-        band.append(LineString(track["pit_lane"]["path"]).buffer(track["pit_lane"].get("width_m", 12.0) * 0.5 + 1.0))
+    # The circuit, its kerbs and run-off (and the pit lane) are the game's own:
+    # keep that band clear, so no map gravel or tarmac shows beside them.
+    # Gravel traps and the circuit's own outline mapped near it are left out
+    # altogether (the game draws its own gravel; the map's sits a few metres
+    # off and would read as a stray line of gravel round the track).
     import shapely
-    land.erase(shapely.union_all(band), 100)
+    band = shapely.union_all(circuit_band(track, track.get("runoff_m", 30.0) + 3.0))
+    near = shapely.union_all(circuit_band(track, track.get("runoff_m", 30.0) + 40.0))
+    land.items = [it for it in land.items
+                  if not (it[2] in (KIND["sand"], KIND["raceway"]) and it[4].intersects(near))]
+    land.erase(band, 100)
 
     t0 = time.time()
     ground = land.encode()
