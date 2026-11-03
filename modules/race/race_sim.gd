@@ -287,7 +287,12 @@ func _refresh_track_position(c: CarState) -> void:
 	c.surface = track.surface_for(q)
 	c.in_joker = track.has_joker() and track.on_joker_route(c.pos, q, c.in_joker)
 	if c.in_joker:
-		c.track_s = track.joker_lap_s(track.project_joker(c.pos)["d"])
+		var jd: float = track.project_joker(c.pos)["d"]
+		c.track_s = track.joker_lap_s(jd)
+		c.dirt = track.joker_dirt_at(jd)
+	else:
+		# Loose dirt under a streamed car too (its tyre sounds and dust).
+		c.dirt = track.dirt_at(q["s"]) if c.surface <= TrackData.Surface.KERB else 0.0
 
 
 func _hold_cars_on_grid(inputs: Array) -> void:
