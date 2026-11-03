@@ -1,7 +1,7 @@
 {
   "id": "ui",
   "name": "UI",
-  "version": "2.5.0",
+  "version": "2.6.0",
   "status": "active",
   "summary": "Screens and overlays: main menu, lobby, race settings, the in-race HUD, and controller-friendly widgets (Stepper), and the pit wall (StrategistScreen: timing, gaps, pit windows, weather radar like a real rain radar over a map with range rings, cell movement, a past-and-forecast loop and the coming changes (WeatherRadar), team radio feed). Co-op pit wall roles (CrewConsole: pit crew and strategist panels around the zoomed-out 3D race, combined for 2 players) and quick team radio calls (TeamRadio). Intro screen (SplashScreen: key art and a GT3 pass-by), the main menu over a loop of race highlights (MenuBackground), the player's profile badge top right (ProfileBadge), and the driver's own HUD layout (HudLayout, saved in GameData.prefs[\"hud_layout\"]) with a minimal co-op driver layout (GameData.prefs[\"hud_layout_coop\"]) and its editor (HudEditor: move, resize, hide items with mouse and keyboard; F2 in a race or Settings > Gameplay over a preview race), and the driver's pit call menu (PitCallMenu: tyres, which tyres, wings, fuel, repairs when calling a stop in single player) and the pit lane guide cues on the HUD, the in-race pause menu (PauseMenu: Esc / Start; resume, restart, settings with race and car settings locked, quit to menu or desktop; an overlay online, host-only restart), and Settings (SettingsScreen: Gameplay, Controller with rebindable keys and buttons, Graphics, Sound, Garage, Debug, built from GameData.settings_catalog; SettingsRuntime applies them).",
   "depends": {
@@ -44,7 +44,8 @@
     "CarPreview",
     "TrackMap",
     "PauseOptions",
+    "PanelLayout",
     "WeatherRadar"
   ],
-  "notes": "Main menu scene: main_menu.tscn. The single race page and the host lobby remember their last race settings per race type (GameData.prefs[\"race_memory\"]; check: tests/race_memory_check.tscn). SetupScreen: the controller-friendly car setup screen; SetupStore saves setups per car per track in user://setups/. First scene: splash.tscn, which goes on to main_menu.tscn. Menu media in media/ (splash.jpg, highlights.ogv; tools/record_highlights.sh films the highlights). PitPlanner: the strategist's pit stop planner (plan view of the car, per-tyre compound and pressure, front/rear downforce, fuel, repairs, driver change, box call; queued, then Send gives the crew the plan and radios it to the driver as a code pit_plan message with lines). CrewConsole, StrategistScreen and TeamRadio take mouse and keyboard first."
+  "notes": "Main menu scene: main_menu.tscn. The single race page and the host lobby remember their last race settings per race type (GameData.prefs[\"race_memory\"]; check: tests/race_memory_check.tscn). SetupScreen: the controller-friendly car setup screen; SetupStore saves setups per car per track in user://setups/. First scene: splash.tscn, which goes on to main_menu.tscn. Menu media in media/ (splash.jpg, highlights.ogv; tools/record_highlights.sh films the highlights). PitPlanner: the strategist's pit stop planner (plan view of the car, per-tyre compound and pressure, front/rear downforce, fuel, repairs, driver change, box call; queued, then Send gives the crew the plan and radios it to the driver as a code pit_plan message with lines). CrewConsole, StrategistScreen and TeamRadio take mouse and keyboard first. The panels on CrewConsole and StrategistScreen move, zoom and resize by dragging (PanelLayout: title bar moves, bottom right grip zooms the panel with its text, 60-200 %, right and bottom edges resize, snapping to edges and each other), saved in GameData.prefs[\"pit_wall_layout\"] per screen; Reset layout in the header puts them back."
 }
