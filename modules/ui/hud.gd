@@ -202,6 +202,7 @@ func item_shown(id: String) -> bool:
 		return false
 	match id:
 		"pit": return sim.pits.enabled and _pit_panel_height(me) > 0.0
+		"hint": return not sim.settings.is_derby()   # no pit wall in a demolition derby
 		"damage": return sim.damage_level != CarDamage.Level.OFF
 		"flags": return _flag_lines(me)[0] != "" or _flag_lines(me)[1] != ""
 		"radio": return radio_time > 0.0 and not radio_msg.is_empty()

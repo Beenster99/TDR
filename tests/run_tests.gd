@@ -406,6 +406,39 @@ func test_derby() -> void:
 		"derby race ends: %d contacts, %d jumps, %.1f of bodywork bent, retired %s (%.0f s)" % [hits, flights, body, retired, sim.race_time])
 	check(not sim.race_control.safety_car_active() and sim.race_control.recoveries.is_empty(),
 		"no safety car or recovery trucks in a derby (wrecks stay put)")
+	check(sim.race_control.yellows.is_empty() and sim.race_control.marshal_jobs.is_empty()
+		and sim.race_control.mode == RaceControl.Mode.GREEN and not sim.pits.enabled,
+		"no yellow flags, VSC, marshals or pit stops in a derby")
+	# Small arenas, a tight grid, tails that step out on dirt.
+	var longest := 0.0
+	for id in arenas:
+		longest = maxf(longest, TrackCatalog.load_track(id).length)
+	var g15: Dictionary = track.grid_slot(15)
+	check(longest <= 600.0 and track.length - float(g15["s"]) < 80.0 and s.max_cars() == RaceSettings.MAX_CARS_DERBY,
+		"small arenas (longest %.0f m), a 16-car grid in %.0f m" % [longest, track.length - float(g15["s"])])
+	var loose := true
+	for id in ids:
+		loose = loose and d["cars"][id].dirt_rear_grip < 0.8
+	check(loose, "derby cars' tails step out on dirt (less rear grip there)")
+	# No pit stops: a wreck drives on until its engine boils dry.
+	var wreck := CarState.new()
+	wreck.pos = track.position_at(20.0)
+	wreck.heading = track.heading_at(20.0)
+	wreck.body_damage = PackedFloat64Array([0.9, 0.8, 0.7, 0.7])
+	wreck.damage_level = CarDamage.Level.FULL
+	wreck.track_idx = track.index_at(20.0)
+	var wdef: CarDefinition = d["cars"]["derby_brannock_sovereign"]
+	var wenv := SimEnvironment.create({}, {}, 1)
+	var go := CarInput.new()
+	go.throttle = 0.6
+	var ticks := 0
+	var moved := 0.0
+	while not CarDamage.engine_failed(wreck) and ticks < 120 * 120:
+		CarPhysics.step(wreck, go, wdef, d["tyres"][wdef.tyre_compound_id], wenv, track, 1.0 / 120.0, 0.0, [], 0)
+		moved = maxf(moved, wreck.vel.length())
+		ticks += 1
+	check(CarDamage.engine_failed(wreck) and ticks > 120 * 20 and moved > 5.0,
+		"a wreck still drives (%.0f km/h) until its engine boils dry (%.0f s)" % [moved * 3.6, ticks / 120.0])
 	# Last car standing wins.
 	var s2 := RaceSettings.new()
 	s2.track_id = "derby_rustbelt_eight"

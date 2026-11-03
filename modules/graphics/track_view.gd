@@ -67,6 +67,8 @@ func setup(p_track: TrackData, p_env: SimEnvironment = null) -> void:
 	_build_road()
 	_build_walls()
 	_build_markings()
+	if not track.jumps.is_empty():
+		_build_jump_markings()
 	if track.has_pit_lane():
 		_build_pit_lane()
 	if track.has_joker():
@@ -711,6 +713,78 @@ func _build_markings() -> void:
 	mat.vertex_color_use_as_albedo = true
 	mat.roughness = 0.6
 	_mesh_node(st, mat, "Markings")
+
+
+## Demolition Derby ramps, painted so they read from above: yellow-and-black
+## chevrons up the take-off ramp pointing the way you jump, a hazard stripe
+## along the lip, and white chevrons down the landing.
+const JUMP_PAINT_LIFT := 0.05
+func _build_jump_markings() -> void:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var yellow := Color(0.98, 0.78, 0.08)
+	var black := Color(0.06, 0.06, 0.06)
+	var white := Color(0.93, 0.93, 0.9)
+	for j in track.jumps:
+		var lip := float(j["s"])
+		var up := float(j["up_m"])
+		var top := float(j["top_m"])
+		var down := float(j["down_m"])
+		var k := track.index_at(lip)
+		var wl: float = track.width_left[k] - 0.4
+		var wr: float = track.width_right[k] - 0.4
+		# Take-off ramp: black base with yellow chevrons.
+		_ramp_paint(st, lip - up, lip, -wl, wr, black)
+		var n := maxi(int(up / 2.2), 2)
+		for c in n:
+			var s0 := lip - up + (c + 0.25) * up / n
+			_chevron(st, s0, 0.9, minf(wl, wr) * 0.45, -wl, wr, yellow)
+		# The lip: yellow and black hazard blocks across the road.
+		var blocks := int((wl + wr) / 1.2)
+		for b in blocks:
+			var o0 := -wl + b * (wl + wr) / blocks
+			var o1 := -wl + (b + 1) * (wl + wr) / blocks
+			_ramp_paint(st, lip - 0.15, lip + 0.75, o0, o1, yellow if b % 2 == 0 else black, 0.004)
+		# Landing ramp: white chevrons on the way down.
+		var m := maxi(int(down / 3.5), 2)
+		for c in m:
+			var s0 := lip + top + (c + 0.3) * down / m
+			_chevron(st, s0, 0.6, minf(wl, wr) * 0.45, -wl, wr, white)
+	var mat := StandardMaterial3D.new()
+	mat.vertex_color_use_as_albedo = true
+	mat.roughness = 0.7
+	_mesh_node(st, mat, "JumpMarkings")
+
+
+## A painted patch on the road surface from s0 to s1 and across from off0 to
+## off1, following the ramp's slope (cut into 1 m steps along the road).
+func _ramp_paint(st: SurfaceTool, s0: float, s1: float, off0: float, off1: float, col: Color, extra := 0.0) -> void:
+	var steps := maxi(int(ceil((s1 - s0) / 1.0)), 1)
+	for i in steps:
+		var a := s0 + (s1 - s0) * i / steps
+		var b := s0 + (s1 - s0) * (i + 1) / steps
+		_paint_tri(st, [[a, off0], [b, off0], [b, off1]], col, extra)
+		_paint_tri(st, [[a, off0], [b, off1], [a, off1]], col, extra)
+
+
+## One chevron (a V pointing the race direction): two bands from the road's
+## edges, band thick along the road, meeting at the centre reach metres ahead.
+func _chevron(st: SurfaceTool, s0: float, band: float, reach: float, off_l: float, off_r: float, col: Color) -> void:
+	for side in [off_l, off_r]:
+		var pts := [[s0, side], [s0 + band, side], [s0 + reach + band, 0.0], [s0 + reach, 0.0]]
+		_paint_tri(st, [pts[0], pts[1], pts[2]], col, 0.008)
+		_paint_tri(st, [pts[0], pts[2], pts[3]], col, 0.008)
+
+
+func _paint_tri(st: SurfaceTool, pts: Array, col: Color, extra: float) -> void:
+	var vs := []
+	for p in pts:
+		var at := track.position_at(float(p[0]), float(p[1]))
+		vs.append(Vector3(at.x, height(float(p[0]), float(p[1])) + JUMP_PAINT_LIFT + extra, at.y))
+	st.set_color(col)
+	st.set_normal(Vector3.UP)
+	for v in [vs[0], vs[1], vs[2], vs[0], vs[2], vs[1]]:
+		st.add_vertex(v)
 
 
 func _flat(st: SurfaceTool, a: Vector2, b: Vector2, c: Vector2, d: Vector2, y: float, col: Color) -> void:

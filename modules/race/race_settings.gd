@@ -20,6 +20,8 @@ var joker_laps: int = 1
 const JOKER_MISSED_PENALTY_S := 30.0
 ## Most cars on a rallycross grid (the circuits are about a kilometre long).
 const MAX_CARS_RALLYCROSS := 12
+## Most cars in a Demolition Derby (the arenas are small, 2 abreast on the grid).
+const MAX_CARS_DERBY := 16
 var laps: int = 3
 var ai_count: int = 5
 ## Most cars on the grid (players + AI): one class, or several classes mixed.
@@ -89,6 +91,8 @@ func max_cars() -> int:
 static func max_cars_for(p_class: String, p_discipline: String = DISCIPLINE_CIRCUIT) -> int:
 	if p_discipline == DISCIPLINE_RALLYCROSS:
 		return MAX_CARS_RALLYCROSS
+	if p_discipline == DISCIPLINE_DERBY:
+		return MAX_CARS_DERBY
 	return MAX_CARS_MULTI_CLASS if p_class == CLASS_MULTI else MAX_CARS_SINGLE_CLASS
 
 

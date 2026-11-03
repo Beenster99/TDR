@@ -631,7 +631,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event.is_action_pressed("hud_edit") and session.local_car >= 0 and not _results_shown and not pit_wall.visible:
 		hud.open_editor()
-	elif event.is_action_pressed("strategy_screen") and not _results_shown:
+	elif event.is_action_pressed("strategy_screen") and not _results_shown and not session.sim.settings.is_derby():
 		pit_wall.toggle()
 	elif event is InputEventMouseButton and event.pressed:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
@@ -772,6 +772,9 @@ func _on_events(evs: Array) -> void:
 			"joker":
 				if e["car"] == session.local_car:
 					hud.flash("JOKER LAP TAKEN", 2.0)
+			"retired":
+				if e["car"] == session.local_car:
+					hud.flash({"engine": "ENGINE GONE: YOU'RE OUT", "stopped": "YOUR CAR WON'T MOVE: YOU'RE OUT"}.get(str(e.get("reason", "")), "RETIRED"), 4.0)
 
 
 func _on_race_finished() -> void:

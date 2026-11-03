@@ -62,6 +62,10 @@ var _incident_cooldown := PackedFloat64Array()
 ## Damage last seen per car [body total, punctures bitmask, engine failed,
 ## gearbox failed], to report what changed on cars simulated elsewhere.
 var _seen_damage: Array = []
+## Demolition Derby: seconds each car has sat still (see DERBY_STILL_OUT_S).
+var _derby_still: PackedFloat64Array = []
+const DERBY_STILL_SPEED := 1.0
+const DERBY_STILL_OUT_S := 15.0
 ## Events posted from outside the sim between steps (AI radio calls and
 ## strategy lines, later pit-wall commands). They join `events` at the start
 ## of the next step, so they are replicated like every other event.
@@ -106,6 +110,7 @@ func _init(p_settings: RaceSettings, p_track: TrackData, p_entries: Array[RaceEn
 		external.append(0)
 		_incident_cooldown.append(0.0)
 		_seen_damage.append([0.0, 0, false, false])
+		_derby_still.append(0.0)
 		if e.pit.is_empty():
 			e.pit = PitRules.new_state(compound.id)
 	pits = PitRules.new(self)
@@ -707,9 +712,14 @@ func _apply_damage() -> void:
 		if eng and not e.dnf and not e.finished:
 			e.dnf = true
 			events.append({"type": "retired", "car": i, "reason": "engine"})
-		elif settings.is_derby() and CarDamage.is_wrecked(c) and not e.dnf and not e.finished:
-			e.dnf = true
-			events.append({"type": "retired", "car": i, "reason": "wrecked"})
+		elif settings.is_derby() and not e.dnf and not e.finished and phase == Phase.RACING:
+			# Demolition Derby: you drive the wreck until it won't drive any
+			# more. A car that can't (or won't) move for DERBY_STILL_OUT_S is out.
+			var moving := c.vel.length() > DERBY_STILL_SPEED or c.air_h > 0.0
+			_derby_still[i] = 0.0 if moving else _derby_still[i] + TICK_DT
+			if _derby_still[i] >= DERBY_STILL_OUT_S:
+				e.dnf = true
+				events.append({"type": "retired", "car": i, "reason": "stopped"})
 
 
 func _damage_hit(i: int, dv: float, local: Vector2, salt: int) -> void:

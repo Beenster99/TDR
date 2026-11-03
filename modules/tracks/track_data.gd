@@ -354,13 +354,20 @@ func index_at(s: float) -> int:
 	return lo
 
 
-## Grid slot i (0 = pole). Two-wide staggered grid behind the line.
+## Grid slot i (0 = pole). Two-wide staggered grid behind the line; in a
+## Demolition Derby arena two abreast in tight rows (the arenas are small).
 func grid_slot(i: int) -> Dictionary:
 	var s := length - 12.0 - i * 8.0
+	if discipline == "derby":
+		s = length - 10.0 - floorf(i * 0.5) * DERBY_ROW_M
 	var side := -1.0 if i % 2 == 0 else 1.0
 	var w := minf(width_left[index_at(s)], width_right[index_at(s)])
 	var offset := side * minf(3.0, w * 0.45)
 	return {"pos": position_at(s, offset), "heading": heading_at(s), "s": s}
+
+
+## Metres between rows on a Demolition Derby grid (two cars a row).
+const DERBY_ROW_M := 7.5
 
 
 # --- Loose surface (rallycross dirt sections) --------------------------------

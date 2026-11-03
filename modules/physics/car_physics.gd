@@ -252,6 +252,8 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 		p_heat[i] = t_c.pressure_heat_factor(p_hot)
 		if i >= 2:
 			mu *= d.rear_grip * (1.0 - 0.3 * s.damage_suspension) * mech_r
+			if s.dirt > 0.0:   # loose dirt: some cars' tails step out (derby cars a lot)
+				mu *= lerpf(1.0, d.dirt_rear_grip, s.dirt)
 		else:
 			mu *= d.front_grip * (1.0 - 0.15 * s.damage_suspension) * mech_f
 		if s.puncture[i] > 0.5:
@@ -312,6 +314,10 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 				# A damaged engine gets worse the harder it is worked.
 				var load := throttle * clampf(s.rpm / d.redline_rpm, 0.0, 1.0)
 				s.damage_engine = minf(s.damage_engine + CarDamage.ENGINE_LEAK_RATE * s.damage_engine * load * dt, 1.0)
+			if track.discipline == "derby" and CarDamage.is_wrecked(s):
+				# Demolition Derby: a wreck drives on until the engine boils
+				# dry (radiator and oil lines gone), quicker when worked hard.
+				s.damage_engine = minf(s.damage_engine + CarDamage.WRECK_BOIL_RATE * (0.4 + 0.6 * throttle) * dt, 1.0)
 		drive_force = torque * ratio * d.drivetrain_efficiency / d.wheel_radius
 		power_kw = torque * s.rpm * TAU / 60.0 / 1000.0
 		if throttle < 0.05 and vx > 1.0:
