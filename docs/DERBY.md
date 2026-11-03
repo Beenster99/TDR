@@ -30,14 +30,17 @@ every hit.
 
 | Arena | Length | Crossovers | Jumps | Dirt |
 |---|---|---|---|---|
-| Rustbelt Figure Eight | 336 m | 1 | 1 | 28% |
-| Scrapyard Knot | 408 m | 3 | 2 | 59% |
-| Harbour Bowtie | 458 m | 1 | 1 | 22% |
-| Quarry Pretzel | 568 m | 2 | 3 | 27% |
-| Mudflat Infinity | 398 m | 1 | 2 | 69% |
+| Rustbelt Figure Eight | 504 m | 1 | 1 | 31% |
+| Scrapyard Knot | 612 m | 3 | 2 | 66% |
+| Harbour Bowtie | 686 m | 1 | 1 | 22% |
+| Quarry Pretzel | 852 m | 2 | 3 | 25% |
+| Mudflat Infinity | 598 m | 1 | 2 | 75% |
 
-The arenas are small and 11-12 m wide so the field keeps running into
-itself.
+The arenas are compact so the field keeps running into itself, but not so
+tight that the AI loses its way: each layout is drawn at `SCALE` (1.5x) of
+its curve and the road is 16.5-18 m wide. There is no gravel or run-off: the
+road (tarmac or dirt) runs right up to the walls (`runoff_m` 1.0, and
+`TrackData.surface_for` counts that strip as road in a derby).
 
 Crossovers are flat: both roads meet at the same height, so cars T-bone
 each other there. `TrackData.crossovers` lists them; the second pass is drawn
@@ -50,9 +53,12 @@ ramp, a yellow and black hazard stripe on the lip, white chevrons down the
 landing. No braking boards in the arenas.
 
 Dirt (`TrackData.dirt_at`, shared with rallycross) grips less (the tyre's
-`dirt_grip`) and on derby cars the rear loses much more than the front
-(`chassis.dirt_rear_grip`: 0.6 rear-drive, 0.68 four-wheel drive, 0.74
-front-drive), so they slide their tails out on the dirt.
+`dirt_grip`; derby cars run the `derby_tyre`, 0.86 on dirt, so they still get
+off the line) and on derby cars the rear loses much more sideways grip than
+the front (`chassis.dirt_rear_grip`: 0.55 rear-drive, 0.63 four-wheel drive,
+0.7 front-drive), so they slide their tails out on the dirt. That loss is
+sideways only: the driven wheels keep their traction, so a launch on dirt is
+only about 0.7 s slower to 40 km/h than on tarmac.
 
 ## Jumps and flying (`CarPhysics`)
 

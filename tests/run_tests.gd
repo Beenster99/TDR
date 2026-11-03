@@ -420,12 +420,40 @@ func test_derby() -> void:
 	for id in arenas:
 		longest = maxf(longest, TrackCatalog.load_track(id).length)
 	var g15: Dictionary = track.grid_slot(15)
-	check(longest <= 600.0 and track.length - float(g15["s"]) < 80.0 and s.max_cars() == RaceSettings.MAX_CARS_DERBY,
-		"small arenas (longest %.0f m), a 16-car grid in %.0f m" % [longest, track.length - float(g15["s"])])
+	check(longest >= 450.0 and longest <= 900.0 and track.length - float(g15["s"]) < 80.0 and s.max_cars() == RaceSettings.MAX_CARS_DERBY,
+		"compact arenas (longest %.0f m), a 16-car grid in %.0f m" % [longest, track.length - float(g15["s"])])
 	var loose := true
 	for id in ids:
 		loose = loose and d["cars"][id].dirt_rear_grip < 0.8
 	check(loose, "derby cars' tails step out on dirt (less rear grip there)")
+	# ...but the driven wheels still dig in: a launch on dirt is only a bit
+	# slower than on tarmac (rear-drive and front-drive alike).
+	var mud := TrackCatalog.load_track("derby_mudflat_infinity")
+	var launch_ok := true
+	var launch_txt := ""
+	for id in ["derby_brannock_sovereign", "derby_tanaga_comet"]:
+		var ld: CarDefinition = d["cars"][id]
+		var times: Array = []
+		for at in [5.0, 250.0]:
+			var lc := CarState.new()
+			lc.pos = mud.position_at(at)
+			lc.heading = mud.heading_at(at)
+			lc.track_idx = mud.index_at(at)
+			var lenv := SimEnvironment.create({}, {}, 1)
+			var lin := CarInput.new()
+			lin.throttle = 1.0
+			var k := 0
+			while lc.speed() < 40.0 / 3.6 and k < 240 * 10:
+				CarPhysics.step(lc, lin, ld, d["tyres"][ld.tyre_compound_id], lenv, mud, 1.0 / 240.0, 0.0, [], 0)
+				k += 1
+			times.append(k / 240.0)
+		launch_ok = launch_ok and mud.dirt_at(250.0) > 0.9 and times[1] < times[0] * 1.4
+		launch_txt += " %s %.1f/%.1f s" % [id.trim_prefix("derby_"), times[0], times[1]]
+	check(launch_ok, "derby cars get off the line on dirt (0-40 km/h tarmac/dirt:%s)" % launch_txt)
+	# The road runs right up to the arena walls: no gravel or run-off strip.
+	var edge_q := mud.project(mud.position_at(250.0) + mud.right_normal(mud.index_at(250.0)) * (mud.width_right[mud.index_at(250.0)] + mud.runoff * 0.8))
+	check(mud.surface_for(edge_q) == TrackData.Surface.TRACK and mud.runoff <= 1.5,
+		"derby road runs up to the walls")
 	# No pit stops: a wreck drives on until its engine boils dry.
 	var wreck := CarState.new()
 	wreck.pos = track.position_at(20.0)

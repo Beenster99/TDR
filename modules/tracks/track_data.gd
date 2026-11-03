@@ -314,8 +314,8 @@ func surface_for(q: Dictionary) -> int:
 	var off: float = q["offset"]
 	var edge: float = q["w_right"] if off >= 0.0 else q["w_left"]
 	var a := absf(off)
-	if a <= edge:
-		return TrackData.Surface.TRACK
+	if a <= edge or (discipline == "derby" and a <= edge + runoff):
+		return TrackData.Surface.TRACK   # a derby arena's road runs right up to the walls
 	if q.has("pos") and in_pit_lane(q["pos"]):
 		return TrackData.Surface.TRACK
 	if q.has("pos") and has_joker() and _joker_bounds.grow(JOKER_VERGE_M).has_point(q["pos"]):
