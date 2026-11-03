@@ -33,6 +33,9 @@ const DEFAULT_DIFFICULTY := 0.75
 const AERO_TRUST := 0.9      ## share of the downforce the profile counts on
 const OFF_LINE_TROUBLE := 4.0
 const BRAKE_TURNING := 0.35  ## share of braking grip left at the cornering limit
+const ALONGSIDE_GAP := 1.1   ## clear metres kept between our side and a car alongside
+const DEFEND_RATE := 2.5     ## m/s: fastest sideways move when covering a line
+const START_HOLD_MAX_M := 1200.0  ## opening lap: furthest the grid lanes are held
 
 ## What the driver is doing right now (for HUD / debugging).
 enum Mood { RACING, ATTACKING, DEFENDING, YIELDING, MISTAKE, RECOVERING }
@@ -78,6 +81,11 @@ var _profile_dirty := false
 var _profile_age := 0
 
 var lateral_bias: float = 0.0   ## offset from the line (m, + right)
+## Test hook: drive as if alone on track (stands in for a human who holds
+## their own line whatever the cars around them do).
+var ignore_traffic := false
+## Test hook: when set (not NAN), hold this offset from the line (m, + right).
+var hold_bias := NAN
 var speed_noise: float = 0.0
 var _block: int = -1
 var _block_trouble := false
@@ -94,6 +102,15 @@ var _defend_side := 0
 var _defend_from := -1
 var _defend_timer := 0.0
 var _defend_decided := -1
+## Standing start: the lateral spot on the track the car started from (held
+## until the braking zone of the first corner, so the field races side by
+## side to turn 1 instead of filing onto the racing line), whether this
+## driver floors it off the line, and the launch throttle a careful starter
+## is feeling for.
+var _start_lat := NAN
+var _start_hold := false
+var _launch_hot := false
+var _launch_thr := 0.9
 var _mistake_kind := ""
 var _mistake_until := -1
 var _mistake_side := 0
@@ -467,6 +484,14 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 	if sim.phase == RaceSim.Phase.COUNTDOWN:
 		stuck_idx = idx
 		stuck_time = 0.0
+		if is_nan(_start_lat):
+			_start_lat = float(sim.track.project(car.pos, -1)["offset"])
+			lateral_bias = (car.pos - line[idx]).dot(line_right[idx])  # start in our grid lane
+			_start_hold = true
+			# Aggressive starters floor it and spin the tyres; the rest feel
+			# for the grip. Always the same for the same driver and seed.
+			_launch_hot = rng.randf() < 0.15 + 0.8 * profile.aggression * profile.aggression
+			_launch_thr = 0.9
 		return inp
 
 	# --- Stuck recovery: reverse out, then carry on. ---
@@ -527,7 +552,7 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 	var ram := -1
 	var ram_lx := INF
 	for j in sim.cars.size():
-		if j == me:
+		if j == me or ignore_traffic:
 			continue
 		var o := sim.cars[j]
 		var rel := o.pos - car.pos
@@ -541,8 +566,13 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 			continue
 		var o_v := o.vel.dot(fwd)
 		var lapped_by := sim.entries[j].distance > my_dist + sim.track.length * 0.5
+		# Overlapping (nose level with our rear wheels or further up) and off
+		# to one side: alongside, even if mostly behind. Racing room is
+		# owed from the first bit of overlap.
+		var overlap := not derby and lx < o_len * 0.9 and lx > -o_len - 0.5 \
+			and absf(ly) > (half_w + o_half) * 0.7
 		# Cars behind: pressure, defending, letting leaders by.
-		if lx < -o_len * 0.6:
+		if lx < -o_len * 0.6 and not overlap:
 			if lx > behind_lx and lx > -30.0:
 				behind = j
 				behind_lx = lx
@@ -557,7 +587,7 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 		elif lx < o_len * 0.9:
 			pressure = 1.0
 			var away := -signf(ly) if absf(ly) > 0.05 else (1.0 if me < j else -1.0)
-			alongside.append([_line_offset(o.pos, idx), away, half_w + o_half + 1.1, lx])
+			alongside.append([_line_offset(o.pos, idx), away, half_w + o_half + ALONGSIDE_GAP, lx])
 		# Ahead.
 		else:
 			if lx < ahead_lx and absf(ly) < half_w + o_half + 2.5:
@@ -568,7 +598,9 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 				ram_lx = lx
 			if absf(ly) < half_w + o_half + 0.4 and not (derby and not sim.entries[j].dnf):
 				var gap := 3.0 + speed * lerpf(0.32, 0.16, p.aggression)
-				if sim.entries[me].laps_done == 0:
+				if _start_hold and o_v > speed - 1.0:
+					gap = 2.0 + speed * 0.12  # off the line: everyone goes together, nose to tail
+				elif sim.entries[me].laps_done == 0:
 					gap *= 1.5  # opening lap: brake a little earlier in the pack
 				if _pass_side != 0 and _pass_target == j:
 					gap *= 0.6
@@ -671,13 +703,22 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 	if behind >= 0 and not cool_down and not yielding:
 		var b := sim.cars[behind]
 		var closing_b := b.vel.dot(fwd) - speed
+		# Where the attacker is (+ = on our right), relative to us.
+		var b_side := (b.pos - car.pos).dot(rgt)
+		var b_committed := corner_dir != 0 and b_side * corner_dir > half_w
 		if _defend_decided != behind:
 			_defend_decided = behind
 			var chance := p.defending * lerpf(0.4, 0.9, p.aggression)
-			if rng.randf() < chance and corner_dir != 0:
+			# One move, made before the attacker commits: never across a car
+			# that is already on that side.
+			if rng.randf() < chance and corner_dir != 0 and not b_committed:
 				_defend_side = corner_dir
 				_defend_from = behind
 				_defend_timer = 3.0
+		# The attacker has pulled out to the side we were covering and is
+		# close: the move is over, leave them the room.
+		if _defend_from == behind and b_side * _defend_side > half_w and behind_lx > -sim.defs[behind].length * 2.0:
+			_defend_timer = 0.0
 		if _defend_from == behind and _defend_timer > 0.0 and behind_lx > -18.0 and closing_b > -2.0:
 			# No moving under braking: only commit while the corner is still ahead.
 			if target_speed[(idx + 10) % n] > speed * 0.85 or absf(lateral_bias) > 0.3:
@@ -687,6 +728,19 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 	else:
 		_defend_decided = -1
 		_defend_from = -1
+
+	# Opening lap: hold the grid lane down to the first corner, then funnel in.
+	if _start_hold:
+		var brake_soon := false
+		for k in range(1, 3 + int(speed * 2.5 / SPACING)):
+			if target_speed[(idx + k) % n] < speed * 0.9:
+				brake_soon = true
+				break
+		if sim.entries[me].laps_done > 0 or brake_soon or car.surface >= TrackData.Surface.GRASS \
+				or sim.entries[me].distance > START_HOLD_MAX_M or rc.mode != RaceControl.Mode.GREEN:
+			_start_hold = false
+		elif _pass_target < 0:
+			want_bias = my_off + (_start_lat - car.lateral_offset)
 
 	# Let a leader through: move away from their line and lift a little.
 	var yield_scale := 1.0
@@ -703,11 +757,27 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 	if _mistake_kind == "wide" and _mistake_until >= 0:
 		want_bias = _mistake_side * minf(_room(_mistake_side, idx) + 1.5, 3.5)
 
+	if not is_nan(hold_bias):
+		want_bias = hold_bias
+
 	# Racing room: never move into a car alongside. If there is no room left
 	# on our side, the car further back lifts and drops in behind.
 	var squeezed := false
+	var look := 5.0 + 0.42 * speed
+	var aim := (idx + int(look / SPACING)) % n
+	# How far the line moves across the track (+ = right) between here and
+	# the steering aim point. A car alongside holds its piece of track, so
+	# when the line sweeps towards it (turn-in, apex, exit) we must not
+	# follow the line into it: keep the gap at the aim point too.
+	var sweep := ((room_left[aim] - room_right[aim]) - (room_left[idx] - room_right[idx])) * 0.5
 	for a in alongside:
 		var keep: float = a[0] + a[1] * a[2]
+		if derby:
+			pass  # Demolition Derby: contact is the point
+		elif a[1] < 0.0:
+			keep -= maxf(sweep, 0.0)
+		else:
+			keep -= minf(sweep, 0.0)
 		if a[1] > 0.0:
 			want_bias = maxf(want_bias, keep)
 		else:
@@ -715,8 +785,12 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 		if (a[1] > 0.0 and keep > room_right[idx]) or (a[1] < 0.0 and -keep > room_left[idx]):
 			if a[3] > 0.0:
 				squeezed = true
-	want_bias = clampf(want_bias, -room_left[idx], room_right[idx])
+	# Room here and where we steer to: an attack out wide on a corner exit
+	# must not run us off where the line itself goes out to the edge.
+	want_bias = clampf(want_bias, -minf(room_left[idx], room_left[aim]), minf(room_right[idx], room_right[aim]))
 	var bias_rate := lerpf(2.5, 4.5, p.aggression)
+	if mood == Mood.DEFENDING:
+		bias_rate = minf(bias_rate, DEFEND_RATE)  # a steady move, not a chop
 	if not alongside.is_empty():
 		bias_rate = 6.0
 	lateral_bias = move_toward(lateral_bias, want_bias, bias_rate * RaceSim.TICK_DT)
@@ -726,8 +800,6 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 		_block_clean = false
 
 	# --- Steering: pure pursuit on the racing line (+ offset). ---
-	var look := 5.0 + 0.42 * speed
-	var aim := (idx + int(look / SPACING)) % n
 	var target := line[aim] + line_right[aim] * clampf(lateral_bias, -room_left[aim], room_right[aim])
 	var local := target - car.pos
 	var lx := local.dot(fwd)
@@ -785,7 +857,15 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 	if cool_down:
 		v_target = minf(v_target, 35.0)
 	var err := v_target - speed
-	if err > 0.0:
+	var launching := _start_hold and speed < CarPhysics.LAUNCH_SPEED and car.gear == 1 and err > 0.0
+	if launching:
+		# Off the line: hot starters keep it floored through the wheelspin
+		# and lose a little; careful ones back off as soon as it spins.
+		inp.throttle = clampf(0.35 + err * 0.4, 0.0, 1.0)
+		if not _launch_hot:
+			_launch_thr = clampf(_launch_thr + (-2.0 if car.wheelspin else 0.6) * RaceSim.TICK_DT, 0.5, 1.0)
+			inp.throttle = minf(inp.throttle, _launch_thr)
+	elif err > 0.0:
 		inp.throttle = clampf(0.35 + err * 0.4, 0.0, 1.0)
 		# Slower drivers are more patient with the throttle out of corners.
 		if absf(curv[idx]) > 0.008:

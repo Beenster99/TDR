@@ -7,7 +7,7 @@ when a co-op driver takes the wheel). AI cars never use them.
 
 | Setting (prefs key) | Values | What it does |
 |---|---|---|
-| Driving help (`driving_help`) | 2 full, 1 traction + ABS, 0 off | Traction control, ABS and the stability assist (catches slides, counter-steer, keeps the front tyres near their best slip angle). |
+| Driving help (`driving_help`) | 2 full, 1 traction + ABS, 0 off | Traction control, ABS and the stability assist (catches slides, counter-steer, keeps the front tyres near their best slip angle). Off the line (below 43 km/h) traction control lets the tyres spin when you floor it (up to 15% over the grip, fading out by 43 km/h): feather the throttle for the best start. |
 | Braking zones (`aid_braking_zones`) | on (default) / off | Colours the driving line: green = your speed is fine, yellow = lift, get ready, red = brake now. With the racing line off, only the braking zones show. |
 | Driving line (`aid_driving_line`) | 2 full (default), 1 corners only, 0 off | Full: the driving line along the whole lap ahead (320 m), soft at the edges. Corners only: just from the braking zone through each corner to its exit, hidden on the straights (a red "brake now" still shows wherever you are too fast). Replaces the old on/off `aid_racing_line`; a saved "off" loads as Off. |
 | Track assist (`aid_track_assist`) | 0 off, 1 light (default), 2 strong | With no steering input it cancels part of any yaw, so the car runs straight; near the edge (2.5 m light, 3.5 m strong) and heading off, it steers gently back. It never adds more than 3 degrees (light) / 5 degrees (strong) of steering, so a bad line or a slide still costs you. |

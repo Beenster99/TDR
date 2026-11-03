@@ -11,6 +11,11 @@ const LOW_SPEED := 3.0        ## slip-angle regularisation (m/s)
 const ROLL_RESIST := 0.015
 const FUEL_DENSITY := 0.74    ## kg per litre
 const TC_LIMIT := 0.95        ## traction control: max share of grip used for drive
+## Standing starts: below this speed (m/s) traction control lets the tyres
+## spin when the driver floors it (launch slip), so feathering the throttle
+## off the line is quicker than flooring it, with or without the aid.
+const LAUNCH_SPEED := 12.0
+const LAUNCH_TC_SLIP := 0.15
 const ABS_LIMIT := 0.97
 const REVERSE_FORCE := 3500.0
 const REVERSE_MAX_SPEED := 6.0
@@ -357,8 +362,11 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 		var use_f := s.fy_front / maxf(cap_yf, 1.0)
 		var spare_r := drive_r * sqrt(maxf(TC_LIMIT * TC_LIMIT - use_r * use_r, 0.0))
 		var spare_f := drive_f * sqrt(maxf(TC_LIMIT * TC_LIMIT - use_f * use_f, 0.0))
-		fx_r_demand = minf(fx_r_demand, maxf(spare_r, drive_r * 0.2))
-		fx_f_demand = minf(fx_f_demand, maxf(spare_f, drive_f * 0.2))
+		var slack := 0.0
+		if vx < LAUNCH_SPEED:
+			slack = LAUNCH_TC_SLIP * throttle * throttle * (1.0 - vx / LAUNCH_SPEED)
+		fx_r_demand = minf(fx_r_demand, maxf(spare_r, drive_r * 0.2) * (1.0 + slack))
+		fx_f_demand = minf(fx_f_demand, maxf(spare_f, drive_f * 0.2) * (1.0 + slack))
 	if s.assist_abs and brake_total > 0.0:
 		# ABS keeps the wheels rolling and leaves room for cornering force.
 		var ab_f := s.fy_front / maxf(cap_yf, 1.0)
