@@ -62,6 +62,11 @@ func _physics_process(_delta: float) -> void:
 	check(absf(f.truth_at(f.centre, f.elapsed) - session.sim.env.rain) < 0.001, "the radar's rain at the track is the race's rain")
 	print("       %s; moving %s %d km/h" % [f.summary(), f.heading_name(), int(f.wind_speed * 3.6)])
 	if out != "":
+		# Main still draws the co-op console over the full pit wall (fixed by
+		# the movable panels change): hide it for a clean picture.
+		if scene.crew:
+			scene.crew.visible = false
+		await RenderingServer.frame_post_draw
 		await RenderingServer.frame_post_draw
 		get_viewport().get_texture().get_image().save_png(out)
 		print("  saved " + out)

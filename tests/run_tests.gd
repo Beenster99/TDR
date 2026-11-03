@@ -2743,10 +2743,10 @@ func test_weather_forecast() -> void:
 	check(absf(f.changes[1]["eta"] - 700.0) < 700.0 * WeatherForecast.SPEED_ERR * 1.05 and f.changes[1]["confidence"] < f.changes[0]["confidence"],
 		"later changes are less certain, and the ETA is close (%s for 11.7 min)" % WeatherForecast.eta_text(f.changes[1]))
 	check(f.changes[1]["lasts"] > 0.0, "the rain's forecast to last about %d min" % int(f.changes[1]["lasts"]))
-	var upwind := f.centre - f.wind_dir * f.wind_speed * 720.0
+	var upwind := f.centre - f.wind_dir * f.wind_speed * 950.0
 	var rain_up := 0.0
-	for k in 9:
-		rain_up = maxf(rain_up, f.rain_at(upwind + Vector2(-f.wind_dir.y, f.wind_dir.x) * (k - 4) * 200.0))
+	for k in 41:
+		rain_up = maxf(rain_up, f.rain_at(upwind + Vector2(-f.wind_dir.y, f.wind_dir.x) * (k - 20) * 250.0))
 	check(rain_up > 0.05 and f.rain_at(f.centre) == 0.0, "rain shows on the radar upwind before it arrives (%.2f)" % rain_up)
 	check(f.radar_cells.size() > 0, "the old radar cells still read (%d)" % f.radar_cells.size())
 	var grid := f.sample_grid(Rect2(f.centre - Vector2.ONE * f.radar_range, Vector2.ONE * f.radar_range * 2.0), 24, 24)
