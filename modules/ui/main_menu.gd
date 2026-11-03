@@ -410,8 +410,11 @@ func _build_ui() -> void:
 	for b in [["Single race", func(): _restore_race(MEMORY_SINGLE); _show("single")], ["Season / championship", func(): _show("season_list")],
 			["Garage", _open_garage], ["Host online race", _on_host], ["Join online race", func(): _show("join")],
 			["Settings", _open_settings],
-			["Quit", func(): GameData.save_prefs(); get_tree().quit()]]:
+			["Quit", func(): pass]]:
 		var btn := _button(main, b[0], b[1])
+		if b[0] == "Quit":
+			_quit_button = btn
+			btn.pressed.connect(_on_quit_pressed)
 		btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		btn.custom_minimum_size = Vector2(440, 54)
 		btn.size_flags_horizontal = SIZE_SHRINK_BEGIN
@@ -818,6 +821,28 @@ func _page(parent: Node, id: String) -> VBoxContainer:
 	parent.add_child(v)
 	pages[id] = v
 	return v
+
+
+## Main menu Quit asks once more: the first press says "Sure? Press again",
+## a second press within QUIT_CONFIRM_TIME closes the game.
+const QUIT_CONFIRM_TIME := 3.0
+var _quit_button: Button
+var _quit_armed_until := -1.0
+
+
+func _on_quit_pressed() -> void:
+	var now := Time.get_ticks_msec() / 1000.0
+	if now <= _quit_armed_until:
+		GameData.save_prefs()
+		get_tree().quit()
+		return
+	_quit_armed_until = now + QUIT_CONFIRM_TIME
+	_quit_button.text = "Quit  ·  sure? press again"
+	var armed_at := _quit_armed_until
+	get_tree().create_timer(QUIT_CONFIRM_TIME).timeout.connect(func():
+		if is_instance_valid(_quit_button) and _quit_armed_until == armed_at:
+			_quit_armed_until = -1.0
+			_quit_button.text = "Quit")
 
 
 func _button(parent: Node, text: String, cb: Callable) -> Button:
