@@ -293,6 +293,7 @@ func _wrap(s: String, width: float, fs: int) -> PackedStringArray:
 
 
 func _panel(r: Rect2, title := "") -> void:
+	draw_rect(r, BG)      # solid, so a panel moved over another hides it
 	draw_rect(r, PANEL)
 	draw_rect(r, Color(1, 1, 1, 0.08), false, 1.0)
 	if title != "":
@@ -332,20 +333,24 @@ func _draw() -> void:
 	# As designed: timing on the left; radar, selected car, then the picture
 	# and the feed down the right. A moved panel goes where it was left, and
 	# panels drawn later sit on top.
-	_in_panel("timing", layout.place("timing", Rect2(16, 58, table_w, vp.y - 58 - 34)), func(r: Rect2): _draw_timing(r, sim, tel))
+	var d := {"timing": Rect2(16, 58, table_w, vp.y - 58 - 34)}
 	var rx := 16 + table_w + 14
 	var rw := vp.x - rx - 16
 	var radar_h := minf(rw * 0.62, 280.0)
-	_in_panel("weather", layout.place("weather", Rect2(rx, 58, rw, radar_h)), func(r: Rect2): _draw_weather(r, tel))
+	d["weather"] = Rect2(rx, 58, rw, radar_h)
 	var car_h := 236.0
-	_in_panel("car", layout.place("car", Rect2(rx, 58 + radar_h + 10, rw, car_h)), func(r: Rect2): _draw_car(r, sim, tel))
+	d["car"] = Rect2(rx, 58 + radar_h + 10, rw, car_h)
 	var fy := 58 + radar_h + 10 + car_h + 10
 	# The picture takes the feed's place (the feed is back when it's off).
 	var ph := minf(rw * 9.0 / 16.0, vp.y - fy - 40)
 	_pip_at = layout.rect_of("pip", Rect2(rx + (rw - ph * 16.0 / 9.0) * 0.5, fy + 3, ph * 16.0 / 9.0, ph))
 	if _pip_on() and not layout.is_moved("pip"):
 		fy += _pip_at.size.y + 12
-	_in_panel("feed", layout.place("feed", Rect2(rx, fy, rw, vp.y - fy - 34)), func(r: Rect2): _draw_feed(r, tel))
+	d["feed"] = Rect2(rx, fy, rw, vp.y - fy - 34)
+	var draws := {"timing": func(r: Rect2): _draw_timing(r, sim, tel), "weather": func(r: Rect2): _draw_weather(r, tel),
+		"car": func(r: Rect2): _draw_car(r, sim, tel), "feed": func(r: Rect2): _draw_feed(r, tel)}
+	for id in layout.draw_order(["timing", "weather", "car", "feed"]):
+		_in_panel(id, layout.place(id, d[id]), draws[id])
 	if _pip_on():
 		layout.place("pip", _pip_at)
 		_hits.append([_pip_at, "pip", null])

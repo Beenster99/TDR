@@ -596,15 +596,12 @@ func _draw() -> void:
 	var pip_r := pip_rect()
 	layout.begin(_bounds())
 	_draw_markers(car)
-	# Drawn (and hit) in this order: a panel dragged over another sits on top of it.
-	_in_panel("timing", layout.place("timing", d["timing"]), func(r: Rect2):
-		_hits.append([r, "panel", null])
-		_draw_timing(r, car))
-	_in_panel("role", layout.place("role", d["role"]), func(r: Rect2): _draw_role(r, car))
-	var mid := layout.place("radio", d["radio"])
-	_in_panel("radio", mid, func(r: Rect2):
-		_hits.append([r, "radio", null])
-		_draw_radio(r))
+	# The last panel moved sits on top (drawn, and hit, last).
+	var draws := {"timing": func(r: Rect2): _draw_timing(r, car), "role": func(r: Rect2): _draw_role(r, car),
+		"radio": _draw_radio}
+	for id in layout.draw_order(["timing", "role", "radio"]):
+		_in_panel(id, layout.place(id, d[id]), draws[id])
+	var mid := layout.rect_of("radio", d["radio"])
 	if pip_on():
 		layout.place("pip", pip_r)
 		_hits.append([pip_r, "panel", null])
@@ -682,6 +679,7 @@ func _draw_header(r: Rect2, car: int) -> void:
 
 
 func _draw_timing(r: Rect2, car: int) -> void:
+	_hits.append([r, "panel", null])
 	_panel(r, "TIMING")
 	var sim := session.sim
 	var tel := session.telemetry
@@ -997,6 +995,7 @@ func _battle_line(o: Vector2, w: float, label: String, other: int, car: int, gap
 
 
 func _draw_radio(r: Rect2) -> void:
+	_hits.append([r, "radio", null])
 	_panel(r, "TEAM RADIO")
 	var y := r.end.y - 10
 	var w := r.size.x - 24

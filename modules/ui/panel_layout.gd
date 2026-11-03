@@ -42,6 +42,7 @@ var _press_mode := ""       ## "move", "scale", "size", "size_x" or "size_y"
 var _press_pos := Vector2.ZERO
 var _press_rect := Rect2()
 var _press_scale := 1.0
+var _z := 0                 ## stacking number of the panel being dragged
 var dragging := false
 ## Save to GameData.prefs when a drag ends (off in tests).
 var autosave := true
@@ -66,6 +67,8 @@ func load_from(prefs: Dictionary) -> void:
 			var v = all[screen][id]
 			if v is Dictionary and v.has_all(["x", "y", "w", "h"]):
 				saved[str(id)] = {"x": float(v["x"]), "y": float(v["y"]), "w": float(v["w"]), "h": float(v["h"])}
+				if v.has("z"):
+					saved[str(id)]["z"] = int(v["z"])
 				if v.has("s"):
 					saved[str(id)]["s"] = clampf(float(v["s"]), MIN_SCALE, MAX_SCALE)
 
@@ -173,6 +176,17 @@ func _save_rect(id: String, r: Rect2, sc := 1.0) -> void:
 		"w": roundf(r.size.x), "h": roundf(r.size.y)}
 	if absf(sc - 1.0) > 0.004:
 		saved[id]["s"] = snappedf(sc, 0.01)
+	saved[id]["z"] = _z
+
+
+## The panels in the order to draw them: as designed, except that the last
+## panel moved or zoomed comes on top.
+func draw_order(ids: Array) -> Array:
+	var keyed := []
+	for k in ids.size():
+		keyed.append([int(saved[ids[k]].get("z", 0)) if saved.has(ids[k]) else 0, k, ids[k]])
+	keyed.sort()
+	return keyed.map(func(e): return e[2])
 
 
 func _grab_rect(id: String, r: Rect2) -> Rect2:
@@ -236,6 +250,12 @@ func motion(pos: Vector2, held := true) -> bool:
 	var d := pos - _press_pos
 	if not dragging and d.length() < DRAG_START:
 		return false
+	if not dragging:
+		# Picked up: it goes on top of the others.
+		_z = 1
+		for id in saved:
+			if id != _press_id:
+				_z = maxi(_z, int(saved[id].get("z", 0)) + 1)
 	dragging = true
 	var r := _press_rect
 	var sc := _press_scale

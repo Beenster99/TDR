@@ -3666,6 +3666,15 @@ func test_pit_wall_layout() -> void:
 	l.release()
 	var ps := l.rect_of("pip", pr).size
 	check(absf(ps.x / ps.y - 16.0 / 9.0) < 0.01 and ps.x > 352.0, "a resized picture stays 16:9 (%s)" % ps)
+	# The last panel picked up is drawn on top.
+	l.begin(b)
+	l.place("timing", l.rect_of("timing", d))
+	var rr := l.place("role", Rect2(1108, 58, 480, 830))
+	check(l.draw_order(["timing", "role", "radio"]) == ["role", "radio", "timing"], "the panel moved last comes on top")
+	l.press(rr.position + Vector2(100, 10))
+	l.motion(rr.position + Vector2(60, 10))
+	l.release()
+	check(l.draw_order(["timing", "role", "radio"]) == ["radio", "timing", "role"], "move another and that one comes on top")
 	# Saved and loaded back; another screen's layout is left alone.
 	var prefs := {PanelLayout.PREF: {"full": {"feed": {"x": 1.0, "y": 0.0, "w": 400, "h": 300}}}}
 	l.store_in(prefs)
