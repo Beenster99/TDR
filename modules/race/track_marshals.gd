@@ -13,14 +13,14 @@ extends RefCounted
 ## the track until they are back behind the barrier: slow right down (under
 ## double_yellow_limit), no overtaking.
 ##
-## With no flags to cover them (rallycross) the crew only goes out when it is
-## safe: they wait behind the barrier
+## The crew only goes out when it is safe: they wait behind the barrier
 ## ("wait") until the next car is far enough away for them to run out, sweep
 ## a while and run back, and they run back off ("back") as soon as a car is
 ## coming, then wait for the next gap. The sweeping adds up over the gaps
 ## until the pile is gone (SWEEP_S in all). step() gets clear_s: seconds
-## until the next car reaches the pile (RaceControl.marshal_clear_s; INF on
-## circuits, where double yellows cover them and they go straight out).
+## until the next car reaches the pile (RaceControl.marshal_clear_s). On
+## circuits the double yellows stay out the whole time, gaps or not; in
+## rallycross there are no flags at all.
 ##
 ## A spot: {s, pos, amount}. A job: see plan().
 

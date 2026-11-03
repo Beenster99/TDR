@@ -25,6 +25,8 @@ func _init() -> void:
 	test_input_wire_format()
 	test_tyre_temperature_matters()
 	test_ai_drivers()
+	test_ai_racing_room()
+	test_launch_wheelspin()
 	test_car_classes()
 	test_every_track()
 	test_derby()
@@ -64,6 +66,7 @@ func _init() -> void:
 	test_graphics_effects()
 	test_pit_lane_blend()
 	test_settings_and_units()
+	test_pause_menu()
 	test_rebinding()
 	test_grid_limits()
 	test_garage_saves()
@@ -1889,6 +1892,29 @@ func test_ai_drivers() -> void:
 	check(vf > vs * 1.03, "pace trait: faster plan for the faster driver (%.1f vs %.1f m/s avg)" % [vf / slow.target_speed.size(), vs / slow.target_speed.size()])
 
 
+## Standing starts: flooring it spins the rear tyres even with traction
+## control, and costs time against feathering the throttle.
+func test_launch_wheelspin() -> void:
+	print("launch wheelspin")
+	var probe = load("res://tests/launch_probe.gd")
+	var floored: Dictionary = probe.run("GT3", true, 1.0)
+	var feathered: Dictionary = probe.run("GT3", true, 0.5)
+	check(floored["spin"] > 0.5 and feathered["spin"] < 0.2, "floored launch spins the tyres with TC on (%.2f s vs %.2f s feathered)" % [floored["spin"], feathered["spin"]])
+	check(floored["t100"] > feathered["t100"], "... and loses time to 100 km/h (%.2f s vs %.2f s)" % [floored["t100"], feathered["t100"]])
+
+
+## Racing room: a car that holds the inside line with its nose level with an
+## AI car's rear wheels must not be turned in on or pushed off, at any corner.
+## (Players saw AI swerve into them: overlap was only counted from half a car
+## alongside, and the AI followed its line across into the other car.)
+func test_ai_racing_room() -> void:
+	print("ai racing room")
+	var probe = load("res://tests/racecraft_corners.gd")
+	var r: Dictionary = probe.run("spielberg", 7)
+	check(r["trials"] >= 6 and r["contacts"] == 0 and r["bot_off"] == 0,
+		"AI leaves room for a car on the inside at %d corners (contacts %d, pushed off %d, closest %s m)" % [r["trials"], r["contacts"], r["bot_off"], r["min_gap"].min()])
+
+
 # --- Wave 3: race control (flags, VSC, safety car, penalties) -------------
 
 ## Runs an AI race in which one car stops and retires at stop_at seconds.
@@ -2146,6 +2172,8 @@ func test_marshals_clear_debris() -> void:
 	var limit := 0.0
 	var penalties := []
 	var snap := {}
+	var unsafe := 0
+	var waited := false
 	while sim.phase != RaceSim.Phase.FINISHED and sim.tick < 60 * 60 * 10:
 		if not placed and sim.phase == RaceSim.Phase.RACING and sim.race_time > 20.0:
 			placed = true
@@ -2169,6 +2197,14 @@ func test_marshals_clear_debris() -> void:
 				snap = rc.to_dict(true)
 			var at: float = rc.marshal_jobs[0]["s"]
 			limit = rc.double_yellow_limit(at)
+			var mj: Dictionary = rc.marshal_jobs[0]
+			waited = waited or (mj["phase"] == "wait" and float(mj["t"]) > 1.0)
+			if TrackMarshals.on_track(mj):
+				for i in sim.car_count():
+					if sim.entries[i].dnf or sim.entries[i].finished:
+						continue
+					if fposmod(at - before[i], track.length) < 40.0 and fposmod(sim.cars[i].track_s - at, track.length) < 40.0:
+						unsafe += 1
 			for i in sim.car_count():
 				if fposmod(at - before[i], track.length) < 60.0 and fposmod(sim.cars[i].track_s - at, track.length) < 60.0:
 					fastest = maxf(fastest, sim.cars[i].speed())
@@ -2176,6 +2212,7 @@ func test_marshals_clear_debris() -> void:
 	check(rc.double_yellow_at(marshal_s) == false and rc.marshal_jobs.is_empty() and ev.get("flag:clear", 0) >= 1, "debris cleared, marshals back, flags withdrawn")
 	check(fastest > 1.0 and fastest <= limit * TrackMarshals.DOUBLE_TOLERANCE, "AI slows down past the marshals (%d km/h, limit %d)" % [roundi(fastest * 3.6), roundi(limit * 3.6)])
 	check(penalties.filter(func(r): return str(r).contains("marshals")).is_empty(), "no double yellow penalties for the AI (%s)" % str(penalties))
+	check(unsafe == 0 and waited, "circuit marshals wait for a gap; no car went past while they were on the track (%d)" % unsafe)
 	check(snap.has("marshal_jobs") and snap["full"].has("debris"), "marshals and debris go into snapshots and the race state")
 	# Too fast past them: penalty.
 	var race2 := _race(settings, _data())
@@ -3158,6 +3195,31 @@ func test_settings_and_units() -> void:
 	gd.free()
 
 
+## The in-race pause menu (Esc / Start): what it offers offline, to the
+## online host and to a guest, and the settings it lets the player change.
+func test_pause_menu() -> void:
+	print("pause menu")
+	check(InputSetup.KEYS["back_to_menu"].has(KEY_ESCAPE) and InputSetup.PAD_BUTTONS["back_to_menu"].has(JOY_BUTTON_START),
+		"Esc and the controller's Start open the pause menu")
+	var off := PauseOptions.button_ids(false, false)
+	check(off == ["resume", "restart", "settings", "menu", "desktop"], "offline: resume, restart, settings, quit to menu, quit to desktop")
+	check(PauseOptions.button_ids(true, true).has("lobby"), "online host can also end the race for everyone")
+	check(not PauseOptions.button_ids(true, false).has("lobby"), "a guest can't end the race")
+	check(PauseOptions.label_for("restart", true, true).contains("everyone"), "the host's restart says it restarts for everyone")
+	var gd = load("res://modules/core/game_data.gd").new()
+	gd.persist_prefs = false
+	gd._register_defaults()
+	for sec in PauseOptions.RACE_SECTIONS:
+		check(sec in gd.SECTIONS, "in-race Settings > %s is a real section" % sec)
+	check(not "garage" in PauseOptions.RACE_SECTIONS, "the garage (car upgrades) isn't in the in-race settings")
+	for key in ["driving_help", "aid_track_assist", "manual_gears"]:
+		check(key in PauseOptions.LOCKED_IN_RACE and not gd.setting_info(key).is_empty(),
+			"%s (how the car drives) is locked during a race" % key)
+	for key in ["aid_racing_line", "units", "vol_master", "display_mode"]:
+		check(not key in PauseOptions.LOCKED_IN_RACE, "%s can still be changed in a race" % key)
+	gd.free()
+
+
 ## Up to 25 cars in one class, 45 in a multi-class race.
 func test_grid_limits() -> void:
 	print("grid limits")
@@ -3327,6 +3389,9 @@ func test_race_start() -> void:
 	var stopped := 0
 	var reversing := 0
 	var green_tick := -1
+	var left := 0
+	var right := 0
+	var mean_v := 0.0
 	while sim.tick < 60 * 30:
 		var inputs := []
 		for i in n:
@@ -3338,11 +3403,21 @@ func test_race_start() -> void:
 			for i in n:
 				if ai[i].recover_time > 0.0:
 					reversing = maxi(reversing, i + 1)
+		if green_tick >= 0 and sim.tick - green_tick == 60 * 5:
+			# Side by side to turn 1, not single file: count each half of the track.
+			for i in n:
+				if sim.cars[i].lateral_offset < -0.5:
+					left += 1
+				elif sim.cars[i].lateral_offset > 0.5:
+					right += 1
+				mean_v += sim.cars[i].speed() / n
 		if green_tick >= 0 and sim.tick - green_tick == 60 * 12:
 			for i in n:
 				if sim.cars[i].speed() < 5.0:
 					stopped += 1
 	check(reversing == 0, "no AI car reverses on the opening lap (first one reversing: %d)" % reversing)
+	check(mini(left, right) >= n / 3, "the field races two wide off the line (%d left, %d right of 5 s in)" % [left, right])
+	check(mean_v * 3.6 > 70.0, "nobody hangs back off the line (%.0f km/h on average 5 s in)" % (mean_v * 3.6))
 	check(stopped == 0, "every AI car is moving 12 s after the start (%d stopped)" % stopped)
 
 

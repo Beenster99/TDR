@@ -22,6 +22,10 @@ var driver_radio: TeamRadio
 var crew_game: PitCrewGame
 ## The strategist's pit stop planner (over the pit wall screens).
 var planner: PitPlanner
+## Esc / Start: the pause menu (offline the race stops; online it's an overlay).
+var pause_menu: PauseMenu
+## The driving line aid's data, kept so Settings can turn it on and off mid-race.
+var _driving_line: DrivingLine
 var results: PanelContainer
 var rotate_camera := false
 var _results_shown := false
@@ -61,9 +65,7 @@ func _ready() -> void:
 			i == session.local_car, i + 1, liveries[i]))
 	_refresh_highlights()
 	session.crew_changed.connect(func(_car): _refresh_highlights())
-	GameData.pref_changed.connect(func(key, _v):
-		if str(key).begins_with("highlight_"):
-			_refresh_highlights())
+	GameData.pref_changed.connect(_on_pref_changed)
 	if session.sim.pits.enabled:
 		for i in session.sim.car_count():
 			world.add_pit_crew(i, session.sim.pits.box_index(i))
@@ -126,6 +128,7 @@ func _ready() -> void:
 	layer.add_child(crew_game)
 	crew_game.setup(session, world.pit_crews)
 	crew_game.autoplay = bool(GameData.arg("crew-autoplay", false))
+	_add_pause_menu(layer)
 	_apply_role()
 	if GameData.arg("pit-wall"):
 		pit_wall.open()
@@ -163,9 +166,84 @@ func _set_driving_aids() -> void:
 ## colours on and off; the boards are always there.
 func _add_driving_aids() -> void:
 	var i := session.local_car if session.local_car >= 0 else maxi(session.team_car, 0)
-	var line := DrivingLine.build(session.sim.track, session.sim.defs[i], session.sim.compounds[i])
-	world.add_driving_aids(line, bool(GameData.prefs.get("aid_racing_line", true)),
+	_driving_line = DrivingLine.build(session.sim.track, session.sim.defs[i], session.sim.compounds[i])
+	world.add_driving_aids(_driving_line, bool(GameData.prefs.get("aid_racing_line", true)),
 		bool(GameData.prefs.get("aid_braking_zones", true)))
+
+
+## Settings changed mid-race (the pause menu's Settings): apply the ones the
+## race scene owns.
+func _on_pref_changed(key, _v) -> void:
+	var k := str(key)
+	if k.begins_with("highlight_"):
+		_refresh_highlights()
+	elif k == "aid_racing_line" or k == "aid_braking_zones":
+		# The line view is built once; build a fresh one with the new choice.
+		if world.driving_line:
+			world.driving_line.queue_free()
+		var view := DrivingLineView.new()
+		view.name = "DrivingLineAid"
+		world.add_child(view)
+		view.setup(_driving_line, world.track_view, bool(GameData.prefs.get("aid_racing_line", true)),
+			bool(GameData.prefs.get("aid_braking_zones", true)))
+		world.driving_line = view
+	elif k == "aid_pit_guide":
+		hud.pit_guide_on = bool(GameData.prefs.get("aid_pit_guide", true))
+
+
+## The pause menu: what it may offer depends on the race (offline, host, guest,
+## championship).
+func _add_pause_menu(layer: CanvasLayer) -> void:
+	var online := session.mode != RaceSession.Mode.OFFLINE
+	var host := session.mode == RaceSession.Mode.SERVER
+	var blocked := ""
+	if session.start_data.has("season"):
+		blocked = "not in a championship"   # no do-overs (as the R key)
+	elif session.mode == RaceSession.Mode.CLIENT:
+		blocked = "only the host can"
+	pause_menu = PauseMenu.new()
+	layer.add_child(pause_menu)
+	pause_menu.setup({"online": online, "host": host, "can_restart": blocked == "", "restart_blocked": blocked,
+		"can_edit_hud": session.local_car >= 0})
+	pause_menu.resumed.connect(_on_pause_closed)
+	pause_menu.restart_requested.connect(func():
+		_on_pause_closed()
+		if session.mode == RaceSession.Mode.SERVER:
+			Net.restart_race()   # everyone gets the new start; see _on_net_race_started
+		else:
+			_restart())
+	pause_menu.end_race_requested.connect(func():
+		_on_pause_closed()
+		Net.end_race())
+	pause_menu.quit_to_menu_requested.connect(func():
+		_on_pause_closed()
+		_back_to_menu())
+	pause_menu.quit_to_desktop_requested.connect(func():
+		GameData.save_prefs()
+		if Net.is_online():
+			Net.leave()
+		get_tree().quit())
+	pause_menu.edit_hud_requested.connect(func():
+		if session.local_car >= 0:
+			hud.open_editor())
+	# Online: the host restarted the race; every machine starts the new one.
+	Net.race_started.connect(_on_net_race_started)
+
+
+func _open_pause_menu() -> void:
+	if session.mode == RaceSession.Mode.OFFLINE:
+		get_tree().paused = true   # the race, its sounds and effects stop; the menu runs
+	pause_menu.open()
+
+
+func _on_pause_closed() -> void:
+	get_tree().paused = false
+
+
+func _on_net_race_started(_start_data: Dictionary) -> void:
+	print("[net] the host restarted the race")
+	get_tree().paused = false
+	get_tree().reload_current_scene.call_deferred()
 
 
 ## The pit guide (line into the pits, limit lines, box marks) for this
@@ -343,8 +421,8 @@ func _tick_once(delta: float) -> void:
 		if autodrive:
 			inp = autodrive.get_input(session.sim, session.local_car)
 			_autodrive_throttle = inp.throttle
-		elif hud.editing:
-			inp = CarInput.neutral()   # online HUD editing: the keys move HUD items, not the car
+		elif hud.editing or pause_menu.visible:
+			inp = CarInput.neutral()   # online HUD editing / menu: the keys work the menu, not the car
 		else:
 			inp = local_input.read(delta, session.sim.cars[session.local_car].speed())
 			if pit_menu.visible and inp.handbrake:
@@ -374,6 +452,13 @@ func _after_tick() -> void:
 		_forced["hand_over"] = true
 		print("[coop] %s: %s" % [Net.local_name, RaceHud.toggle_driver_change(session, session.local_car)])
 		session.request_pit(session.local_car, {"box": true})
+	# Testing: --host-restart-at 5: the online host restarts the race for
+	# everyone (the pause menu's Restart) once, after 5 s of racing.
+	if GameData.arg("host-restart-at") and session.mode == RaceSession.Mode.SERVER \
+			and session.sim.race_time >= float(GameData.arg("host-restart-at")):
+		GameData.args.erase("host-restart-at")
+		print("[pause] host restarts the race for everyone")
+		Net.restart_race()
 	# Testing: --force-sc 30 sends the safety car out after 30 s (--force-vsc too).
 	for opt in ["force-sc", "force-vsc"]:
 		if GameData.arg(opt) and not _forced.has(opt) and session.is_authority() \
@@ -622,6 +707,13 @@ func _maybe_screenshot() -> void:
 		return
 	if session.sim.race_time + session.sim.phase_time * float(session.sim.phase == RaceSim.Phase.COUNTDOWN) >= float(GameData.arg("screenshot-at", 10)):
 		_shot_taken = true
+		# --screenshot-pause [settings]: with the pause menu (or its Settings) open.
+		if GameData.arg("screenshot-pause"):
+			_open_pause_menu()
+			if str(GameData.arg("screenshot-pause")) == "settings":
+				pause_menu._open_settings()
+			for _f in 4:
+				await RenderingServer.frame_post_draw
 		await RenderingServer.frame_post_draw
 		get_viewport().get_texture().get_image().save_png(str(GameData.arg("screenshot")))
 		print("[screenshot] saved")
@@ -629,7 +721,7 @@ func _maybe_screenshot() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if hud.editing or pit_menu.visible:
+	if hud.editing or pit_menu.visible or pause_menu.visible:
 		return
 	if event.is_action_pressed("hud_edit") and session.local_car >= 0 and not _results_shown and not pit_wall.visible:
 		hud.open_editor()
@@ -653,7 +745,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		_restart()
 	elif event.is_action_pressed("back_to_menu") and not _results_shown and not pit_wall.visible and not planner.visible \
 			and not driver_radio.visible and not crew.radio.visible:
-		_back_to_menu()
+		get_viewport().set_input_as_handled()
+		_open_pause_menu()
 
 
 func _has_crew_mates() -> bool:
@@ -1011,10 +1104,12 @@ func _restart() -> void:
 	var start := session.start_data.duplicate(true)
 	start["settings"]["seed"] = randi()
 	GameData.active_session = RaceSession.create(RaceSession.Mode.OFFLINE, start, 0)
+	get_tree().paused = false
 	get_tree().reload_current_scene()
 
 
 func _back_to_menu() -> void:
+	get_tree().paused = false
 	if Net.is_online():
 		Net.leave()
 	GameData.active_session = null
