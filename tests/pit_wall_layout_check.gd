@@ -146,6 +146,34 @@ func _run() -> void:
 	check(wall.layout.is_moved("feed") and moved.position.x < 40.0, "the feed moved to the left (%s)" % moved)
 	check((GameData.prefs[PanelLayout.PREF] as Dictionary).has("full") and (GameData.prefs[PanelLayout.PREF] as Dictionary).has("console"),
 		"each pit wall screen keeps its own layout")
+	# Zoom the timing up with its corner grip so it reads better, then pick a car in it.
+	var tim: Rect2
+	for pl in wall.layout.placed:
+		if pl[0] == "timing":
+			tim = pl[1]
+	# Shorter first (bottom edge), so there's room below to zoom into.
+	var ex := tim.position.x + tim.size.x * 0.8   # clear of the feed moved over its left side
+	await _drag(wall, Vector2(ex, tim.end.y - 2), Vector2(ex, tim.end.y - 2 - tim.size.y * 0.4))
+	var tim2 := wall.layout.rect_of("timing", tim)
+	check(tim2.size.y < tim.size.y * 0.7 and is_equal_approx(tim2.size.x, tim.size.x), "the bottom edge makes the timing shorter (%s -> %s)" % [tim, tim2])
+	await _drag(wall, tim2.end - Vector2(4, 4), tim2.end - Vector2(4, 4) + Vector2(tim2.size.x * 0.3, tim2.size.y * 0.3))
+	var zs := wall.layout.scale_of("timing")
+	check(zs > 1.1, "the corner grip zooms the full pit wall's timing (%d %%)" % roundi(zs * 100.0))
+	await _frames(2)
+	var tz := wall.layout.rect_of("timing", tim)
+	var w_order := session.sim.running_order
+	var pick: int = w_order[w_order.size() - 1]
+	var pk := w_order.size() - 1
+	var lr := wall.layout.content_rect("timing", tz)
+	var wrh := clampf((lr.size.y - 34) / maxf(w_order.size(), 1), 18.0, 28.0)
+	var ly := lr.position.y + 32 + pk * wrh + wrh * 0.5
+	var at := tz.position + (Vector2(lr.position.x + 300, ly) - tz.position) * zs
+	_mouse(wall, at, 1)
+	_mouse(wall, at, 0)
+	check(wall.selected == pick, "clicking a car in the zoomed timing picks that car")
+	if scene.pit_wall.onboard:
+		var cam: Camera3D = scene.pit_wall.onboard.camera
+		check(cam.cull_mask & CarView.HIGHLIGHT_LAYER == 0, "the onboard picture leaves out the player highlight rings")
 	if out != "":
 		await _frames(20)
 		await RenderingServer.frame_post_draw

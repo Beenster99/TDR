@@ -1,18 +1,22 @@
 class_name PanelLayout
 extends RefCounted
-## Movable, resizable panels on the pit wall screens (CrewConsole and
+## Movable, scalable panels on the pit wall screens (CrewConsole and
 ## StrategistScreen). Drag a panel by its title bar (the top strip; the whole
-## picture for the onboard camera) to move it, drag the grip in its bottom
-## right corner to resize it. Panels snap to the screen edges and to each
-## other. A press on the title bar that doesn't move is still a click, so the
-## buttons up there keep working.
+## picture for the onboard camera) to move it. Drag the grip in its bottom
+## right corner to scale it: the whole panel, text included, gets bigger or
+## smaller, so the data is easier to read. Drag its right or bottom edge to
+## make it wider or taller without changing the text size. Panels snap to the
+## screen edges and to each other. A press on the title bar that doesn't move
+## is still a click, so the buttons up there keep working.
 ##
 ## Saved in GameData.prefs["pit_wall_layout"] as
-##   {screen: {panel_id: {"x": 0..1, "y": 0..1, "w": px, "h": px}}}
+##   {screen: {panel_id: {"x": 0..1, "y": 0..1, "w": px, "h": px, "s": scale}}}
 ## x and y say where the panel sits in the room left around it inside the
 ## screen's bounds (0 against the left / top, 1 against the right / bottom),
-## so a layout fits any screen shape. w and h are in the 1600x900 canvas.
-## A panel with no entry sits where it was designed to.
+## so a layout fits any screen shape. w and h are its size on screen in the
+## 1600x900 canvas; s (1 if missing) how much its contents are scaled, so
+## they're laid out in w / s by h / s. A panel with no entry sits where it
+## was designed to.
 
 const PREF := "pit_wall_layout"
 const GRAB_H := 28.0        ## title bar height that moves a panel
@@ -20,9 +24,12 @@ const GRIP := 16.0          ## resize grip size, bottom right
 const SNAP := 10.0          ## snap distance to edges
 const GAP := 12.0           ## gap kept when snapping next to another panel
 const DRAG_START := 5.0     ## pixels before a press on the title bar becomes a drag
+const EDGE := 6.0           ## width of the right and bottom edges that resize
+const MIN_SCALE := 0.6
+const MAX_SCALE := 2.0
 
 var screen := ""
-## panel id -> {"x", "y", "w", "h"}
+## panel id -> {"x", "y", "w", "h", "s"}
 var saved: Dictionary = {}
 ## panel id -> {"min": Vector2, "max": Vector2, "aspect": float, "grab_all": bool}
 var specs: Dictionary = {}
@@ -31,9 +38,10 @@ var placed: Array = []
 var bounds := Rect2()
 
 var _press_id := ""
-var _press_mode := ""       ## "move" or "size"
+var _press_mode := ""       ## "move", "scale", "size", "size_x" or "size_y"
 var _press_pos := Vector2.ZERO
 var _press_rect := Rect2()
+var _press_scale := 1.0
 var dragging := false
 ## Save to GameData.prefs when a drag ends (off in tests).
 var autosave := true
@@ -58,6 +66,8 @@ func load_from(prefs: Dictionary) -> void:
 			var v = all[screen][id]
 			if v is Dictionary and v.has_all(["x", "y", "w", "h"]):
 				saved[str(id)] = {"x": float(v["x"]), "y": float(v["y"]), "w": float(v["w"]), "h": float(v["h"])}
+				if v.has("s"):
+					saved[str(id)]["s"] = clampf(float(v["s"]), MIN_SCALE, MAX_SCALE)
 
 
 ## Writes this screen's layout into prefs (the caller saves them).
@@ -80,6 +90,23 @@ func save() -> void:
 
 func is_moved(id: String) -> bool:
 	return saved.has(id)
+
+
+## How much panel id's contents are scaled (1 = as designed).
+func scale_of(id: String) -> float:
+	return float(saved[id].get("s", 1.0)) if saved.has(id) else 1.0
+
+
+## Panels whose contents scale (not the onboard picture, which just resizes).
+func scalable(id: String) -> bool:
+	var sp: Dictionary = specs.get(id, {})
+	return not bool(sp.get("grab_all", false)) and float(sp.get("aspect", 0.0)) <= 0.0
+
+
+## The rect a scaled panel's contents are laid out in: r's top left corner,
+## its size divided by the scale. Drawn with draw_transform(r, s).
+func content_rect(id: String, r: Rect2) -> Rect2:
+	return Rect2(r.position, r.size / scale_of(id))
 
 
 func customised() -> bool:
@@ -105,7 +132,7 @@ func rect_of(id: String, default: Rect2, p_bounds := Rect2()) -> Rect2:
 	var r := Rect2(default.position, default.size.max(Vector2.ZERO))
 	if saved.has(id):
 		var s: Dictionary = saved[id]
-		var sz := _fit_size(id, Vector2(s["w"], s["h"]), b)
+		var sz := _fit_size(id, Vector2(s["w"], s["h"]), b, float(s.get("s", 1.0)))
 		r = Rect2(b.position + (b.size - sz) * Vector2(s["x"], s["y"]).clamp(Vector2.ZERO, Vector2.ONE), sz)
 	return r
 
@@ -121,10 +148,12 @@ func place(id: String, default: Rect2) -> Rect2:
 	return r
 
 
-func _fit_size(id: String, sz: Vector2, b: Rect2) -> Vector2:
+## Size limits scale with the contents: a panel at 150 % needs 150 % of its
+## smallest size to fit them.
+func _fit_size(id: String, sz: Vector2, b: Rect2, sc := 1.0) -> Vector2:
 	var sp: Dictionary = specs.get(id, {"min": Vector2(60, 40), "max": Vector2(4000, 4000), "aspect": 0.0})
-	var lo: Vector2 = (sp["min"] as Vector2).min(b.size)
-	var hi: Vector2 = (sp["max"] as Vector2).min(b.size)
+	var lo: Vector2 = ((sp["min"] as Vector2) * sc).min(b.size)
+	var hi: Vector2 = ((sp["max"] as Vector2) * sc).min(b.size)
 	sz = sz.clamp(lo, hi.max(lo))
 	var a: float = sp["aspect"]
 	if a > 0.0:
@@ -136,12 +165,14 @@ func _fit_size(id: String, sz: Vector2, b: Rect2) -> Vector2:
 	return sz
 
 
-func _save_rect(id: String, r: Rect2) -> void:
+func _save_rect(id: String, r: Rect2, sc := 1.0) -> void:
 	var room := bounds.size - r.size
 	var off := r.position - bounds.position
 	saved[id] = {"x": snappedf(off.x / room.x if room.x > 0.5 else 0.0, 0.0001),
 		"y": snappedf(off.y / room.y if room.y > 0.5 else 0.0, 0.0001),
 		"w": roundf(r.size.x), "h": roundf(r.size.y)}
+	if absf(sc - 1.0) > 0.004:
+		saved[id]["s"] = snappedf(sc, 0.01)
 
 
 func _grab_rect(id: String, r: Rect2) -> Rect2:
@@ -154,17 +185,24 @@ func _grip_rect(r: Rect2) -> Rect2:
 	return Rect2(r.end - Vector2(GRIP, GRIP), Vector2(GRIP, GRIP))
 
 
-## What's under the mouse: [id, "move" / "size"], or [] for nothing.
+## What's under the mouse: [id, mode] (mode "move", "scale" for the corner
+## grip, "size" for the picture's corner, "size_x" / "size_y" for the right
+## and bottom edges), or [] for nothing.
 func handle_at(pos: Vector2) -> Array:
 	for k in range(placed.size() - 1, -1, -1):
 		var id: String = placed[k][0]
 		var r: Rect2 = placed[k][1]
-		if not r.grow(2).has_point(pos):
+		if not r.grow(3).has_point(pos):
 			continue
 		if _grip_rect(r).grow(3).has_point(pos):
-			return [id, "size"]
+			return [id, "scale" if scalable(id) else "size"]
 		if _grab_rect(id, r).has_point(pos):
 			return [id, "move"]
+		if scalable(id):
+			if pos.x >= r.end.x - EDGE:
+				return [id, "size_x"]
+			if pos.y >= r.end.y - EDGE:
+				return [id, "size_y"]
 		return []      # on a panel, but not on its handles: the panel's own clicks
 	return []
 
@@ -182,6 +220,7 @@ func press(pos: Vector2) -> bool:
 	for p in placed:
 		if p[0] == _press_id:
 			_press_rect = p[1]
+	_press_scale = scale_of(_press_id)
 	return true
 
 
@@ -199,16 +238,35 @@ func motion(pos: Vector2, held := true) -> bool:
 		return false
 	dragging = true
 	var r := _press_rect
-	if _press_mode == "size":
-		var sz := _fit_size(_press_id, r.size + d, bounds)
+	var sc := _press_scale
+	if _press_mode == "scale":
+		# The whole panel grows or shrinks with the mouse, contents and all.
+		var f := (r.size + d) / r.size
+		var k := (f.x + f.y) * 0.5
+		var room := (bounds.end - r.position) / r.size
+		k = minf(k, minf(room.x, room.y))
+		sc = clampf(snappedf(_press_scale * k, 0.01), MIN_SCALE, MAX_SCALE)
+		r.size = r.size * (sc / _press_scale)
+		r.size = r.size.min(bounds.end - r.position)
+	elif _press_mode.begins_with("size"):
+		var dd := d
+		if _press_mode == "size_x":
+			dd.y = 0.0
+		elif _press_mode == "size_y":
+			dd.x = 0.0
+		var sz := _fit_size(_press_id, r.size + dd, bounds, sc)
 		sz = sz.min(bounds.end - r.position)   # stays on screen
-		sz = _snap_size(_press_id, Rect2(r.position, sz))
-		r.size = _fit_size(_press_id, sz, bounds)
+		var snapped := _snap_size(_press_id, Rect2(r.position, sz))
+		if _press_mode != "size_y":
+			sz.x = snapped.x
+		if _press_mode != "size_x":
+			sz.y = snapped.y
+		r.size = _fit_size(_press_id, sz, bounds, sc)
 	else:
 		r.position += d
 		r.position = r.position.clamp(bounds.position, bounds.end - r.size)
 		r.position = _snap_move(_press_id, r)
-	_save_rect(_press_id, r)
+	_save_rect(_press_id, r, sc)
 	return true
 
 
@@ -286,25 +344,36 @@ func _snap_size(id: String, r: Rect2) -> Vector2:
 	return sz
 
 
-## The cursor for the mouse at pos (move hand over a title bar, diagonal
-## arrows over a grip, arrow elsewhere).
+static func _cursor_for(mode: String) -> Input.CursorShape:
+	match mode:
+		"scale", "size": return Input.CURSOR_FDIAGSIZE
+		"size_x": return Input.CURSOR_HSIZE
+		"size_y": return Input.CURSOR_VSIZE
+	return Input.CURSOR_MOVE
+
+
+## The cursor for the mouse at pos (move over a title bar, diagonal arrows
+## over the corner grip, sideways / up-down arrows over the edges, the arrow
+## elsewhere).
 func cursor_at(pos: Vector2) -> Input.CursorShape:
 	if _press_id != "":
-		return Input.CURSOR_FDIAGSIZE if _press_mode == "size" else Input.CURSOR_MOVE
+		return _cursor_for(_press_mode)
 	var h := handle_at(pos)
 	if h.is_empty():
 		return Input.CURSOR_ARROW
-	return Input.CURSOR_FDIAGSIZE if h[1] == "size" else Input.CURSOR_MOVE
+	return _cursor_for(h[1])
 
 
 ## Draws the handles: a dotted grip on each title bar and the corner grip,
-## brighter under the mouse, and an outline round a panel being dragged.
-func draw_handles(ci: CanvasItem, hover: Vector2) -> void:
+## brighter under the mouse; the edge under the mouse lit up; an outline round
+## a panel being dragged and its size while it's scaled.
+func draw_handles(ci: CanvasItem, hover: Vector2, font: Font = null) -> void:
 	var h := handle_at(hover) if _press_id == "" else [_press_id, _press_mode]
 	for p in placed:
 		var id: String = p[0]
 		var r: Rect2 = p[1]
 		var hot: bool = not h.is_empty() and h[0] == id
+		var mode: String = h[1] if hot else ""
 		var a := 0.5 if hot else 0.18
 		if not bool(specs.get(id, {}).get("grab_all", false)):
 			# Six dots in the middle of the title bar.
@@ -313,12 +382,22 @@ func draw_handles(ci: CanvasItem, hover: Vector2) -> void:
 				for j in 2:
 					ci.draw_circle(c + Vector2((k - 1) * 6, j * 5 - 2.5), 1.4, Color(1, 1, 1, a))
 		var g := _grip_rect(r)
+		var ga := a + (0.4 if mode in ["scale", "size"] else 0.0)
+		var gc := Color(1.0, 0.88, 0.35, ga) if scalable(id) else Color(1, 1, 1, ga)
 		for k in 3:
 			var o := 4.0 + k * 4.0
-			ci.draw_line(Vector2(g.end.x - o, g.end.y - 2), Vector2(g.end.x - 2, g.end.y - o),
-				Color(1, 1, 1, a + (0.25 if hot and h[1] == "size" else 0.0)), 1.2)
+			ci.draw_line(Vector2(g.end.x - o, g.end.y - 2), Vector2(g.end.x - 2, g.end.y - o), gc, 1.4)
+		if mode == "size_x":
+			ci.draw_line(Vector2(r.end.x - 1, r.position.y + GRAB_H), Vector2(r.end.x - 1, r.end.y - GRIP), Color(1, 1, 1, 0.7), 2.0)
+		elif mode == "size_y":
+			ci.draw_line(Vector2(r.position.x, r.end.y - 1), Vector2(r.end.x - GRIP, r.end.y - 1), Color(1, 1, 1, 0.7), 2.0)
 		if active_id() == id:
 			ci.draw_rect(r.grow(2), Color(1.0, 0.88, 0.35, 0.9), false, 2.0)
+			if font and _press_mode == "scale":
+				var txt := "%d %%" % roundi(scale_of(id) * 100.0)
+				var tp := r.end - Vector2(70, 26)
+				ci.draw_rect(Rect2(tp - Vector2(6, 18), Vector2(64, 24)), Color(0, 0, 0, 0.7))
+				ci.draw_string(font, tp, txt, HORIZONTAL_ALIGNMENT_RIGHT, 52, 16, Color(1.0, 0.88, 0.35))
 
 
 ## The biggest rectangle inside `area` that no rect in `blocks` overlaps (the

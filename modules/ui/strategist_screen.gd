@@ -17,7 +17,8 @@ extends Control
 ##
 ## The panels (timing, weather radar, selected car, feed and the onboard
 ## picture) move: drag a title bar (or the picture) to move one, the grip in
-## its bottom right corner to resize it (PanelLayout). Where they were left
+## its bottom right corner to zoom it (text and all), its right or bottom
+## edge to make it wider or taller (PanelLayout). Where they were left
 ## is saved in GameData.prefs["pit_wall_layout"]["full"]. "Reset layout" in
 ## the header puts them back.
 
@@ -241,6 +242,26 @@ func _pip_rect() -> Rect2:
 
 # --- Drawing helpers ------------------------------------------------------------
 
+
+## Draws one panel through f(content rect), scaled by the player's zoom for
+## it: hover and clicks are mapped to match.
+func _in_panel(id: String, r: Rect2, f: Callable) -> void:
+	var sc := layout.scale_of(id)
+	var lr := layout.content_rect(id, r)
+	if absf(sc - 1.0) < 0.001:
+		f.call(lr)
+		return
+	var n0 := _hits.size()
+	var hov := _hover
+	_hover = r.position + (hov - r.position) / sc
+	draw_set_transform(r.position * (1.0 - sc), 0.0, Vector2(sc, sc))
+	f.call(lr)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	_hover = hov
+	for k in range(n0, _hits.size()):
+		var hr: Rect2 = _hits[k][0]
+		_hits[k][0] = Rect2(r.position + (hr.position - r.position) * sc, hr.size * sc)
+
 func _text(pos: Vector2, s: String, fs := 15, col := Color.WHITE, align := HORIZONTAL_ALIGNMENT_LEFT, width := -1.0) -> void:
 	if width > 0.0 and align == HORIZONTAL_ALIGNMENT_LEFT:
 		s = _fit(s, width, fs)
@@ -311,25 +332,25 @@ func _draw() -> void:
 	# As designed: timing on the left; radar, selected car, then the picture
 	# and the feed down the right. A moved panel goes where it was left, and
 	# panels drawn later sit on top.
-	_draw_timing(layout.place("timing", Rect2(16, 58, table_w, vp.y - 58 - 34)), sim, tel)
+	_in_panel("timing", layout.place("timing", Rect2(16, 58, table_w, vp.y - 58 - 34)), func(r: Rect2): _draw_timing(r, sim, tel))
 	var rx := 16 + table_w + 14
 	var rw := vp.x - rx - 16
 	var radar_h := minf(rw * 0.62, 280.0)
-	_draw_weather(layout.place("weather", Rect2(rx, 58, rw, radar_h)), tel)
+	_in_panel("weather", layout.place("weather", Rect2(rx, 58, rw, radar_h)), func(r: Rect2): _draw_weather(r, tel))
 	var car_h := 236.0
-	_draw_car(layout.place("car", Rect2(rx, 58 + radar_h + 10, rw, car_h)), sim, tel)
+	_in_panel("car", layout.place("car", Rect2(rx, 58 + radar_h + 10, rw, car_h)), func(r: Rect2): _draw_car(r, sim, tel))
 	var fy := 58 + radar_h + 10 + car_h + 10
 	# The picture takes the feed's place (the feed is back when it's off).
 	var ph := minf(rw * 9.0 / 16.0, vp.y - fy - 40)
 	_pip_at = layout.rect_of("pip", Rect2(rx + (rw - ph * 16.0 / 9.0) * 0.5, fy + 3, ph * 16.0 / 9.0, ph))
 	if _pip_on() and not layout.is_moved("pip"):
 		fy += _pip_at.size.y + 12
-	_draw_feed(layout.place("feed", Rect2(rx, fy, rw, vp.y - fy - 34)), tel)
+	_in_panel("feed", layout.place("feed", Rect2(rx, fy, rw, vp.y - fy - 34)), func(r: Rect2): _draw_feed(r, tel))
 	if _pip_on():
 		layout.place("pip", _pip_at)
 		_hits.append([_pip_at, "pip", null])
 		OnboardPip.draw(self, font, onboard, _pip_at, session, selected, cam_mode == 2)
-	layout.draw_handles(self, _hover)
+	layout.draw_handles(self, _hover, font)
 	if layout.customised():
 		var rb := Rect2(vp.x - 196, 14, 132, 32)
 		var hot := rb.has_point(_hover)
@@ -337,7 +358,7 @@ func _draw() -> void:
 		draw_rect(rb, Color(1, 1, 1, 0.5 if hot else 0.25), false, 1.0)
 		_text(Vector2(rb.position.x, rb.position.y + 21), "Reset layout", 14, Color.WHITE if hot else DIM, HORIZONTAL_ALIGNMENT_CENTER, rb.size.x)
 		_hits.append([rb, "reset_layout", null])
-	var keys := "Click a car to look at it    ↑↓ choose car    ←→ or wheel filter feed    Drag a title bar to move a panel    P / Esc close"
+	var keys := "Click a car to look at it    ↑↓ choose car    ←→ or wheel filter feed    Drag a title bar to move, the corner to zoom    P / Esc close"
 	if _can_plan():
 		keys += "    Enter plan the stop"
 	if _cam_allowed():

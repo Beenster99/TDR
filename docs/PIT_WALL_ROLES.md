@@ -90,13 +90,18 @@ old driver the console.
 
 Every panel on the console (timing, the pit crew / strategy panel, team
 radio and the onboard camera picture) and on the full pit wall (timing,
-weather radar, selected car, feed, onboard picture) can be moved and resized
-with the mouse:
+weather radar, selected car, feed, onboard picture) can be moved, zoomed and
+resized with the mouse:
 
 - drag a panel's title bar (the strip along its top, marked with six dots)
   to move it; drag the onboard picture from anywhere on it;
-- drag the grip in a panel's bottom right corner to resize it (the picture
-  stays 16:9, every panel has a smallest size that still fits its contents);
+- drag the grip in a panel's bottom right corner to zoom it: the whole
+  panel, text included, gets bigger (up to 200 %) or smaller (down to 60 %),
+  so the data is easier to read; the size shows while you drag;
+- drag a panel's right or bottom edge to make it wider or taller without
+  changing the text size (every panel has a smallest size that still fits
+  its contents);
+- the onboard picture resizes from its corner and stays 16:9;
 - panels snap to the screen edges and line up next to each other;
 - a click on a title bar that doesn't move still clicks what's there.
 

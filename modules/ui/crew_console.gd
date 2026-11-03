@@ -29,7 +29,8 @@ extends Control
 ##
 ## The panels (timing, the role panel, team radio and the onboard picture)
 ## move: drag a title bar (or the picture) to move one, the grip in its
-## bottom right corner to resize it (PanelLayout). Where they were left is
+## bottom right corner to zoom it (text and all, to read it better), its right
+## or bottom edge to make it wider or taller (PanelLayout). Where they were left is
 ## saved in GameData.prefs["pit_wall_layout"]["console"]; the 3D race frames
 ## itself in the biggest space they leave free. "Reset layout" in the header
 ## puts them back.
@@ -596,27 +597,53 @@ func _draw() -> void:
 	layout.begin(_bounds())
 	_draw_markers(car)
 	# Drawn (and hit) in this order: a panel dragged over another sits on top of it.
-	var tr := layout.place("timing", d["timing"])
-	_hits.append([tr, "panel", null])
-	_draw_timing(tr, car)
-	var rr := layout.place("role", d["role"])
-	_hits.append([rr, "panel", null])
-	if car >= 0:
-		if current_tab() == TAB_PIT:
-			_draw_pit_crew(rr, car)
-		else:
-			_draw_strategy(rr, car)
+	_in_panel("timing", layout.place("timing", d["timing"]), func(r: Rect2):
+		_hits.append([r, "panel", null])
+		_draw_timing(r, car))
+	_in_panel("role", layout.place("role", d["role"]), func(r: Rect2): _draw_role(r, car))
 	var mid := layout.place("radio", d["radio"])
-	_hits.append([mid, "radio", null])
-	_draw_radio(mid)
+	_in_panel("radio", mid, func(r: Rect2):
+		_hits.append([r, "radio", null])
+		_draw_radio(r))
 	if pip_on():
 		layout.place("pip", pip_r)
 		_hits.append([pip_r, "panel", null])
 		OnboardPip.draw(self, font, onboard, pip_r, session, cam_car, cam_mode == CAM_REAR)
 	var hy := mid.position.y - 10 if mid.position.y > 90 else mid.end.y + 18
-	_text(Vector2(mid.position.x, hy), "Click: act   Right-click / wheel: change   ↑↓ ←→ Enter   %sV radio   P pit wall   Drag a title bar to move" % (
+	_text(Vector2(mid.position.x, hy), "Click: act   Right-click / wheel: change   ↑↓ ←→ Enter   %sV radio   P pit wall   Drag a title bar to move, the corner to zoom" % (
 		"C switch tab   " if tabs.size() > 1 else ""), 13, Color(1, 1, 1, 0.75), HORIZONTAL_ALIGNMENT_LEFT, maxf(mid.size.x, 760.0))
-	layout.draw_handles(self, _hover)
+	layout.draw_handles(self, _hover, font)
+
+
+## Draws one panel through f(content rect), scaled by the player's zoom for
+## it: hover and clicks are mapped to match.
+func _in_panel(id: String, r: Rect2, f: Callable) -> void:
+	var sc := layout.scale_of(id)
+	var lr := layout.content_rect(id, r)
+	if absf(sc - 1.0) < 0.001:
+		f.call(lr)
+		return
+	var n0 := _hits.size()
+	var hov := _hover
+	_hover = r.position + (hov - r.position) / sc
+	draw_set_transform(r.position * (1.0 - sc), 0.0, Vector2(sc, sc))
+	f.call(lr)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	_hover = hov
+	for k in range(n0, _hits.size()):
+		var hr: Rect2 = _hits[k][0]
+		_hits[k][0] = Rect2(r.position + (hr.position - r.position) * sc, hr.size * sc)
+
+
+## The role's panel: pit crew or strategy.
+func _draw_role(r: Rect2, car: int) -> void:
+	_hits.append([r, "panel", null])
+	if car < 0:
+		return
+	if current_tab() == TAB_PIT:
+		_draw_pit_crew(r, car)
+	else:
+		_draw_strategy(r, car)
 
 
 func _draw_header(r: Rect2, car: int) -> void:
