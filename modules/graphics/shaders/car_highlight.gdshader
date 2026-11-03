@@ -11,7 +11,7 @@ uniform vec2 half_size = vec2(2.6, 1.15);   // the car's footprint, half length 
 uniform vec2 quad_half = vec2(4.0, 2.6);    // half size of the quad (m)
 uniform float corner = 0.6;                 // rounding of the outline (m)
 uniform float width = 0.35;                 // outline thickness (m), grows when zoomed out
-uniform float pulse = 0.0;                  // 1 = breathe (own car; the car to give a place back to)
+uniform float pulse = 0.0;                  // 1 = breathe (own car; the car to give a place back to), 2 = flash fast (safety car)
 uniform float pulse_rate = 3.0;             // breaths per 2 pi seconds (faster = more urgent)
 
 void fragment() {
@@ -20,7 +20,7 @@ void fragment() {
 	float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - corner;   // signed distance to the footprint
 	float ring = exp(-pow(max(d, 0.0) / max(width, 0.01), 2.0) * 1.6) * step(-0.15, d);
 	float inner = smoothstep(-0.15, 0.1, d);
-	float breathe = 1.0 - pulse * 0.25 * (0.5 + 0.5 * sin(TIME * pulse_rate));
+	float breathe = pulse > 1.5 ? 0.35 + 0.65 * step(0.0, sin(TIME * 10.5)) : 1.0 - pulse * 0.25 * (0.5 + 0.5 * sin(TIME * pulse_rate));
 	float a = ring * inner * strength * breathe;
 	ALBEDO = tint.rgb;
 	ALPHA = a;

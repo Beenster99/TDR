@@ -64,12 +64,14 @@ func _init() -> void:
 	test_race_start()
 	test_driving_aids()
 	test_active_pad()
+	test_input_prompts()
 	test_pointer_hider()
 	test_hud_timing()
 	test_hud_layout()
 	test_pit_wall_layout()
 	test_graphics_effects()
 	test_pit_lane_blend()
+	test_pit_wall()
 	test_settings_and_units()
 	test_pause_menu()
 	test_rebinding()
@@ -2351,9 +2353,22 @@ func test_safety_car_off() -> void:
 	check(ev.has("flag:yellow"), "a stopped car still brings out yellow flags")
 	check(not ev.has("safety_car:sc") and not ev.has("safety_car:vsc") and not r["sc_seen"], "no VSC or safety car when the host turns it off")
 	check(r["sim"].phase == RaceSim.Phase.FINISHED, "race finishes")
+	# "Safety car: Off": no flags of any kind either.
+	var s2 := RaceSettings.new()
+	s2.laps = 2
+	s2.ai_count = 5
+	s2.seed = 99
+	s2.set_race_control_mode(RaceSettings.RC_OFF)
+	check(s2.race_control_mode() == RaceSettings.RC_OFF and not s2.safety_car_enabled
+		and RaceSettings.from_dict(s2.to_dict()).race_control_mode() == RaceSettings.RC_OFF, "Safety car: Off survives the trip to the clients")
+	var r2 := _sc_race(s2, 30.0, false)
+	var ev2: Dictionary = r2["events"]
+	var flags := ev2.keys().filter(func(k): return str(k).begins_with("flag:yellow") or str(k).begins_with("flag:double") or str(k).begins_with("safety_car:"))
+	check(flags.is_empty() and not r2["sc_seen"], "Safety car: Off: no yellow flags, VSC or safety car (%s)" % str(flags))
+	check(ev2.has("flag:recovered") or r2["sim"].race_control.recovered[r2["victim"]] == 1, "the retired car is still taken away")
+	check(r2["sim"].phase == RaceSim.Phase.FINISHED, "race finishes")
 
 
-## Rules without driving: penalties, classification, overtaking rules, sync.
 ## Yellow flags only for real incidents: contact between cars (rubbing, a tap,
 ## a bump) raises nothing; a heavy crash, a spun car, a car crawling off the
 ## track or into the wall does.
@@ -2477,6 +2492,7 @@ func test_give_back_highlight() -> void:
 	check(rc.give_back_target(2) == RaceControl.GIVE_BACK_SC, "passing the safety car: the safety car is highlighted")
 
 
+## Rules without driving: penalties, classification, overtaking rules, sync.
 func test_race_control_rules() -> void:
 	print("race control rules")
 	var d := _data()
@@ -3591,6 +3607,83 @@ func test_pit_lane_blend() -> void:
 		check(worst < 0.15 and own < 0.01, "%s: pit lane meets the track's edge (step %.2f m) and is level by the garages (%.2f m)" % [d["id"], worst, own])
 
 
+## The pit wall stands between the track and the pit lane (never on the track,
+## which it used to cross on many circuits, or in the lane), all along the
+## garages, and cars can't drive through it from either side.
+func test_pit_wall() -> void:
+	print("pit wall")
+	for info in TrackCatalog.list_all():
+		var t := TrackCatalog.load_track(info["id"])
+		if not t.has_pit_lane() or t.discipline != "circuit":
+			continue
+		var on_track := 0
+		var in_lane := 0
+		var hint := -1
+		for k in range(0, t.pit_wall.size() * 4 - 3):
+			# vertices and the points between them
+			var p := t.pit_wall[k / 4].lerp(t.pit_wall[mini(k / 4 + 1, t.pit_wall.size() - 1)], (k % 4) * 0.25)
+			var q := t.project(p, hint)
+			hint = q["idx"]
+			var edge: float = q["w_right"] if t.pit_side > 0.0 else q["w_left"]
+			if float(q["offset"]) * t.pit_side - TrackData.PIT_WALL_HALF < edge + t.kerb_width:
+				on_track += 1
+			if t.project_pit(p)["dist"] - TrackData.PIT_WALL_HALF < t.pit_width * 0.5:
+				in_lane += 1
+		# Along the garages, wherever the lane is near the track (a lane far
+		# off across the grass needs no wall), the wall is there.
+		var a := INF
+		var b := -INF
+		if t.has_pit_wall():
+			a = t.project_pit(t.pit_wall[0])["d"]
+			b = t.project_pit(t.pit_wall[t.pit_wall.size() - 1])["d"]
+		var near := 0
+		var walled := 0
+		var dd := t.pit_limit_start
+		while dd <= t.pit_limit_end:
+			var q := t.project(t.pit_position_at(dd, -t.pit_side * t.pit_width * 0.5))
+			var edge: float = q["w_right"] if t.pit_side > 0.0 else q["w_left"]
+			if float(q["offset"]) * t.pit_side - edge < 15.0:
+				near += 1
+				if dd >= a - 2.0 and dd <= b + 2.0:
+					walled += 1
+			dd += 4.0
+		check(t.has_pit_wall() and on_track == 0 and in_lane == 0 and walled >= near * 0.95,
+			"%s: pit wall clear of the track (%d) and the lane (%d), along %d%% of the garages beside the track" % [info["id"], on_track, in_lane, 100 * walled / maxi(near, 1)])
+	# Drive at it from the track and from the lane: the car stops at it.
+	var d := _data()
+	var s := RaceSettings.new()
+	s.track_id = "monza"
+	s.ai_count = 1
+	var track := TrackCatalog.load_track("monza")
+	var start := RaceFactory.plan(s, [], d["cars"], d["drivers"], track)
+	for from_lane in [false, true]:
+		var sim := RaceFactory.build_sim(start, d["cars"], d["tyres"], track)
+		sim.phase = RaceSim.Phase.RACING
+		var mid := track.pit_wall.size() / 2
+		var wp := track.pit_wall[mid]
+		var along := (track.pit_wall[mid + 1] - wp).normalized()
+		var to_lane := along.orthogonal()
+		if to_lane.dot(track.pit_position_at(track.project_pit(wp)["d"]) - wp) < 0.0:
+			to_lane = -to_lane
+		var toward := -to_lane if from_lane else to_lane   # towards the wall
+		var c := sim.cars[0]
+		c.pos = wp - toward * 5.0
+		c.heading = (toward + along).angle()   # 45 degrees into the wall
+		c.vel = Vector2.from_angle(c.heading) * 30.0
+		c.track_idx = track.project(c.pos)["idx"]
+		var hit := false
+		var through := false
+		for f in 120:
+			sim.step([CarInput.neutral()])
+			for e in sim.events:
+				if e["type"] == "barrier_impact" and e.get("pit_wall", false):
+					hit = true
+			var side := (sim.cars[0].pos - wp).dot(to_lane)
+			if (side > 0.0) != from_lane:
+				through = true
+		check(hit and not through, "a car driven into the pit wall from the %s hits it and stays on its side" % ("pit lane" if from_lane else "track"))
+
+
 ## Graphics effects: run-off and gravel are drawn at the height cars are
 ## drawn at (cars used to vanish under them on hilly tracks), and a pit
 ## crew does a stop (jacks the car up, takes the wheels off, puts them back).
@@ -3775,6 +3868,56 @@ func test_active_pad() -> void:
 		if ev is InputEventJoypadMotion:
 			ui_ok = ui_ok and ev.device == 4
 	check(ui_ok, "menu navigation sticks follow the pad in use too")
+	ActivePad._choose(-1)
+
+
+func test_input_prompts() -> void:
+	print("button prompts follow the last-used device")
+	if not InputMap.has_action("crew_grab"):
+		InputMap.load_from_project_settings()
+	InputSetup.register_actions()
+	ActivePad._choose(0)
+	var key := InputEventKey.new()
+	key.physical_keycode = KEY_G
+	key.pressed = true
+	InputPrompt.observe(key)
+	check(not InputPrompt.pad, "pressing a key switches prompts to the keyboard")
+	check(InputPrompt.key("crew_grab") == "G" and InputPrompt.key("handbrake") == "Space", "keyboard prompts name keys (%s, %s)" % [
+		InputPrompt.key("crew_grab"), InputPrompt.key("handbrake")])
+	check(InputPrompt.fill("Put it down ({crew_grab}), {not_an_action}") == "Put it down (G), {not_an_action}", "fill swaps action names only")
+	var serial := InputPrompt.serial
+	var b := InputEventJoypadButton.new()
+	b.device = 0
+	b.button_index = JOY_BUTTON_A
+	b.pressed = true
+	check(InputPrompt.observe(b) and InputPrompt.pad and InputPrompt.serial > serial, "pressing a pad button switches prompts to the controller")
+	check(InputPrompt.key("crew_grab") == "X" and InputPrompt.key("crew_gun") == "RT" and InputPrompt.key("ui_cancel") == "B",
+		"controller prompts name buttons (%s, %s, %s)" % [InputPrompt.key("crew_grab"), InputPrompt.key("crew_gun"), InputPrompt.key("ui_cancel")])
+	check(InputPrompt.key("pit_fuel") == "F", "an action with no pad button names its key instead")
+	var jitter := InputEventMouseMotion.new()
+	jitter.relative = Vector2(1, 1)
+	check(not InputPrompt.observe(jitter) and InputPrompt.pad, "a nudged mouse doesn't switch away from the controller")
+	# A rebound action is named by its new binding.
+	var o := InputSetup.with_binding({}, "crew_grab", "pad", 0, {"button": JOY_BUTTON_Y})
+	o = InputSetup.with_binding(o, "crew_grab", "keys", 0, KEY_K)
+	InputSetup.apply_bindings(o)
+	check(InputPrompt.key("crew_grab") == "Y", "a rebound pad button is what the prompt names")
+	var click := InputEventMouseButton.new()
+	click.button_index = MOUSE_BUTTON_LEFT
+	click.pressed = true
+	check(InputPrompt.observe(click) and not InputPrompt.pad, "a mouse click switches prompts back to keyboard and mouse")
+	check(InputPrompt.key("crew_grab") == "K", "... naming the rebound key")
+	# A label kept up to date: refreshed when the device changes.
+	var label := Label.new()
+	InputPrompt.live(label, func(): label.text = InputPrompt.fill("{handbrake}"))
+	check(label.text == "Space", "a live label starts on the device in use")
+	InputPrompt.set_pad(true)
+	for c in label.get_children(true):
+		c._process(0.0)
+	check(label.text == "A", "... and follows a switch to the controller")
+	label.free()
+	InputSetup.register_actions()
+	InputPrompt.set_pad(false)
 	ActivePad._choose(-1)
 
 

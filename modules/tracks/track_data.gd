@@ -63,6 +63,17 @@ var pit_limit_start: float = 0.0   ## pit metres where the speed limit starts
 var pit_limit_end: float = 0.0     ## and ends
 var pit_box_count: int = 30
 var _pit_bounds := Rect2()
+## The pit wall: a concrete wall between the track and the pit lane, all
+## along the stretch where the lane runs beside the track with room for it
+## (never on the track or in the lane). Its centre line, in metres; cars
+## can't drive through it (RaceSim.resolve_pit_wall). Empty if no room.
+var pit_wall: PackedVector2Array = []
+var _pit_wall_bounds := Rect2()
+const PIT_WALL_HALF := 0.5        ## half the wall's thickness (m, as TrackView draws it)
+const PIT_WALL_MIN_GAP := 3.4     ## track edge to lane edge needed for the wall (clear of the kerb band)
+const PIT_WALL_MAX_GAP := 25.0    ## the lane's this far off: an access road, no wall
+const PIT_WALL_LANE_GAP := 1.5    ## the wall stands at most this far off the lane's edge
+const PIT_WALL_STEP := 2.0        ## m along the lane between wall points
 ## Pit lane surface: how far beside the lane the ground eases into it, and
 ## how far from the track's edge the lane still follows the track's height.
 const PIT_VERGE_M := 10.0
@@ -158,6 +169,108 @@ func _build_pit(p: Dictionary) -> void:
 		lo = lo.min(q)
 		hi = hi.max(q)
 	_pit_bounds = Rect2(lo, hi - lo).grow(pit_width)
+	_build_pit_wall()
+
+
+## The pit wall's centre line: wherever the gap between the track's edge and
+## the lane's edge is at least PIT_WALL_MIN_GAP, in the stretch round the
+## garages (the run of such points that overlaps the speed-limit zone). It
+## stands in the middle of the gap, or PIT_WALL_LANE_GAP off the lane where
+## the gap is wide.
+func _build_pit_wall() -> void:
+	pit_wall = PackedVector2Array()
+	var h := pit_width * 0.5
+	var runs: Array = []      ## [[start d, points], ...]
+	var cur := PackedVector2Array()
+	var cur_start := 0.0
+	var hint := -1
+	var d := 0.0
+	while d <= pit_length:
+		var lane_edge := pit_position_at(d, -pit_side * h)
+		var q := project(lane_edge, hint)
+		hint = q["idx"]
+		var edge: float = q["w_right"] if pit_side > 0.0 else q["w_left"]
+		var gap: float = float(q["offset"]) * pit_side - edge
+		var ok := gap >= PIT_WALL_MIN_GAP and gap <= PIT_WALL_MAX_GAP
+		var wp := pit_position_at(d, -pit_side * (h + minf(gap * 0.5, PIT_WALL_LANE_GAP)))
+		if ok:
+			# Where the lane bends the offset point can fold back into the
+			# lane or out onto the track: no wall there.
+			var wq := project(wp, hint)
+			var w_edge: float = wq["w_right"] if pit_side > 0.0 else wq["w_left"]
+			ok = float(wq["offset"]) * pit_side - w_edge >= kerb_width + PIT_WALL_HALF \
+				and project_pit(wp)["dist"] >= h + PIT_WALL_HALF + 0.2
+		if ok:
+			if cur.is_empty():
+				cur_start = d
+			cur.append(wp)
+		elif not cur.is_empty():
+			runs.append([cur_start, cur])
+			cur = PackedVector2Array()
+		d += PIT_WALL_STEP
+	if not cur.is_empty():
+		runs.append([cur_start, cur])
+	# The longest run beside the garages (the speed-limit zone).
+	for r in runs:
+		var pts: PackedVector2Array = r[1]
+		var a: float = r[0]
+		var b: float = a + (pts.size() - 1) * PIT_WALL_STEP
+		if pts.size() >= 2 and b >= pit_limit_start and a <= pit_limit_end and pts.size() > pit_wall.size():
+			pit_wall = pts
+	if pit_wall.size() >= 2:
+		var lo := pit_wall[0]
+		var hi := pit_wall[0]
+		for p in pit_wall:
+			lo = lo.min(p)
+			hi = hi.max(p)
+		_pit_wall_bounds = Rect2(lo, hi - lo)
+
+
+func has_pit_wall() -> bool:
+	return pit_wall.size() >= 2
+
+
+## Where a circle (centre c, radius r) is into the pit wall, or {} if it
+## isn't: {normal (unit, out of the wall towards keep_side's side), depth (m)}.
+## keep_side is a point on the side the circle should end up on (the car's
+## centre); a circle that has gone right through is pushed back to that side.
+func pit_wall_contact(c: Vector2, r: float, keep_side: Vector2) -> Dictionary:
+	if not has_pit_wall() or not _pit_wall_bounds.grow(r + PIT_WALL_HALF + 0.5).has_point(c):
+		return {}
+	var reach := r + PIT_WALL_HALF
+	var best := {}
+	for i in pit_wall.size() - 1:
+		var a := pit_wall[i]
+		var b := pit_wall[i + 1]
+		var seg := b - a
+		var l2 := seg.length_squared()
+		if l2 < 1e-6:
+			continue
+		var t := clampf((c - a).dot(seg) / l2, 0.0, 1.0)
+		var foot := a + seg * t
+		var v := c - foot
+		var dist := v.length()
+		if dist >= reach + 1.0:
+			continue
+		var nrm: Vector2
+		var depth: float
+		if t > 0.0 and t < 1.0:
+			# Along the wall: out on the side the car is on.
+			var side_n := Vector2(-seg.y, seg.x) / sqrt(l2)
+			if side_n.dot(keep_side - a) < 0.0:
+				side_n = -side_n
+			var sd := side_n.dot(c - foot)   # + on the car's side
+			depth = reach - sd
+			nrm = side_n
+		else:
+			# Round the end of the wall.
+			if dist < 0.0001:
+				continue
+			depth = reach - dist
+			nrm = v / dist
+		if depth > 0.0 and (best.is_empty() or depth > float(best["depth"])):
+			best = {"normal": nrm, "depth": depth}
+	return best
 
 
 func _build() -> void:
