@@ -328,14 +328,20 @@ def make_gear_whine():
 
 
 def make_squeal():
+    # Racing tyres past the limit howl and rasp more than they whistle: a
+    # band of rough noise centred low (~500-1500 Hz) with broad, wandering
+    # resonances in it, not the thin tones of a road tyre in a car park.
     rng, n = loop_noise(3.0, 31)
-    base = [760, 1130, 1520, 2280]
-    x = tonal_noise_bands(n, base, [9, 12, 16, 20], [1.0, 0.7, 0.45, 0.2], rng)
-    x = x / (np.std(x) + 1e-9)
-    flutter = slow_mod(n, 14.0, rng, 0.45) * slow_mod(n, 2.0, rng, 0.25)
-    hiss = bandnoise(n, SR, 1500, 6000, rng)
-    x = x * flutter + hiss / (np.std(hiss) + 1e-9) * 0.25
-    return normalise(x, 0.2)
+    body = bandnoise(n, SR, 280, 1800, rng)
+    body /= np.std(body) + 1e-9
+    howl = tonal_noise_bands(n, [480, 720, 1010, 1380], [70, 90, 120, 150], [1.0, 0.8, 0.5, 0.25], rng)
+    howl /= np.std(howl) + 1e-9
+    # The tread stick-slips: a fast rough grain on top of a slower surge.
+    grain = 0.55 + np.abs(slow_mod(n, 55.0, rng, 1.0) - 1.0)
+    surge = slow_mod(n, 3.0, rng, 0.3)
+    x = (body * 1.0 + howl * 0.55) * grain * surge
+    x = fft_filter(x, lambda f: highpass(f, 180, 2) * lowpass(f, 2600, 2), SR)
+    return normalise(np.tanh(x / (np.std(x) + 1e-9) * 0.7), 0.2)
 
 
 def make_scrub():
@@ -350,13 +356,15 @@ def make_scrub():
 
 
 def make_lock():
+    # Locked or spinning wheels: a coarse, low rubbery rasp (no whistle).
     rng, n = loop_noise(2.0, 33)
-    x = tonal_noise_bands(n, [520, 790, 1040], [14, 18, 22], [1.0, 0.6, 0.35], rng)
+    x = tonal_noise_bands(n, [380, 610, 900], [60, 80, 110], [1.0, 0.6, 0.35], rng)
     x /= np.std(x) + 1e-9
-    rough = bandnoise(n, SR, 200, 2500, rng)
+    rough = bandnoise(n, SR, 150, 2000, rng)
     rough /= np.std(rough) + 1e-9
-    x = x * slow_mod(n, 25.0, rng, 0.5) + rough * 0.6 * slow_mod(n, 9.0, rng, 0.5)
-    return normalise(np.tanh(x * 0.6), 0.2)
+    x = x * 0.6 * slow_mod(n, 25.0, rng, 0.5) + rough * slow_mod(n, 9.0, rng, 0.5)
+    x = fft_filter(x, lambda f: lowpass(f, 2400, 2), SR)
+    return normalise(np.tanh(x / (np.std(x) + 1e-9) * 0.6), 0.2)
 
 
 def make_road():
@@ -387,6 +395,22 @@ def make_gravel():
     x = fft_filter(imp, lambda f: highpass(f, 700, 1) * lowpass(f, 7000, 2), SR)
     rumble = bandnoise(n, SR, 30, 250, rng)
     x = x / (np.std(x) + 1e-9) + rumble / (np.std(rumble) + 1e-9) * 0.8
+    return normalise(x, 0.2)
+
+
+def make_dirt():
+    # Sliding on loose earth: soft clods and grit scrabbling under the tyres
+    # over a low rumble (duller than the gravel's stones). Wet, the game plays
+    # it lower and it turns to a mud slurp.
+    rng, n = loop_noise(2.0, 40)
+    imp = np.zeros(n)
+    hits = rng.integers(0, n, 1800)
+    imp[hits] = rng.uniform(-1, 1, len(hits)) ** 3
+    grit = fft_filter(imp, lambda f: highpass(f, 300, 1) * lowpass(f, 2800, 2), SR)
+    hiss = bandnoise(n, SR, 400, 3000, rng)
+    rumble = bandnoise(n, SR, 30, 220, rng)
+    x = grit / (np.std(grit) + 1e-9) + hiss / (np.std(hiss) + 1e-9) * 0.35 * slow_mod(n, 7.0, rng, 0.5) \
+        + rumble / (np.std(rumble) + 1e-9) * 0.9
     return normalise(x, 0.2)
 
 
@@ -479,7 +503,7 @@ EXTRAS = {
     "hybrid_whine": (make_hybrid, True), "gear_whine": (make_gear_whine, True),
     "tyre_squeal": (make_squeal, True), "tyre_scrub": (make_scrub, True), "tyre_lock": (make_lock, True),
     "road_roar": (make_road, True), "kerb": (make_kerb, True), "gravel": (make_gravel, True),
-    "grass": (make_grass, True), "wind": (make_wind, True), "spray": (make_spray, True),
+    "dirt": (make_dirt, True), "grass": (make_grass, True), "wind": (make_wind, True), "spray": (make_spray, True),
     "pop_1": (lambda: make_pop(1), False), "pop_2": (lambda: make_pop(2), False),
     "pop_3": (lambda: make_pop(3), False), "pop_4": (lambda: make_pop(4), False),
     "crackle": (make_crackle, False), "shift": (make_shift, False),

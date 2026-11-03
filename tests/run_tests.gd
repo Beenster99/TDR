@@ -70,6 +70,7 @@ func _init() -> void:
 	test_garage_saves()
 	test_online_contacts()
 	test_rallycross()
+	test_handbrake()
 	print("\n%s (%d failures, %.1fs)" % ["PASS" if failures == 0 else "FAIL", failures, (Time.get_ticks_msec() - t0) / 1000.0])
 	quit(1 if failures > 0 else 0)
 
@@ -1577,6 +1578,7 @@ func test_pit_crew_game() -> void:
 	p5["phase"] = PitRules.PHASE_APPROACH
 	g0.step(1.0 / 60.0)
 	check(g0.stage == PitCrewGame.Stage.READY and g0.jobs == ["gun_l"] and not g0.coop and not bool(p5["crew_auto"]), "solo: the left gun man, the driver still drives in")
+	check(g0.hold == PitCrewGame.Hold.GUN, "solo: the gun man starts with the gun in hand")
 	p5["phase"] = PitRules.PHASE_LIMIT
 	sim5.pits._arrive(0)
 	g0.step(1.0 / 60.0)
@@ -1608,6 +1610,13 @@ func test_pit_crew_game() -> void:
 	g0._use_was = true
 	g0._step_gun(1.0 / 60.0, Vector2.ZERO, false, false)
 	check(g0.loose == 1 and g0.job == PitCrewGame.Job.LOOSE and not g0.done.has(0), "too early off the wheel gun: loose nut, go again")
+	g0.job = PitCrewGame.Job.NONE
+	g0.hold = PitCrewGame.Hold.NONE
+	g0.gun_at = {0: g0.pos}
+	g0.sent = {}
+	g0._use_was = false
+	g0._step_gun(1.0 / 60.0, Vector2.ZERO, true, false)
+	check(g0.hold == PitCrewGame.Hold.GUN, "the gun button next to the gun on the ground picks it up")
 	g0.free()
 
 
@@ -2874,7 +2883,7 @@ func test_rebinding() -> void:
 	check(InputSetup.keys_of(o, "accelerate") == [KEY_I], "the same key twice on one control is kept once")
 	o = InputSetup.with_binding(o, "brake", "pad", 0, {"button": JOY_BUTTON_B})
 	check(InputSetup.same_binding(InputSetup.pads_of(o, "brake")[0], {"button": JOY_BUTTON_B}), "pad brake on B")
-	check("Next tyres" in InputSetup.used_by(o, "brake", "pad", {"button": JOY_BUTTON_B}), "B is also next tyres: shown as a clash")
+	check("Shift up (manual gears)" in InputSetup.used_by(o, "brake", "pad", {"button": JOY_BUTTON_B}), "B is also shift up: shown as a clash")
 	o = InputSetup.with_binding(o, "brake", "pad", 0, null)
 	check(InputSetup.pads_of(o, "brake").size() == 1, "a cleared binding is dropped")
 	InputSetup.apply_bindings(o)
@@ -3379,6 +3388,17 @@ func _pad_motion(dev: int, axis: JoyAxis, v: float) -> InputEventJoypadMotion:
 
 func test_driving_aids() -> void:
 	print("driving aids")
+	# Speed-sensitive lock: full lock at walking pace and through a slow
+	# hairpin's entry speed, unchanged at the top end.
+	check(is_equal_approx(LocalInput.steer_lock(0.0), 1.0), "full steering lock at a standstill")
+	check(is_equal_approx(LocalInput.steer_lock(LocalInput.LOCK_FULL_SPEED), 1.0), "full steering lock up to about 29 km/h")
+	check(LocalInput.steer_lock(60.0 / 3.6) > 0.6, "most of the lock left at 60 km/h (%.2f)" % LocalInput.steer_lock(60.0 / 3.6))
+	var lock_250 := LocalInput.steer_lock(250.0 / 3.6)
+	check(lock_250 > 0.17 and lock_250 < 0.2, "high-speed lock unchanged at 250 km/h (%.3f)" % lock_250)
+	var falls := true
+	for k in range(1, 100):
+		falls = falls and LocalInput.steer_lock(float(k)) <= LocalInput.steer_lock(float(k - 1))
+	check(falls, "steering lock never grows with speed")
 	var d := _data()
 	var track: TrackData = d["track"]
 	var def: CarDefinition = d["cars"]["bmw_m4_gt3"]
@@ -3731,3 +3751,99 @@ func test_rallycross() -> void:
 	var e0: RaceEntry = sim.entries[0]
 	check(e0.jokers == 0 and e0.penalty_s >= RaceSettings.JOKER_MISSED_PENALTY_S,
 		"a missed joker costs %.0f s at the flag (got %.0f s)" % [RaceSettings.JOKER_MISSED_PENALTY_S, e0.penalty_s])
+
+
+## The handbrake: on the wire, bound to A / Space, locks the rear wheels so
+## the rear swings round, holds a car still; tyres never squeal on dirt.
+func test_handbrake() -> void:
+	print("handbrake")
+	var i := CarInput.new()
+	i.handbrake = true
+	i.pit_request = true
+	var j := CarInput.from_bytes(i.to_bytes())
+	check(j.handbrake and j.pit_request and not j.shift_up, "handbrake bit survives the wire")
+	check(not CarInput.from_bytes(CarInput.new().to_bytes()).handbrake, "handbrake off by default")
+	InputSetup.register_actions()
+	check(InputSetup.keys_of({}, "handbrake") == [KEY_SPACE], "handbrake on Space")
+	var a := {"button": JOY_BUTTON_A}
+	check(InputSetup.pads_of({}, "handbrake").any(func(b): return InputSetup.same_binding(b, a)), "handbrake on pad A")
+	var clash: Array = InputSetup.used_by({}, "handbrake", "pad", a)
+	check(clash == ["Pit crew: use (wheel gun, windscreen)"], "pad A drives nothing else while racing (also: %s)" % ", ".join(clash))
+	check(InputSetup.REBINDABLE.any(func(r): return r[0] == "handbrake"), "handbrake is in Settings > Controller")
+	var cars := CarCatalog.load_all()
+	var tyres := TyreCatalog.load_all()
+	var d: CarDefinition = cars["bmw_m4_gt3"]
+	var tc: TyreCompound = tyres[d.tyre_compound_id]
+	# Same turn-in at 90 km/h, with and without the handbrake.
+	for track_id in ["monza", "holjes", "derby_mudflat_infinity"]:
+		var track := TrackCatalog.load_track(track_id)
+		var env := SimEnvironment.new()
+		env.bind_track(track)
+		var s0 := 40.0
+		var yaw := []
+		var speed := []
+		for hb in [false, true]:
+			var c := CarState.new()
+			c.pos = track.position_at(s0, 0.0)
+			c.heading = track.heading_at(s0)
+			c.vel = c.forward() * 25.0
+			c.tyre_temp = PackedFloat64Array([80.0, 80.0, 80.0, 80.0])
+			var start := c.heading
+			var ev := []
+			for k in 96:   # 0.4 s
+				var inp := CarInput.new()
+				inp.steer = 0.35
+				inp.handbrake = hb and k < 60
+				CarPhysics.step(c, inp, d, tc, env, track, 1.0 / 240.0, 0.0, ev, 0)
+			yaw.append(absf(angle_difference(start, c.heading)))
+			speed.append(c.speed())
+		check(yaw[1] > yaw[0] * 1.4, "%s: the handbrake swings the car round (%.0f deg vs %.0f deg in 0.4 s)" % [track_id, rad_to_deg(yaw[1]), rad_to_deg(yaw[0])])
+		check(speed[1] < speed[0], "%s: and scrubs speed (%.0f vs %.0f km/h)" % [track_id, speed[1] * 3.6, speed[0] * 3.6])
+	# Parked on the handbrake with the throttle down: a rear-drive car stays put.
+	var flat := TrackCatalog.load_track("monza")
+	var env2 := SimEnvironment.new()
+	env2.bind_track(flat)
+	var p := CarState.new()
+	p.pos = flat.position_at(40.0, 0.0)
+	p.heading = flat.heading_at(40.0)
+	var ev2 := []
+	for k in 480:
+		var inp := CarInput.new()
+		inp.throttle = 1.0
+		inp.handbrake = true
+		CarPhysics.step(p, inp, d, tc, env2, flat, 1.0 / 240.0, 0.0, ev2, 0)
+	check(p.speed() < 1.0, "throttle on the handbrake: a rear-drive car stays put (%.1f m/s)" % p.speed())
+	# Net: the held flag reaches other players' machines (for their sounds).
+	var buf := PackedFloat32Array()
+	p.pack_net(buf)
+	var r := CarState.new()
+	r.unpack_net(buf, 0)
+	check(r.handbrake, "handbrake held is streamed with the car")
+	# Sound: sliding on dirt or mud makes a dirt noise, never a tyre squeal.
+	var au := CarAudio.new()
+	var st := CarState.new()
+	au.setup(d, st, true)
+	st.vel = Vector2(30.0, 0.0)
+	st.slip_angle_rear = 0.3
+	st.slip_angle_front = 0.2
+	st.handbrake = true
+	for k in 30:
+		au._update_tyres(1.0 / 60.0, 30.0, 1.0)
+	check(au._squeal_level > 0.5 and au._lock_level > 0.3, "sliding on tarmac squeals (%.2f)" % au._squeal_level)
+	var dirt_layer: AudioStreamPlayer2D = au._layers["dirt"]
+	check(dirt_layer.volume_db <= -79.0, "no dirt noise on tarmac")
+	st.dirt = 1.0
+	for wet in [0.0, 1.0]:
+		au.wetness = wet
+		for k in 60:
+			au._update_tyres(1.0 / 60.0, 30.0, 1.0)
+		check(au._squeal_level < 0.01 and au._lock_level < 0.01 and au._scrub_level < 0.01,
+			"sliding on %s: no tyre squeal (%.3f)" % ["mud" if wet > 0.0 else "dirt", au._squeal_level])
+		check(dirt_layer.volume_db > -12.0, "  but the dirt scrabbles (%.0f dB)" % dirt_layer.volume_db)
+	st.dirt = 0.0
+	for surf in [TrackData.Surface.GRAVEL, TrackData.Surface.GRASS]:
+		st.surface = surf
+		for k in 60:
+			au._update_tyres(1.0 / 60.0, 30.0, 1.0)
+		check(au._squeal_level < 0.01 and au._lock_level < 0.01, "sliding on %s: no tyre squeal" % ("gravel" if surf == TrackData.Surface.GRAVEL else "grass"))
+	au.free()

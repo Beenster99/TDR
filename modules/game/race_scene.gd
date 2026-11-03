@@ -425,6 +425,8 @@ func _tick_once(delta: float) -> void:
 			inp = CarInput.neutral()   # online HUD editing / menu: the keys work the menu, not the car
 		else:
 			inp = local_input.read(delta, session.sim.cars[session.local_car].speed())
+			if pit_menu.visible and inp.handbrake:
+				inp.handbrake = false   # online the race runs on: A / Space confirms the menu, not the handbrake
 	session.tick(inp)
 
 
