@@ -704,11 +704,6 @@ func _process(delta: float) -> void:
 	var centre_mix := smoothstep(0.85, 1.0, zoom_level) * (1.0 - _box_mix)
 	var cam_centre := follow.lerp(_track_rect.get_center(), centre_mix)
 	var smooth := centre_mix < 0.01
-	if _spectating and _spec_view == SpecView.TV:
-		var tv := _tv_frame(car, vs)
-		cam_centre = tv[0]
-		z = tv[1]
-		smooth = false
 	# Put the view's centre (not the window's) on the target.
 	var shift := (_view_rect().get_center() - vs * 0.5) / z
 	camera.position = cam_centre - shift
@@ -742,6 +737,8 @@ func _process(delta: float) -> void:
 	if rot:
 		camera.rotation = heading + PI * 0.5
 	world.set_camera(camera.get_screen_center_position(), z, camera.rotation if rot else 0.0)
+	if _spectating and _spec_view == SpecView.TV:
+		_update_tv_camera(delta)
 	_camera_placed = true
 	_maybe_screenshot()
 
@@ -1311,9 +1308,6 @@ var _cooldown_ai: AIDriver = null
 var _penalties: Array = []      ## every penalty in the race {car, seconds, reason} (race events)
 var _onboard: OnboardCamera = null
 var _onboard_rect: TextureRect
-var _tv_point := Vector2.INF
-var _tv_s := 0.0
-var _tv_side := 1.0
 var _tv_car := -1
 
 
@@ -1387,7 +1381,9 @@ func _spectate_shots() -> void:
 	var dir := str(GameData.arg("spectate-shots"))
 	DirAccess.make_dir_recursive_absolute(dir)
 	_shots_busy = true
-	for v in SPEC_VIEW_NAMES.size():
+	var first := int(_spec_view)   # --spectate-view picks the first one
+	for j in SPEC_VIEW_NAMES.size():
+		var v := (first + j) % SPEC_VIEW_NAMES.size()
 		_spec_view = v as SpecView
 		_tv_car = -1
 		spectator.watch(_spec_car, SPEC_VIEW_NAMES[_spec_view])
@@ -1456,30 +1452,69 @@ func _update_onboard_view() -> void:
 		_onboard_rect.texture = _onboard.get_texture()
 
 
-## Trackside TV: a camera beside the track ahead of the car, which holds its
-## spot and zooms in as the car comes by, then cuts to the next spot ahead.
-## Returns [view centre, pixels per metre].
-func _tv_frame(car: CarState, vs: Vector2) -> Array:
+## Trackside TV: broadcast cameras on poles round the circuit, every couple
+## of hundred metres and alternating sides. The camera the car is coming up
+## to follows it, panning and zooming to keep it the same size in the
+## picture, and cuts to the next one once the car is past.
+const TV_SPACING_M := 220.0
+const TV_POLE_M := 9.0          ## camera height above the ground
+const TV_FRAME_M := 14.0        ## how much of the scene the lens keeps in the picture, top to bottom
+const TV_PAST_M := 60.0         ## cut to the next camera this far past the current one
+var _tv_cams: Array = []        ## [{s, pos: Vector3}]
+var _tv_cam := -1
+var _tv_look := Vector3.ZERO
+var _tv_fov := 30.0
+
+
+func _build_tv_cams() -> void:
 	var t := session.sim.track
-	var L := t.length
-	if _tv_car != _spec_car or _tv_point == Vector2.INF:
+	var n := maxi(6, int(t.length / TV_SPACING_M))
+	for k in n:
+		var s := t.length * k / n
+		var side := 1.0 if k % 2 == 0 else -1.0
+		var idx := int(t.project(t.position_at(s))["idx"])
+		var w := maxf(t.width_left[idx], t.width_right[idx]) + minf(t.runoff * 0.5, 18.0) + 6.0
+		var p := t.position_at(s, side * w)
+		_tv_cams.append({"s": s, "pos": Vector3(p.x, t.ground_height_at(p) + TV_POLE_M, p.y)})
+
+
+## The camera for a car at track_s: the nearest one it hasn't passed yet
+## (or passed by less than TV_PAST_M).
+func _tv_pick(track_s: float) -> int:
+	var L := session.sim.track.length
+	var best := -1
+	var best_d := INF
+	for k in _tv_cams.size():
+		var d := wrapf(float(_tv_cams[k]["s"]) - track_s, -L * 0.5, L * 0.5)
+		if d > -TV_PAST_M and d < best_d:
+			best_d = d
+			best = k
+	return best
+
+
+func _update_tv_camera(delta: float) -> void:
+	if _tv_cams.is_empty():
+		_build_tv_cams()
+	var cv := car_views[_spec_car]
+	var car_s := session.sim.cars[_spec_car].track_s
+	var target := cv.global_position + Vector3(0, 0.6, 0)
+	var cut := _tv_car != _spec_car or _tv_cam < 0
+	if not cut:
+		var L := session.sim.track.length
+		var d := wrapf(float(_tv_cams[_tv_cam]["s"]) - car_s, -L * 0.5, L * 0.5)
+		cut = d <= -TV_PAST_M or d > TV_SPACING_M * 2.5
+	if cut:
 		_tv_car = _spec_car
-		_place_tv(car.track_s + 80.0)
-	var past := wrapf(car.track_s - _tv_s, -L * 0.5, L * 0.5)
-	if past > 60.0 or past < -260.0:
-		_place_tv(car.track_s + 110.0)
-	var d := car.pos.distance_to(_tv_point)
-	var span := clampf(d * 1.9 + 45.0, 55.0, 480.0)   # metres across the short side of the screen
-	return [_tv_point.lerp(car.pos, 0.55), minf(vs.x, vs.y) / span]
-
-
-func _place_tv(s: float) -> void:
-	var t := session.sim.track
-	_tv_s = wrapf(s, 0.0, t.length)
-	_tv_side = -_tv_side
-	var idx := int(t.project(t.position_at(_tv_s))["idx"])
-	var w := maxf(t.width_right[idx], t.width_left[idx])
-	_tv_point = t.position_at(_tv_s, _tv_side * (w + 14.0))
+		_tv_cam = _tv_pick(car_s)
+		_tv_look = target
+	var from: Vector3 = _tv_cams[_tv_cam]["pos"]
+	# A camera operator: a touch behind the car, never jerky.
+	var k := 1.0 - exp(-9.0 * delta)
+	_tv_look = target if cut else _tv_look.lerp(target, k)
+	var dist := from.distance_to(_tv_look)
+	var want := rad_to_deg(2.0 * atan(TV_FRAME_M * 0.5 / maxf(dist, 1.0)))
+	_tv_fov = clampf(want if cut else lerpf(_tv_fov, want, k), 3.0, 55.0)
+	world.set_camera_view(from, _tv_look, _tv_fov)
 
 
 func _restart() -> void:
