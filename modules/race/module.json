@@ -1,7 +1,7 @@
 {
   "id": "race",
   "name": "Race rules",
-  "version": "2.4.1",
+  "version": "2.4.2",
   "status": "active",
   "summary": "The race itself: countdown, laps, sectors, positions, finish, car-to-car contacts, snapshots, race settings and entries (crews), and building a race from start data.",
   "depends": {

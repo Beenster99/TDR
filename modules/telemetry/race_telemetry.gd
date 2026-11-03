@@ -314,6 +314,12 @@ func _compute_gaps(sim: RaceSim) -> void:
 		else:
 			c.gap_leader = _gap(sim, i, leader)
 			c.interval = _gap(sim, i, order[p - 1])
+			# A car that has just got by is ahead on the road before the next
+			# timing loop says so: never show it closer to the leader than
+			# the car it passed.
+			var prev := sim.entries[order[p - 1]]
+			if p > 1 and not (prev.finished or prev.dnf):
+				c.gap_leader = maxf(c.gap_leader, cars[order[p - 1]].gap_leader)
 			c.laps_down = int(floor((sim.entries[leader].distance - e.distance) / track.length))
 	for p in order.size():
 		var c := cars[order[p]]
