@@ -10,6 +10,7 @@ var world: WorldView
 var car_views: Array[CarView] = []
 var camera: Camera2D
 var hud: RaceHud
+var _give_back_to := -1    ## the car we're highlighting to let past (-1 none)
 var race_audio: RaceAudio
 var pit_wall: StrategistScreen
 ## Co-op: the pit crew / strategist console (players in a car's crew who are
@@ -108,6 +109,17 @@ func _ready() -> void:
 		if not _camera_placed or world.camera == null or world.camera.is_position_behind(car_views[i].global_position):
 			return Vector2(-1000, -1000)
 		return world.camera.unproject_position(car_views[i].global_position)
+	# Where a car (or the safety car, RaceControl.GIVE_BACK_SC) is on screen, for
+	# HUD's pointer to the car to let past. null when it can't be placed.
+	hud.car_screen_pos = func(i: int):
+		var v: Node3D = world.safety_car if i == RaceControl.GIVE_BACK_SC else (car_views[i] if i >= 0 and i < car_views.size() else null)
+		if v == null or not _camera_placed or world.camera == null:
+			return null
+		var p := v.global_position
+		if world.camera.is_position_behind(p):
+			return null
+		return world.camera.unproject_position(p)
+	hud.give_back_to = _give_back_to
 	pit_menu = PitCallMenu.new()
 	layer.add_child(pit_menu)
 	pit_menu.setup(session.sim)
@@ -135,6 +147,9 @@ func _ready() -> void:
 		pit_wall.open()
 	results = _build_results()
 	layer.add_child(results)
+	var pointer := PointerHider.new()   # no mouse pointer over the track while driving
+	pointer.driving = _driving_view
+	add_child(pointer)
 	_make_autodrive()
 	# Filming (tools/record_highlights.sh): --no-hud shows just the race,
 	# --rotate-camera turns the view with the car.
@@ -334,18 +349,36 @@ func _pit_messages(car: int) -> void:
 
 ## Outlines on the ground: gold round this player's own car (or the team's
 ## car on the pit wall), a fainter blue round cars other people are driving.
-## Settings > Gameplay turns each on or off.
+## Settings > Gameplay turns each on or off. When race control tells our car
+## to give a place back, the car to let past (or the safety car) gets a
+## pulsing orange-red outline and a "LET PAST" tag, always, until it's done.
 func _refresh_highlights() -> void:
 	var show_me := bool(GameData.prefs.get("highlight_me", true))
 	var show_others := bool(GameData.prefs.get("highlight_players", true))
 	var mine := session.local_car if session.local_car >= 0 else session.team_car
+	_give_back_to = session.sim.race_control.give_back_target(mine)
 	for i in car_views.size():
 		var kind := CarView.Highlight.NONE
-		if i == mine:
+		if i == _give_back_to:
+			kind = CarView.Highlight.GIVE_BACK
+		elif i == mine:
 			kind = CarView.Highlight.SELF if show_me else CarView.Highlight.NONE
 		elif session.mode != RaceSession.Mode.OFFLINE and show_others and session.sim.entries[i].is_player_driving():
 			kind = CarView.Highlight.PLAYER
 		car_views[i].set_highlight(kind)
+	if world.safety_car:
+		world.safety_car.set_highlight(CarView.Highlight.GIVE_BACK if _give_back_to == RaceControl.GIVE_BACK_SC else CarView.Highlight.NONE)
+	if hud:
+		hud.give_back_to = _give_back_to
+
+
+## Every frame: follow race control's give-back order for our car.
+func _update_give_back() -> void:
+	var mine := session.local_car if session.local_car >= 0 else session.team_car
+	var t := session.sim.race_control.give_back_target(mine)
+	if t != _give_back_to or (t == RaceControl.GIVE_BACK_SC and world.safety_car \
+			and world.safety_car.highlight != CarView.Highlight.GIVE_BACK):
+		_refresh_highlights()
 
 
 ## Testing: --autodrive lets the AI drive this player's car.
@@ -357,6 +390,13 @@ func _make_autodrive() -> void:
 
 
 ## True when this player is in a car's crew but not driving it (co-op).
+## At the wheel with nothing on screen that wants the mouse (PointerHider).
+func _driving_view() -> bool:
+	return session.local_car >= 0 and not _results_shown and not pause_menu.visible and not hud.editing \
+		and not pit_wall.visible and not planner.visible and not pit_menu.visible and not driver_radio.visible \
+		and not crew_game.is_active()
+
+
 func _is_crew() -> bool:
 	return session.local_car < 0 and session.team_car >= 0
 
@@ -634,6 +674,7 @@ func _process(delta: float) -> void:
 	_update_pit_crews()
 	_update_rejoin()
 	world.set_safety_car(rc.sc_visible, rc.sc_pos, rc.sc_heading, rc.sc_speed, rc.sc_lights)
+	_update_give_back()
 	world.update_driving_line(car.pos, speed)
 	_update_pit_guide(delta)
 	if world.driving_line:
@@ -742,11 +783,14 @@ func _maybe_screenshot() -> void:
 		return
 	if session.sim.race_time + session.sim.phase_time * float(session.sim.phase == RaceSim.Phase.COUNTDOWN) >= float(GameData.arg("screenshot-at", 10)):
 		_shot_taken = true
-		# --screenshot-pause [settings]: with the pause menu (or its Settings) open.
+		# --screenshot-pause [settings|restart|menu|desktop|lobby]: with the pause menu
+		# (or its Settings, or its "Are you sure?" popup for that button) open.
 		if GameData.arg("screenshot-pause"):
 			_open_pause_menu()
 			if str(GameData.arg("screenshot-pause")) == "settings":
 				pause_menu._open_settings()
+			elif str(GameData.arg("screenshot-pause")) in ["restart", "menu", "desktop", "lobby"]:
+				pause_menu.ask_confirm(str(GameData.arg("screenshot-pause")))
 			for _f in 4:
 				await RenderingServer.frame_post_draw
 		await RenderingServer.frame_post_draw

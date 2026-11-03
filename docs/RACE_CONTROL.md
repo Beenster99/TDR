@@ -99,7 +99,12 @@ clear: "VSC ending", then green 6 s later.
 
 Overtaking under yellow flags, the VSC or the SC, before the restart line, or
 passing the safety car: a warning to give the place back within 12 s, then a
-5 s time penalty. Passing a stopped, crawling or off-track car, a car in the
+5 s time penalty. While the order stands, the car to let past (or the safety
+car) is picked out on track with a pulsing orange-red outline and a "LET PAST"
+tag, its timing tower row turns orange, the race control box names it with
+how far ahead or behind it is, and an arrow on the screen edge points to it
+when it's out of view (`RaceControl.give_back_target(i)`; all of it clears
+the moment the place is given back). Passing a stopped, crawling or off-track car, a car in the
 pit lane, or (when waved by) as a lapped car is allowed. Pit-lane penalties
 from the fuel/pit stop rules use the same `RaceSim.add_penalty(car, s, reason)`.
 Penalties go in `RaceEntry.penalty_s` and are added to the race time in the
