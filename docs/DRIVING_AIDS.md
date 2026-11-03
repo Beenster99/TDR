@@ -9,7 +9,7 @@ when a co-op driver takes the wheel). AI cars never use them.
 |---|---|---|
 | Driving help (`driving_help`) | 2 full, 1 traction + ABS, 0 off | Traction control, ABS and the stability assist (catches slides, counter-steer, keeps the front tyres near their best slip angle). Off the line (below 43 km/h) traction control lets the tyres spin when you floor it (up to 15% over the grip, fading out by 43 km/h): feather the throttle for the best start. |
 | Braking zones (`aid_braking_zones`) | on (default) / off | Colours the driving line: green = your speed is fine, yellow = lift, get ready, red = brake now. With the racing line off, only the braking zones show. |
-| Racing line (`aid_racing_line`) | on (default) / off | The driving line along the whole lap ahead (320 m), soft at the edges. |
+| Driving line (`aid_driving_line`) | 2 full (default), 1 corners only, 0 off | Full: the driving line along the whole lap ahead (320 m), soft at the edges. Corners only: just from the braking zone through each corner to its exit, hidden on the straights (a red "brake now" still shows wherever you are too fast). Replaces the old on/off `aid_racing_line`; a saved "off" loads as Off. |
 | Track assist (`aid_track_assist`) | 0 off, 1 light (default), 2 strong | With no steering input it cancels part of any yaw, so the car runs straight; near the edge (2.5 m light, 3.5 m strong) and heading off, it steers gently back. It never adds more than 3 degrees (light) / 5 degrees (strong) of steering, so a bad line or a slide still costs you. |
 | Manual gears (`manual_gears`) | off (default) / on | Shift Up: Shift or `.`, pad B. Shift Down: Ctrl or `,`, pad X. One gear per press; a downshift that would over-rev is refused. With manual gears on, the pad's X stops working as the brake (the trigger does that). Pad A is the handbrake; next tyres moved from B to D-pad up. |
 
@@ -27,6 +27,12 @@ and its tyres, with two speed profiles:
 `DrivingLineView` (graphics) draws a 2 m band along the line ahead of the car.
 Its shader compares the car's speed with `speed` at each point: below 90% it's
 green, 90-97% turns yellow, from 99% it turns red.
+
+Corners only uses `DrivingLine.corner` (0..1 per point): each braking zone
+from 30 m before the brakes go on, past the apex while the line is still
+turning (tighter than 250 m radius, at most 250 m) and 20 m on; plus any bend
+tighter than 125 m radius taken flat out. The edges fade over 16 m. On most
+circuits that is about half the lap (35% at Monza, 72% at the Hungaroring).
 
 ## Brake marker boards
 

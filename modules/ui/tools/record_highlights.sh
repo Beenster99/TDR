@@ -26,7 +26,7 @@ CLIPS=(
 cat >"$WORK/film_settings.cfg" <<'CFG'
 [prefs]
 display_mode="windowed"
-aid_racing_line=false
+aid_driving_line=0
 aid_braking_zones=false
 show_fps=false
 CFG

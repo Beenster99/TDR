@@ -3148,7 +3148,7 @@ func test_settings_and_units() -> void:
 	var gd = load("res://modules/core/game_data.gd").new()
 	gd.persist_prefs = false
 	gd._register_defaults()
-	for key in ["driving_help", "aid_braking_zones", "aid_track_assist", "aid_racing_line", "manual_gears",
+	for key in ["driving_help", "aid_braking_zones", "aid_track_assist", "aid_driving_line", "manual_gears",
 			"hud_timing_tower", "units", "power_unit", "display_mode", "vol_master", "vol_engine", "show_fps"]:
 		check(not gd.setting_info(key).is_empty() and gd.prefs.has(key), "setting %s is registered with a value" % key)
 	check("controller" in gd.SECTIONS and gd.settings_in("controller").size() > 0, "Settings has a Controller section")
@@ -3215,7 +3215,7 @@ func test_pause_menu() -> void:
 	for key in ["driving_help", "aid_track_assist", "manual_gears"]:
 		check(key in PauseOptions.LOCKED_IN_RACE and not gd.setting_info(key).is_empty(),
 			"%s (how the car drives) is locked during a race" % key)
-	for key in ["aid_racing_line", "units", "vol_master", "display_mode"]:
+	for key in ["aid_driving_line", "units", "vol_master", "display_mode"]:
 		check(not key in PauseOptions.LOCKED_IN_RACE, "%s can still be changed in a race" % key)
 	gd.free()
 
@@ -3503,6 +3503,42 @@ func test_driving_aids() -> void:
 	for k in line.size():
 		env_ok = env_ok and line.lap_speed[k] <= line.speed[k] + 0.01
 	check(env_ok, "brake envelope and lap speeds agree")
+	# Corners only: the line shows through every braking zone and is gone on the long straights.
+	var n := line.size()
+	var through := true
+	for z in line.zones:
+		var k: int = z["start"]
+		while k != int(z["end"]):
+			through = through and line.corner[k] > 0.99
+			k = (k + 1) % n
+	check(line.corner.size() == n and through, "corners-only line covers each braking zone to the apex")
+	var shown := 0.0
+	var hidden_run := 0
+	var longest := 0
+	for k in 2 * n:
+		if k < n:
+			shown += line.corner[k]
+		hidden_run = hidden_run + 1 if line.corner[k % n] < 0.01 else 0
+		longest = maxi(longest, mini(hidden_run, n))
+	check(shown / n > 0.25 and shown / n < 0.75, "corners only hides the straights (%d%% of the lap shown)" % roundi(100.0 * shown / n))
+	check(longest * line.length / n > 500.0, "corners only: the long straight up to Turn 3 has no line (%d m hidden)" % roundi(longest * line.length / n))
+	# The setting: Full / Corners only / Off, and the old on/off setting carries over.
+	var gd = load("res://modules/core/game_data.gd").new()
+	gd.persist_prefs = false
+	gd._register_defaults()
+	check(gd.prefs["aid_driving_line"] == DrivingLineView.LINE_FULL and gd.setting_info("aid_driving_line")["options"].size() == 3,
+		"Settings > Gameplay > Driving line: Full (default) / Corners only / Off")
+	var old_cfg := ConfigFile.new()
+	old_cfg.set_value("prefs", "aid_racing_line", false)
+	old_cfg.set_value("prefs", "manual_gears", 3)     # a value that isn't a choice any more is dropped
+	old_cfg.save("user://test_old_settings.cfg")
+	gd.persist_prefs = true
+	gd._settings_path = "user://test_old_settings.cfg"
+	gd.load_prefs()
+	check(gd.prefs["aid_driving_line"] == DrivingLineView.LINE_OFF and gd.prefs["manual_gears"] == false,
+		"an old 'racing line off' setting loads as driving line Off")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://test_old_settings.cfg"))
+	gd.free()
 	# Track assist: a car drifting off the right edge at speed is steered back.
 	var env := SimEnvironment.new()
 	env.bind_track(track)

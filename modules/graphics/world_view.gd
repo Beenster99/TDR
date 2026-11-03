@@ -77,10 +77,12 @@ func setup(p_track: TrackData, p_env: SimEnvironment = null) -> void:
 	_apply_conditions()
 
 
-## Driving aids from Settings > Gameplay: the driving line (show_line) with
-## braking colours (show_brake), plus the brake marker boards, which are
-## always there. line: DrivingLine for the player's car. Call once after setup.
-func add_driving_aids(line: DrivingLine, show_line: bool, show_brake: bool) -> void:
+## Driving aids from Settings > Gameplay: the driving line (line_mode:
+## DrivingLineView.LINE_FULL / LINE_CORNERS / LINE_OFF; true / false still
+## mean full / off) with braking colours (show_brake), plus the brake marker
+## boards, which are always there. line: DrivingLine for the player's car.
+## Call once after setup.
+func add_driving_aids(line: DrivingLine, line_mode, show_brake: bool) -> void:
 	if track.discipline != "derby":   # no braking boards in a demolition derby arena
 		brake_boards = BrakeBoards.new()
 		brake_boards.name = "BrakeBoards"
@@ -89,7 +91,7 @@ func add_driving_aids(line: DrivingLine, show_line: bool, show_brake: bool) -> v
 	driving_line = DrivingLineView.new()
 	driving_line.name = "DrivingLineAid"
 	add_child(driving_line)
-	driving_line.setup(line, track_view, show_line, show_brake)
+	driving_line.setup(line, track_view, line_mode, show_brake)
 
 
 ## The pit guide line, limit lines and box marks for the player's car

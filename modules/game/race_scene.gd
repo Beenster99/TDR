@@ -162,12 +162,12 @@ func _set_driving_aids() -> void:
 
 
 ## The driving line and brake boards, for this player's car (or the team's
-## car on the pit wall). Settings > Gameplay turns the line and its braking
-## colours on and off; the boards are always there.
+## car on the pit wall). Settings > Gameplay sets the line (full, corners
+## only, off) and turns its braking colours on and off; the boards are always there.
 func _add_driving_aids() -> void:
 	var i := session.local_car if session.local_car >= 0 else maxi(session.team_car, 0)
 	_driving_line = DrivingLine.build(session.sim.track, session.sim.defs[i], session.sim.compounds[i])
-	world.add_driving_aids(_driving_line, bool(GameData.prefs.get("aid_racing_line", true)),
+	world.add_driving_aids(_driving_line, int(GameData.prefs.get("aid_driving_line", DrivingLineView.LINE_FULL)),
 		bool(GameData.prefs.get("aid_braking_zones", true)))
 
 
@@ -177,14 +177,14 @@ func _on_pref_changed(key, _v) -> void:
 	var k := str(key)
 	if k.begins_with("highlight_"):
 		_refresh_highlights()
-	elif k == "aid_racing_line" or k == "aid_braking_zones":
+	elif k == "aid_driving_line" or k == "aid_braking_zones":
 		# The line view is built once; build a fresh one with the new choice.
 		if world.driving_line:
 			world.driving_line.queue_free()
 		var view := DrivingLineView.new()
 		view.name = "DrivingLineAid"
 		world.add_child(view)
-		view.setup(_driving_line, world.track_view, bool(GameData.prefs.get("aid_racing_line", true)),
+		view.setup(_driving_line, world.track_view, int(GameData.prefs.get("aid_driving_line", DrivingLineView.LINE_FULL)),
 			bool(GameData.prefs.get("aid_braking_zones", true)))
 		world.driving_line = view
 	elif k == "aid_pit_guide":

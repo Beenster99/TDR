@@ -17,6 +17,13 @@ const CORNER_GRIP := 0.92
 const BRAKE_GRIP := 0.82
 const AERO_TRUST := 0.9
 const ZONE_MIN_DROP := 6.0    ## m/s (about 22 km/h): less is a lift, not a braking zone
+## "Corners only" line (corner): where a corner starts and ends.
+const CORNER_CURV := 0.008     ## 1/m (radius 125 m): a corner even without braking
+const CORNER_EXIT_CURV := 0.004  ## 1/m (radius 250 m): still turning, past the apex
+const CORNER_LEAD := 30.0      ## m shown before a braking zone or turn-in
+const CORNER_TAIL := 20.0      ## m shown after the corner straightens out
+const CORNER_MAX_EXIT := 250.0 ## m past the apex at most
+const CORNER_FADE := 16.0      ## m the line fades in and out over
 
 var points := PackedVector2Array()
 var track_s := PackedFloat64Array()     ## track distance of each point
@@ -29,6 +36,10 @@ var lap_speed := PackedFloat64Array()   ## speed on a full-power lap (m/s)
 ## indices (braking starts at start, the slowest point is end) and side the
 ## way the corner turns (+1 right, -1 left).
 var zones: Array = []
+## 0..1 for each point: 1 from the braking zone (or turn-in) through each
+## corner to its exit, 0 on the straights, soft in between. The "Corners
+## only" driving line shows only where this is up.
+var corner := PackedFloat32Array()
 var length := 0.0
 
 
@@ -37,6 +48,7 @@ static func build(track: TrackData, def: CarDefinition, compound: TyreCompound) 
 	dl._resample(track)
 	dl._profile(track, def, compound)
 	dl._find_zones()
+	dl._find_corners()
 	return dl
 
 
@@ -185,3 +197,59 @@ func _turn_dir(k: int) -> float:
 	for j in range(-6, 10):
 		sum += curv[(k + j + n) % n]
 	return sum
+
+
+## corner (see above): braking zones from just before the brakes go on to
+## where the corner opens out, and any tighter bend taken flat out.
+func _find_corners() -> void:
+	var n := points.size()
+	corner = PackedFloat32Array()
+	corner.resize(n)
+	if n == 0:
+		return
+	var step := length / n
+	var lead := ceili(CORNER_LEAD / step)
+	var tail := ceili(CORNER_TAIL / step)
+	var fade := maxf(CORNER_FADE / step, 1.0)
+	# Curvature smoothed over about 25 m, so a wobble in the line isn't a corner.
+	var bend := PackedFloat32Array()
+	bend.resize(n)
+	for k in n:
+		var sum := 0.0
+		for j in range(-3, 4):
+			sum += absf(curv[(k + j + n) % n])
+		bend[k] = sum / 7.0
+	var on := PackedByteArray()
+	on.resize(n)
+	for z in zones:
+		var s0: int = z["start"]
+		var e: int = z["end"]
+		var last := e
+		var steps := 0
+		while steps * step < CORNER_MAX_EXIT and bend[(e + steps) % n] > CORNER_EXIT_CURV:
+			last = (e + steps) % n
+			steps += 1
+		var span := (last - s0 + n) % n
+		for j in range(-lead, span + tail + 1):
+			on[(s0 + j + n) % n] = 1
+	for k in n:
+		if bend[k] > CORNER_CURV:
+			for j in range(-lead, tail + 1):
+				on[(k + j + n) % n] = 1
+	# Soft edges: distance (in points) to the nearest corner point, both ways round.
+	var far := float(n)
+	var gap := PackedFloat32Array()
+	gap.resize(n)
+	gap.fill(far)
+	for _pass in 2:
+		var d := far
+		for k in n:
+			d = 0.0 if on[k] else d + 1.0
+			gap[k] = minf(gap[k], d)
+		d = far
+		for j in n:
+			var k := n - 1 - j
+			d = 0.0 if on[k] else d + 1.0
+			gap[k] = minf(gap[k], d)
+	for k in n:
+		corner[k] = 1.0 - smoothstep(0.0, fade, gap[k])
