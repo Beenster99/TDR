@@ -518,6 +518,8 @@ func _build_road() -> void:
 	# asphalt
 	_ribbon(st, func(i): return [-track.width_left[i], track.width_right[i]], func(_i): return K_ASPHALT, 0.03, 6)
 	_mesh_node(st, road_material, "Asphalt")
+	# A derby arena's road (tarmac or dirt) runs right up to its walls.
+	var derby := track.discipline == "derby"
 	# kerbs on corners (both sides), raised a touch
 	for side in [-1.0, 1.0]:
 		var ks := SurfaceTool.new()
@@ -537,7 +539,7 @@ func _build_road() -> void:
 			var e := (track.width_right[i] if sd > 0 else track.width_left[i]) + _kerb_w(i, sd)
 			var w := _runoff_width(i, sd)
 			return [sd * e, sd * (e + w)] if sd > 0 else [sd * (e + w), sd * e],
-			func(i): return K_GRAVEL if _is_gravel(i, sd) else K_TARMAC, 0.02, 2)
+			func(i): return K_ASPHALT if derby else (K_GRAVEL if _is_gravel(i, sd) else K_TARMAC), 0.02, 2)
 		_mesh_node(rs, road_material, "Runoff")
 
 
@@ -572,6 +574,8 @@ func _is_gravel(i: int, side: float) -> bool:
 
 
 func _runoff_width(i: int, side: float) -> float:
+	if track.discipline == "derby":
+		return track.runoff + 0.3   # tuck under the wall
 	var ro := track.runoff_right if side > 0 else track.runoff_left
 	var w := minf(4.0, track.runoff * 0.3)
 	if ro.size() == track.point_count() and ro[i] != TrackData.Surface.GRASS:

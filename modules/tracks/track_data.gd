@@ -314,8 +314,8 @@ func surface_for(q: Dictionary) -> int:
 	var off: float = q["offset"]
 	var edge: float = q["w_right"] if off >= 0.0 else q["w_left"]
 	var a := absf(off)
-	if a <= edge:
-		return TrackData.Surface.TRACK
+	if a <= edge or (discipline == "derby" and a <= edge + runoff):
+		return TrackData.Surface.TRACK   # a derby arena's road runs right up to the walls
 	if q.has("pos") and in_pit_lane(q["pos"]):
 		return TrackData.Surface.TRACK
 	if q.has("pos") and has_joker() and _joker_bounds.grow(JOKER_VERGE_M).has_point(q["pos"]):
@@ -364,7 +364,7 @@ func grid_slot(i: int) -> Dictionary:
 		s = length - 10.0 - floorf(i * 0.5) * DERBY_ROW_M
 	var side := -1.0 if i % 2 == 0 else 1.0
 	var w := minf(width_left[index_at(s)], width_right[index_at(s)])
-	var offset := side * minf(3.0, w * 0.45)
+	var offset := side * minf(4.0 if discipline == "circuit" else 3.0, w * 0.45)
 	return {"pos": position_at(s, offset), "heading": heading_at(s), "s": s}
 
 

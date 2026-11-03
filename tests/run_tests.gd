@@ -48,6 +48,7 @@ func _init() -> void:
 	test_telemetry(replay)
 	test_weather_forecast()
 	test_race_control_rules()
+	test_give_back_highlight()
 	test_yellow_flags_for_incidents()
 	test_safety_car_race()
 	test_car_recovery()
@@ -62,8 +63,10 @@ func _init() -> void:
 	test_race_start()
 	test_driving_aids()
 	test_active_pad()
+	test_pointer_hider()
 	test_hud_timing()
 	test_hud_layout()
+	test_pit_wall_layout()
 	test_graphics_effects()
 	test_land_cover()
 	test_pit_lane_blend()
@@ -76,6 +79,7 @@ func _init() -> void:
 	test_rallycross()
 	test_rallycross_marshals()
 	test_joker_lanes()
+	test_joker_driving_line()
 	test_handbrake()
 	print("\n%s (%d failures, %.1fs)" % ["PASS" if failures == 0 else "FAIL", failures, (Time.get_ticks_msec() - t0) / 1000.0])
 	quit(1 if failures > 0 else 0)
@@ -422,12 +426,40 @@ func test_derby() -> void:
 	for id in arenas:
 		longest = maxf(longest, TrackCatalog.load_track(id).length)
 	var g15: Dictionary = track.grid_slot(15)
-	check(longest <= 600.0 and track.length - float(g15["s"]) < 80.0 and s.max_cars() == RaceSettings.MAX_CARS_DERBY,
-		"small arenas (longest %.0f m), a 16-car grid in %.0f m" % [longest, track.length - float(g15["s"])])
+	check(longest >= 450.0 and longest <= 900.0 and track.length - float(g15["s"]) < 80.0 and s.max_cars() == RaceSettings.MAX_CARS_DERBY,
+		"compact arenas (longest %.0f m), a 16-car grid in %.0f m" % [longest, track.length - float(g15["s"])])
 	var loose := true
 	for id in ids:
 		loose = loose and d["cars"][id].dirt_rear_grip < 0.8
 	check(loose, "derby cars' tails step out on dirt (less rear grip there)")
+	# ...but the driven wheels still dig in: a launch on dirt is only a bit
+	# slower than on tarmac (rear-drive and front-drive alike).
+	var mud := TrackCatalog.load_track("derby_mudflat_infinity")
+	var launch_ok := true
+	var launch_txt := ""
+	for id in ["derby_brannock_sovereign", "derby_tanaga_comet"]:
+		var ld: CarDefinition = d["cars"][id]
+		var times: Array = []
+		for at in [5.0, 250.0]:
+			var lc := CarState.new()
+			lc.pos = mud.position_at(at)
+			lc.heading = mud.heading_at(at)
+			lc.track_idx = mud.index_at(at)
+			var lenv := SimEnvironment.create({}, {}, 1)
+			var lin := CarInput.new()
+			lin.throttle = 1.0
+			var k := 0
+			while lc.speed() < 40.0 / 3.6 and k < 240 * 10:
+				CarPhysics.step(lc, lin, ld, d["tyres"][ld.tyre_compound_id], lenv, mud, 1.0 / 240.0, 0.0, [], 0)
+				k += 1
+			times.append(k / 240.0)
+		launch_ok = launch_ok and mud.dirt_at(250.0) > 0.9 and times[1] < times[0] * 1.4
+		launch_txt += " %s %.1f/%.1f s" % [id.trim_prefix("derby_"), times[0], times[1]]
+	check(launch_ok, "derby cars get off the line on dirt (0-40 km/h tarmac/dirt:%s)" % launch_txt)
+	# The road runs right up to the arena walls: no gravel or run-off strip.
+	var edge_q := mud.project(mud.position_at(250.0) + mud.right_normal(mud.index_at(250.0)) * (mud.width_right[mud.index_at(250.0)] + mud.runoff * 0.8))
+	check(mud.surface_for(edge_q) == TrackData.Surface.TRACK and mud.runoff <= 1.5,
+		"derby road runs up to the walls")
 	# No pit stops: a wreck drives on until its engine boils dry.
 	var wreck := CarState.new()
 	wreck.pos = track.position_at(20.0)
@@ -1094,7 +1126,12 @@ func test_pit_self_drive() -> void:
 		var rel := aim - c.pos
 		var alpha := atan2(rel.dot(c.right()), rel.dot(c.forward()))
 		inp.steer = clampf(atan(2.0 * sim.defs[i].wheelbase * sin(alpha) / maxf(rel.length(), 1.0)) / sim.defs[i].max_steer, -1, 1)
+		# Like a driver, look a moment ahead for where the guide slows down.
 		var target := sp[k]
+		var look := k
+		while look < pts.size() - 1 and ds[look] < ds[k] + c.speed() * 0.4:
+			look += 1
+			target = minf(target, sp[look])
 		if ph == PitRules.PHASE_LIMIT and stop_on_box:
 			var m := pits.box_marks(i, c.pos)
 			target = minf(t.pit_speed_limit - 0.5, sqrt(2.0 * 3.0 * maxf(overshoot_m - float(m["along"]), 0.0)))
@@ -2094,7 +2131,10 @@ func test_car_recovery() -> void:
 			sim.entries[victim].dnf = true
 			start_pos = c.pos
 		if victim >= 0 and not sim.race_control.out_of_play(victim):
-			inputs[victim] = CarInput.neutral()
+			# Brakes on, so a crashed car on a slope stays against the wall.
+			var held := CarInput.neutral()
+			held.brake = 1.0
+			inputs[victim] = held
 		sim.step(inputs)
 		for e in sim.events:
 			var key: String = e["type"] + ":" + str(e.get("state", e.get("flag", "")))
@@ -2393,6 +2433,48 @@ func test_yellow_flags_for_incidents() -> void:
 			elif e["type"] == "flag" and e.get("flag", "") == "yellow":
 				yellow_flags += 1
 	print("    AI race: %d contacts, %d yellow flags" % [contacts, yellow_flags])
+
+
+## The car you must give a place back to is picked out (outline + "LET PAST"
+## tag) until you've let it past, and the HUD names it.
+func test_give_back_highlight() -> void:
+	print("give-back highlight")
+	var d := _data()
+	var settings := RaceSettings.new()
+	settings.ai_count = 4
+	settings.laps = 1
+	var sim: RaceSim = _race(settings, d)["sim"]
+	var rc := sim.race_control
+	sim.phase = RaceSim.Phase.RACING
+	for c in sim.cars:
+		c.vel = Vector2.from_angle(c.heading) * 40.0
+	check(rc.give_back_target(1) == -1, "no give-back order: nothing highlighted")
+	rc._deploy_sc("test")
+	rc._prev_order = [0, 1, 2, 3]
+	sim.entries[1].distance = sim.entries[0].distance + 10.0
+	sim._update_positions()
+	rc._check_overtakes()
+	check(rc.give_back_target(1) == 0, "passed car 0 under the SC: car 0 is the one to let past")
+	check(rc.give_back_target(2) == -1, "other cars have nothing to give back")
+	# The 3D marker on that car.
+	var v := CarView.new()
+	v.setup(sim.defs[0], sim.cars[0], "test", false)
+	v.set_highlight(CarView.Highlight.GIVE_BACK)
+	var tag := v.get_node_or_null("LetPast") as Label3D
+	check(tag != null and tag.visible and tag.text == "LET PAST" and tag.fixed_size and tag.no_depth_test,
+		"the car to let past gets a LET PAST tag, same size on screen at every zoom, never hidden")
+	check(v.get_node_or_null("Highlight") != null and v.get_node("Highlight").visible, "and an outline on the ground")
+	v.set_highlight(CarView.Highlight.NONE)
+	check(not tag.visible and not v.get_node("Highlight").visible, "both go when the order is over")
+	v.free()
+	# Let it back past: the order and the highlight clear.
+	sim.entries[0].distance = sim.entries[1].distance + 5.0
+	sim._update_positions()
+	rc._check_overtakes()
+	check(rc.give_back_target(1) == -1 and sim.entries[1].penalty_s == 0.0, "place given back: highlight cleared, no penalty")
+	# Passing the safety car: the safety car is the one to drop behind.
+	rc.give_back[2] = {"victim": -2, "until": sim.race_time + 5.0, "why": "test"}
+	check(rc.give_back_target(2) == RaceControl.GIVE_BACK_SC, "passing the safety car: the safety car is highlighted")
 
 
 func test_race_control_rules() -> void:
@@ -2735,17 +2817,54 @@ func test_weather_forecast() -> void:
 	if env.get("timeline") == null:
 		print("       (environment has no weather timeline in this build: forecast is current conditions only)")
 		return
+	check(f.radar_range >= f.wind_speed * WeatherForecast.HORIZON_S and f.radar_range / f.ring_step <= 6.0,
+		"the radar covers 30 minutes of weather in %d rings of %.1f km" % [int(f.radar_range / f.ring_step), f.ring_step / 1000.0])
 	env.set("timeline", [[0.0, 0.1, 0.0], [400.0, 0.85, 0.0], [700.0, 0.95, 0.35], [1300.0, 0.85, 0.0]])
 	f.update(env)
-	check(f.changes.size() == 3 and f.changes[0]["weather"] == "overcast", "forecast lists the coming changes")
-	check(f.changes[1]["eta"] == 700.0 and f.changes[1]["confidence"] < f.changes[0]["confidence"], "later changes are less certain")
-	check(f.radar_cells.size() > 0, "rain shows on the radar before it arrives (%d cells)" % f.radar_cells.size())
-	var nearest := INF
-	for c in f.radar_cells:
-		if c["rain"] > 0.05:
-			nearest = minf(nearest, c["pos"].distance_to(f.centre))
-	check(nearest > f.track_radius, "rain still upwind of the track")
+	check(f.changes.size() == 3 and f.changes[0]["weather"] == "overcast", "forecast lists the coming changes %s" % [f.changes.map(func(c): return c["weather"])])
+	check(absf(f.changes[1]["eta"] - 700.0) < 700.0 * WeatherForecast.SPEED_ERR * 1.05 and f.changes[1]["confidence"] < f.changes[0]["confidence"],
+		"later changes are less certain, and the ETA is close (%s for 11.7 min)" % WeatherForecast.eta_text(f.changes[1]))
+	check(f.changes[1]["lasts"] > 0.0, "the rain's forecast to last about %d min" % int(f.changes[1]["lasts"]))
+	var upwind := f.centre - f.wind_dir * f.wind_speed * 950.0
+	var rain_up := 0.0
+	for k in 41:
+		rain_up = maxf(rain_up, f.rain_at(upwind + Vector2(-f.wind_dir.y, f.wind_dir.x) * (k - 20) * 250.0))
+	check(rain_up > 0.05 and f.rain_at(f.centre) == 0.0, "rain shows on the radar upwind before it arrives (%.2f)" % rain_up)
+	check(f.radar_cells.size() > 0, "the old radar cells still read (%d)" % f.radar_cells.size())
+	var grid := f.sample_grid(Rect2(f.centre - Vector2.ONE * f.radar_range, Vector2.ONE * f.radar_range * 2.0), 24, 24)
+	var same := true
+	for j in 24:
+		for i in 24:
+			var p := f.centre - Vector2.ONE * f.radar_range + Vector2(i + 0.5, j + 0.5) * f.radar_range * 2.0 / 24.0
+			same = same and absf(grid[j * 24 + i] - f.rain_at(p)) < 0.03
+	check(same, "the radar picture matches the rain field point by point")
 	print("       " + f.summary())
+	# Real changing weather: what the radar and forecast say is what happens.
+	var max_err := 0.0
+	var inside := 0
+	var total := 0
+	var right := 0
+	var near := 0
+	for seed in [3, 11, 27, 64, 91]:
+		var e := SimEnvironment.create({"climate": {"rain_chance": 0.7}}, {"weather": "light_rain", "weather_changes": true}, seed)
+		var fc := WeatherForecast.new()
+		fc.setup(d["track"], seed)
+		for step in 240:
+			e.update(15.0)
+			fc.update(e)
+			max_err = maxf(max_err, absf(fc.truth_at(fc.centre, e.elapsed_s) - e.rain))
+			for ch in fc.changes:
+				var real: float = e.timeline[ch["k"]][0] - e.elapsed_s
+				total += 1
+				inside += 1 if real >= ch["eta_lo"] and real <= ch["eta_hi"] else 0
+				if ch["eta"] < 300.0:
+					near += 1
+					var tl: Array = e.timeline[ch["k"]]
+					right += 1 if SimEnvironment.weather_for(tl[1], tl[2]) == ch["weather"] else 0
+	check(max_err < 0.001, "the radar's rain over the track is the race's own rain (off by %.4f)" % max_err)
+	check(total > 50 and inside >= total * 0.8 and inside < total,
+		"forecast ETAs are close but not perfect: %d of %d ranges held the real time" % [inside, total])
+	check(near > 10 and right >= near * 0.95, "within 5 minutes the forecast names the right weather (%d of %d)" % [right, near])
 
 
 ## Points presets, custom lists and bonus points.
@@ -3289,6 +3408,12 @@ func test_pause_menu() -> void:
 	check(PauseOptions.button_ids(true, true).has("lobby"), "online host can also end the race for everyone")
 	check(not PauseOptions.button_ids(true, false).has("lobby"), "a guest can't end the race")
 	check(PauseOptions.label_for("restart", true, true).contains("everyone"), "the host's restart says it restarts for everyone")
+	for id in ["restart", "lobby", "menu", "desktop"]:
+		check(PauseOptions.confirm_text(id, true, true).size() == 3 and PauseOptions.confirm_text(id, false, false).size() == 3,
+			"%s asks \"are you sure?\" (Yes / No popup)" % id)
+	check(PauseOptions.confirm_text("resume", false, false).is_empty() and PauseOptions.confirm_text("settings", false, false).is_empty(),
+		"resume and settings don't ask")
+	check(PauseOptions.confirm_text("menu", true, true)[1].contains("everyone"), "the host is told quitting closes the race for everyone")
 	var gd = load("res://modules/core/game_data.gd").new()
 	gd.persist_prefs = false
 	gd._register_defaults()
@@ -3550,6 +3675,35 @@ func test_race_start() -> void:
 ## A second "controller" with an axis stuck off centre (a pedal set, a
 ## motion sensor, a virtual pad) must not steer or zoom: only the pad in use
 ## feeds the stick and trigger actions.
+func test_pointer_hider() -> void:
+	print("mouse pointer while driving")
+	var p := PointerHider.new()
+	p.step(1.0, true)
+	check(not p.hidden, "the pointer stays a moment after the race starts")
+	p.step(1.0, true)
+	check(p.hidden, "driving: the pointer hides when the mouse is left alone")
+	var wheel := InputEventMouseButton.new()
+	wheel.button_index = MOUSE_BUTTON_WHEEL_UP
+	wheel.pressed = true
+	p._input(wheel)
+	check(p.hidden, "zooming with the wheel keeps it hidden")
+	var jitter := InputEventMouseMotion.new()
+	jitter.relative = Vector2(1, 0)
+	p._input(jitter)
+	check(p.hidden, "a pixel of jitter keeps it hidden")
+	var move := InputEventMouseMotion.new()
+	move.relative = Vector2(20, 5)
+	p._input(move)
+	check(not p.hidden, "moving the mouse brings it back")
+	p.step(2.0, true)
+	check(p.hidden, "... and it hides again when the mouse stops")
+	p.step(0.1, false)
+	check(not p.hidden, "a menu, pit wall or crew job shows it straight away")
+	p.step(5.0, false)
+	check(not p.hidden, "... and keeps it while not driving")
+	p.free()
+
+
 func test_active_pad() -> void:
 	print("active controller")
 	if not InputMap.has_action("steer_right"):
@@ -3708,6 +3862,122 @@ func test_driving_aids() -> void:
 	check(c2.manual_gears and c2.assist_track == 2, "manual gearbox and track assist survive a snapshot")
 ## HUD layout editor: items keep their spot on any screen shape, resizes are
 ## clamped, hidden items come back, and the saved form round-trips.
+## The pit wall screens' panels: dragged by the title bar, resized by the
+## corner grip, snapped, kept on screen, saved and loaded back.
+func test_pit_wall_layout() -> void:
+	print("pit wall layout:")
+	var l := PanelLayout.new("console")
+	l.autosave = false     # no GameData autoload in a test run
+	l.spec("timing", Vector2(430, 260), Vector2(720, 4000))
+	l.spec("pip", Vector2(192, 108), Vector2(960, 540), 16.0 / 9.0, true)
+	var b := Rect2(4, 54, 1592, 842)
+	var d := Rect2(12, 58, 430, 830)
+	l.begin(b)
+	check(l.place("timing", d) == d and not l.customised(), "a panel never moved sits as designed")
+	check(not l.press(Vector2(200, 300)), "a press inside a panel (not its title bar) is the panel's own click")
+	check(l.press(Vector2(200, 66)), "a press on the title bar is the layout's")
+	l.motion(Vector2(202, 67))
+	check(l.release() == "click" and not l.customised(), "a press that doesn't move is still a click")
+	l.press(Vector2(200, 66))
+	l.motion(Vector2(800, 66))
+	check(l.dragging, "moving past a few pixels drags")
+	check(l.release() == "moved" and l.is_moved("timing"), "letting go keeps the new spot")
+	var r := l.rect_of("timing", d)
+	check(absf(r.position.x - 612.0) < 0.5 and r.size == d.size, "the panel moved with the mouse, same size")
+	l.begin(b)
+	l.place("timing", d)
+	l.press(Vector2(r.position.x + 100, 66))
+	l.motion(Vector2(r.position.x + 100 + 4000, 66 + 4000))
+	l.release()
+	r = l.rect_of("timing", d)
+	check(b.encloses(r), "dragged far off: it stays on screen")
+	check(is_equal_approx(r.end.x, b.end.x), "and sits against the right edge")
+	# Snapping: dropped 6 px from the left edge, it goes onto it.
+	l.begin(b)
+	l.place("timing", r)
+	l.press(r.position + Vector2(50, 10))
+	l.motion(r.position + Vector2(50, 10) + Vector2(b.position.x + 6 - r.position.x, 0))
+	l.release()
+	check(is_equal_approx(l.rect_of("timing", d).position.x, b.position.x), "snaps onto the screen edge")
+	# The corner grip zooms the whole panel, text and all.
+	l.reset_all()
+	l.begin(b)
+	var t := l.place("timing", Rect2(b.position.x, 100, 430, 500))
+	l.press(t.end - Vector2(4, 4))
+	l.motion(t.end - Vector2(4, 4) + Vector2(86, 100))
+	l.release()
+	var big := l.rect_of("timing", d)
+	check(is_equal_approx(l.scale_of("timing"), 1.2), "dragging the corner out zooms the panel to 120 %% (%.2f)" % l.scale_of("timing"))
+	check(big.size.is_equal_approx(Vector2(516, 600)), "the box grows with it, same shape (%s)" % big.size)
+	check(l.content_rect("timing", big).size.is_equal_approx(Vector2(430, 500)), "its contents are laid out as before, just bigger")
+	l.begin(b)
+	l.place("timing", big)
+	l.press(big.end - Vector2(4, 4))
+	l.motion(big.end - Vector2(4, 4) - Vector2(2000, 2000))
+	l.release()
+	check(is_equal_approx(l.scale_of("timing"), PanelLayout.MIN_SCALE), "zooming out stops at %d %%" % roundi(PanelLayout.MIN_SCALE * 100.0))
+	# The right and bottom edges resize without zooming, within the panel's limits.
+	l.begin(b)
+	t = l.place("timing", l.rect_of("timing", d))
+	var sc0 := l.scale_of("timing")
+	l.press(Vector2(t.end.x - 2, t.get_center().y))
+	l.motion(Vector2(t.end.x - 2 - 600, t.get_center().y + 300))
+	l.release()
+	var narrow := l.rect_of("timing", d)
+	check(is_equal_approx(narrow.size.x, 430.0 * sc0) and is_equal_approx(narrow.size.y, t.size.y) and l.scale_of("timing") == sc0,
+		"the right edge only changes the width, down to the smallest that fits (%s)" % narrow.size)
+	l.begin(b)
+	t = l.place("timing", narrow)
+	l.press(Vector2(t.get_center().x, t.end.y - 2))
+	l.motion(Vector2(t.get_center().x, t.end.y - 2 - 2000))
+	l.release()
+	var small := l.rect_of("timing", d)
+	check(is_equal_approx(small.size.y, 260.0 * sc0) and is_equal_approx(small.size.x, narrow.size.x), "the bottom edge only changes the height (%s)" % small.size)
+	# The picture keeps 16:9 and grabs anywhere.
+	l.begin(b)
+	var pr := l.place("pip", Rect2(900, 70, 352, 198))
+	check(l.press(pr.get_center()), "the onboard picture moves from anywhere on it")
+	l.release()
+	l.press(pr.end - Vector2(3, 3))
+	l.motion(pr.end + Vector2(200, 20))
+	l.release()
+	var ps := l.rect_of("pip", pr).size
+	check(absf(ps.x / ps.y - 16.0 / 9.0) < 0.01 and ps.x > 352.0, "a resized picture stays 16:9 (%s)" % ps)
+	# The last panel picked up is drawn on top.
+	l.begin(b)
+	l.place("timing", l.rect_of("timing", d))
+	var rr := l.place("role", Rect2(1108, 58, 480, 830))
+	check(l.draw_order(["timing", "role", "radio"]) == ["role", "radio", "timing"], "the panel moved last comes on top")
+	l.press(rr.position + Vector2(100, 10))
+	l.motion(rr.position + Vector2(60, 10))
+	l.release()
+	check(l.draw_order(["timing", "role", "radio"]) == ["radio", "timing", "role"], "move another and that one comes on top")
+	# Saved and loaded back; another screen's layout is left alone.
+	var prefs := {PanelLayout.PREF: {"full": {"feed": {"x": 1.0, "y": 0.0, "w": 400, "h": 300}}}}
+	l.store_in(prefs)
+	var back := PanelLayout.new("console")
+	back.load_from(prefs)
+	check(back.rect_of("timing", d, b) == l.rect_of("timing", d, b), "the layout loads back")
+	check((prefs[PanelLayout.PREF] as Dictionary).has("full"), "the full pit wall's layout is kept")
+	var other := PanelLayout.new("full")
+	other.load_from(prefs)
+	check(other.is_moved("feed") and not other.is_moved("timing"), "each screen has its own layout")
+	var wide := Rect2(4, 54, 2552, 842)
+	check(is_equal_approx(other.rect_of("feed", Rect2(), wide).end.x, wide.end.x), "a panel on the right edge stays there on a wider screen")
+	back.reset_all()
+	back.store_in(prefs)
+	check(not (prefs[PanelLayout.PREF] as Dictionary).has("console"), "reset: nothing left to save")
+	var junk := PanelLayout.new("console")
+	junk.load_from({PanelLayout.PREF: "junk"})
+	check(not junk.customised(), "a broken saved layout is ignored")
+	# The free space the 3D race frames itself in.
+	var area := Rect2(12, 58, 1576, 830)
+	var free := PanelLayout.largest_free(area, [Rect2(12, 58, 430, 830), Rect2(1108, 58, 480, 830)])
+	check(free == Rect2(442, 58, 666, 830), "the race shows between two side panels (%s)" % free)
+	free = PanelLayout.largest_free(area, [Rect2(12, 58, 430, 830), Rect2(442, 58, 900, 830)])
+	check(free == Rect2(1342, 58, 246, 830), "both panels on the left: the race goes right (%s)" % free)
+
+
 func test_hud_layout() -> void:
 	print("hud layout:")
 	var l := HudLayout.new()
@@ -3896,6 +4166,20 @@ func test_online_contacts() -> void:
 	check(p.is_player_driving(), "a person at the wheel is highlighted")
 	p.crew = [{"peer_id": RaceEntry.AI_PEER, "role": RaceEntry.ROLE_DRIVER}]
 	check(not p.is_player_driving(), "an AI co-driver is not")
+	# Settings > Gameplay "highlight_fade": the outline fades away after its time
+	# and comes back (wake_highlight) when the camera zooms.
+	var cv := CarView.new()
+	cv.highlight = CarView.Highlight.SELF
+	cv._hl_age = 100.0
+	check(cv.highlight_alpha() == 1.0, "highlight never fades by default")
+	cv.highlight_fade_s = 15.0
+	cv._hl_age = 10.0
+	check(cv.highlight_alpha() == 1.0, "highlight stays full before its fade time")
+	cv._hl_age = 15.0 + CarView.HIGHLIGHT_FADE_TIME + 0.1
+	check(cv.highlight_alpha() == 0.0, "highlight has faded away after its time")
+	cv.wake_highlight()
+	check(cv.highlight_alpha() == 1.0, "zooming brings a faded highlight back")
+	cv.free()
 
 
 ## Rallycross: RX tracks and cars only appear in rallycross, dirt is looser
@@ -4000,6 +4284,41 @@ func test_rallycross() -> void:
 ## Rallycross: no yellow flags, VSC or safety car. Marshals only go onto the
 ## track in the gaps between cars, run off when one is coming, and finish the
 ## job over several gaps; a retired car is pushed off in a gap.
+## The driving line through the joker lane (rallycross): one line round the
+## lap that takes the joker, its branch flag up on the joker, none on circuits.
+func test_joker_driving_line() -> void:
+	print("joker driving line")
+	var d := _data()
+	var def: CarDefinition = d["cars"].get("skoda_fabia_rx")
+	var tc: TyreCompound = TyreCatalog.load_all().get(def.tyre_compound_id)
+	for id in TrackCatalog.ids_for(TrackCatalog.list_all(), RaceSettings.DISCIPLINE_RALLYCROSS):
+		var t := TrackCatalog.load_track(id)
+		if not t.has_joker():
+			continue
+		var jl := DrivingLine.build_joker(t, def, tc)
+		var n := jl.size() if jl else 0
+		var on := 0
+		var off_lane := 0
+		var branch_ok := true
+		var lap_branch := 0
+		for k in n:
+			if jl.joker_d[k] >= 0.0:
+				on += 1
+				if t.project_joker(jl.points[k])["dist"] > t.joker_width * 0.5:
+					off_lane += 1
+				branch_ok = branch_ok and jl.branch[k] > 0.99
+			elif jl.branch[k] > 0.5:
+				lap_branch += 1
+		var span := fposmod(t.joker_exit_s - t.joker_entry_s, t.length)
+		var want := t.length - span + t.joker_length
+		check(n > 0 and on * DrivingLine.SPACING > t.joker_length * 0.8 and off_lane == 0 and branch_ok
+			and lap_branch * DrivingLine.SPACING < 120.0 and absf(jl.length - want) < want * 0.12
+			and jl.speed.size() == n and jl.corner.size() == n,
+			"%s: joker line %d m (%d m on the joker lane, %d m of lap lead-in shown)"
+			% [id, int(jl.length) if jl else 0, int(on * DrivingLine.SPACING), int(lap_branch * DrivingLine.SPACING)])
+	check(DrivingLine.build_joker(TrackCatalog.load_track("spa"), def, tc) == null, "no joker line on a circuit")
+
+
 func test_rallycross_marshals() -> void:
 	print("rallycross marshals")
 	var track := TrackCatalog.load_track("holjes")
