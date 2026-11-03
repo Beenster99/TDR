@@ -26,6 +26,13 @@ extends Control
 ## ← → change, Enter acts, C switches tab, V radio, P full pit wall. A
 ## controller still works (D-pad, A, Y, X). Drawn immediate-mode in the 1600x900 canvas, scaled to the window, so it
 ## stays sharp at 4K.
+##
+## The panels (timing, the role panel, team radio and the onboard picture)
+## move: drag a title bar (or the picture) to move one, the grip in its
+## bottom right corner to resize it (PanelLayout). Where they were left is
+## saved in GameData.prefs["pit_wall_layout"]["console"]; the 3D race frames
+## itself in the biggest space they leave free. "Reset layout" in the header
+## puts them back.
 
 signal open_pit_wall
 signal open_planner
@@ -73,6 +80,9 @@ var onboard: OnboardCamera
 var cam_car := -1                    ## car the onboard camera is on
 var cam_mode := CAM_FRONT
 var _items: Array = []               ## rows of the current tab: [id, label, value text, can_change]
+## Where the player has moved the panels.
+var layout := PanelLayout.new("console")
+var _cursor := Input.CURSOR_ARROW
 
 
 func setup(p_session: RaceSession) -> void:
@@ -83,6 +93,13 @@ func setup(p_session: RaceSession) -> void:
 	radio = TeamRadio.new()
 	add_child(radio)
 	radio.setup(session, team_car(), false)
+	layout.spec("timing", Vector2(430, 260), Vector2(720, 4000))
+	layout.spec("role", Vector2(420, 520), Vector2(800, 4000))
+	layout.spec("radio", Vector2(360, 90))
+	layout.spec("pip", Vector2(192, 108), Vector2(960, 540), 16.0 / 9.0, true)
+	var gd := get_node_or_null("/root/GameData")
+	if gd:
+		layout.load_from(gd.prefs)
 	refresh_role()
 
 
@@ -125,10 +142,11 @@ func pip_on() -> bool:
 			and cam_car < session.sim.car_count() and RaceEntry.role_covers(role(), RaceEntry.ROLE_STRATEGIST)
 
 
-## Where the onboard camera window sits: the top right of the 3D view.
+## Where the onboard camera window sits: the top right of the 3D view, or
+## wherever the player dragged it.
 func pip_rect() -> Rect2:
 	var vr := view_rect()
-	return Rect2(Vector2(vr.end.x - OnboardPip.SIZE.x - 10, vr.position.y + 10), OnboardPip.SIZE)
+	return layout.rect_of("pip", Rect2(Vector2(vr.end.x - OnboardPip.SIZE.x - 10, vr.position.y + 10), OnboardPip.SIZE), _bounds())
 
 
 func current_tab() -> String:
@@ -147,7 +165,37 @@ static func role_title(r: String) -> String:
 ## The part of the screen the 3D race shows through (between the panels).
 func view_rect() -> Rect2:
 	var vp := get_viewport_rect().size
-	return Rect2(LEFT_W + 24, 58, maxf(vp.x - LEFT_W - RIGHT_W - 48, 200.0), maxf(vp.y - 58 - RADIO_H - 20, 200.0))
+	var as_designed := Rect2(LEFT_W + 24, 58, maxf(vp.x - LEFT_W - RIGHT_W - 48, 200.0), maxf(vp.y - 58 - RADIO_H - 20, 200.0))
+	if not (layout.is_moved("timing") or layout.is_moved("role") or layout.is_moved("radio")):
+		return as_designed
+	var pr := panel_rects()
+	var free := PanelLayout.largest_free(Rect2(12, 58, vp.x - 24, vp.y - 70),
+		[(pr["timing"] as Rect2).grow(12), (pr["role"] as Rect2).grow(12), (pr["radio"] as Rect2).grow(12)])
+	return free if free.size.x >= 200.0 and free.size.y >= 200.0 else as_designed
+
+
+## Where the panels may go: below the header.
+func _bounds() -> Rect2:
+	var vp := get_viewport_rect().size
+	return Rect2(4, 54, vp.x - 8, vp.y - 58)
+
+
+## The timing, role and radio panels as designed (the left, the right and
+## the bottom middle).
+func _default_rects() -> Dictionary:
+	var vp := get_viewport_rect().size
+	var rx := vp.x - RIGHT_W - 12
+	return {"timing": Rect2(12, 58, LEFT_W, vp.y - 70), "role": Rect2(rx, 58, RIGHT_W, vp.y - 70),
+		"radio": Rect2(LEFT_W + 24, vp.y - RADIO_H - 12, rx - LEFT_W - 36, RADIO_H)}
+
+
+## Where the timing, role and radio panels are now.
+func panel_rects() -> Dictionary:
+	var d := _default_rects()
+	var b := _bounds()
+	for id in d:
+		d[id] = layout.rect_of(id, d[id], b)
+	return d
 
 
 ## A team radio message for our car (from the session's team_radio signal,
@@ -166,8 +214,23 @@ func _input(event: InputEvent) -> void:
 		return
 	if event is InputEventMouseMotion:
 		_hover = event.position
+		if layout.motion(event.position, event.button_mask & MOUSE_BUTTON_MASK_LEFT != 0):
+			get_viewport().set_input_as_handled()
+		_set_cursor(layout.cursor_at(event.position))
 		return
 	if event is InputEventMouseButton:
+		if event.button_index == MOUSE_BUTTON_LEFT:
+			# A title bar moves its panel; a press there that doesn't move is a click.
+			if event.pressed and layout.press(event.position):
+				get_viewport().set_input_as_handled()
+				return
+			if not event.pressed:
+				var res := layout.release()
+				if res == "click":
+					_click(layout.press_position(), MOUSE_BUTTON_LEFT)
+				if res != "":
+					get_viewport().set_input_as_handled()
+				return
 		if event.pressed and _click(event.position, event.button_index):
 			get_viewport().set_input_as_handled()
 		return
@@ -217,6 +280,10 @@ func _click(pos: Vector2, button: int) -> bool:
 		match str(h[1]):
 			"panel":
 				return true
+			"reset_layout":
+				if dir == 1:
+					layout.reset_all()
+					layout.save()
 			"tab":
 				if absi(dir) == 1:
 					tab = int(arg)
@@ -474,6 +541,18 @@ static func _setup_label(key: String) -> String:
 
 # --- Drawing ---------------------------------------------------------------------
 
+func _set_cursor(c: Input.CursorShape) -> void:
+	if c != _cursor:
+		_cursor = c
+		Input.set_default_cursor_shape(c)
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_VISIBILITY_CHANGED and not is_visible_in_tree():
+		layout.release()
+		_set_cursor(Input.CURSOR_ARROW)
+
+
 func _process(_delta: float) -> void:
 	if not visible or session == null:
 		return
@@ -512,24 +591,32 @@ func _draw() -> void:
 	var vp := size
 	var car := team_car()
 	_draw_header(Rect2(12, 8, vp.x - 24, 42), car)
-	_draw_timing(Rect2(12, 58, LEFT_W, vp.y - 58 - 12), car)
-	var rx := vp.x - RIGHT_W - 12
-	var rr := Rect2(rx, 58, RIGHT_W, vp.y - 58 - 12)
+	var d := _default_rects()
+	var pip_r := pip_rect()
+	layout.begin(_bounds())
+	_draw_markers(car)
+	# Drawn (and hit) in this order: a panel dragged over another sits on top of it.
+	var tr := layout.place("timing", d["timing"])
+	_hits.append([tr, "panel", null])
+	_draw_timing(tr, car)
+	var rr := layout.place("role", d["role"])
 	_hits.append([rr, "panel", null])
-	_hits.append([Rect2(12, 58, LEFT_W, vp.y - 70), "panel", null])
 	if car >= 0:
 		if current_tab() == TAB_PIT:
 			_draw_pit_crew(rr, car)
 		else:
 			_draw_strategy(rr, car)
-	var mid := Rect2(LEFT_W + 24, vp.y - RADIO_H - 12, rx - LEFT_W - 36, RADIO_H)
-	_draw_radio(mid)
+	var mid := layout.place("radio", d["radio"])
 	_hits.append([mid, "radio", null])
-	_draw_markers(car)
+	_draw_radio(mid)
 	if pip_on():
-		OnboardPip.draw(self, font, onboard, pip_rect(), session, cam_car, cam_mode == CAM_REAR)
-	_text(Vector2(LEFT_W + 24, mid.position.y - 10), "Click: act   Right-click / wheel: change   ↑↓ ←→ Enter   %sV radio   P pit wall" % (
-		"C switch tab   " if tabs.size() > 1 else ""), 13, Color(1, 1, 1, 0.75))
+		layout.place("pip", pip_r)
+		_hits.append([pip_r, "panel", null])
+		OnboardPip.draw(self, font, onboard, pip_r, session, cam_car, cam_mode == CAM_REAR)
+	var hy := mid.position.y - 10 if mid.position.y > 90 else mid.end.y + 18
+	_text(Vector2(mid.position.x, hy), "Click: act   Right-click / wheel: change   ↑↓ ←→ Enter   %sV radio   P pit wall   Drag a title bar to move" % (
+		"C switch tab   " if tabs.size() > 1 else ""), 13, Color(1, 1, 1, 0.75), HORIZONTAL_ALIGNMENT_LEFT, maxf(mid.size.x, 520.0))
+	layout.draw_handles(self, _hover)
 
 
 func _draw_header(r: Rect2, car: int) -> void:
@@ -553,7 +640,15 @@ func _draw_header(r: Rect2, car: int) -> void:
 		var e := sim.entries[car]
 		var lap := mini(e.laps_done + 1, sim.settings.laps)
 		_text(Vector2(tx + 16, r.position.y + 28), "%s  ·  P%d %s  ·  %s  ·  Lap %d/%d" % [role_title(role()), e.position,
-			e.at_wheel(), sim.defs[car].display_name, lap, sim.settings.laps], 16, Color.WHITE, HORIZONTAL_ALIGNMENT_LEFT, r.end.x - tx - 300)
+			e.at_wheel(), sim.defs[car].display_name, lap, sim.settings.laps], 16, Color.WHITE, HORIZONTAL_ALIGNMENT_LEFT,
+			r.end.x - tx - (440 if layout.customised() else 300))
+	if layout.customised():
+		var rb := Rect2(r.end.x - 424, r.position.y + 7, 124, 28)
+		var hot := rb.has_point(_hover)
+		draw_rect(rb, Color(1, 1, 1, 0.14 if hot else 0.06))
+		draw_rect(rb, Color(1, 1, 1, 0.5 if hot else 0.25), false, 1.0)
+		_text(Vector2(rb.position.x, rb.position.y + 19), "Reset layout", 14, Color.WHITE if hot else DIM, HORIZONTAL_ALIGNMENT_CENTER, rb.size.x)
+		_hits.append([rb, "reset_layout", null])
 	var f := session.telemetry.forecast
 	_text(Vector2(r.end.x - 290, r.position.y + 28), "%s  Air %d°  Track %d°  Wet %d%%" % [WeatherForecast.weather_label(f.weather),
 		int(f.ambient_c), int(f.track_c), int(f.wetness * 100.0)], 15, BLUE, HORIZONTAL_ALIGNMENT_RIGHT, 280)
@@ -575,6 +670,8 @@ func _draw_timing(r: Rect2, car: int) -> void:
 		var e := sim.entries[i]
 		var c := tel.cars[i]
 		var y := r.position.y + 46 + p * rh
+		if y + rh > r.end.y + 2:
+			break      # a panel made too short for the whole field
 		var row := Rect2(x + 2, y, r.size.x - 4, rh - 2)
 		if i == car:
 			draw_rect(row, Color(1, 0.88, 0.35, 0.2))

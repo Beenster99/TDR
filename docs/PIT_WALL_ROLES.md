@@ -86,6 +86,26 @@ shows it's waiting; press A again to cancel). After a swap the screen
 changes over by itself: the new driver gets the HUD and the controls, the
 old driver the console.
 
+### Moving the panels
+
+Every panel on the console (timing, the pit crew / strategy panel, team
+radio and the onboard camera picture) and on the full pit wall (timing,
+weather radar, selected car, feed, onboard picture) can be moved and resized
+with the mouse:
+
+- drag a panel's title bar (the strip along its top, marked with six dots)
+  to move it; drag the onboard picture from anywhere on it;
+- drag the grip in a panel's bottom right corner to resize it (the picture
+  stays 16:9, every panel has a smallest size that still fits its contents);
+- panels snap to the screen edges and line up next to each other;
+- a click on a title bar that doesn't move still clicks what's there.
+
+On the console the 3D race frames itself in the biggest space the panels
+leave free. The layout is saved (`GameData.prefs["pit_wall_layout"]`, one
+for the console and one for the full pit wall) and comes back next race.
+**Reset layout** in the header puts everything back. Code: `PanelLayout`
+(ui); check: `tests/pit_wall_layout_check.tscn`.
+
 ## Controls (console)
 
 | | Keyboard | Pad |

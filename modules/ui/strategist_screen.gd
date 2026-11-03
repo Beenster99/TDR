@@ -14,6 +14,12 @@ extends Control
 ## camera (OnboardCamera) above the feed: Y / C switches front, rear, off.
 ## Drawn immediate-mode at 1600x900 and scaled by
 ## the window's stretch, so it stays sharp at 4K.
+##
+## The panels (timing, weather radar, selected car, feed and the onboard
+## picture) move: drag a title bar (or the picture) to move one, the grip in
+## its bottom right corner to resize it (PanelLayout). Where they were left
+## is saved in GameData.prefs["pit_wall_layout"]["full"]. "Reset layout" in
+## the header puts them back.
 
 const FILTERS := [["All", []], ["Radio", ["radio"]], ["Strategy", ["strategy"]], ["Pit", ["pit"]],
 	["Timing", ["timing"]], ["Tyres", ["tyres"]], ["Weather", ["weather"]], ["Incidents", ["incident"]], ["Race control", ["race_control"]]]
@@ -44,6 +50,9 @@ var _hover := Vector2(-1, -1)
 ## Onboard camera for the selected car (set by the race scene; null = none).
 var onboard: OnboardCamera
 var cam_mode := 0               ## 0 off, 1 front, 2 rear
+## Where the player has moved the panels.
+var layout := PanelLayout.new("full")
+var _cursor := Input.CURSOR_ARROW
 
 
 func setup(p_session: RaceSession) -> void:
@@ -57,6 +66,14 @@ func setup(p_session: RaceSession) -> void:
 	for i in range(0, t.point_count(), 3):
 		_track_pts.append(t.points[i])
 	_track_pts.append(t.points[0])
+	layout.spec("timing", Vector2(700, 300), Vector2(1400, 4000))
+	layout.spec("weather", Vector2(300, 200), Vector2(900, 600))
+	layout.spec("car", Vector2(340, 236), Vector2(900, 420))
+	layout.spec("feed", Vector2(280, 120))
+	layout.spec("pip", Vector2(240, 135), Vector2(1120, 630), 16.0 / 9.0, true)
+	var gd := get_node_or_null("/root/GameData")
+	if gd:
+		layout.load_from(gd.prefs)
 
 
 func open() -> void:
@@ -86,11 +103,21 @@ func _input(event: InputEvent) -> void:
 		return
 	if event is InputEventMouseMotion:
 		_hover = event.position
+		layout.motion(event.position, event.button_mask & MOUSE_BUTTON_MASK_LEFT != 0)
+		_set_cursor(layout.cursor_at(event.position))
 		return
 	if event is InputEventMouseButton:
+		get_viewport().set_input_as_handled()
+		if event.button_index == MOUSE_BUTTON_LEFT:
+			# A title bar moves its panel; a press there that doesn't move is a click.
+			if event.pressed and layout.press(event.position):
+				return
+			if not event.pressed:
+				if layout.release() == "click":
+					_click(layout.press_position(), MOUSE_BUTTON_LEFT)
+				return
 		if event.pressed:
 			_click(event.position, event.button_index)
-		get_viewport().set_input_as_handled()
 		return
 	if not event.is_pressed() or event.is_echo() and not (event.is_action("ui_up") or event.is_action("ui_down")):
 		return
@@ -156,6 +183,10 @@ func _click(pos: Vector2, button: int) -> void:
 			"close":
 				if dir == 1:
 					close()
+			"reset_layout":
+				if dir == 1:
+					layout.reset_all()
+					layout.save()
 		if absi(dir) == 1:
 			Sound.ui("ui_select", -6.0)
 		return
@@ -167,6 +198,18 @@ func _button(r: Rect2, label: String, action: String, fs := 15, col := Color.WHI
 	draw_rect(r, Color(1, 0.88, 0.35, 0.9 if hover else 0.6), false, 1.5)
 	_text(Vector2(r.position.x, r.position.y + r.size.y * 0.5 + fs * 0.36), label, fs, col, HORIZONTAL_ALIGNMENT_CENTER, r.size.x)
 	_hits.append([r, action, null])
+
+
+func _set_cursor(c: Input.CursorShape) -> void:
+	if c != _cursor:
+		_cursor = c
+		Input.set_default_cursor_shape(c)
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_VISIBILITY_CHANGED and not is_visible_in_tree():
+		layout.release()
+		_set_cursor(Input.CURSOR_ARROW)
 
 
 func _process(delta: float) -> void:
@@ -264,22 +307,37 @@ func _draw() -> void:
 	var tel := session.telemetry
 	var table_w := clampf(vp.x * 0.66, 900.0, 1080.0)
 	_draw_header(Rect2(16, 10, vp.x - 32, 40), sim, tel)
-	_draw_timing(Rect2(16, 58, table_w, vp.y - 58 - 34), sim, tel)
+	layout.begin(Rect2(8, 54, vp.x - 16, vp.y - 54 - 26))
+	# As designed: timing on the left; radar, selected car, then the picture
+	# and the feed down the right. A moved panel goes where it was left, and
+	# panels drawn later sit on top.
+	_draw_timing(layout.place("timing", Rect2(16, 58, table_w, vp.y - 58 - 34)), sim, tel)
 	var rx := 16 + table_w + 14
 	var rw := vp.x - rx - 16
 	var radar_h := minf(rw * 0.62, 280.0)
-	_draw_weather(Rect2(rx, 58, rw, radar_h), tel)
+	_draw_weather(layout.place("weather", Rect2(rx, 58, rw, radar_h)), tel)
 	var car_h := 236.0
-	_draw_car(Rect2(rx, 58 + radar_h + 10, rw, car_h), sim, tel)
+	_draw_car(layout.place("car", Rect2(rx, 58 + radar_h + 10, rw, car_h)), sim, tel)
 	var fy := 58 + radar_h + 10 + car_h + 10
 	# The picture takes the feed's place (the feed is back when it's off).
 	var ph := minf(rw * 9.0 / 16.0, vp.y - fy - 40)
-	_pip_at = Rect2(rx + (rw - ph * 16.0 / 9.0) * 0.5, fy + 3, ph * 16.0 / 9.0, ph)
-	if _pip_on():
-		OnboardPip.draw(self, font, onboard, _pip_at, session, selected, cam_mode == 2)
+	_pip_at = layout.rect_of("pip", Rect2(rx + (rw - ph * 16.0 / 9.0) * 0.5, fy + 3, ph * 16.0 / 9.0, ph))
+	if _pip_on() and not layout.is_moved("pip"):
 		fy += _pip_at.size.y + 12
-	_draw_feed(Rect2(rx, fy, rw, vp.y - fy - 34), tel)
-	var keys := "Click a car to look at it    ↑↓ choose car    ←→ or wheel filter feed    P / Esc close"
+	_draw_feed(layout.place("feed", Rect2(rx, fy, rw, vp.y - fy - 34)), tel)
+	if _pip_on():
+		layout.place("pip", _pip_at)
+		_hits.append([_pip_at, "pip", null])
+		OnboardPip.draw(self, font, onboard, _pip_at, session, selected, cam_mode == 2)
+	layout.draw_handles(self, _hover)
+	if layout.customised():
+		var rb := Rect2(vp.x - 196, 14, 132, 32)
+		var hot := rb.has_point(_hover)
+		draw_rect(rb, Color(1, 1, 1, 0.14 if hot else 0.06))
+		draw_rect(rb, Color(1, 1, 1, 0.5 if hot else 0.25), false, 1.0)
+		_text(Vector2(rb.position.x, rb.position.y + 21), "Reset layout", 14, Color.WHITE if hot else DIM, HORIZONTAL_ALIGNMENT_CENTER, rb.size.x)
+		_hits.append([rb, "reset_layout", null])
+	var keys := "Click a car to look at it    ↑↓ choose car    ←→ or wheel filter feed    Drag a title bar to move a panel    P / Esc close"
 	if _can_plan():
 		keys += "    Enter plan the stop"
 	if _cam_allowed():
@@ -297,7 +355,7 @@ func _draw_header(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 	_text(r.position + Vector2(150, 26), "%s   ·   Lap %d / %d   ·   %s" % [sim.track.display_name, lap,
 		sim.settings.laps, fmt_lap(sim.race_time).trim_suffix("0")], 18)
 	var f := tel.forecast
-	_text(r.position + Vector2(r.size.x - 580, 26), "%02d:%02d   %s   Air %d°   Track %d°   Wet %d%%" % [
+	_text(r.position + Vector2(r.size.x - 580 - (150.0 if layout.customised() else 0.0), 26), "%02d:%02d   %s   Air %d°   Track %d°   Wet %d%%" % [
 		int(f.time_of_day_h), int(fmod(f.time_of_day_h, 1.0) * 60.0), WeatherForecast.weather_label(f.weather),
 		int(f.ambient_c), int(f.track_c), int(f.wetness * 100.0)], 16, Color(0.75, 0.85, 1.0),
 		HORIZONTAL_ALIGNMENT_RIGHT, 520)
@@ -326,6 +384,8 @@ func _draw_timing(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 		var e := sim.entries[i]
 		var c := tel.cars[i]
 		var y := r.position.y + 32 + p * rh
+		if y + rh > r.end.y + 2:
+			break      # a panel made too short for the whole field
 		var row := Rect2(r.position.x + 2, y, r.size.x - 4, rh - 2)
 		if i == selected:
 			draw_rect(row, Color(1, 0.88, 0.35, 0.16))
