@@ -152,6 +152,11 @@ func _ready() -> void:
 	Net.race_started.connect(_on_race_started)
 	Net.internet_status_changed.connect(_refresh_lobby)
 	if Net.is_online():
+		# Back from an online race as the host: the rebuilt menu shows the
+		# settings we raced with, not the defaults.
+		if Net.is_server() and not Net.dedicated and Net.season_info.is_empty():
+			_restore_race(MEMORY_HOST)
+			_push_settings()
 		_show("lobby")
 		_refresh_lobby()
 	elif GameData.season != null:
@@ -402,7 +407,7 @@ func _build_ui() -> void:
 	# Main page
 	var main := _page(root, "main")
 	main.add_theme_constant_override("separation", 10)
-	for b in [["Single race", func(): _show("single")], ["Season / championship", func(): _show("season_list")],
+	for b in [["Single race", func(): _restore_race(MEMORY_SINGLE); _show("single")], ["Season / championship", func(): _show("season_list")],
 			["Garage", _open_garage], ["Host online race", _on_host], ["Join online race", func(): _show("join")],
 			["Settings", _open_settings],
 			["Quit", func(): GameData.save_prefs(); get_tree().quit()]]:
@@ -561,6 +566,8 @@ func _build_ui() -> void:
 
 	for s in _settings_steppers:
 		s.value_changed.connect(func(_v): _push_settings())
+	for s in _remembered_steppers().values():
+		s.value_changed.connect(func(_v): _remember_race())
 
 	status_label = Label.new()
 	status_label.modulate = Color(1, 0.75, 0.4)
@@ -753,6 +760,13 @@ func _on_race_type_changed(push := true) -> void:
 	var topts := _track_options(dsc)
 	if topts.is_empty():
 		return
+	# Remembering: keep what the old race type had, then bring back what this
+	# one had last time (its track, car, laps ...), if it was raced before.
+	var recalled := {}
+	if _mem_slot != "" and not _mem_restoring:
+		_remember_race(_mem_type)
+		recalled = _race_memory().get(_mem_slot, {}).get(dsc, {})
+	_mem_type = dsc
 	track_stepper.options = topts
 	if not topts.any(func(o): return o[0] == track_stepper.value):
 		track_stepper.set_value(topts[0][0])
@@ -766,7 +780,7 @@ func _on_race_type_changed(push := true) -> void:
 		class_stepper.set_value(class_stepper.value)
 	car_filter_stepper.options = _filter_options(dsc)
 	car_filter_stepper.set_value("")
-	if push and not _building and (not Net.is_online() or Net.is_server()):
+	if recalled.is_empty() and push and not _building and (not Net.is_online() or Net.is_server()):
 		if dsc == RaceSettings.DISCIPLINE_RALLYCROSS:
 			laps_stepper.set_value(6)   # a World RX final: 6 laps, 6 cars
 			ai_stepper.set_value(5)
@@ -778,6 +792,11 @@ func _on_race_type_changed(push := true) -> void:
 	_rebuild_car_options()
 	_limit_grid()
 	_refresh_cards()
+	if not recalled.is_empty():
+		_apply_remembered(recalled)
+		_refresh_cards()
+	if _mem_slot != "" and not _mem_restoring:
+		_remember_race()
 	if push:
 		_push_settings()
 
@@ -839,6 +858,8 @@ func _show(id: String) -> void:
 	if id != "lobby":
 		race_type_stepper.disabled = false
 	help_label.visible = id == "main"
+	if not id in [MEMORY_SINGLE, "lobby"]:
+		_mem_slot = ""   # seasons and guests don't touch the remembered settings
 	if id == "season_hub":
 		_refresh_hub()
 	elif id == "season_list":
@@ -1143,8 +1164,11 @@ func _on_single() -> void:
 
 func _on_host() -> void:
 	var port := int(GameData.arg("port", Net.DEFAULT_PORT))
+	if not GameData.arg("host"):   # test runs set their own settings
+		_restore_race(MEMORY_HOST)
 	var err := Net.host(port, name_edit.text)
 	if err != OK:
+		_mem_slot = ""
 		_status("Could not host on port %d (error %d)." % [port, err])
 		return
 	var fields := _my_lobby_fields(car_stepper.value)
@@ -1970,3 +1994,110 @@ func _limit_grid() -> void:
 		ai_stepper.set_value(most)
 		if not _building:
 			_push_settings()
+
+
+# --- Remembered race settings -------------------------------------------------
+# The single race page and the online host lobby each keep the settings they
+# were last left with, for every race type (circuit, rallycross, derby), in
+# GameData.prefs["race_memory"] (saved to disk, so they survive a restart):
+#   {"single": {"type": "rallycross", "circuit": {"track": "spa", "laps": 5 ...},
+#               "rallycross": {...}}, "host": {...}}
+# Seasons pick their own settings and guests see the host's, so neither uses it.
+
+const MEMORY_KEY := "race_memory"
+const MEMORY_SINGLE := "single"
+const MEMORY_HOST := "host"
+var _mem_slot := ""         ## "single" / "host" while that page is open, else ""
+var _mem_type := "circuit"  ## the race type the steppers hold values for
+var _mem_restoring := false
+
+
+## Pref key -> stepper for everything remembered (besides the race type).
+func _remembered_steppers() -> Dictionary:
+	return {"track": track_stepper, "class": class_stepper, "car_filter": car_filter_stepper, "car": car_stepper,
+		"tyre": tyre_stepper, "laps": laps_stepper, "ai": ai_stepper, "difficulty": difficulty_stepper,
+		"time": tod_stepper, "clock": clock_stepper, "weather": weather_stepper,
+		"weather_changes": weather_change_stepper, "grid": grid_stepper, "fuel": fuel_stepper,
+		"tyre_wear": wear_stepper, "pit_stops": stops_stepper, "drivers": drivers_stepper,
+		"safety_car": safety_car_stepper, "damage": damage_stepper, "car_setups": tuning_stepper,
+		"upgrades": upgrades_stepper}
+
+
+func _race_memory() -> Dictionary:
+	var m = GameData.prefs.get(MEMORY_KEY, {})
+	return m if m is Dictionary else {}
+
+
+## Saves what the page shows now under race type `dsc` (default: the one picked).
+func _remember_race(dsc := "") -> void:
+	if _mem_slot == "" or _mem_restoring or _building:
+		return
+	if dsc == "":
+		dsc = _race_type()
+	var values := {}
+	var steppers := _remembered_steppers()
+	for k in steppers:
+		values[k] = steppers[k].value
+	var mem := _race_memory().duplicate(true)
+	var slot: Dictionary = mem.get(_mem_slot, {})
+	slot[dsc] = values
+	slot["type"] = _race_type()
+	mem[_mem_slot] = slot
+	GameData.set_pref(MEMORY_KEY, mem)
+
+
+## Brings back the settings this page (single or host) was last left with.
+func _restore_race(slot_name: String) -> void:
+	_mem_slot = slot_name
+	var slot: Dictionary = _race_memory().get(slot_name, {})
+	var dsc := str(slot.get("type", _race_type()))
+	if not race_type_stepper.options.any(func(o): return o[0] == dsc):
+		dsc = _race_type()
+	_mem_restoring = true
+	if dsc != _race_type():
+		race_type_stepper.set_value(dsc)
+		_on_race_type_changed(false)
+	_mem_type = dsc
+	var values: Dictionary = slot.get(dsc, {})
+	if not values.is_empty():
+		_apply_remembered(values)
+	_mem_restoring = false
+	_apply_race_type_rules()
+	_refresh_cards()
+	_setup_changed()
+
+
+## Sets the steppers to saved values, skipping any that no longer fit (a car or
+## track that's gone, a number out of range).
+func _apply_remembered(values: Dictionary) -> void:
+	var steppers := _remembered_steppers()
+	for k in steppers:
+		if not values.has(k):
+			continue
+		var st: Stepper = steppers[k]
+		var v = values[k]
+		if st.options.is_empty():
+			if not (v is int or v is float):
+				continue
+			st.set_value(clampf(float(v), st.min_value, st.max_value) if v is float \
+				else clampi(int(v), int(st.min_value), int(st.max_value)))
+		elif st.options.any(func(o): return _same_value(o[0], v)):
+			st.set_value(v)
+		else:
+			continue
+		if st == class_stepper or st == car_filter_stepper:
+			_rebuild_car_options()   # the car comes after these, so it's picked from the new list
+			_limit_grid()
+		elif st == car_stepper:
+			GameData.prefs["car_id"] = v
+	_limit_grid()
+
+
+## Saved values come back from disk as the same types, but numbers may be
+## int or float; anything else must match its type exactly.
+static func _same_value(a, b) -> bool:
+	var na := a is int or a is float
+	var nb := b is int or b is float
+	if na or nb:
+		return na and nb and is_equal_approx(float(a), float(b))
+	return typeof(a) == typeof(b) and a == b
