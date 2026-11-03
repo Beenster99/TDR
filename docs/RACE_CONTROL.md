@@ -24,11 +24,17 @@ SC, but yellow flags still apply.
 `TrackMarshals` (modules/race/track_marshals.gd). Every incident (severity >= 0.25)
 leaves debris where it happened; debris within 60 m piles up (`RaceControl.debris`).
 When a pile reaches 1.4 (summed severity, e.g. two or three decent crashes in one
-place), a crew of 4 marshals runs out from the barrier, sweeps for 16 s and runs back
-(about 30-40 s in all, `RaceControl.marshal_jobs`).
+place), a crew of 4 marshals goes to the barrier there (`RaceControl.marshal_jobs`).
 
-- Double yellow flags from 220 m before the marshals to 80 m after, until they're
-  back: no overtaking, and slow right down. The limit is the VSC reference speed x 1.2
+- They only go on the track when it is safe: they wait behind the barrier until the
+  next car (`time_to_traffic(s)`: seconds until it arrives; stopped, retired and
+  pitting cars don't count) is far enough away to run out, sweep at least 4 s and be
+  back off 1.5 s before it arrives. They run off early if a car comes sooner, then
+  wait for the next gap. The sweeping adds up over the gaps until 16 s in all.
+  Same on circuits and in rallycross (`marshal_clear_s`).
+
+- On circuits, double yellow flags from 220 m before the marshals to 80 m after,
+  from when the crew is sent until it is back behind the barrier for good (gaps or not): no overtaking, and slow right down. The limit is the VSC reference speed x 1.2
   (`double_yellow_limit(s)`, shown on the HUD); passing the marshals more than 10 %
   over it is a 5 s penalty. The AI drives 8 % under it.
 - `double_yellow_at(s)`; `yellow_at(s)` is also true there; `neutralisation()` is
