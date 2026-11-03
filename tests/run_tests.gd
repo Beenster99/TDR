@@ -77,6 +77,7 @@ func _init() -> void:
 	test_rallycross()
 	test_rallycross_marshals()
 	test_joker_lanes()
+	test_joker_driving_line()
 	test_handbrake()
 	print("\n%s (%d failures, %.1fs)" % ["PASS" if failures == 0 else "FAIL", failures, (Time.get_ticks_msec() - t0) / 1000.0])
 	quit(1 if failures > 0 else 0)
@@ -4065,6 +4066,41 @@ func test_rallycross() -> void:
 ## Rallycross: no yellow flags, VSC or safety car. Marshals only go onto the
 ## track in the gaps between cars, run off when one is coming, and finish the
 ## job over several gaps; a retired car is pushed off in a gap.
+## The driving line through the joker lane (rallycross): one line round the
+## lap that takes the joker, its branch flag up on the joker, none on circuits.
+func test_joker_driving_line() -> void:
+	print("joker driving line")
+	var d := _data()
+	var def: CarDefinition = d["cars"].get("skoda_fabia_rx")
+	var tc: TyreCompound = TyreCatalog.load_all().get(def.tyre_compound_id)
+	for id in TrackCatalog.ids_for(TrackCatalog.list_all(), RaceSettings.DISCIPLINE_RALLYCROSS):
+		var t := TrackCatalog.load_track(id)
+		if not t.has_joker():
+			continue
+		var jl := DrivingLine.build_joker(t, def, tc)
+		var n := jl.size() if jl else 0
+		var on := 0
+		var off_lane := 0
+		var branch_ok := true
+		var lap_branch := 0
+		for k in n:
+			if jl.joker_d[k] >= 0.0:
+				on += 1
+				if t.project_joker(jl.points[k])["dist"] > t.joker_width * 0.5:
+					off_lane += 1
+				branch_ok = branch_ok and jl.branch[k] > 0.99
+			elif jl.branch[k] > 0.5:
+				lap_branch += 1
+		var span := fposmod(t.joker_exit_s - t.joker_entry_s, t.length)
+		var want := t.length - span + t.joker_length
+		check(n > 0 and on * DrivingLine.SPACING > t.joker_length * 0.8 and off_lane == 0 and branch_ok
+			and lap_branch * DrivingLine.SPACING < 120.0 and absf(jl.length - want) < want * 0.12
+			and jl.speed.size() == n and jl.corner.size() == n,
+			"%s: joker line %d m (%d m on the joker lane, %d m of lap lead-in shown)"
+			% [id, int(jl.length) if jl else 0, int(on * DrivingLine.SPACING), int(lap_branch * DrivingLine.SPACING)])
+	check(DrivingLine.build_joker(TrackCatalog.load_track("spa"), def, tc) == null, "no joker line on a circuit")
+
+
 func test_rallycross_marshals() -> void:
 	print("rallycross marshals")
 	var track := TrackCatalog.load_track("holjes")
