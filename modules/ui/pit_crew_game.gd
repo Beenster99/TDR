@@ -391,6 +391,10 @@ func _start(want: Dictionary) -> void:
 		return
 	pos = _start_spot()
 	face = 0.0
+	if not coop and current_job() in [PitRules.JOB_GUN_L, PitRules.JOB_GUN_R]:
+		# On your own the gun man has the gun in hand from the start.
+		hold = Hold.GUN
+		sent["gun_taken:%d" % _side()] = true
 	for j in jobs:
 		session.request_pit(car, {"crew": {"job": j, "play": true, "lane_auto": coop}})
 
@@ -737,7 +741,10 @@ func _step_gun(dt: float, move: Vector2, use: bool, grab: bool) -> void:
 	match job:
 		Job.NONE:
 			_run(dt, move)
-			if grab:
+			# Grab picks the gun up or puts it down; the gun button next to
+			# the gun on the ground picks it up too.
+			var by_use := pressed and hold == Hold.NONE and gun_at.has(side) and _near(gun_at[side])
+			if grab or by_use:
 				if hold == Hold.NONE and gun_at.has(side) and _near(gun_at[side]):
 					if not _gun_out(side):
 						_flash_msg("No gun laid out yet", 1.2)
@@ -770,7 +777,7 @@ func _step_gun(dt: float, move: Vector2, use: bool, grab: bool) -> void:
 						pos = ws[0]
 						face = ws[1]
 			elif at_wheel and pressed and hold != Hold.GUN:
-				_flash_msg("Pick up your wheel gun first (grab)", 1.2)
+				_flash_msg("Pick up your wheel gun first", 1.2)
 			# the nut's off: wait for the wheel man, then gun it on
 			if sent.has("%s:nut_off:%d:" % [me, w]) and job == Job.NONE:
 				job = Job.SWAP
@@ -1292,7 +1299,7 @@ func _tyre_tip(j: String) -> Array:
 				draw_rect(Rect2(mx - 2, gy - 4, 4, 22), Color.WHITE)
 				return ["Let go in the green", Color.WHITE]
 		if hold != Hold.GUN:
-			return ["Pick up your wheel gun (grab)", YELLOW]
+			return ["Pick up your wheel gun (grab or the gun button)", YELLOW]
 		if not _near(wheel_spot(w)[0]):
 			return ["Run to the %s" % WHEEL_NAMES[w], Color.WHITE]
 		if tj.is_empty() or float(tj.get("start", INF)) > clock:

@@ -72,9 +72,14 @@ family is worked out from `cylinders` and the description ("twin-turbo",
 
 ## Tyres and surfaces
 
-- **Squeal** when cornering past the grip peak, **scrub** just under it
-  (your car), **lock-up / wheelspin** howl, **ABS chatter** under heavy
-  braking with ABS on.
+- **Squeal** when cornering past the grip peak: a rough, low howl of
+  rubber (racing tyres rasp, they don't whistle). **Scrub** just under it
+  (your car), **lock-up / wheelspin / handbrake** rasp, **ABS chatter**
+  under heavy braking with ABS on.
+- Tyres only squeal on tarmac and kerbs. Sliding on **gravel**, **grass**,
+  **dirt** or **mud** makes that surface's own noise: on rallycross and derby
+  dirt a rumble that turns into a scrabble of grit and clods when the car
+  slides, spins or locks its wheels (lower and duller in the wet: mud).
 - **Road roar** rising with speed, **kerb** buzz whose pitch follows your
   speed, **gravel** crunch, **grass** swish, **wind**.
 - **Rain:** on a wet track tyres hiss with **spray** instead of squealing.
