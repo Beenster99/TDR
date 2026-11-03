@@ -14,7 +14,7 @@ extends SubViewport
 
 enum View { FRONT, REAR }
 
-const MAX_PX := Vector2i(1280, 720)   ## render size cap (a 4K screen's PiP)
+const MAX_PX := Vector2i(1920, 1080)  ## render size cap (a 4K screen's PiP, or a full-screen spectator onboard at 1080p)
 const MIN_PX := Vector2i(160, 90)
 
 var world: WorldView

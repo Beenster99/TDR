@@ -26,7 +26,11 @@ var planner: PitPlanner
 var pause_menu: PauseMenu
 ## The driving line aid's data, kept so Settings can turn it on and off mid-race.
 var _driving_line: DrivingLine
-var results: PanelContainer
+## The results screen, faded in once every car has finished.
+var results: RaceResults
+## Spectator mode: once this player's car has finished (or retired) and
+## others are still racing, they watch the race: any car, any camera view.
+var spectator: SpectatorHud
 var rotate_camera := false
 var _results_shown := false
 var _forced := {}
@@ -84,6 +88,14 @@ func _ready() -> void:
 	camera.make_current()
 	var layer := CanvasLayer.new()
 	add_child(layer)
+	# Spectator mode's onboard views: the onboard camera, full screen, under the HUD.
+	_onboard_rect = TextureRect.new()
+	_onboard_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_onboard_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_onboard_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	_onboard_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_onboard_rect.visible = false
+	layer.add_child(_onboard_rect)
 	hud = RaceHud.new()
 	layer.add_child(hud)
 	hud.setup(session)
@@ -100,6 +112,7 @@ func _ready() -> void:
 		onboard.name = "OnboardCamera"
 		add_child(onboard)
 		onboard.setup(world)
+		_onboard = onboard
 		crew.onboard = onboard
 		pit_wall.onboard = onboard
 	crew.cover = pit_wall
@@ -128,12 +141,20 @@ func _ready() -> void:
 	layer.add_child(crew_game)
 	crew_game.setup(session, world.pit_crews)
 	crew_game.autoplay = bool(GameData.arg("crew-autoplay", false))
+	spectator = SpectatorHud.new()
+	layer.add_child(spectator)
+	spectator.setup(session)
+	spectator.car_picked.connect(_spec_watch)
+	spectator.car_step.connect(_spec_step)
+	spectator.view_step.connect(_spec_next_view)
 	_add_pause_menu(layer)
 	_apply_role()
 	if GameData.arg("pit-wall"):
 		pit_wall.open()
-	results = _build_results()
+	results = RaceResults.new()
+	results.visible = false
 	layer.add_child(results)
+	results.chosen.connect(_on_results_chosen)
 	_make_autodrive()
 	# Filming (tools/record_highlights.sh): --no-hud shows just the race,
 	# --rotate-camera turns the view with the car.
@@ -418,7 +439,15 @@ func _physics_process(delta: float) -> void:
 func _tick_once(delta: float) -> void:
 	var inp: CarInput = null
 	if session.local_car >= 0:
-		if autodrive:
+		var mine := session.sim.entries[session.local_car]
+		if mine.finished and autodrive == null:
+			# Over the line: the AI drives the cool-down lap while you watch.
+			if _cooldown_ai == null:
+				_cooldown_ai = AIDriver.for_car(session.sim, session.local_car)
+			inp = _cooldown_ai.get_input(session.sim, session.local_car)
+		elif mine.dnf and not mine.finished:
+			inp = CarInput.neutral()
+		elif autodrive:
 			inp = autodrive.get_input(session.sim, session.local_car)
 			_autodrive_throttle = inp.throttle
 		elif hud.editing or pause_menu.visible:
@@ -540,16 +569,19 @@ func _film_extra_ticks() -> int:
 
 
 func _process(delta: float) -> void:
+	_update_spectator(delta)
 	var focus := session.local_car if session.local_car >= 0 else session.team_car
 	if focus < 0:
 		focus = session.team_car if session.team_car >= 0 else session.sim.running_order[0]
+	if _spectating:
+		focus = _spec_car
 	var car: CarState = session.sim.cars[focus]
 	var target := car_views[focus].pos2
 	var heading := car_views[focus].heading
 	var speed := car.speed()
 	# Held zoom: keys, bumpers and the right stick all ramp smoothly.
 	var zin := Input.get_action_strength("zoom_out") - Input.get_action_strength("zoom_in")
-	if absf(zin) > 0.0 and not pit_wall.visible:  # the bumpers pick tyres on the pit wall
+	if absf(zin) > 0.0 and not pit_wall.visible and not _results_shown:  # the bumpers pick tyres on the pit wall
 		_set_zoom(_zoom_target + zin * ZOOM_RATE * delta)
 	_zoom = lerpf(_zoom, _zoom_target, 1.0 - exp(-8.0 * delta))
 	# Zoom level: log scale from close up to the whole track, so every bit
@@ -557,7 +589,10 @@ func _process(delta: float) -> void:
 	# speed only when you're right in close.
 	var close := ZOOM_CLOSE * lerpf(1.0, 0.75, clampf(speed / 70.0, 0.0, 1.0) * (1.0 - _zoom))
 	var fit := _fit_zoom()
-	var z := exp(lerpf(log(close), log(fit), _zoom))
+	var zoom_level := _zoom
+	if _spectating and _spec_view == SpecView.TRACK:
+		zoom_level = 1.0
+	var z := exp(lerpf(log(close), log(fit), zoom_level))
 	# Look ahead along the track (not just the nose), further when zoomed out,
 	# keeping your car on screen.
 	var vs := get_viewport_rect().size
@@ -573,7 +608,7 @@ func _process(delta: float) -> void:
 	# On the pit wall the console steps aside for it, and comes back when the
 	# lollipop sends the car.
 	var box_view := crew_game.wants_close_view()
-	if _is_crew() and crew.visible == box_view:
+	if _is_crew() and not _spectating and crew.visible == box_view:
 		crew.visible = not box_view
 	_box_mix = move_toward(_box_mix, 1.0 if box_view else 0.0, delta * 2.5)
 	if _box_mix > 0.0:
@@ -581,11 +616,18 @@ func _process(delta: float) -> void:
 		var box_z := minf(_view_rect().size.x, _view_rect().size.y) / BOX_VIEW_M
 		z = exp(lerpf(log(z), log(box_z), k))
 		follow = follow.lerp(crew_game.view_centre() if crew_game.car >= 0 else target, k)
-	var centre_mix := smoothstep(0.85, 1.0, _zoom) * (1.0 - _box_mix)
+	var centre_mix := smoothstep(0.85, 1.0, zoom_level) * (1.0 - _box_mix)
+	var cam_centre := follow.lerp(_track_rect.get_center(), centre_mix)
+	var smooth := centre_mix < 0.01
+	if _spectating and _spec_view == SpecView.TV:
+		var tv := _tv_frame(car, vs)
+		cam_centre = tv[0]
+		z = tv[1]
+		smooth = false
 	# Put the view's centre (not the window's) on the target.
 	var shift := (_view_rect().get_center() - vs * 0.5) / z
-	camera.position = follow.lerp(_track_rect.get_center(), centre_mix) - shift
-	camera.position_smoothing_enabled = centre_mix < 0.01
+	camera.position = cam_centre - shift
+	camera.position_smoothing_enabled = smooth
 	camera.zoom = Vector2(z, z)
 	var rc := session.sim.race_control
 	var recovering := rc.recovery_vehicles()
@@ -603,9 +645,12 @@ func _process(delta: float) -> void:
 	world.update_driving_line(car.pos, speed)
 	_update_pit_guide(delta)
 	if world.driving_line:
-		world.driving_line.visible = world.driving_line.enabled and session.local_car >= 0
+		world.driving_line.visible = world.driving_line.enabled and session.local_car >= 0 and not _spectating
 	race_audio.update(delta, camera.position, local_input.last_throttle if autodrive == null else _autodrive_throttle, _zoom)
 	var rot := rotate_camera and _zoom < 0.5 and _box_mix <= 0.0
+	if _spectating:
+		rot = _spec_view == SpecView.CHASE
+	_update_onboard_view()
 	camera.ignore_rotation = not rot
 	if rot:
 		camera.rotation = heading + PI * 0.5
@@ -670,7 +715,7 @@ func _update_pit_crews() -> void:
 func _update_rejoin() -> void:
 	var car := session.local_car if session.local_car >= 0 else session.team_car
 	var pits := session.sim.pits
-	var show := pits.enabled and car >= 0 and session.sim.phase == RaceSim.Phase.RACING
+	var show := pits.enabled and car >= 0 and session.sim.phase == RaceSim.Phase.RACING and not _spectating
 	var est := {}
 	if show:
 		var p: Dictionary = session.sim.entries[car].pit
@@ -738,7 +783,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		driver_radio.toggle()
 	elif session.local_car >= 0 and _pit_input(event):
 		pass
-	elif event.is_action_pressed("camera_toggle") and not _is_crew():
+	elif event.is_action_pressed("camera_toggle") and not _is_crew() and not _spectating:
 		rotate_camera = not rotate_camera
 	elif event.is_action_pressed("restart_race") and session.mode == RaceSession.Mode.OFFLINE \
 			and not session.start_data.has("season"):  # no do-overs in a championship
@@ -862,6 +907,7 @@ func _on_events(evs: Array) -> void:
 				if says.has(e.get("state", "")):
 					hud.flash(says[e["state"]], 2.5)
 			"penalty":
+				_penalties.append({"car": int(e["car"]), "seconds": float(e.get("seconds", 0.0)), "reason": str(e.get("reason", ""))})
 				if e["car"] == session.local_car:
 					hud.flash("+%d s penalty: %s" % [int(e["seconds"]), e["reason"]], 4.0)
 			"joker":
@@ -914,7 +960,7 @@ func _on_race_finished() -> void:
 				var keys: Array = e.setup.keys()
 				keys.sort()
 				print("[setup] %s: %s" % [e.driver_name, ", ".join(keys)])
-		print("[results]\n" + "\n".join(lines))
+		print("[results] %s\n" % title + "\n".join(lines))
 		var heard := []
 		for i in session.timelines:
 			heard.append("%s=%d" % [sim.entries[i].driver_name, session.timelines[i].received])
@@ -941,7 +987,7 @@ func _on_race_finished() -> void:
 		return
 	if GameData.arg("quit-after-season") and session.mode == RaceSession.Mode.CLIENT:
 		return  # wait for the host to bring everyone back to the lobby
-	_show_results(lines, title)
+	_show_results(season_info, season_pts, prize)
 
 
 ## A season session (qualifying or race) just ended. The host / offline
@@ -1049,55 +1095,300 @@ func _save_race_data() -> void:
 				session.telemetry.feed.items.size(), ", ".join(gaps)])
 
 
-func _build_results() -> PanelContainer:
-	var p := PanelContainer.new()
-	p.visible = false
-	p.set_anchors_preset(Control.PRESET_CENTER)
-	return p
-
-
-func _show_results(lines: Array, title := "RESULTS") -> void:
+## Fades the race out and the results screen in (RaceResults), with the
+## buttons for this kind of race.
+func _show_results(season_info: Dictionary, season_pts: Dictionary, prize: int) -> void:
 	_results_shown = true
-	for c in results.get_children():
-		c.queue_free()
-	var v := VBoxContainer.new()
-	results.add_child(v)
-	var t := Label.new()
-	t.text = title
-	t.add_theme_font_size_override("font_size", 30)
-	v.add_child(t)
-	var body := Label.new()
-	body.text = "\n".join(lines)
-	body.add_theme_font_override("font", SystemFont.new())
-	v.add_child(body)
-	var first: Button = null
+	_stop_spectating()
+	hud.visible = false
+	crew.visible = false
+	var sim := session.sim
+	var d := ResultsTable.build(sim, session.telemetry, {"me": _own_car(), "penalties": _penalties,
+		"points": season_pts, "points_name": PointsSystem.from_dict(season_info.get("points", {})).display_name() if not season_info.is_empty() else "",
+		"single_race_points": season_info.is_empty()})
+	var buttons := []
+	var notes := []
 	if session.mode == RaceSession.Mode.OFFLINE and session.start_data.has("season"):
-		first = _results_button(v, "Continue season", _back_to_menu)
+		buttons = [["menu", "Continue season"]]
 	elif session.mode == RaceSession.Mode.OFFLINE:
-		first = _results_button(v, "Race again", _restart)
-		_results_button(v, "Main menu", _back_to_menu)
+		buttons = [["again", "Race again"], ["menu", "Main menu"]]
 	elif session.mode == RaceSession.Mode.SERVER:
-		first = _results_button(v, "Back to lobby", func(): Net.end_race())
+		buttons = [["lobby", "Back to lobby"]]
 	else:
-		var w := Label.new()
-		w.text = "Waiting for the host..."
-		v.add_child(w)
-		first = _results_button(v, "Leave", _back_to_menu)
-	results.visible = true
-	results.reset_size()
-	results.position = (get_viewport_rect().size - results.size) * 0.5
+		notes.append("Waiting for the host to go back to the lobby...")
+		buttons = [["leave", "Leave"]]
+	if prize > 0:
+		notes.push_front("Prize money: +%s  (team budget %s)" % [UpgradeCatalog.format_money(prize),
+			UpgradeCatalog.format_money(TeamProfile.load_or_new().money)])
+	var me := _own_car()
+	if me >= 0 and not sim.settings.is_qualifying():
+		for r in d["rows"]:
+			if r["car"] == me:
+				var got := "  ·  +%d points" % int(r["points"]) if int(r["points"]) > 0 else ""
+				notes.push_front(("You were classified P%d" % int(r["pos"]) if r["status"] == "" else "You didn't finish") + got)
+	var sub := ""
+	if not season_info.is_empty():
+		sub = "%s  ·  round %d of %d  ·  %s  ·  %d lap%s" % [season_info.get("name", "Season"), int(season_info["round"]) + 1,
+			int(season_info["rounds"]), sim.track.display_name, sim.settings.laps, "" if sim.settings.laps == 1 else "s"]
+	var opts := {"title": "QUALIFYING" if sim.settings.is_qualifying() else "RESULTS",
+		"subtitle": sub, "buttons": buttons, "notes": notes, "standings": _standings(season_info),
+		"instant": bool(GameData.arg("results-instant", false))}
+	results.show_results(d, opts)
 	Sound.wire_buttons(results)
-	if first:
-		first.grab_focus.call_deferred()
+	if GameData.arg("spectate-shots") and DisplayServer.get_name() != "headless":
+		_results_shot()
+	if session.mode == RaceSession.Mode.CLIENT and not season_info.is_empty():
+		# The host records the race and shares the new standings a moment later.
+		_results_season = season_info
+		Net.lobby_changed.connect(_on_lobby_changed_after_race)
+	if DisplayServer.get_name() == "headless":
+		var r0: Dictionary = d["rows"][0] if not d["rows"].is_empty() else {}
+		print("[results screen] %d rows, fastest %s, %d penalties, points %s, standings %s" % [d["rows"].size(),
+			str(d["fastest"].get("name", "-")), d["penalties"].size(), str(d["has_points"]),
+			str(not opts["standings"].is_empty())] + ("" if r0.is_empty() else ", P1 %s potential %s" % [r0["name"], RaceResults.fmt_time(float(r0["potential"]))]))
 
 
-func _results_button(parent: Node, text: String, cb: Callable) -> Button:
-	var b := Button.new()
-	b.text = text
-	b.custom_minimum_size = Vector2(300, 42)
-	b.pressed.connect(cb)
-	parent.add_child(b)
-	return b
+var _results_season := {}
+
+
+func _on_lobby_changed_after_race() -> void:
+	if results.visible:
+		results.set_standings(_standings(_results_season))
+
+
+func _on_results_chosen(id: String) -> void:
+	match id:
+		"again": _restart()
+		"menu", "leave": _back_to_menu()
+		"lobby": Net.end_race()
+
+
+## The championship for the results screen: the host / offline player has
+## the whole season; online guests get the standings the host shares after
+## it has recorded the race. {} = not a championship.
+func _standings(info: Dictionary) -> Dictionary:
+	if info.is_empty():
+		return {}
+	var me := _own_car()
+	var my_key := ""
+	if me >= 0:
+		my_key = SeasonResults.key_for(session.sim.entries[me].is_ai, session.sim.entries[me].driver_name)
+	var s = GameData.season
+	if s is Season and s.id == info.get("id", ""):
+		var drivers := []
+		for dr in s.driver_standings().slice(0, 12):
+			drivers.append({"name": dr["name"], "team": dr["team"], "points": dr["points"], "is_me": dr["key"] == my_key})
+		var teams := []
+		for t in s.team_standings().slice(0, 6):
+			teams.append({"team": t["team"], "points": t["points"]})
+		return {"title": "CHAMPIONSHIP" + ("  ·  FINAL" if s.is_complete() else ""),
+			"note": "After round %d of %d" % [mini(s.round_index, s.rounds.size()), s.rounds.size()] if not session.sim.settings.is_qualifying()
+				else "Before this round's race", "drivers": drivers, "teams": teams,
+			"champion": s.champion().get("name", "") if s.is_complete() else ""}
+	var si: Dictionary = Net.season_info
+	if si.get("id", "") != info.get("id", ""):
+		return {"title": "CHAMPIONSHIP", "note": "The host has the standings", "drivers": [], "teams": []}
+	var updated := int(si.get("round", 0)) > int(info.get("round", 0)) or bool(si.get("complete", false))
+	var my_name := session.sim.entries[me].driver_name if me >= 0 else ""
+	var out_d := []
+	for dr in si.get("drivers", []):
+		out_d.append({"name": dr["name"], "team": dr.get("team", ""), "points": dr["points"],
+			"is_me": not dr.get("is_ai", false) and dr["name"] == my_name})
+	return {"title": "CHAMPIONSHIP" + ("  ·  FINAL" if si.get("complete", false) else ""),
+		"note": ("After this race" if updated else "Before this race: the host is adding this race's points")
+			if not session.sim.settings.is_qualifying() else "Before this round's race",
+		"drivers": out_d, "teams": si.get("teams", []), "champion": str(si.get("champion", ""))}
+
+
+# --- Spectator mode -------------------------------------------------------------
+
+enum SpecView { FOLLOW, CHASE, ONBOARD, REAR, TV, TRACK }
+const SPEC_VIEW_NAMES := ["Follow", "Chase (turns with the car)", "Onboard", "Onboard, looking back", "Trackside TV", "Whole track"]
+## Seconds after crossing the line before spectating starts (the "Finished"
+## message, and your own car taking the flag, first).
+const SPECTATE_DELAY_S := 3.0
+## A watched car that finishes: seconds before the view moves on to the
+## next car still racing.
+const SPEC_MOVE_ON_S := 5.0
+
+var _spectating := false
+var _spec_car := -1
+var _spec_view := SpecView.FOLLOW
+var _spec_done_for := 0.0       ## how long the watched car has been home
+var _finished_at := -1.0        ## race time this player's car finished (or retired)
+var _cooldown_ai: AIDriver = null
+var _penalties: Array = []      ## every penalty in the race {car, seconds, reason} (race events)
+var _onboard: OnboardCamera = null
+var _onboard_rect: TextureRect
+var _tv_point := Vector2.INF
+var _tv_s := 0.0
+var _tv_side := 1.0
+var _tv_car := -1
+
+
+## The car this player drives, or the car whose crew they're in (-1 none).
+func _own_car() -> int:
+	return session.local_car if session.local_car >= 0 else session.team_car
+
+
+func _update_spectator(delta: float) -> void:
+	var sim := session.sim
+	if _results_shown:
+		return
+	if not _spectating:
+		var me := _own_car()
+		if me < 0 or sim.phase == RaceSim.Phase.FINISHED:
+			return
+		var e := sim.entries[me]
+		if not (e.finished or e.dnf):
+			return
+		if _finished_at < 0.0:
+			_finished_at = sim.race_time
+		if sim.race_time - _finished_at < SPECTATE_DELAY_S and not GameData.arg("spectate-now"):
+			return
+		_start_spectating()
+		return
+	# Spectating: the controls, and moving on from a car that's home.
+	if not (pause_menu.visible or pit_wall.visible or planner.visible or hud.editing):
+		if Input.is_action_just_pressed("steer_right"):
+			_spec_step(1)
+		elif Input.is_action_just_pressed("steer_left"):
+			_spec_step(-1)
+		if Input.is_action_just_pressed("camera_toggle"):
+			_spec_next_view()
+		if Input.is_action_just_pressed("handbrake"):
+			_spec_watch(_own_car())
+	var w := sim.entries[_spec_car]
+	if (w.finished or w.dnf) and _spec_car != _own_car() and not _shots_busy:
+		_spec_done_for += delta
+		var racing := ResultsTable.still_racing(sim)
+		if _spec_done_for >= SPEC_MOVE_ON_S and not racing.is_empty():
+			_spec_watch(racing[0])
+	else:
+		_spec_done_for = 0.0
+
+
+func _start_spectating() -> void:
+	_spectating = true
+	var racing := ResultsTable.still_racing(session.sim)
+	var first: int = racing[0] if not racing.is_empty() else _own_car()
+	_spec_view = clampi(int(GameData.arg("spectate-view", SpecView.FOLLOW)), 0, SPEC_VIEW_NAMES.size() - 1) as SpecView
+	hud.visible = false
+	crew.visible = false
+	driver_radio.close()
+	crew.radio.close()
+	spectator.own_car = _own_car()
+	spectator.visible = true
+	_spec_watch(first)
+	if GameData.arg("spectate-shots") and DisplayServer.get_name() != "headless":
+		_spectate_shots()
+	if DisplayServer.get_name() == "headless":
+		print("[spectator] %s is spectating, watching %s (%d still racing)" % [Net.local_name,
+			session.sim.entries[first].driver_name, racing.size()])
+
+
+## Testing: --spectate-shots DIR saves a picture of every camera view once
+## spectating starts, then one of the results screen.
+var _shots_busy := false
+
+
+func _spectate_shots() -> void:
+	var dir := str(GameData.arg("spectate-shots"))
+	DirAccess.make_dir_recursive_absolute(dir)
+	_shots_busy = true
+	for v in SPEC_VIEW_NAMES.size():
+		_spec_view = v as SpecView
+		_tv_car = -1
+		spectator.watch(_spec_car, SPEC_VIEW_NAMES[_spec_view])
+		for _f in 12:
+			await get_tree().process_frame
+		if _results_shown:
+			break
+		await RenderingServer.frame_post_draw
+		get_viewport().get_texture().get_image().save_png("%s/spectate_%d.png" % [dir, v])
+		print("[screenshot] spectator view %s" % SPEC_VIEW_NAMES[v])
+	_shots_busy = false
+
+
+func _results_shot() -> void:
+	var dir := str(GameData.arg("spectate-shots"))
+	while not results.is_shown():
+		await get_tree().process_frame
+	for _f in 3:
+		await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png("%s/results.png" % dir)
+	print("[screenshot] results")
+	get_tree().quit()
+
+
+func _stop_spectating() -> void:
+	_spectating = false
+	spectator.visible = false
+	_onboard_rect.visible = false
+
+
+func _spec_watch(car: int) -> void:
+	if car < 0 or car >= session.sim.car_count():
+		return
+	_spec_car = car
+	_spec_done_for = 0.0
+	_tv_car = -1
+	spectator.watch(car, SPEC_VIEW_NAMES[_spec_view])
+
+
+func _spec_step(step: int) -> void:
+	if _spectating:
+		_spec_watch(ResultsTable.next_car(session.sim, _spec_car, step))
+
+
+func _spec_next_view() -> void:
+	if not _spectating:
+		return
+	_spec_view = ((_spec_view + 1) % SPEC_VIEW_NAMES.size()) as SpecView
+	if _onboard == null and _spec_view in [SpecView.ONBOARD, SpecView.REAR]:
+		_spec_view = SpecView.TV   # no onboard cameras on this machine
+	_tv_car = -1
+	spectator.watch(_spec_car, SPEC_VIEW_NAMES[_spec_view])
+
+
+## The onboard views fill the screen with the watched car's roof camera.
+func _update_onboard_view() -> void:
+	var on := _spectating and _onboard != null and _spec_view in [SpecView.ONBOARD, SpecView.REAR]
+	_onboard_rect.visible = on
+	if not on:
+		return
+	var px := get_window().size
+	_onboard.show_car(_spec_car, OnboardCamera.View.FRONT if _spec_view == SpecView.ONBOARD else OnboardCamera.View.REAR,
+		Vector2i(px.x, px.y))
+	if _onboard_rect.texture != _onboard.get_texture():
+		_onboard_rect.texture = _onboard.get_texture()
+
+
+## Trackside TV: a camera beside the track ahead of the car, which holds its
+## spot and zooms in as the car comes by, then cuts to the next spot ahead.
+## Returns [view centre, pixels per metre].
+func _tv_frame(car: CarState, vs: Vector2) -> Array:
+	var t := session.sim.track
+	var L := t.length
+	if _tv_car != _spec_car or _tv_point == Vector2.INF:
+		_tv_car = _spec_car
+		_place_tv(car.track_s + 80.0)
+	var past := wrapf(car.track_s - _tv_s, -L * 0.5, L * 0.5)
+	if past > 60.0 or past < -260.0:
+		_place_tv(car.track_s + 110.0)
+	var d := car.pos.distance_to(_tv_point)
+	var span := clampf(d * 1.9 + 45.0, 55.0, 480.0)   # metres across the short side of the screen
+	return [_tv_point.lerp(car.pos, 0.55), minf(vs.x, vs.y) / span]
+
+
+func _place_tv(s: float) -> void:
+	var t := session.sim.track
+	_tv_s = wrapf(s, 0.0, t.length)
+	_tv_side = -_tv_side
+	var idx := int(t.project(t.position_at(_tv_s))["idx"])
+	var w := maxf(t.width_right[idx], t.width_left[idx])
+	_tv_point = t.position_at(_tv_s, _tv_side * (w + 14.0))
 
 
 func _restart() -> void:
