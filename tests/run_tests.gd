@@ -48,6 +48,7 @@ func _init() -> void:
 	test_telemetry(replay)
 	test_weather_forecast()
 	test_race_control_rules()
+	test_yellow_flags_for_incidents()
 	test_safety_car_race()
 	test_car_recovery()
 	test_marshals_clear_debris()
@@ -2340,6 +2341,87 @@ func test_safety_car_off() -> void:
 
 
 ## Rules without driving: penalties, classification, overtaking rules, sync.
+## Yellow flags only for real incidents: contact between cars (rubbing, a tap,
+## a bump) raises nothing; a heavy crash, a spun car, a car crawling off the
+## track or into the wall does.
+func test_yellow_flags_for_incidents() -> void:
+	print("yellow flags: incidents, not contact")
+	var d := _data()
+	var settings := RaceSettings.new()
+	settings.ai_count = 4
+	settings.laps = 1
+	var sim: RaceSim = _race(settings, d)["sim"]
+	var rc := sim.race_control
+	sim.phase = RaceSim.Phase.RACING
+	sim.race_time = 30.0
+	for c in sim.cars:
+		c.vel = Vector2.from_angle(c.heading) * 40.0
+	var a := sim.cars[0]
+	var b := sim.cars[1]
+	var mid := (a.pos + b.pos) * 0.5
+	# Contact: the raw collision and the damage module's light incidents.
+	sim.events = [
+		{"type": "collision", "a": 0, "b": 1, "impulse": 9000.0, "pos": mid},
+		{"type": "incident", "car": 0, "kind": "collision", "severity": 0.3, "pos": a.pos, "other": 1},
+		{"type": "incident", "car": 1, "kind": "collision", "severity": 0.3, "pos": b.pos, "other": 0},
+		{"type": "incident", "car": 1, "kind": "puncture", "severity": 0.3, "pos": b.pos, "other": -1}]
+	rc._read_incidents()
+	rc._track_hazards(1.0)
+	check(rc.yellows.is_empty() and rc.debris.is_empty(), "a bump between two cars: no yellow flag, no debris (%d yellows)" % rc.yellows.size())
+	# Running wide onto the grass at speed and carrying on: no flag.
+	sim.events = []
+	a.surface = TrackData.Surface.GRASS
+	rc._track_hazards(1.0)
+	check(rc.yellows.is_empty(), "running wide at speed: no yellow flag")
+	# A heavy crash between two cars.
+	a.surface = TrackData.Surface.TRACK
+	sim.events = [{"type": "incident", "car": 0, "kind": "collision", "severity": 0.7, "pos": a.pos, "other": 1}]
+	rc._read_incidents()
+	check(rc.yellows.size() == 1 and rc.yellow_at(a.track_s) and not rc.debris.is_empty(), "a heavy crash: yellow flag and debris")
+	# Into the barrier.
+	rc.yellows.clear()
+	sim.events = [{"type": "incident", "car": 2, "kind": "barrier", "severity": 0.3, "pos": sim.cars[2].pos, "other": -1}]
+	rc._read_incidents()
+	check(rc.yellows.size() == 1, "into the barrier: yellow flag")
+	# A spun car, facing back down the track.
+	rc.yellows.clear()
+	sim.events = []
+	b.heading = sim.track.heading_at(b.track_s) + PI
+	b.vel = Vector2.from_angle(b.heading) * 6.0
+	rc._track_hazards(0.5)
+	check(rc.yellows.is_empty(), "a moment facing the wrong way isn't a flag yet")
+	rc._track_hazards(0.5)
+	check(rc.yellows.size() == 1 and rc.yellows[0]["car"] == 1, "a spun car: yellow flag")
+	# Crawling out of the gravel.
+	rc.yellows.clear()
+	var c3 := sim.cars[3]
+	c3.surface = TrackData.Surface.GRAVEL
+	c3.vel = Vector2.from_angle(c3.heading) * 5.0
+	rc._track_hazards(1.0)
+	check(rc.yellows.any(func(y): return y["car"] == 3), "a car beached in the gravel: yellow flag")
+	# A whole AI race: contact happens, but flags stay rare.
+	var settings2 := RaceSettings.new()
+	settings2.ai_count = 11
+	settings2.laps = 2
+	settings2.seed = 77
+	var r2 := _race(settings2, d)
+	var sim2: RaceSim = r2["sim"]
+	var ai: Dictionary = r2["ai"]
+	var contacts := 0
+	var yellow_flags := 0
+	while sim2.phase != RaceSim.Phase.FINISHED and sim2.tick < 60 * 60 * 8:
+		var inputs := []
+		for i in sim2.car_count():
+			inputs.append(ai[i].get_input(sim2, i))
+		sim2.step(inputs)
+		for e in sim2.events:
+			if e["type"] == "collision":
+				contacts += 1
+			elif e["type"] == "flag" and e.get("flag", "") == "yellow":
+				yellow_flags += 1
+	print("    AI race: %d contacts, %d yellow flags" % [contacts, yellow_flags])
+
+
 func test_race_control_rules() -> void:
 	print("race control rules")
 	var d := _data()

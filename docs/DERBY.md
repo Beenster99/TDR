@@ -80,9 +80,16 @@ bonnet and boot lid.
 
 ## What the damage looks like (`CarView`, graphics)
 
-- Bodywork crumples where it was hit: the paint, lights, grilles and glass
-  all bend together in the vertex shader (`shaders/car_deform.gdshaderinc`),
-  the roof sags after a pile of hits.
+- Bodywork crumples where it was hit (on every car, not only in a derby):
+  the paint, lights, grilles, wings and glass all bend together in the
+  vertex shader (`shaders/car_deform.gdshaderinc`). A nose or tail is shoved
+  in up to about a sixth of the car's length (`CarView.crush_depth`) and
+  folds like an accordion, the bonnet or boot lid buckles up into a peak
+  behind it, and an offset hit crushes that corner more. A side hit caves
+  the doors in around where it landed, dragging the roof rail down; a hit
+  well away from the first dent on that side starts a second one. The paint
+  darkens in the folds so dents read from straight above, and the roof sags
+  after a pile of hits.
 - The windscreen cracks from the hit point, then shatters (and throws glass).
 - The bonnet and boot lid spring open on their hinges, then tear off and
   stay on the track for the rest of the race, with the bumpers, mirrors and
@@ -92,4 +99,5 @@ bonnet and boot lid.
 - On dirt the cars throw up dust (dry) or mud (wet) and clods, lay earth
   ruts instead of rubber, and get dirtier as the race goes on.
 
-Screenshots: `tests/derby_shot.tscn` (race, wrecks, jump, dirt).
+Screenshots: `tests/derby_shot.tscn` (race, wrecks, jump, dirt) and
+`tests/damage_shot.tscn` (one car hit front, rear, left, right and all over).

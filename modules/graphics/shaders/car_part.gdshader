@@ -1,5 +1,5 @@
 shader_type spatial;
-// Plain car part (grille, lights, trim) on a Demolition Derby car: crumples
+// Plain car part (grille, lights, trim, wings) on any car: crumples
 // with the paint (car_deform.gdshaderinc) so lights and grilles stay on the
 // bodywork. CarView copies the original material's look into it.
 
