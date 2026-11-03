@@ -342,6 +342,13 @@ func step(dt: float, prev_s: PackedFloat64Array) -> void:
 	# they stop (they're part of the arena now).
 	if sim.settings.is_derby():
 		return
+	# Rallycross: no flags, VSC, safety car or marshals either. A car that
+	# retires out on the circuit is still taken away by a recovery vehicle.
+	if sim.settings.is_rallycross():
+		if sim.phase == RaceSim.Phase.RACING or sim.phase == RaceSim.Phase.CHEQUERED:
+			_track_retired_rx(dt)
+		_update_recoveries(dt)
+		return
 	var racing := sim.phase == RaceSim.Phase.RACING
 	if sim.phase == RaceSim.Phase.CHEQUERED or sim.phase == RaceSim.Phase.FINISHED:
 		if mode != Mode.GREEN or not yellows.is_empty() or sc_visible:
@@ -415,6 +422,18 @@ func _track_stranded(dt: float) -> void:
 			stranded_t[i] = STRANDED_YELLOW_S
 
 
+## Rallycross: just send a recovery vehicle for a retired car once it stops.
+func _track_retired_rx(dt: float) -> void:
+	for i in sim.cars.size():
+		var e := sim.entries[i]
+		if not e.dnf or e.finished or recovered[i]:
+			continue
+		if sim.cars[i].speed() < STOPPED_SPEED:
+			stranded_t[i] += dt
+			if stranded_t[i] >= STRANDED_VSC_S and recovery_for(i).is_empty():
+				_dispatch_recovery(i)
+
+
 # --- Recovery vehicles ---------------------------------------------------------
 
 func _dispatch_recovery(i: int) -> void:
@@ -472,7 +491,7 @@ func _update_marshals(dt: float, prev_s: PackedFloat64Array) -> void:
 	k = 0
 	while k < marshal_jobs.size():
 		var job: Dictionary = marshal_jobs[k]
-		TrackMarshals.step(job, dt)
+		TrackMarshals.step(job, dt, _gap_to(float(job["s"])))
 		if job["done"]:
 			_event({"type": "flag", "flag": "clear", "car": -1, "reason": "Debris cleared, marshals back behind the barrier"})
 			marshal_jobs.remove_at(k)
@@ -480,6 +499,26 @@ func _update_marshals(dt: float, prev_s: PackedFloat64Array) -> void:
 		if not prev_s.is_empty() and mode == Mode.GREEN:
 			_check_double_yellow_speed(job, prev_s)
 		k += 1
+
+
+## Seconds until the next running car reaches track distance at (INF = none
+## coming). A car just past it, or stopped right on it, counts as there now.
+func _gap_to(at: float) -> float:
+	var L := sim.track.length
+	var gap := INF
+	for i in sim.cars.size():
+		var e := sim.entries[i]
+		if e.finished or e.dnf or _pitting(i) or out_of_play(i):
+			continue
+		var c := sim.cars[i]
+		var d := fposmod(at - c.track_s, L)
+		if d > L - 12.0:
+			return 0.0  # going past right now
+		var v := c.speed()
+		if v < STOPPED_SPEED:
+			continue  # stranded: not coming
+		gap = minf(gap, d / v)
+	return gap
 
 
 ## Too fast past the marshals: 5 s penalty.
@@ -744,7 +783,7 @@ func follower_step(dt: float) -> void:
 	for job in recoveries:
 		CarRecovery.step(job, dt)
 	for job in marshal_jobs:
-		TrackMarshals.step(job, dt)
+		TrackMarshals.step(job, dt, -1.0)
 	if not sc_visible:
 		return
 	if sc_in_pit:

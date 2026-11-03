@@ -24,8 +24,13 @@ SC, but yellow flags still apply.
 `TrackMarshals` (modules/race/track_marshals.gd). Every incident (severity >= 0.25)
 leaves debris where it happened; debris within 60 m piles up (`RaceControl.debris`).
 When a pile reaches 1.4 (summed severity, e.g. two or three decent crashes in one
-place), a crew of 4 marshals runs out from the barrier, sweeps for 16 s and runs back
-(about 30-40 s in all, `RaceControl.marshal_jobs`).
+place), a crew of 4 marshals comes out to the side of the track
+(`RaceControl.marshal_jobs`). They only go on when it is safe: they wait for a gap in
+the traffic (`_gap_to`: seconds until the next running car reaches the debris), run
+on, sweep, and are off again 2.5 s before the next car arrives, cutting a sweep short
+if a car comes sooner than expected. They keep doing that until they have swept for
+16 s in all, then go back behind the barrier. On an empty track that's about 35 s; in
+traffic it takes several dashes. Nose-to-tail traffic: they wait at the side.
 
 - Double yellow flags from 220 m before the marshals to 80 m after, until they're
   back: no overtaking, and slow right down. The limit is the VSC reference speed x 1.2
@@ -37,6 +42,12 @@ place), a crew of 4 marshals runs out from the barrier, sweeps for 16 s and runs
   per marshal; `WorldView.set_marshals` draws them (orange overalls, brooms) and
   clears the debris bits where they sweep.
 - Screenshots: `tests/fx_race_shot.tscn -- out.png marshals spa <secs after sent>`.
+
+## Rallycross and Demolition Derby
+
+No flags, penalties, VSC, safety car, marshals or pit stops (the RX circuits have no
+pit lane). In rallycross a car that retires out on the circuit is still taken away by
+a recovery vehicle (no flags); in the derby the wrecks stay where they stop.
 
 ## Recovery vehicles
 

@@ -2084,8 +2084,29 @@ func test_marshals_clear_debris() -> void:
 			phases.append(job["phase"])
 		for m in TrackMarshals.view(job):
 			swept = swept or m["action"] == "sweep"
-	check(phases == ["out", "sweep", "back", "done"] and swept, "marshals run out, sweep, run back (%s, %.0f s)" % [" > ".join(phases), t])
+	check(phases == ["out", "wait", "on", "sweep", "off", "back", "done"] and swept,
+		"empty track: marshals come out, run on, sweep, run off, go back (%s, %.0f s)" % [" > ".join(phases), t])
 	check(job["crew"].size() == TrackMarshals.CREW and t < 60.0, "a crew of %d, done in %.0f s" % [job["crew"].size(), t])
+	# Traffic: a car every 9 s. They only go on in the gaps, in several dashes,
+	# and are always off before the next car.
+	job = TrackMarshals.plan(track, {"s": 800.0, "pos": track.position_at(800.0, 3.0), "amount": 2.0}, 2)
+	t = 0.0
+	var unsafe := 0
+	var never_on := true
+	while not job["done"] and t < 300.0:
+		var gap := 9.0 - fmod(t, 9.0)
+		TrackMarshals.step(job, 1.0 / 60.0, gap)
+		t += 1.0 / 60.0
+		if TrackMarshals.on_surface(job):
+			never_on = false
+			if gap < 0.3:
+				unsafe += 1
+	check(job["done"] and int(job["sorties"]) >= 3 and unsafe == 0,
+		"car every 9 s: %d dashes on and off in the gaps, never on the track as a car passes (%.0f s)" % [job["sorties"], t])
+	job = TrackMarshals.plan(track, {"s": 800.0, "pos": track.position_at(800.0, 3.0), "amount": 2.0}, 3)
+	for k in 600:
+		TrackMarshals.step(job, 1.0 / 60.0, 3.0)
+	check(job["phase"] == "wait", "nose to tail traffic: they wait at the side of the track")
 	# In a race: a pile of debris ahead of the field.
 	var settings := RaceSettings.new()
 	settings.laps = 2
@@ -2102,6 +2123,8 @@ func test_marshals_clear_debris() -> void:
 	var limit := 0.0
 	var penalties := []
 	var snap := {}
+	var passed_while_on := 0
+	var saw_on := false
 	while sim.phase != RaceSim.Phase.FINISHED and sim.tick < 60 * 60 * 10:
 		if not placed and sim.phase == RaceSim.Phase.RACING and sim.race_time > 20.0:
 			placed = true
@@ -2125,10 +2148,16 @@ func test_marshals_clear_debris() -> void:
 				snap = rc.to_dict(true)
 			var at: float = rc.marshal_jobs[0]["s"]
 			limit = rc.double_yellow_limit(at)
+			if TrackMarshals.on_surface(rc.marshal_jobs[0]):
+				saw_on = true
+				for i in sim.car_count():
+					if rc._crossed(before[i], sim.cars[i].track_s, at):
+						passed_while_on += 1
 			for i in sim.car_count():
 				if fposmod(at - before[i], track.length) < 60.0 and fposmod(sim.cars[i].track_s - at, track.length) < 60.0:
 					fastest = maxf(fastest, sim.cars[i].speed())
 	check(ev.has("flag:double_yellow"), "double yellow flags for the marshals")
+	check(saw_on and passed_while_on == 0, "in a race no car goes past while marshals are on the track")
 	check(rc.double_yellow_at(marshal_s) == false and rc.marshal_jobs.is_empty() and ev.get("flag:clear", 0) >= 1, "debris cleared, marshals back, flags withdrawn")
 	check(fastest > 1.0 and fastest <= limit * TrackMarshals.DOUBLE_TOLERANCE, "AI slows down past the marshals (%d km/h, limit %d)" % [roundi(fastest * 3.6), roundi(limit * 3.6)])
 	check(penalties.filter(func(r): return str(r).contains("marshals")).is_empty(), "no double yellow penalties for the AI (%s)" % str(penalties))
@@ -3681,8 +3710,9 @@ func test_rallycross() -> void:
 	s.ai_count = 5
 	start = RaceFactory.plan(s, [], d["cars"], d["drivers"], track)
 	var sim := RaceFactory.build_sim(start, d["cars"], d["tyres"], track)
-	check(not sim.settings.safety_car_enabled and sim.settings.mandatory_pit_stops == 0 and not sim.settings.fuel_enabled,
-		"rallycross races: no safety car, pit stops or fuel")
+	check(not sim.settings.safety_car_enabled and sim.settings.mandatory_pit_stops == 0 and not sim.settings.fuel_enabled
+		and not sim.pits.enabled, "rallycross races: no safety car, pit stops or fuel")
+	var flags := 0
 	# Car 0's joker runs are spoilt every tick, so it finishes without one.
 	var ai := AIDriver.for_all_ai(sim)
 	var events := 0
@@ -3692,10 +3722,18 @@ func test_rallycross() -> void:
 			inputs.append(ai[i].get_input(sim, i))
 		if sim.cars[0].in_joker:
 			sim.entries[0].joker_from = 1e9
+		if sim.tick == 60 * 30:
+			# A pile of debris: still no marshals or flags in rallycross.
+			TrackMarshals.add_debris(sim.race_control.debris, track.length, 300.0, track.position_at(300.0), 3.0)
 		sim.step(inputs)
 		for ev in sim.events:
 			if ev.get("type", "") == "joker":
 				events += 1
+			if ev.get("type", "") == "safety_car" or (ev.get("type", "") == "flag" and ev.get("flag", "") != "recovery" and ev.get("flag", "") != "recovered"):
+				flags += 1
+		if sim.race_control.neutralisation() != "green" or not sim.race_control.marshal_jobs.is_empty():
+			flags += 1
+	check(flags == 0, "rallycross: no yellow flags, VSC, safety car or marshals (%d)" % flags)
 	var jokers_ok := 0
 	for i in range(1, sim.entries.size()):
 		if sim.entries[i].jokers == 1:
