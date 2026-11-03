@@ -339,6 +339,8 @@ func set_camera(centre: Vector2, zoom: float, rotation_rad := 0.0) -> void:
 	for v in cars:
 		if v.highlight != CarView.Highlight.NONE:
 			v.set_highlight_zoom(hk)
+	if safety_car and safety_car.highlight != CarView.Highlight.NONE:
+		safety_car.set_highlight_zoom(hk)
 
 
 func _process(_delta: float) -> void:
