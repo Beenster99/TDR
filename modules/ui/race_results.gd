@@ -29,11 +29,13 @@ const FADE_IN_S := 0.7      ## black to the results
 
 ## Columns: id, heading, width, alignment (0 left, 2 right).
 const COLUMNS := [
-	["pos", "POS", 46, 0], ["name", "DRIVER", 186, 0], ["car_name", "CAR", 176, 0], ["laps", "LAPS", 48, 2],
-	["time", "TIME / GAP", 116, 2], ["best_lap", "BEST LAP", 120, 2], ["avg_lap", "AVG LAP", 92, 2],
-	["s", "S", 74, 2], ["potential", "POTENTIAL", 96, 2], ["stops", "STOPS", 54, 2], ["pen", "PEN", 56, 2],
-	["points", "PTS", 46, 2],
+	["pos", "POS", 44, 0], ["name", "DRIVER", 160, 0], ["car_name", "CAR", 150, 0], ["laps", "LAPS", 40, 2],
+	["time", "TIME / GAP", 100, 2], ["best_lap", "BEST LAP", 112, 2], ["avg_lap", "AVG LAP", 84, 2],
+	["s", "S", 66, 2], ["potential", "POTENTIAL", 88, 2], ["stops", "STOPS", 48, 2], ["pen", "PEN", 50, 2],
+	["points", "PTS", 40, 2],
 ]
+const SEP := 6
+const ROW_FONT := 15
 
 var data: Dictionary = {}
 var _backdrop: ColorRect
@@ -138,7 +140,7 @@ func _build(d: Dictionary, opts: Dictionary) -> Control:
 	var root := MarginContainer.new()
 	root.set_anchors_and_offsets_preset(PRESET_FULL_RECT)
 	for side in ["left", "right"]:
-		root.add_theme_constant_override("margin_" + side, 40)
+		root.add_theme_constant_override("margin_" + side, 30)
 	root.add_theme_constant_override("margin_top", 26)
 	root.add_theme_constant_override("margin_bottom", 22)
 	var v := VBoxContainer.new()
@@ -147,7 +149,7 @@ func _build(d: Dictionary, opts: Dictionary) -> Control:
 	v.add_child(_header(d, opts))
 	var mid := HBoxContainer.new()
 	mid.size_flags_vertical = SIZE_EXPAND_FILL
-	mid.add_theme_constant_override("separation", 22)
+	mid.add_theme_constant_override("separation", 16)
 	v.add_child(mid)
 	var left := VBoxContainer.new()
 	left.size_flags_horizontal = SIZE_EXPAND_FILL
@@ -177,7 +179,7 @@ func _build(d: Dictionary, opts: Dictionary) -> Control:
 	var st: Dictionary = opts.get("standings", {})
 	if not st.is_empty():
 		var panel := _panel()
-		panel.custom_minimum_size = Vector2(330, 0)
+		panel.custom_minimum_size = Vector2(280, 0)
 		mid.add_child(panel)
 		_standings_box = VBoxContainer.new()
 		_standings_box.add_theme_constant_override("separation", 3)
@@ -222,11 +224,14 @@ func _header(d: Dictionary, opts: Dictionary) -> Control:
 	if not fl.is_empty() and not d.get("derby", false):
 		var card := _panel()
 		h.add_child(card)
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 28)
+		card.add_child(row)
 		var cv := VBoxContainer.new()
 		cv.add_theme_constant_override("separation", 2)
-		card.add_child(cv)
+		row.add_child(cv)
 		cv.add_child(_label("FASTEST LAP", 13, PURPLE))
-		cv.add_child(_label("%s  %s" % [fl["name"], fmt_time(float(fl["time"]))], 20, Color.WHITE))
+		cv.add_child(_label("%s  %s" % [fl["name"], fmt_time(float(fl["time"]))], 19, Color.WHITE))
 		if int(fl.get("lap", 0)) > 0:
 			cv.add_child(_label("on lap %d" % int(fl["lap"]), 13, DIM))
 		var bs: Array = d.get("best_sectors", [])
@@ -236,13 +241,11 @@ func _header(d: Dictionary, opts: Dictionary) -> Control:
 			parts.append("S%d %s" % [s + 1, fmt_sector(float(bs[s]))])
 			ideal = ideal + float(bs[s]) if float(bs[s]) > 0.0 and ideal >= 0.0 else -1.0
 		if not parts.is_empty():
-			var card2 := _panel()
-			h.add_child(card2)
 			var c2 := VBoxContainer.new()
 			c2.add_theme_constant_override("separation", 2)
-			card2.add_child(c2)
+			row.add_child(c2)
 			c2.add_child(_label("BEST SECTORS IN THE FIELD", 13, PURPLE))
-			c2.add_child(_label("   ".join(parts), 17, Color.WHITE))
+			c2.add_child(_label("   ".join(parts), 19, Color.WHITE))
 			if ideal > 0.0:
 				c2.add_child(_label("ideal lap %s" % fmt_time(ideal), 13, DIM))
 	return h
@@ -274,7 +277,7 @@ func _columns(d: Dictionary) -> Array:
 
 func _table_header(d: Dictionary) -> Control:
 	var h := HBoxContainer.new()
-	h.add_theme_constant_override("separation", 8)
+	h.add_theme_constant_override("separation", SEP)
 	var pad := Control.new()
 	pad.custom_minimum_size = Vector2(6, 0)
 	h.add_child(pad)
@@ -300,7 +303,7 @@ func _row(d: Dictionary, r: Dictionary) -> Control:
 	sb.content_margin_bottom = 3
 	p.add_theme_stylebox_override("panel", sb)
 	var h := HBoxContainer.new()
-	h.add_theme_constant_override("separation", 8)
+	h.add_theme_constant_override("separation", SEP)
 	p.add_child(h)
 	var field_best: Array = d.get("best_sectors", [])
 	for c in _columns(d):
@@ -356,7 +359,7 @@ func _row(d: Dictionary, r: Dictionary) -> Control:
 					text = fmt_sector(v)
 					if v > 0.0 and s < field_best.size() and is_equal_approx(v, float(field_best[s])):
 						col = PURPLE
-		var l := _label(text, 16, col)
+		var l := _label(text, ROW_FONT, col)
 		l.custom_minimum_size = Vector2(c[2], 0)
 		l.clip_text = true
 		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT if c[3] == 2 else HORIZONTAL_ALIGNMENT_LEFT
