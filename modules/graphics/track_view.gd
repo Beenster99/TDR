@@ -71,6 +71,7 @@ func setup(p_track: TrackData, p_env: SimEnvironment = null) -> void:
 		_build_pit_lane()
 	if track.has_joker():
 		_build_joker()
+		_build_joker_posts()
 
 
 ## The rallycross joker lane: a road the joker's width along its path (dirt
@@ -119,6 +120,61 @@ func _build_joker() -> void:
 				st.add_index(b + 1)
 		base += m * cols
 	_mesh_node(st, road_material, "Joker")
+
+
+## Orange and white marker posts along both edges of the joker lane, where it
+## has left the lap, so the joker reads from above at any zoom.
+const JOKER_POST_GAP_M := 5.0
+func _build_joker_posts() -> void:
+	var post := BoxMesh.new()
+	post.size = Vector3(0.7, 1.3, 0.7)
+	var m := StandardMaterial3D.new()
+	m.vertex_color_use_as_albedo = true
+	m.roughness = 0.6
+	post.material = m
+	var xs: Array[Transform3D] = []
+	var cs: Array[Color] = []
+	var path := track.joker_path
+	var off := track.joker_width * 0.5 + 0.9
+	var d := 0.0
+	var k := 0
+	while d <= track.joker_length:
+		var i := clampi(track.joker_cum.bsearch(d) - 1, 0, path.size() - 2)
+		var a := path[i]
+		var b := path[i + 1]
+		var span := maxf(track.joker_cum[i + 1] - track.joker_cum[i], 0.001)
+		var p := a.lerp(b, clampf((d - track.joker_cum[i]) / span, 0.0, 1.0))
+		var dir := (b - a).normalized()
+		var nrm := Vector2(-dir.y, dir.x)
+		for side in [-1.0, 1.0]:
+			var q: Vector2 = p + nrm * off * side
+			# Only beside the lane, not out on the lap where the two meet.
+			if clearance_lap(q) > 1.0:
+				xs.append(Transform3D(Basis(), Vector3(q.x, track.surface_height_at(q) + 0.65, q.y)))
+				cs.append(Color(1.0, 0.45, 0.05) if k % 2 == 0 else Color(0.95, 0.95, 0.92))
+		d += JOKER_POST_GAP_M
+		k += 1
+	if xs.is_empty():
+		return
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.use_colors = true
+	mm.mesh = post
+	mm.instance_count = xs.size()
+	for j in xs.size():
+		mm.set_instance_transform(j, xs[j])
+		mm.set_instance_color(j, cs[j])
+	var mmi := MultiMeshInstance3D.new()
+	mmi.name = "JokerPosts"
+	mmi.multimesh = mm
+	add_child(mmi)
+
+
+## How far q is outside the lap's road and kerbs (negative = on them).
+func clearance_lap(q: Vector2) -> float:
+	var t := track.project(q)
+	var o: float = t["offset"]
+	return absf(o) - ((t["w_right"] if o >= 0.0 else t["w_left"]) + track.kerb_width)
 
 
 ## Sun direction for the hillshade cue (WorldView keeps it in step with the sun).
