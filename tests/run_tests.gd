@@ -46,6 +46,7 @@ func _init() -> void:
 	test_deterministic_replay(replay)
 	test_snapshot_restore(replay)
 	test_telemetry(replay)
+	test_results_and_spectator(replay)
 	test_weather_forecast()
 	test_race_control_rules()
 	test_give_back_highlight()
@@ -63,6 +64,7 @@ func _init() -> void:
 	test_race_start()
 	test_driving_aids()
 	test_active_pad()
+	test_input_prompts()
 	test_pointer_hider()
 	test_hud_timing()
 	test_hud_layout()
@@ -70,6 +72,7 @@ func _init() -> void:
 	test_graphics_effects()
 	test_land_cover()
 	test_pit_lane_blend()
+	test_pit_wall()
 	test_settings_and_units()
 	test_pause_menu()
 	test_rebinding()
@@ -1542,13 +1545,13 @@ func test_pit_crew_game() -> void:
 	sess.local_car = 0
 	sess.team_car = -1
 	sess.local_role = ""
-	check(PitCrewGame.jobs_for(sess)["jobs"] == ["gun_l"], "a driver on their own is the left gun man")
+	check((PitCrewGame.jobs_for(sess)["jobs"] as Array).is_empty(), "a driver on their own has no crew job (the AI crew do the stop)")
 	sess.local_car = -1
 	sess.team_car = 0
 	sess.local_role = RaceEntry.ROLE_STRATEGIST
 	check((PitCrewGame.jobs_for(sess)["jobs"] as Array).is_empty(), "a strategist alone doesn't play")
 	sess.local_role = RaceEntry.ROLE_PIT_WALL
-	check(PitCrewGame.jobs_for(sess)["jobs"] == ["gun_l"], "the pit wall with the AI driving: the left gun man")
+	check((PitCrewGame.jobs_for(sess)["jobs"] as Array).is_empty(), "the pit wall alone with the AI driving: no crew job")
 	sim3.entries[0].crew = [{"peer_id": 1, "role": RaceEntry.ROLE_DRIVER, "pit_job": "wheel_r"}, {"peer_id": 2, "role": RaceEntry.ROLE_PIT_WALL}]
 	sess.local_peer = 2
 	var jf := PitCrewGame.jobs_for(sess)
@@ -1636,7 +1639,8 @@ func test_pit_crew_game() -> void:
 		for g in games:
 			g.free()
 
-	# Solo: the left gun man (Settings > Gameplay); a loose nut.
+	# Single player: no crew game, the AI crew do the stop; a stop can't be
+	# held past the crew's give-up time, whatever a player did.
 	var sim5: RaceSim = _race(st, d)["sim"]
 	sim5.phase = RaceSim.Phase.RACING
 	var solo := FakeSession.new()
@@ -1645,7 +1649,6 @@ func test_pit_crew_game() -> void:
 	solo.team_car = -1
 	var g0: PitCrewGame = PitCrewGame.new()
 	g0.session = solo
-	g0.enabled_override = true
 	g0.autoplay = true
 	var p5: Dictionary = sim5.entries[0].pit
 	sim5.cars[0].pos = sim5.track.pit_box(sim5.pits.box_index(0))["pos"]
@@ -1653,27 +1656,32 @@ func test_pit_crew_game() -> void:
 	sim5.pits.set_plan(0, {"box": true, "tyre": PitRules.TYRE_DRY, "wheels": "all", "fuel": 9.0, "repair": false})
 	p5["phase"] = PitRules.PHASE_APPROACH
 	g0.step(1.0 / 60.0)
-	check(g0.stage == PitCrewGame.Stage.READY and g0.jobs == ["gun_l"] and not g0.coop and not bool(p5["crew_auto"]), "solo: the left gun man, the driver still drives in")
-	check(g0.hold == PitCrewGame.Hold.GUN, "solo: the gun man starts with the gun in hand")
+	check(g0.stage == PitCrewGame.Stage.IDLE and int(p5["crew_play"]) == 0, "single player: no crew game, the AI crew do the stop")
 	p5["phase"] = PitRules.PHASE_LIMIT
 	sim5.pits._arrive(0)
-	g0.step(1.0 / 60.0)
-	g0.autoplay = false
-	g0.hold = PitCrewGame.Hold.GUN
-	g0.pos = g0.wheel_spot(0)[0]
-	g0.step(1.0 / 60.0, Vector2.ZERO, true)
-	check(g0.job == PitCrewGame.Job.NONE and g0.clock < float(g0._tl()["guns_from"]), "no tyres while the fuel goes in")
-	g0.autoplay = true
 	var guard5 := 0
 	while p5["phase"] == PitRules.PHASE_SERVICE and guard5 < 60 * 40:
 		guard5 += 1
 		g0.step(1.0 / 60.0)
 		sim5.step(idle)
-	g0.step(1.0 / 60.0)
 	var ls5: Dictionary = p5["last_stop"]
-	check(ls5.get("played", false) and float(ls5["stationary_s"]) < float(ls5["standard_s"]) * 1.05 + (PitRules.CREW_FUMBLE_S if int(ls5["fumble"]) >= 0 else 0.0) and g0.done.size() == 2
-		and g0.done.values().all(func(r): return r == "perfect"),
-		"a sharp solo gun man: %.2f s vs standard %.2f s, both nuts perfect" % [ls5.get("stationary_s", 0.0), ls5.get("standard_s", 0.0)])
+	check(not ls5.get("played", true) and float(ls5["stationary_s"]) < float(ls5["standard_s"]) * 1.05 + (PitRules.CREW_FUMBLE_S if int(ls5["fumble"]) >= 0 else 0.0),
+		"single player stop: %.2f s vs standard %.2f s (AI fumble %d)" % [ls5.get("stationary_s", 0.0), ls5.get("standard_s", 0.0), ls5.get("fumble", -1)])
+	# A player who claimed a job and never did it: released at the give-up time.
+	sim5.pits.set_plan(0, {"box": true, "tyre": PitRules.TYRE_DRY, "wheels": "all", "fuel": 0.0, "repair": false})
+	p5["phase"] = PitRules.PHASE_LIMIT
+	p5["crew_play"] = PitRules.job_bit(PitRules.JOB_GUN_L)
+	sim5.pits._arrive(0)
+	var std5 := float(p5["service_std"])
+	var held := 0.0
+	guard5 = 0
+	while p5["phase"] == PitRules.PHASE_SERVICE and guard5 < 60 * 60:
+		guard5 += 1
+		held += 1.0 / 60.0
+		sim5.step(idle)
+	check(p5["phase"] != PitRules.PHASE_SERVICE and held <= std5 * PitRules.CREW_GIVE_UP + 0.7,
+		"a job nobody does holds the car only to the give-up time: %.1f s (standard %.1f s)" % [held, std5])
+	g0.enabled_override = true
 	g0.stage = PitCrewGame.Stage.BOX
 	g0.car = 0
 	g0.jobs = ["gun_l"]
@@ -1693,6 +1701,23 @@ func test_pit_crew_game() -> void:
 	g0._use_was = false
 	g0._step_gun(1.0 / 60.0, Vector2.ZERO, true, false)
 	check(g0.hold == PitCrewGame.Hold.GUN, "the gun button next to the gun on the ground picks it up")
+	# No fuel this stop: the fuel man stays out (stands by) instead of vanishing.
+	g0.jobs = ["fuel"]
+	g0.cur = 0
+	g0.stage = PitCrewGame.Stage.BOX
+	g0._skip_empty_jobs()
+	check(g0.cur == 0 and g0._no_fuel() and g0._auto()[2] == false, "no fuel this stop: the fuel man stays on his job and stands by")
+	if not InputMap.has_action("crew_grab"):
+		InputSetup.register_actions()
+	var was := InputPrompt.pad
+	InputPrompt.set_pad(false)
+	var kb := PitCrewGame.with_keys("Pull the old wheel off ({crew_grab})")
+	var kb2 := PitCrewGame.with_keys("Hold {crew_gun} at the windscreen")
+	InputPrompt.set_pad(true)
+	var pd := PitCrewGame.with_keys("Pull the old wheel off ({crew_grab})")
+	InputPrompt.set_pad(was)
+	check(kb == "Pull the old wheel off (G)" and kb2 == "Hold Space at the windscreen" and pd == "Pull the old wheel off (X)",
+		"crew tips name the buttons of the device in use: %s / %s / %s" % [kb, kb2, pd])
 	g0.free()
 
 
@@ -2351,9 +2376,22 @@ func test_safety_car_off() -> void:
 	check(ev.has("flag:yellow"), "a stopped car still brings out yellow flags")
 	check(not ev.has("safety_car:sc") and not ev.has("safety_car:vsc") and not r["sc_seen"], "no VSC or safety car when the host turns it off")
 	check(r["sim"].phase == RaceSim.Phase.FINISHED, "race finishes")
+	# "Safety car: Off": no flags of any kind either.
+	var s2 := RaceSettings.new()
+	s2.laps = 2
+	s2.ai_count = 5
+	s2.seed = 99
+	s2.set_race_control_mode(RaceSettings.RC_OFF)
+	check(s2.race_control_mode() == RaceSettings.RC_OFF and not s2.safety_car_enabled
+		and RaceSettings.from_dict(s2.to_dict()).race_control_mode() == RaceSettings.RC_OFF, "Safety car: Off survives the trip to the clients")
+	var r2 := _sc_race(s2, 30.0, false)
+	var ev2: Dictionary = r2["events"]
+	var flags := ev2.keys().filter(func(k): return str(k).begins_with("flag:yellow") or str(k).begins_with("flag:double") or str(k).begins_with("safety_car:"))
+	check(flags.is_empty() and not r2["sc_seen"], "Safety car: Off: no yellow flags, VSC or safety car (%s)" % str(flags))
+	check(ev2.has("flag:recovered") or r2["sim"].race_control.recovered[r2["victim"]] == 1, "the retired car is still taken away")
+	check(r2["sim"].phase == RaceSim.Phase.FINISHED, "race finishes")
 
 
-## Rules without driving: penalties, classification, overtaking rules, sync.
 ## Yellow flags only for real incidents: contact between cars (rubbing, a tap,
 ## a bump) raises nothing; a heavy crash, a spun car, a car crawling off the
 ## track or into the wall does.
@@ -2477,6 +2515,7 @@ func test_give_back_highlight() -> void:
 	check(rc.give_back_target(2) == RaceControl.GIVE_BACK_SC, "passing the safety car: the safety car is highlighted")
 
 
+## Rules without driving: penalties, classification, overtaking rules, sync.
 func test_race_control_rules() -> void:
 	print("race control rules")
 	var d := _data()
@@ -3399,6 +3438,87 @@ func test_settings_and_units() -> void:
 
 ## The in-race pause menu (Esc / Start): what it offers offline, to the
 ## online host and to a guest, and the settings it lets the player change.
+## TDR_ONLY=test_end_of_race: a race, then the results and spectator checks.
+func test_end_of_race() -> void:
+	test_results_and_spectator(test_ai_race_completes())
+
+
+## End of the race: the results table (ResultsTable) from a finished race and
+## its race data, and the spectator's car picker.
+func test_results_and_spectator(rep: Dictionary) -> void:
+	print("results screen and spectator")
+	var sim: RaceSim = rep["sim"]
+	var tel: RaceTelemetry = rep["telemetry"]
+	var me: int = sim.running_order[2]
+	var pens := [{"car": me, "seconds": 5.0, "reason": "Speeding in the pit lane"}]
+	var d := ResultsTable.build(sim, tel, {"me": me, "penalties": pens, "single_race_points": true})
+	var rows: Array = d["rows"]
+	check(rows.size() == sim.car_count(), "one row per car (%d)" % rows.size())
+	var order_ok := true
+	var potential_ok := true
+	var avg_ok := true
+	var sectors_ok := true
+	for k in rows.size():
+		var r: Dictionary = rows[k]
+		var e := sim.entries[int(r["car"])]
+		if int(r["pos"]) != k + 1 or int(r["car"]) != sim.running_order[k]:
+			order_ok = false
+		var sum := 0.0
+		for v in r["best_sectors"]:
+			sum += float(v)
+		if float(r["potential"]) > 0.0 and (absf(float(r["potential"]) - sum) > 1e-6 or float(r["potential"]) > e.best_lap + 1e-6):
+			potential_ok = false   # the best sectors can only add up to the best lap or quicker
+		if e.laps_done > 0 and (float(r["avg_lap"]) < e.best_lap - 1e-6 or float(r["avg_lap"]) <= 0.0):
+			avg_ok = false
+		for s in r["best_sectors"].size():
+			if float(r["best_sectors"][s]) > 0.0 and float(r["best_sectors"][s]) < float(d["best_sectors"][s]) - 1e-6:
+				sectors_ok = false
+	check(order_ok, "rows in finishing order")
+	check(potential_ok, "best potential lap = the driver's best sectors added up, never slower than their best lap")
+	check(avg_ok, "average lap is never quicker than the best lap")
+	check(sectors_ok, "nobody's best sector beats the field's best sector")
+	var fl: Dictionary = d["fastest"]
+	check(not fl.is_empty() and is_equal_approx(float(fl["time"]), tel.fastest_lap) and int(fl["lap"]) >= 1,
+		"fastest lap %s on lap %s, the same as the race data's" % [str(fl.get("time", 0)), str(fl.get("lap", 0))])
+	var flagged := rows.filter(func(r): return r["fastest"])
+	check(flagged.size() == 1 and int(flagged[0]["car"]) == int(fl["car"]), "exactly one row has the fastest lap")
+	check(rows.filter(func(r): return r["is_me"]).size() == 1 and rows[2]["is_me"], "the player's own row is marked")
+	check(d["penalties"].size() == 1 and d["penalties"][0]["name"] == sim.entries[me].driver_name, "penalties listed with the driver and reason")
+	check(d["has_points"] and int(rows[0]["points"]) >= 25 and (rows[0]["status"] != "" or int(rows[0]["points"]) <= 26),
+		"single race scored with F1 points (P1 %d)" % int(rows[0]["points"]))
+	var gaps_ok := true
+	for k in range(1, rows.size()):
+		var r: Dictionary = rows[k]
+		if r["status"] == "" and str(r["gap"]) == "":
+			gaps_ok = false
+	check(gaps_ok, "every classified car behind the winner has a gap or laps down")
+	var season := ResultsTable.build(sim, tel, {"points": {SeasonResults.key_for(sim.entries[sim.running_order[0]].is_ai,
+		sim.entries[sim.running_order[0]].driver_name): 30}, "points_name": "Test"})
+	check(int(season["rows"][0]["points"]) == 30 and int(season["rows"][1]["points"]) == 0, "a season's points are shown as given")
+	var quali_sim := sim
+	quali_sim.settings.session_type = "qualifying"
+	var q := ResultsTable.build(quali_sim, tel, {"single_race_points": true})
+	check(not q["has_points"] and q["quali"], "no points in qualifying")
+	quali_sim.settings.session_type = "race"
+	# Spectator car picker: steps round the running order and wraps.
+	var first: int = sim.running_order[0]
+	var last: int = sim.running_order[sim.running_order.size() - 1]
+	check(ResultsTable.next_car(sim, first, 1) == sim.running_order[1], "next car after the leader is P2")
+	check(ResultsTable.next_car(sim, first, -1) == last or sim.race_control.recovered[last], "before the leader wraps round to last place")
+	check(ResultsTable.still_racing(sim).is_empty(), "nobody still racing once the race is over")
+	# The results screen builds from the table without errors.
+	var screen := RaceResults.new()
+	root.add_child(screen)
+	screen.show_results(d, {"buttons": [["menu", "Main menu"]], "instant": true,
+		"standings": {"title": "CHAMPIONSHIP", "drivers": [{"name": "A", "team": "T", "points": 10, "is_me": true}], "teams": [{"team": "T", "points": 10}]}})
+	check(screen.is_shown() and screen.visible, "results screen shows (instant)")
+	var picked := []
+	screen.chosen.connect(func(id): picked.append(id))
+	screen._buttons[0].pressed.emit()
+	check(picked == ["menu"], "results screen buttons report their id")
+	screen.queue_free()
+
+
 func test_pause_menu() -> void:
 	print("pause menu")
 	check(InputSetup.KEYS["back_to_menu"].has(KEY_ESCAPE) and InputSetup.PAD_BUTTONS["back_to_menu"].has(JOY_BUTTON_START),
@@ -3549,6 +3669,82 @@ func test_land_cover() -> void:
 		tv.free()
 	var sh := FileAccess.get_file_as_string("res://modules/graphics/shaders/terrain.gdshader")
 	check(kinds > 0 and sh.count("const int K_") == kinds, "terrain shader knows every land kind (%d)" % kinds)
+
+## The pit wall stands between the track and the pit lane (never on the track,
+## which it used to cross on many circuits, or in the lane), all along the
+## garages, and cars can't drive through it from either side.
+func test_pit_wall() -> void:
+	print("pit wall")
+	for info in TrackCatalog.list_all():
+		var t := TrackCatalog.load_track(info["id"])
+		if not t.has_pit_lane() or t.discipline != "circuit":
+			continue
+		var on_track := 0
+		var in_lane := 0
+		var hint := -1
+		for k in range(0, t.pit_wall.size() * 4 - 3):
+			# vertices and the points between them
+			var p := t.pit_wall[k / 4].lerp(t.pit_wall[mini(k / 4 + 1, t.pit_wall.size() - 1)], (k % 4) * 0.25)
+			var q := t.project(p, hint)
+			hint = q["idx"]
+			var edge: float = q["w_right"] if t.pit_side > 0.0 else q["w_left"]
+			if float(q["offset"]) * t.pit_side - TrackData.PIT_WALL_HALF < edge + t.kerb_width:
+				on_track += 1
+			if t.project_pit(p)["dist"] - TrackData.PIT_WALL_HALF < t.pit_width * 0.5:
+				in_lane += 1
+		# Along the garages, wherever the lane is near the track (a lane far
+		# off across the grass needs no wall), the wall is there.
+		var a := INF
+		var b := -INF
+		if t.has_pit_wall():
+			a = t.project_pit(t.pit_wall[0])["d"]
+			b = t.project_pit(t.pit_wall[t.pit_wall.size() - 1])["d"]
+		var near := 0
+		var walled := 0
+		var dd := t.pit_limit_start
+		while dd <= t.pit_limit_end:
+			var q := t.project(t.pit_position_at(dd, -t.pit_side * t.pit_width * 0.5))
+			var edge: float = q["w_right"] if t.pit_side > 0.0 else q["w_left"]
+			if float(q["offset"]) * t.pit_side - edge < 15.0:
+				near += 1
+				if dd >= a - 2.0 and dd <= b + 2.0:
+					walled += 1
+			dd += 4.0
+		check(t.has_pit_wall() and on_track == 0 and in_lane == 0 and walled >= near * 0.95,
+			"%s: pit wall clear of the track (%d) and the lane (%d), along %d%% of the garages beside the track" % [info["id"], on_track, in_lane, 100 * walled / maxi(near, 1)])
+	# Drive at it from the track and from the lane: the car stops at it.
+	var d := _data()
+	var s := RaceSettings.new()
+	s.track_id = "monza"
+	s.ai_count = 1
+	var track := TrackCatalog.load_track("monza")
+	var start := RaceFactory.plan(s, [], d["cars"], d["drivers"], track)
+	for from_lane in [false, true]:
+		var sim := RaceFactory.build_sim(start, d["cars"], d["tyres"], track)
+		sim.phase = RaceSim.Phase.RACING
+		var mid := track.pit_wall.size() / 2
+		var wp := track.pit_wall[mid]
+		var along := (track.pit_wall[mid + 1] - wp).normalized()
+		var to_lane := along.orthogonal()
+		if to_lane.dot(track.pit_position_at(track.project_pit(wp)["d"]) - wp) < 0.0:
+			to_lane = -to_lane
+		var toward := -to_lane if from_lane else to_lane   # towards the wall
+		var c := sim.cars[0]
+		c.pos = wp - toward * 5.0
+		c.heading = (toward + along).angle()   # 45 degrees into the wall
+		c.vel = Vector2.from_angle(c.heading) * 30.0
+		c.track_idx = track.project(c.pos)["idx"]
+		var hit := false
+		var through := false
+		for f in 120:
+			sim.step([CarInput.neutral()])
+			for e in sim.events:
+				if e["type"] == "barrier_impact" and e.get("pit_wall", false):
+					hit = true
+			var side := (sim.cars[0].pos - wp).dot(to_lane)
+			if (side > 0.0) != from_lane:
+				through = true
+		check(hit and not through, "a car driven into the pit wall from the %s hits it and stays on its side" % ("pit lane" if from_lane else "track"))
 
 
 ## Graphics effects: run-off and gravel are drawn at the height cars are
@@ -3735,6 +3931,56 @@ func test_active_pad() -> void:
 		if ev is InputEventJoypadMotion:
 			ui_ok = ui_ok and ev.device == 4
 	check(ui_ok, "menu navigation sticks follow the pad in use too")
+	ActivePad._choose(-1)
+
+
+func test_input_prompts() -> void:
+	print("button prompts follow the last-used device")
+	if not InputMap.has_action("crew_grab"):
+		InputMap.load_from_project_settings()
+	InputSetup.register_actions()
+	ActivePad._choose(0)
+	var key := InputEventKey.new()
+	key.physical_keycode = KEY_G
+	key.pressed = true
+	InputPrompt.observe(key)
+	check(not InputPrompt.pad, "pressing a key switches prompts to the keyboard")
+	check(InputPrompt.key("crew_grab") == "G" and InputPrompt.key("handbrake") == "Space", "keyboard prompts name keys (%s, %s)" % [
+		InputPrompt.key("crew_grab"), InputPrompt.key("handbrake")])
+	check(InputPrompt.fill("Put it down ({crew_grab}), {not_an_action}") == "Put it down (G), {not_an_action}", "fill swaps action names only")
+	var serial := InputPrompt.serial
+	var b := InputEventJoypadButton.new()
+	b.device = 0
+	b.button_index = JOY_BUTTON_A
+	b.pressed = true
+	check(InputPrompt.observe(b) and InputPrompt.pad and InputPrompt.serial > serial, "pressing a pad button switches prompts to the controller")
+	check(InputPrompt.key("crew_grab") == "X" and InputPrompt.key("crew_gun") == "RT" and InputPrompt.key("ui_cancel") == "B",
+		"controller prompts name buttons (%s, %s, %s)" % [InputPrompt.key("crew_grab"), InputPrompt.key("crew_gun"), InputPrompt.key("ui_cancel")])
+	check(InputPrompt.key("pit_fuel") == "F", "an action with no pad button names its key instead")
+	var jitter := InputEventMouseMotion.new()
+	jitter.relative = Vector2(1, 1)
+	check(not InputPrompt.observe(jitter) and InputPrompt.pad, "a nudged mouse doesn't switch away from the controller")
+	# A rebound action is named by its new binding.
+	var o := InputSetup.with_binding({}, "crew_grab", "pad", 0, {"button": JOY_BUTTON_Y})
+	o = InputSetup.with_binding(o, "crew_grab", "keys", 0, KEY_K)
+	InputSetup.apply_bindings(o)
+	check(InputPrompt.key("crew_grab") == "Y", "a rebound pad button is what the prompt names")
+	var click := InputEventMouseButton.new()
+	click.button_index = MOUSE_BUTTON_LEFT
+	click.pressed = true
+	check(InputPrompt.observe(click) and not InputPrompt.pad, "a mouse click switches prompts back to keyboard and mouse")
+	check(InputPrompt.key("crew_grab") == "K", "... naming the rebound key")
+	# A label kept up to date: refreshed when the device changes.
+	var label := Label.new()
+	InputPrompt.live(label, func(): label.text = InputPrompt.fill("{handbrake}"))
+	check(label.text == "Space", "a live label starts on the device in use")
+	InputPrompt.set_pad(true)
+	for c in label.get_children(true):
+		c._process(0.0)
+	check(label.text == "A", "... and follows a switch to the controller")
+	label.free()
+	InputSetup.register_actions()
+	InputPrompt.set_pad(false)
 	ActivePad._choose(-1)
 
 

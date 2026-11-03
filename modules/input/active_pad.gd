@@ -51,6 +51,21 @@ static func observe(event: InputEvent) -> bool:
 	return false
 
 
+## Was this a real move of a stick or trigger (well away from where that axis
+## rests), not a stuck axis or a jitter? Call after observe().
+static func is_deliberate(event: InputEventJoypadMotion) -> bool:
+	var rest: Dictionary = _rest.get(event.device, {})
+	return rest.has(event.axis) and absf(event.axis_value - float(rest[event.axis])) >= MOVE_TO_TAKE_OVER
+
+
+## A PlayStation pad (DualShock, DualSense) by its name, so prompts can say
+## Cross and L1 rather than A and LB.
+static func is_playstation() -> bool:
+	var n := pad_name().to_lower()
+	return device >= 0 and (n.contains("playstation") or n.contains("ps3") or n.contains("ps4") or n.contains("ps5")
+		or n.contains("dualshock") or n.contains("dualsense") or n.contains("sony"))
+
+
 ## The value of one axis on the active pad (0 when there is none).
 static func axis(a: JoyAxis) -> float:
 	return Input.get_joy_axis(device, a) if device >= 0 else 0.0
@@ -94,6 +109,7 @@ static func _choose(dev: int) -> bool:
 		return false
 	device = dev
 	bind_axes()
+	InputPrompt.serial += 1   # an Xbox or PlayStation pad: button names may change
 	if dev >= 0:
 		print("[input] driving with controller %d: %s" % [dev, Input.get_joy_name(dev)])
 	return true

@@ -41,5 +41,5 @@ grep -q "^\[pit crew\] .* played lance+gun_l: .*gave up false" "$LOG/carol.log" 
 line=$(grep -m1 "^\[pit crew\]" "$LOG/alice.log")
 st=$(echo "$line" | sed -E 's/.*stationary ([0-9.]+) s, standard ([0-9.]+) s.*/\1 \2/')
 awk -v a="$st" 'BEGIN { split(a, v, " "); exit !(v[1] > 0 && v[1] < v[2] * 1.4) }' || { echo "stop too slow: $st"; ok=1; }
-grep -E "^P[0-9].*Alice.*stops 1" "$LOG/server.log" | grep -vq "pen" || { echo "shared car missed its stop or got a penalty"; ok=1; }
+grep -E "^P[0-9].*BMW M4 GT3.*stops 1" "$LOG/server.log" | grep -vq "pen" || { echo "shared car missed its stop or got a penalty"; ok=1; }
 [ $ok -eq 0 ] && echo "NET COOP PIT PASS" || { echo "NET COOP PIT FAIL (logs in $LOG)"; exit 1; }

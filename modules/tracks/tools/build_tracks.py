@@ -33,6 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pit_limit_zone import limit_zone  # noqa: E402
 import raceline as raceline_opt  # noqa: E402
 import widen  # noqa: E402
+import pit_clearance  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(os.path.dirname(HERE), "data")
@@ -561,6 +562,8 @@ def build(cfg, cache):
         "default_environment": env,
         "pit_lane": pit_lane,
     }
+    # Room for the pit wall between the track and the lane (see pit_clearance.py).
+    pit_clearance.clear_track(out)
     if "climate" in cfg:
         out["climate"] = cfg["climate"]
     if geo_r is not None:

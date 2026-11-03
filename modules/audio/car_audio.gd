@@ -6,8 +6,8 @@ extends Node2D
 ## see engine_profile()). The family's baked loops exist at many rpm bands, on
 ## throttle and on overrun. We play the two bands either side of the revs,
 ## crossfade them and nudge their pitch, and crossfade throttle against
-## overrun. On top: rev limiter, gearshift cuts and blips, exhaust pops and
-## crackles, turbo whistle and wastegate flutter, supercharger whine, hybrid
+## overrun. On top: rev limiter, gearshift cuts and blips (no exhaust pops or
+## crackles), turbo whistle and wastegate flutter, supercharger whine, hybrid
 ## motor whine, straight-cut gearbox whine.
 ## Tyres and road: squeal (cornering past the grip peak), scrub (just under
 ## it), lock-up, wheelspin and the handbrake, road roar, kerbs, gravel,
@@ -48,7 +48,6 @@ var _squeal_level := 0.0
 var _scrub_level := 0.0
 var _lock_level := 0.0
 var _last_thr := 0.0
-var _pop_clock := 0.0
 var _rng := RandomNumberGenerator.new()
 var _time := 0.0
 var _doppler := 1.0
@@ -117,7 +116,7 @@ static func engine_cylinders(d: CarDefinition) -> int:
 
 
 ## What an engine sounds like: {family, turbo, supercharged, hybrid,
-## gear_whine, limiter_hz, pops}. A car can say it outright in its JSON:
+## gear_whine, limiter_hz}. A car can say it outright in its JSON:
 ##   "engine": {"sound": {"family": "v6_turbo", "hybrid": true}}
 ## otherwise it is worked out from the cylinders and the description
 ## ("twin-turbo", "flat-six", "Mid-engined ... V8" = flat-plane crank ...).
@@ -158,8 +157,6 @@ static func engine_profile(d: CarDefinition) -> Dictionary:
 		"gear_whine": bool(given.get("gear_whine", d.class_tag != "Road" and d.class_tag != "Safety" and d.class_tag != "")),
 		# Limiter bounce: high-revving NA engines bang off it fast, turbos slower.
 		"limiter_hz": float(given.get("limiter_hz", 9.0 if turbo else 14.0)),
-		# How much it pops and crackles on the overrun.
-		"pops": float(given.get("pops", 1.0 if family.begins_with("v8_cross") else (0.8 if turbo else 0.6))),
 	}
 	return p
 
@@ -245,8 +242,6 @@ func _update_engine(delta: float, speed: float, vs: float) -> void:
 				_shot("flutter", -10.0, _rng.randf_range(0.9, 1.1))
 		elif state.gear < _gear and state.gear >= 1:
 			_blip_t = 0.13
-			if _rng.randf() < 0.5 * profile["pops"]:
-				_shot("crackle", -9.0, _rng.randf_range(0.9, 1.15))
 		_gear = state.gear
 	_cut_t = maxf(_cut_t - delta, 0.0)
 	_blip_t = maxf(_blip_t - delta, 0.0)
@@ -260,8 +255,6 @@ func _update_engine(delta: float, speed: float, vs: float) -> void:
 		_limiter_phase += profile["limiter_hz"] * delta
 		if _limiter_phase >= 1.0:
 			_limiter_phase -= 1.0
-			if _rng.randf() < 0.25 * profile["pops"]:
-				_pop(-10.0)
 		var cut := _limiter_phase < 0.4
 		mix = 0.15 if cut else 1.0
 		rpm = red * (0.985 - 0.03 * (1.0 - _limiter_phase))
@@ -272,16 +265,9 @@ func _update_engine(delta: float, speed: float, vs: float) -> void:
 	if _blip_t > 0.0:
 		mix = maxf(mix, 0.75)
 		rpm += (red - rpm) * 0.12 * (_blip_t / 0.13)
-	# Overrun pops: lifting off at high revs, more on some engines.
+	# No exhaust pops or crackles on the overrun, limiter or downshifts: they
+	# sounded like constant banging, so lifting off is just the overrun loop.
 	var rev := clampf((rpm - idle) / maxf(red - idle, 1.0), 0.0, 1.0)
-	if _last_thr > 0.7 and _throttle < 0.25 and rev > 0.55 and _rng.randf() < 0.6 * profile["pops"]:
-		_pop(-8.0)
-	if _throttle < 0.1 and rev > 0.45:
-		_pop_clock += delta * 4.0 * rev * profile["pops"]
-		if _pop_clock > 1.0:
-			_pop_clock = 0.0
-			if _rng.randf() < 0.5:
-				_pop(-14.0 + 6.0 * rev)
 	# Band crossfade.
 	var on_gain := lerpf(0.4, 1.0, rev) * vs
 	var off_gain := lerpf(0.3, 0.55, rev) * vs
@@ -418,10 +404,6 @@ func _shot(sound: String, db: float, pitch := 1.0) -> void:
 	p.pitch_scale = pitch * _doppler
 	if p.is_inside_tree():
 		p.play()
-
-
-func _pop(db: float) -> void:
-	_shot("pop_%d" % _rng.randi_range(1, 4), db, _rng.randf_range(0.8, 1.2))
 
 
 func silence() -> void:

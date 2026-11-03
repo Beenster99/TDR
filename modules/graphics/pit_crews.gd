@@ -98,7 +98,9 @@ class Person:
 	var walk := 0.0
 	var fidget := 0.0
 	var next_wander := 0.0
-	var marker: MeshInstance3D   ## ring on the ground under a player's crew member
+	var marker: Node3D           ## a player's crew member: a hoop on the ground
+	var marker_mat: StandardMaterial3D
+	var marker_ring: Node3D
 
 
 class Crew:
@@ -439,7 +441,40 @@ func _sp(c: Crew, kind: String, idx := 0) -> Array:
 
 # --- Each frame ------------------------------------------------------------------
 
+var _warm: MeshInstance3D
+var _warm_frames := 0
+
+
+## The players' markers use a shader nothing else in the race does (drawn over
+## everything, see-through). Drawn once, almost invisible, where the camera
+## looks at the start, so the GPU builds it then and not with a hitch when
+## the car first stops in its box.
+func _warm_up() -> void:
+	if _warm_frames > 20:
+		return
+	_warm_frames += 1
+	if _warm == null:
+		var m := StandardMaterial3D.new()
+		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		m.albedo_color = Color(1, 1, 1, 0.01)
+		m.no_depth_test = true
+		m.render_priority = 2
+		var q := BoxMesh.new()
+		q.size = Vector3(0.05, 0.05, 0.05)
+		_warm = MeshInstance3D.new()
+		_warm.mesh = q
+		_warm.material_override = m
+		_warm.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(_warm)
+	_warm.position = Vector3(_cam_centre.x, 0.5, _cam_centre.y)
+	if _warm_frames > 20:
+		_warm.queue_free()
+		_warm = null
+
+
 func _process(delta: float) -> void:
+	_warm_up()
 	if not _show:
 		return
 	delta = minf(delta, 0.05)
@@ -471,7 +506,8 @@ func _plan(c: Crew) -> void:
 			p.carry = d[3]
 			p.speed = RUN_SPEED * 3.0   # keeps right with the player's stick
 			p.marker.visible = true
-			(p.marker.material_override as StandardMaterial3D).albedo_color = Color(d[4], 0.85)
+			var col: Color = d[4]
+			p.marker_mat.albedo_color = Color(col, 0.95)
 			continue
 		p.carry = _default_carry(i)
 		if not active:
@@ -1038,22 +1074,25 @@ func _person(c: Crew, suit: Color, helmet: Color, holds: Array = []) -> Person:
 		p.items[Carry.EXTINGUISHER] = ext
 	for k in p.items:
 		(p.items[k] as Node3D).visible = false
-	# A ring on the ground under a crew member a player drives.
+	# A player's crew member: a yellow hoop on the ground, drawn over
+	# everything so the eye finds them at once.
 	if not _meshes.has("ring"):
 		var ring := TorusMesh.new()
-		ring.inner_radius = 0.48
-		ring.outer_radius = 0.62
-		ring.rings = 20
+		ring.inner_radius = 0.62
+		ring.outer_radius = 0.86
+		ring.rings = 24
 		ring.ring_segments = 6
 		_meshes["ring"] = ring
 	var rm := StandardMaterial3D.new()
 	rm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	rm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	rm.albedo_color = Color(1.0, 0.85, 0.2, 0.85)
+	rm.albedo_color = Color(1.0, 0.85, 0.2, 0.95)
 	rm.no_depth_test = true
 	rm.render_priority = 2
-	p.marker = _part(p.root, _meshes["ring"], rm, Vector3(0, 0.08, 0))
-	p.marker.scale = Vector3(1, 0.25, 1)
+	p.marker_mat = rm
+	p.marker = _joint(p.root, Vector3.ZERO)
+	p.marker_ring = _part(p.marker, _meshes["ring"], rm, Vector3(0, 0.08, 0))
+	p.marker_ring.scale = Vector3(1, 0.3, 1)
 	p.marker.visible = false
 	return p
 
