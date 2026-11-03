@@ -9,7 +9,7 @@
     "cars": "1",
     "tracks": "1",
     "physics": "1",
-    "race": "1"
+    "race": "2"
   },
   "api": [
     "AIDriver",

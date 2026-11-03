@@ -24,6 +24,9 @@ signal role_changed(role: String)
 signal crew_changed(car: int)
 ## Team radio / pings for a car's crew (see send_team_radio).
 signal team_radio(car: int, msg: Dictionary)
+## Co-op pit stops: a team mate's crew member (from their machine): {job, x,
+## y, f, pose, carry, props} (see send_crew_pose).
+signal crew_pose(car: int, peer: int, pose: Dictionary)
 
 enum Mode { OFFLINE, SERVER, CLIENT }
 
@@ -525,3 +528,35 @@ func on_team_radio(sender: int, car: int, msg: Dictionary) -> void:
 			team_radio.emit(car, msg)
 	elif e.has_peer(local_peer):
 		team_radio.emit(car, msg)
+
+
+## Co-op pit stops (ui PitCrewGame): tells the rest of car's crew where this
+## player's crew member is. Through the host, to every other player in the crew.
+func send_crew_pose(car: int, pose: Dictionary) -> void:
+	if car < 0 or car >= sim.car_count() or net == null or mode == Mode.OFFLINE:
+		return
+	var p := pose.duplicate()
+	p["peer"] = local_peer
+	if is_authority():
+		on_crew_pose(local_peer, car, p)
+	else:
+		net.send_crew_pose(HOST_PEER, car, p)
+
+
+## Host: passes a crew member's pose to the rest of their crew. Clients: shows it.
+func on_crew_pose(sender: int, car: int, pose: Dictionary) -> void:
+	if car < 0 or car >= sim.car_count():
+		return
+	var e := sim.entries[car]
+	if is_authority():
+		if not e.has_peer(sender):
+			return
+		pose["peer"] = sender
+		for m in e.crew:
+			var pid := int(m.get("peer_id", 0))
+			if pid != sender and pid != local_peer and net and not RaceEntry.is_ai_peer(pid):
+				net.send_crew_pose(pid, car, pose)
+		if sender != local_peer and e.has_peer(local_peer):
+			crew_pose.emit(car, sender, pose)
+	elif e.has_peer(local_peer) and int(pose.get("peer", -1)) != local_peer:
+		crew_pose.emit(car, int(pose.get("peer", sender)), pose)
