@@ -3792,9 +3792,16 @@ func test_graphics_effects() -> void:
 			"down": [8.8, 9.6], "release": 10.5, "fumble": -1,
 			"guns": [[{"wheel": 0, "off": 0.8, "on": 3.8}, {"wheel": 2, "off": 3.8, "on": 6.8}],
 				[{"wheel": 1, "off": 0.8, "on": 3.8}, {"wheel": 3, "off": 3.8, "on": 6.8}]]}}
+	crews._process(1.0 / 30.0)
+	var idle_seen := 0
+	for b in crews.crews:
+		idle_seen += crews.crew_in_sight(b)
+	check(idle_seen == 0, "idle pit crews are out of sight in their garages (%d in sight)" % idle_seen)
 	crews.set_stop(0, PitCrews.Stop.COMING, 0.0, work)
 	for f in 120:
 		crews._process(1.0 / 30.0)
+	check(crews.crew_in_sight(4) == PitCrews.CREW_SIZE and crews.crew_in_sight(5) == 0,
+		"called in: the crew come out of the garage (%d out), the next garage's stay in" % crews.crew_in_sight(4))
 	var box: Vector2 = t2.pit_box(4)["pos"]
 	var near := 0
 	for p in crews.crews[4].people:
@@ -3814,6 +3821,13 @@ func test_graphics_effects() -> void:
 	check(not crews.wheels_off(0), "end of the stop: wheels back on")
 	crews.set_stop(0, PitCrews.Stop.LEAVING, 10.0, work)
 	check(crews.car_lift(0) == 0.0, "car off the jacks when it leaves")
+	crews.set_stop(0, PitCrews.Stop.NONE, 0.0, {})
+	for f in 300:
+		crews._process(1.0 / 30.0)
+	check(crews.crew_in_sight(4) == 0 and crews.crews[4].settled, "after the stop the crew walk back into the garage (%d still out)" % crews.crew_in_sight(4))
+	crews.drive_member(0, "gun_l", box, 0.0)
+	crews._process(1.0 / 30.0)
+	check(crews.crew_in_sight(4) == 1, "a co-op player's crew member is always in sight")
 	tv2.free()
 
 
