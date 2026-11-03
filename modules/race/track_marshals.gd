@@ -13,6 +13,15 @@ extends RefCounted
 ## the track until they are back behind the barrier: slow right down (under
 ## double_yellow_limit), no overtaking.
 ##
+## With no flags to cover them (rallycross) the crew only goes out when it is
+## safe: they wait behind the barrier
+## ("wait") until the next car is far enough away for them to run out, sweep
+## a while and run back, and they run back off ("back") as soon as a car is
+## coming, then wait for the next gap. The sweeping adds up over the gaps
+## until the pile is gone (SWEEP_S in all). step() gets clear_s: seconds
+## until the next car reaches the pile (RaceControl.marshal_clear_s; INF on
+## circuits, where double yellows cover them and they go straight out).
+##
 ## A spot: {s, pos, amount}. A job: see plan().
 
 const MERGE_M := 60.0            ## debris this close together counts as one pile
@@ -24,6 +33,8 @@ const DOUBLE_BEFORE_M := 220.0   ## double yellow zone before the marshals
 const DOUBLE_AFTER_M := 80.0     ## and after them
 const DOUBLE_LIMIT := 1.2        ## speed limit: the VSC reference speed x this
 const DOUBLE_TOLERANCE := 1.1    ## faster than limit x this past the marshals: penalty
+const MIN_WORK_S := 4.0          ## a gap must give at least this much sweeping
+const BACK_MARGIN_S := 1.5       ## off the track this long before a car arrives
 
 
 ## Adds amount of debris at track distance s / position pos.
@@ -58,27 +69,43 @@ static func plan(track: TrackData, spot: Dictionary, id: int) -> Dictionary:
 		var r2 := _hash(id * 17 + k * 13 + 5)
 		var at := track.position_at(s + along + (r1 - 0.5) * 4.0, off + (r2 - 0.5) * 6.0)
 		crew.append({"gate": gate, "at": at, "run": gate.distance_to(at) / RUN_SPEED, "seed": r1 * 10.0 + r2})
-	return {"id": id, "s": s, "pos": pos, "side": side, "phase": "out", "t": 0.0, "crew": crew,
-		"done": false, "cleared": false}
+	return {"id": id, "s": s, "pos": pos, "side": side, "phase": "wait", "t": 0.0, "crew": crew,
+		"done": false, "cleared": false, "work_left": SWEEP_S}
 
 
-static func step(job: Dictionary, dt: float) -> void:
+## Moves the crew on by dt. clear_s: seconds until the next car reaches the
+## pile (INF with no car coming).
+static func step(job: Dictionary, dt: float, clear_s: float = INF) -> void:
 	if job["done"]:
 		return
 	job["t"] = float(job["t"]) + dt
 	var t: float = job["t"]
+	var run := _longest_run(job)
 	match String(job["phase"]):
+		"wait":
+			if clear_s > run * 2.0 + MIN_WORK_S + BACK_MARGIN_S:
+				_next(job, "out")
 		"out":
-			if t >= _longest_run(job):
+			if clear_s < minf(t, run) + BACK_MARGIN_S:
+				# A car is coming: turn round where they are (continuous).
+				_next(job, "back")
+				job["t"] = maxf(run - t, 0.0)
+			elif t >= run:
 				_next(job, "sweep")
 		"sweep":
-			if t >= SWEEP_S:
+			job["work_left"] = float(job.get("work_left", SWEEP_S)) - dt
+			if float(job["work_left"]) <= 0.0:
 				job["cleared"] = true
 				_next(job, "back")
+			elif clear_s < run + BACK_MARGIN_S:
+				_next(job, "back")
 		"back":
-			if t >= _longest_run(job):
-				job["done"] = true
-				job["phase"] = "done"
+			if t >= run:
+				if job["cleared"]:
+					job["done"] = true
+					job["phase"] = "done"
+				else:
+					_next(job, "wait")
 
 
 ## Where each marshal is: [{pos, heading, action ("run"/"sweep"/"wave"), t}].
@@ -96,6 +123,9 @@ static func view(job: Dictionary) -> Array:
 		var h := (at - gate).angle()
 		var action := "sweep"
 		match phase:
+			"wait":   # behind the barrier, waiting for a gap
+				p = gate
+				action = "wave"
 			"out":
 				var f := clampf(t / maxf(run, 0.1), 0.0, 1.0)
 				p = gate.lerp(at, f)
@@ -114,9 +144,9 @@ static func view(job: Dictionary) -> Array:
 	return out
 
 
-## True while marshals are out on the circuit (double yellows).
+## True while marshals are out on the circuit (not waiting behind the barrier).
 static func on_track(job: Dictionary) -> bool:
-	return not job["done"]
+	return not job["done"] and String(job["phase"]) != "wait"
 
 
 static func _next(job: Dictionary, phase: String) -> void:

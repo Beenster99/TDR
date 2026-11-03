@@ -126,6 +126,8 @@ static func from_dict(d: Dictionary) -> TrackData:
 	if d.get("joker") is Dictionary and (d["joker"] as Dictionary).get("path", []).size() >= 2:
 		t._build_joker(d["joker"])
 	t._load_elevation(d.get("elevation"), start)
+	if t.has_joker():
+		t._build_joker_profile()
 	t._load_barriers(d.get("barriers"), start)
 	if t.pit_lane is Dictionary and t.pit_lane.get("path", []).size() >= 2:
 		t._build_pit(t.pit_lane)
@@ -467,6 +469,54 @@ func _build_joker(j: Dictionary) -> void:
 	_joker_bounds = Rect2(lo, hi - lo).grow(joker_width)
 
 
+## Height of the joker lane at each path point. Where it shares the ground
+## with the lap (its ends) it is the lap's height; once it runs away from the
+## lap it follows the hillside under it (smoothed), so it lies on the ground
+## instead of cutting under the grass where the lap beside it is lower.
+var joker_heights: PackedFloat64Array = []
+
+func _build_joker_profile() -> void:
+	var m := joker_path.size()
+	var lap_h := PackedFloat64Array()
+	var ground := PackedFloat64Array()
+	var w := PackedFloat64Array()
+	var h0 := joker_surface_height(project(joker_path[0]))
+	var h1 := joker_surface_height(project(joker_path[m - 1]))
+	for i in m:
+		var q := project(joker_path[i])
+		var off: float = q["offset"]
+		var edge: float = (q["w_right"] if off >= 0.0 else q["w_left"]) + kerb_width
+		lap_h.append(joker_surface_height(q))
+		var f := joker_cum[i] / maxf(joker_length, 1.0)
+		ground.append(ground_height_at(joker_path[i]) if terrain_size != Vector2i.ZERO else lerpf(h0, h1, f))
+		w.append(smoothstep(0.0, 10.0, absf(off) - edge))
+	# Smooth the hillside along the lane (about 8 m either way).
+	for _pass in 2:
+		var sm := ground.duplicate()
+		for i in range(1, m - 1):
+			var acc := 0.0
+			var n := 0
+			for k in range(maxi(i - 4, 0), mini(i + 5, m)):
+				acc += ground[k]
+				n += 1
+			sm[i] = acc / n
+		ground = sm
+	joker_heights.resize(m)
+	for i in m:
+		joker_heights[i] = lerpf(lap_h[i], ground[i], w[i])
+
+
+## Height of the joker lane d joker metres along it (0 without elevation).
+func joker_height_at(d: float) -> float:
+	if joker_heights.size() != joker_path.size():
+		return 0.0
+	var i := joker_cum.bsearch(d) - 1
+	i = clampi(i, 0, joker_path.size() - 2)
+	var span := joker_cum[i + 1] - joker_cum[i]
+	var f := clampf((d - joker_cum[i]) / span, 0.0, 1.0) if span > 0.0001 else 0.0
+	return lerpf(joker_heights[i], joker_heights[i + 1], f)
+
+
 func has_joker() -> bool:
 	return joker_path.size() >= 2
 
@@ -730,7 +780,7 @@ func surface_height_at(pos: Vector2, hint: int = -1) -> float:
 		var jp := project_joker(pos)
 		var jout: float = jp["dist"] - joker_width * 0.5
 		if jout < PIT_VERGE_M:
-			h = lerpf(h, joker_surface_height(q), 1.0 - smoothstep(1.5, PIT_VERGE_M, jout))
+			h = lerpf(h, joker_height_at(jp["d"]), 1.0 - smoothstep(1.5, PIT_VERGE_M, jout))
 	return h
 
 
