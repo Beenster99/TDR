@@ -472,6 +472,8 @@ func _build_road() -> void:
 func _kerb_w(i: int, sd: float) -> float:
 	if absf(curvature[i]) <= 0.006 or track.dirt_at(track.cum_s[i]) >= 0.3:
 		return 0.0
+	if track.discipline == "derby":   # no kerbs in a derby arena (they'd cross the other road at the crossovers)
+		return 0.0
 	if track.has_joker():
 		var e := track.width_right[i] if sd > 0 else track.width_left[i]
 		var q := track.points[i] + track.right_normal(i) * sd * (e + track.kerb_width * 0.5)
