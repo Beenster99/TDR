@@ -24,8 +24,7 @@ extends Control
 ## car to the end of the lane and gives it back to the driver there, and the
 ## pit wall is back at its screens.
 ##
-## On your own (Settings > Gameplay > Pit crew mini-game, off by default) you
-## are the left gun man and the AI crew do everything else.
+## On your own there's no crew game: the AI crew do the whole stop.
 ##
 ## Controls: run (stick / WASD), grab (pad X / G key: pick up, put down, plug in,
 ## take off), use (RT or A / Space, held: the wheel gun, the windscreen).
@@ -33,7 +32,6 @@ extends Control
 ## machine that simulates the car through RaceSession.request_pit, and team
 ## mates see each other's crew members (RaceSession.send_crew_pose).
 
-const PREF := "pit_crew_game"
 const PREF_COOP := "pit_crew_coop"
 
 enum Stage { IDLE, READY, BOX, DONE }
@@ -137,8 +135,8 @@ func _hook_poses() -> void:
 		_signal_hooked = true
 
 
-## On/off: Settings > Gameplay (registered by core): co-op pit stops for a
-## shared car, the solo mini-game otherwise.
+## On/off: Settings > Gameplay (registered by core), co-op pit stops for a
+## shared car only.
 func enabled(p_coop := false) -> bool:
 	if enabled_override != null:
 		return bool(enabled_override)
@@ -149,14 +147,14 @@ func enabled(p_coop := false) -> bool:
 	var gd := get_node_or_null("/root/GameData")
 	if gd == null:
 		return false
-	return bool(gd.prefs.get(PREF_COOP, true)) if p_coop else bool(gd.prefs.get(PREF, false))
+	return p_coop and bool(gd.prefs.get(PREF_COOP, true))
 
 
 ## The jobs this player does at their car's stops: {car, jobs: [...], coop}.
 ## Co-op (two or more players in the car's crew): the strategist / pit wall
 ## refuels, the driver cleans the windscreen then does their tyre job, a pit
 ## crew player lays out the tyres and guns and plugs the air lance in, then
-## does theirs. On your own: the left gun man (a strategist alone doesn't play).
+## does theirs. On your own: nothing (the AI crew do it all).
 static func jobs_for(s) -> Dictionary:
 	var none := {"car": -1, "jobs": [], "coop": false}
 	if s == null:
@@ -169,9 +167,7 @@ static func jobs_for(s) -> Dictionary:
 	var humans := e.human_crew()
 	var role := RaceEntry.ROLE_DRIVER if s.local_car == c else str(s.local_role)
 	if humans.size() < 2:
-		if role == RaceEntry.ROLE_STRATEGIST:
-			return none
-		return {"car": c, "jobs": [PitRules.JOB_GUN_L], "coop": false}
+		return none   # on your own the AI crew do the whole stop
 	var me := int(s.local_peer) if "local_peer" in s else 0
 	var tyre := tyre_job_for(e, me, role)
 	match role:
@@ -384,17 +380,8 @@ func _start(want: Dictionary) -> void:
 	job_wheel = -1
 	wipe = 0.0
 	stage = Stage.READY
-	var w := _sim().pits.service_for(car, _pit()["plan"])
-	# On your own with no tyres to change there's nothing to play.
-	if not coop and PitRules._side_wheels(w, 0).is_empty():
-		stage = Stage.IDLE
-		return
 	pos = _start_spot()
 	face = 0.0
-	if not coop and current_job() in [PitRules.JOB_GUN_L, PitRules.JOB_GUN_R]:
-		# On your own the gun man has the gun in hand from the start.
-		hold = Hold.GUN
-		sent["gun_taken:%d" % _side()] = true
 	for j in jobs:
 		session.request_pit(car, {"crew": {"job": j, "play": true, "lane_auto": coop}})
 
@@ -411,8 +398,12 @@ func _start_spot() -> Vector2:
 	return _spot("wait", _side())[0]
 
 
+var _no_fuel_stop := false   ## this stop puts no fuel in (the fuel man stands by)
+
+
 func _start_box() -> void:
 	stage = Stage.BOX
+	_no_fuel_stop = float(_work().get("fuel_s", 0.0)) <= 0.0
 	clock = float(_pit()["service_total"]) - float(_pit()["service_left"])
 	_skip_empty_jobs()
 
@@ -425,7 +416,7 @@ func _skip_empty_jobs() -> void:
 		var empty := false
 		match j:
 			PitRules.JOB_FUEL:
-				empty = float(work.get("fuel_s", 0.0)) <= 0.0
+				empty = false   # no fuel this stop: the fuel man stays out and says so (_step_fuel)
 			PitRules.JOB_LANCE:
 				empty = false
 			PitRules.JOB_SCREEN:
@@ -459,7 +450,8 @@ func _stop(next: Stage) -> void:
 
 
 func _finish() -> void:
-	var gave_up := cur < jobs.size()
+	# Standing by as fuel man with no fuel to put in counts as done.
+	var gave_up := cur < jobs.size() and not (current_job() == PitRules.JOB_FUEL and _no_fuel_stop and cur == jobs.size() - 1)
 	_stop(Stage.DONE)
 	var perfect := 0
 	for w in done:
@@ -606,7 +598,15 @@ func _hose_on() -> bool:
 	return sent.has("fuel:on::") and not sent.has("fuel:off::")
 
 
+## No fuel goes in this stop (none planned, or the tank's full).
+func _no_fuel() -> bool:
+	return stage == Stage.BOX and float(_work().get("fuel_s", 0.0)) <= 0.0
+
+
 func _step_fuel(dt: float, move: Vector2, grab: bool) -> void:
+	if _no_fuel():
+		_run(dt, move)   # nothing to plug in: the fuel man stands by
+		return
 	var filler := _spot("filler")
 	if _hose_on():
 		pos = filler[0]
@@ -1036,7 +1036,7 @@ func _auto() -> Array:
 		return []
 	match j:
 		PitRules.JOB_FUEL:
-			if stage != Stage.BOX:
+			if stage != Stage.BOX or _no_fuel():
 				return [Vector2.ZERO, false, false]
 			if _hose_on():
 				return [Vector2.ZERO, false, fuel_in() >= float(_work().get("fuel_l", 0.0)) - 0.05]
@@ -1186,6 +1186,13 @@ func _draw() -> void:
 			HORIZONTAL_ALIGNMENT_CENTER, W)
 
 
+## A tip with the player's own buttons in: {crew_grab} and {crew_gun}
+## become what they mapped those actions to, on the device they touched
+## last (keyboard and mouse, or the controller), e.g. "G" / "X".
+static func with_keys(tip: String) -> String:
+	return InputPrompt.fill(tip)
+
+
 func _bar(x: float, y: float, w: float, f: float, col: Color) -> void:
 	draw_rect(Rect2(x, y, w, 14), Color(1, 1, 1, 0.08))
 	draw_rect(Rect2(x, y, w * clampf(f, 0.0, 1.0), 14), col)
@@ -1217,16 +1224,19 @@ func _draw_job(r: Rect2) -> void:
 			_bar(gx, gy, gw, got / maxf(want, 0.1), Color(GREEN if got >= want - 0.05 else YELLOW, 0.7))
 			if stage != Stage.BOX:
 				tip = "Car coming in: be ready at the fuel rig"
+			elif _no_fuel():
+				tip = "No fuel this stop (none planned, or the tank's full): stand by"
+				tip_col = GREEN
 			elif _hose_on():
-				tip = "Take the hose off (grab) when the tank's full" if got < want - 0.05 else "FULL: take the hose off now (grab)"
+				tip = "Take the hose off ({crew_grab}) when the tank's full" if got < want - 0.05 else "FULL: take the hose off now ({crew_grab})"
 				tip_col = YELLOW if got < want - 0.05 else GREEN
 			elif hold == Hold.HOSE:
-				tip = "Plug the hose into the car (grab at the filler)"
+				tip = "Plug the hose into the car ({crew_grab} at the filler)"
 			else:
-				tip = "Grab the hose at the fuel rig"
+				tip = "{crew_grab}: grab the hose at the fuel rig"
 		PitRules.JOB_SCREEN:
 			_bar(gx, gy, gw, wipe / SCREEN_WIPE_S, Color(BLUE, 0.7))
-			tip = "Car coming in: get to the nose" if stage != Stage.BOX else "Hold USE at the windscreen to wipe it clean"
+			tip = "Car coming in: get to the nose" if stage != Stage.BOX else "Hold {crew_gun} at the windscreen to wipe it clean"
 		PitRules.JOB_LANCE:
 			var n := _prep_needs()
 			var x := o.x + 16
@@ -1241,11 +1251,11 @@ func _draw_job(r: Rect2) -> void:
 			if not prep_done():
 				tip = "Lay out the new tyres (stacks by the garage) and the wheel guns (trolley)"
 				if hold == Hold.NEW_TYRE:
-					tip = "Carrying a %s tyre: put it by its wheel (grab)" % KIND_NAMES[hold_kind]
+					tip = "Carrying a %s tyre: put it by its wheel ({crew_grab})" % KIND_NAMES[hold_kind]
 				elif hold == Hold.GUN:
-					tip = "Carrying a wheel gun: lay it by the car (grab)"
+					tip = "Carrying a wheel gun: lay it by the car ({crew_grab})"
 			elif stage == Stage.BOX:
-				tip = "Air lance in: grab at the socket, back of the car"
+				tip = "Air lance in: {crew_grab} at the socket, back of the car"
 				tip_col = YELLOW
 			else:
 				tip = "All laid out: wait by the air lance socket for the car"
@@ -1265,7 +1275,7 @@ func _draw_job(r: Rect2) -> void:
 			tip = res[0]
 			tip_col = res[1]
 	if tip != "":
-		_text(Vector2(gx, o.y + H - 12), tip, 15, tip_col)
+		_text(Vector2(gx, o.y + H - 12), with_keys(tip), 15, tip_col)
 
 
 ## What to do now on a tyre job: [tip, colour] (and draws the gun gauge).
@@ -1277,7 +1287,7 @@ func _tyre_tip(j: String) -> Array:
 	if stage != Stage.BOX:
 		return ["Car coming in: get to the %s" % WHEEL_NAMES[w] if w >= 0 else "No tyres on your side this stop", Color.WHITE]
 	if w < 0:
-		return ["Your side's done%s" % (": put the gun down (grab)" if hold == Hold.GUN else ""), GREEN]
+		return ["Your side's done%s" % (": put the gun down ({crew_grab})" if hold == Hold.GUN else ""), GREEN]
 	var tj := PitRules.tyre_job(_tl(), _side(), w)
 	if j.begins_with("gun"):
 		match job:
@@ -1287,7 +1297,7 @@ func _tyre_tip(j: String) -> Array:
 			Job.SWAP:
 				return ["Nut off: the wheel man swaps the wheel...", Color.WHITE]
 			Job.LOOSE:
-				return ["HOLD the gun on the new nut, let go in the green", YELLOW]
+				return ["HOLD {crew_gun} on the new nut, let go in the green", YELLOW]
 			Job.GUN:
 				var full := GUN_AUTO
 				draw_rect(Rect2(gx, gy, gw, 14), Color(1, 1, 1, 0.08))
@@ -1299,26 +1309,26 @@ func _tyre_tip(j: String) -> Array:
 				draw_rect(Rect2(mx - 2, gy - 4, 4, 22), Color.WHITE)
 				return ["Let go in the green", Color.WHITE]
 		if hold != Hold.GUN:
-			return ["Pick up your wheel gun (grab or the gun button)", YELLOW]
+			return ["Pick up your wheel gun ({crew_grab} or {crew_gun})", YELLOW]
 		if not _near(wheel_spot(w)[0]):
 			return ["Run to the %s" % WHEEL_NAMES[w], Color.WHITE]
 		if tj.is_empty() or float(tj.get("start", INF)) > clock:
 			return [_why_wait(tj), AMBER]
-		return ["HOLD the gun to undo the nut", YELLOW]
+		return ["HOLD {crew_gun} to undo the nut", YELLOW]
 	# wheel man
 	var me := current_job()
 	match hold:
 		Hold.OLD_TYRE:
-			return ["Put the old wheel down, out of the way (grab)", YELLOW]
+			return ["Put the old wheel down, out of the way ({crew_grab})", YELLOW]
 		Hold.NEW_TYRE:
-			return ["Put the new wheel on the %s (grab at the hub)" % WHEEL_NAMES[w], YELLOW]
+			return ["Put the new wheel on the %s ({crew_grab} at the hub)" % WHEEL_NAMES[w], YELLOW]
 	if not sent.has("%s:wheel_off:%d:" % [me, w]):
 		if not _near(wheel_spot(w)[0]):
 			return ["Run to the %s" % WHEEL_NAMES[w], Color.WHITE]
 		if tj.is_empty() or float(tj.get("nut_off", INF)) > clock:
 			return ["Wait for the gun man to undo the nut", AMBER]
-		return ["Pull the old wheel off (grab)", YELLOW]
-	return ["Pick up the new wheel by the corner (grab)", YELLOW]
+		return ["Pull the old wheel off ({crew_grab})", YELLOW]
+	return ["Pick up the new wheel by the corner ({crew_grab})", YELLOW]
 
 
 func _draw_result(r: Rect2) -> void:

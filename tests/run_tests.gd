@@ -1544,13 +1544,13 @@ func test_pit_crew_game() -> void:
 	sess.local_car = 0
 	sess.team_car = -1
 	sess.local_role = ""
-	check(PitCrewGame.jobs_for(sess)["jobs"] == ["gun_l"], "a driver on their own is the left gun man")
+	check((PitCrewGame.jobs_for(sess)["jobs"] as Array).is_empty(), "a driver on their own has no crew job (the AI crew do the stop)")
 	sess.local_car = -1
 	sess.team_car = 0
 	sess.local_role = RaceEntry.ROLE_STRATEGIST
 	check((PitCrewGame.jobs_for(sess)["jobs"] as Array).is_empty(), "a strategist alone doesn't play")
 	sess.local_role = RaceEntry.ROLE_PIT_WALL
-	check(PitCrewGame.jobs_for(sess)["jobs"] == ["gun_l"], "the pit wall with the AI driving: the left gun man")
+	check((PitCrewGame.jobs_for(sess)["jobs"] as Array).is_empty(), "the pit wall alone with the AI driving: no crew job")
 	sim3.entries[0].crew = [{"peer_id": 1, "role": RaceEntry.ROLE_DRIVER, "pit_job": "wheel_r"}, {"peer_id": 2, "role": RaceEntry.ROLE_PIT_WALL}]
 	sess.local_peer = 2
 	var jf := PitCrewGame.jobs_for(sess)
@@ -1638,7 +1638,8 @@ func test_pit_crew_game() -> void:
 		for g in games:
 			g.free()
 
-	# Solo: the left gun man (Settings > Gameplay); a loose nut.
+	# Single player: no crew game, the AI crew do the stop; a stop can't be
+	# held past the crew's give-up time, whatever a player did.
 	var sim5: RaceSim = _race(st, d)["sim"]
 	sim5.phase = RaceSim.Phase.RACING
 	var solo := FakeSession.new()
@@ -1647,7 +1648,6 @@ func test_pit_crew_game() -> void:
 	solo.team_car = -1
 	var g0: PitCrewGame = PitCrewGame.new()
 	g0.session = solo
-	g0.enabled_override = true
 	g0.autoplay = true
 	var p5: Dictionary = sim5.entries[0].pit
 	sim5.cars[0].pos = sim5.track.pit_box(sim5.pits.box_index(0))["pos"]
@@ -1655,27 +1655,32 @@ func test_pit_crew_game() -> void:
 	sim5.pits.set_plan(0, {"box": true, "tyre": PitRules.TYRE_DRY, "wheels": "all", "fuel": 9.0, "repair": false})
 	p5["phase"] = PitRules.PHASE_APPROACH
 	g0.step(1.0 / 60.0)
-	check(g0.stage == PitCrewGame.Stage.READY and g0.jobs == ["gun_l"] and not g0.coop and not bool(p5["crew_auto"]), "solo: the left gun man, the driver still drives in")
-	check(g0.hold == PitCrewGame.Hold.GUN, "solo: the gun man starts with the gun in hand")
+	check(g0.stage == PitCrewGame.Stage.IDLE and int(p5["crew_play"]) == 0, "single player: no crew game, the AI crew do the stop")
 	p5["phase"] = PitRules.PHASE_LIMIT
 	sim5.pits._arrive(0)
-	g0.step(1.0 / 60.0)
-	g0.autoplay = false
-	g0.hold = PitCrewGame.Hold.GUN
-	g0.pos = g0.wheel_spot(0)[0]
-	g0.step(1.0 / 60.0, Vector2.ZERO, true)
-	check(g0.job == PitCrewGame.Job.NONE and g0.clock < float(g0._tl()["guns_from"]), "no tyres while the fuel goes in")
-	g0.autoplay = true
 	var guard5 := 0
 	while p5["phase"] == PitRules.PHASE_SERVICE and guard5 < 60 * 40:
 		guard5 += 1
 		g0.step(1.0 / 60.0)
 		sim5.step(idle)
-	g0.step(1.0 / 60.0)
 	var ls5: Dictionary = p5["last_stop"]
-	check(ls5.get("played", false) and float(ls5["stationary_s"]) < float(ls5["standard_s"]) * 1.05 + (PitRules.CREW_FUMBLE_S if int(ls5["fumble"]) >= 0 else 0.0) and g0.done.size() == 2
-		and g0.done.values().all(func(r): return r == "perfect"),
-		"a sharp solo gun man: %.2f s vs standard %.2f s, both nuts perfect" % [ls5.get("stationary_s", 0.0), ls5.get("standard_s", 0.0)])
+	check(not ls5.get("played", true) and float(ls5["stationary_s"]) < float(ls5["standard_s"]) * 1.05 + (PitRules.CREW_FUMBLE_S if int(ls5["fumble"]) >= 0 else 0.0),
+		"single player stop: %.2f s vs standard %.2f s (AI fumble %d)" % [ls5.get("stationary_s", 0.0), ls5.get("standard_s", 0.0), ls5.get("fumble", -1)])
+	# A player who claimed a job and never did it: released at the give-up time.
+	sim5.pits.set_plan(0, {"box": true, "tyre": PitRules.TYRE_DRY, "wheels": "all", "fuel": 0.0, "repair": false})
+	p5["phase"] = PitRules.PHASE_LIMIT
+	p5["crew_play"] = PitRules.job_bit(PitRules.JOB_GUN_L)
+	sim5.pits._arrive(0)
+	var std5 := float(p5["service_std"])
+	var held := 0.0
+	guard5 = 0
+	while p5["phase"] == PitRules.PHASE_SERVICE and guard5 < 60 * 60:
+		guard5 += 1
+		held += 1.0 / 60.0
+		sim5.step(idle)
+	check(p5["phase"] != PitRules.PHASE_SERVICE and held <= std5 * PitRules.CREW_GIVE_UP + 0.7,
+		"a job nobody does holds the car only to the give-up time: %.1f s (standard %.1f s)" % [held, std5])
+	g0.enabled_override = true
 	g0.stage = PitCrewGame.Stage.BOX
 	g0.car = 0
 	g0.jobs = ["gun_l"]
@@ -1695,6 +1700,23 @@ func test_pit_crew_game() -> void:
 	g0._use_was = false
 	g0._step_gun(1.0 / 60.0, Vector2.ZERO, true, false)
 	check(g0.hold == PitCrewGame.Hold.GUN, "the gun button next to the gun on the ground picks it up")
+	# No fuel this stop: the fuel man stays out (stands by) instead of vanishing.
+	g0.jobs = ["fuel"]
+	g0.cur = 0
+	g0.stage = PitCrewGame.Stage.BOX
+	g0._skip_empty_jobs()
+	check(g0.cur == 0 and g0._no_fuel() and g0._auto()[2] == false, "no fuel this stop: the fuel man stays on his job and stands by")
+	if not InputMap.has_action("crew_grab"):
+		InputSetup.register_actions()
+	var was := InputPrompt.pad
+	InputPrompt.set_pad(false)
+	var kb := PitCrewGame.with_keys("Pull the old wheel off ({crew_grab})")
+	var kb2 := PitCrewGame.with_keys("Hold {crew_gun} at the windscreen")
+	InputPrompt.set_pad(true)
+	var pd := PitCrewGame.with_keys("Pull the old wheel off ({crew_grab})")
+	InputPrompt.set_pad(was)
+	check(kb == "Pull the old wheel off (G)" and kb2 == "Hold Space at the windscreen" and pd == "Pull the old wheel off (X)",
+		"crew tips name the buttons of the device in use: %s / %s / %s" % [kb, kb2, pd])
 	g0.free()
 
 

@@ -720,6 +720,7 @@ func _process(delta: float) -> void:
 		if v["kind"] == "crane" and int(v["car"]) < car_views.size():
 			car_views[int(v["car"])].hoist = v["hoist"]
 	_update_pit_crews()
+	_log_pit_stop()
 	_update_rejoin()
 	world.set_safety_car(rc.sc_visible, rc.sc_pos, rc.sc_heading, rc.sc_speed, rc.sc_lights)
 	_update_give_back()
@@ -762,6 +763,37 @@ func _update_pit_guide(delta: float) -> void:
 
 
 var _pit_work := {}   ## car -> the stop's work while it's on its way in
+
+
+var _pit_log := {}   ## what _log_pit_stop last printed
+
+
+## Writes our car's pit stop to the log (godot.log) as it goes: each phase
+## change, and once a stop runs long, what the crew are still waiting for.
+## Player reports of a stuck stop come with the log.
+func _log_pit_stop() -> void:
+	var car := session.local_car if session.local_car >= 0 else session.team_car
+	var pits := session.sim.pits
+	if car < 0 or not pits.enabled:
+		return
+	var p: Dictionary = session.sim.entries[car].pit
+	var ph: String = p["phase"]
+	var t := session.sim.race_time
+	if ph != str(_pit_log.get("phase", "")):
+		print("[pit] t %.1f car %d %s -> %s  auto %s self %s owns %s play %d box %s  crew game %s" % [t, car, _pit_log.get("phase", "?"), ph,
+			p["auto"], pits.self_drives(car), session.owns(car), int(p.get("crew_play", 0)), p["box"], crew_game.jobs if crew_game.stage != PitCrewGame.Stage.IDLE else []])
+		_pit_log = {"phase": ph, "since": t, "long": false}
+	var since := t - float(_pit_log.get("since", t))
+	if ph == PitRules.PHASE_SERVICE and not bool(_pit_log.get("long", false)) and since > float(p.get("service_std", 0.0)) + 3.0:
+		_pit_log["long"] = true
+		var tl: Dictionary = (p.get("work", {}) as Dictionary).get("crew", {})
+		print("[pit] long stop: %.1f s of %.1f (standard %.1f), release %s, jobs %s, fuel %s, screen %s, tyres %s" % [
+			float(p["service_total"]) - float(p["service_left"]), float(p["service_total"]), float(p.get("service_std", 0.0)),
+			tl.get("release", "?"), p.get("crew_jobs", {}), tl.get("fuel", []), tl.get("screen", []), tl.get("tyres", [])])
+	if ph in [PitRules.PHASE_LEAVE, PitRules.PHASE_EXIT] and not bool(_pit_log.get("long", false)) and since > 20.0:
+		_pit_log["long"] = true
+		print("[pit] still in the lane %.0f s after the stop: phase %s, speed %.1f m/s, controls %s" % [since, ph,
+			session.sim.cars[car].speed(), pits.controls(car)])
 
 
 ## Tells the pit crews what each car's stop is doing.
