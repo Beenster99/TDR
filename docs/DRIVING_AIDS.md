@@ -11,7 +11,7 @@ when a co-op driver takes the wheel). AI cars never use them.
 | Braking zones (`aid_braking_zones`) | on (default) / off | Colours the driving line: green = your speed is fine, yellow = lift, get ready, red = brake now. With the racing line off, only the braking zones show. |
 | Racing line (`aid_racing_line`) | on (default) / off | The driving line along the whole lap ahead (320 m), soft at the edges. |
 | Track assist (`aid_track_assist`) | 0 off, 1 light (default), 2 strong | With no steering input it cancels part of any yaw, so the car runs straight; near the edge (2.5 m light, 3.5 m strong) and heading off, it steers gently back. It never adds more than 3 degrees (light) / 5 degrees (strong) of steering, so a bad line or a slide still costs you. |
-| Manual gears (`manual_gears`) | off (default) / on | Shift Up: Shift or `.`, pad A. Shift Down: Ctrl or `,`, pad X. One gear per press; a downshift that would over-rev is refused. With manual gears on, the pad's A / X stop working as throttle / brake (the triggers do that). |
+| Manual gears (`manual_gears`) | off (default) / on | Shift Up: Shift or `.`, pad B. Shift Down: Ctrl or `,`, pad X. One gear per press; a downshift that would over-rev is refused. With manual gears on, the pad's X stops working as the brake (the trigger does that). Pad A is the handbrake; next tyres moved from B to D-pad up. |
 
 ## How the braking line works
 
@@ -39,9 +39,11 @@ be hit, knocked down or damaged. The numbers face the camera.
 
 ## Steering
 
-Steering lock falls with speed (`LocalInput.steer_lock`: full lock at a
-standstill, 50% at 58 km/h, 14% from about 350 km/h), so a full stick or a
-held key turns the car about as hard at 250 km/h as at 80. Keyboard steering
+Steering lock falls with speed (`LocalInput.steer_lock`: full lock up to
+about 29 km/h, 67% at 54 km/h, 50% at 80 km/h, 18% at 250 km/h, never below
+14%), so a full stick or a held key turns the car about as hard at 250 km/h as
+at 80, while hairpins, the pit lane and turning round after a spin get most
+or all of the lock. Keyboard steering
 winds on more slowly at speed (`LocalInput.key_steer`), so a tap is a small
 correction.
 
