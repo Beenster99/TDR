@@ -153,9 +153,14 @@ func load_prefs() -> void:
 		return
 	for key in cfg.get_section_keys("prefs") if cfg.has_section("prefs") else []:
 		var v = cfg.get_value("prefs", key)
+		# The old on/off racing line (before Full / Corners only / Off).
+		if key == "aid_racing_line":
+			if typeof(v) == TYPE_BOOL and not cfg.has_section_key("prefs", "aid_driving_line"):
+				prefs["aid_driving_line"] = 2 if v else 0
+			continue
 		var info := setting_info(key)
 		# Keep a saved value only if it's still one of the choices.
-		if info.get("kind") == "choice" and not info["options"].any(func(o): return o[0] == v):
+		if info.get("kind") == "choice" and not info["options"].any(func(o): return typeof(o[0]) == typeof(v) and o[0] == v):
 			continue
 		prefs[key] = v
 
@@ -178,8 +183,8 @@ func _register_defaults() -> void:
 		"Coloured braking zones on the racing line: green to keep the throttle down, yellow to lift, red to brake.")
 	register_setting("gameplay", "aid_track_assist", "Track assist", [[0, "Off"], [1, "Light"], [2, "Strong"]], 1,
 		"A gentle pull on the steering that helps you stay inside the track limits and on the driving line.")
-	register_setting("gameplay", "aid_racing_line", "Racing line", [[true, "On"], [false, "Off"]], true,
-		"Shows the ideal line through each corner.")
+	register_setting("gameplay", "aid_driving_line", "Driving line", [[2, "Full"], [1, "Corners only"], [0, "Off"]], 2,
+		"The ideal line on the track. Full: all the way round the lap. Corners only: from the braking zone through each corner, hidden on the straights.")
 	register_setting("gameplay", "pit_drive_in", "Pit stops", [["self", "Drive in yourself"], ["auto", "Automatic"]], "self",
 		"Drive in yourself: when you've called a stop, follow the pit line, be down to the speed limit by the limit line and stop on your box (overshoot and it costs time). Automatic: the car drives itself in and out.")
 	register_setting("gameplay", "aid_pit_guide", "Pit lane guide", [[true, "On"], [false, "Off"]], true,

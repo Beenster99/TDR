@@ -159,12 +159,12 @@ func _set_driving_aids() -> void:
 
 
 ## The driving line and brake boards, for this player's car (or the team's
-## car on the pit wall). Settings > Gameplay turns the line and its braking
-## colours on and off; the boards are always there.
+## car on the pit wall). Settings > Gameplay sets the line (full, corners
+## only, off) and turns its braking colours on and off; the boards are always there.
 func _add_driving_aids() -> void:
 	var i := session.local_car if session.local_car >= 0 else maxi(session.team_car, 0)
 	var line := DrivingLine.build(session.sim.track, session.sim.defs[i], session.sim.compounds[i])
-	world.add_driving_aids(line, bool(GameData.prefs.get("aid_racing_line", true)),
+	world.add_driving_aids(line, int(GameData.prefs.get("aid_driving_line", DrivingLineView.LINE_FULL)),
 		bool(GameData.prefs.get("aid_braking_zones", true)))
 
 
