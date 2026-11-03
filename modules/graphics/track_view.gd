@@ -248,6 +248,17 @@ func terrain_height(p: Vector2) -> float:
 
 ## Height of the grass mesh as drawn (its triangles, not the smooth
 ## hillside), so a car off the road can be kept on top of it.
+## The terrain grid as built: [origin, cell size m, points per side, lowest
+## and highest point]. Scenery lays its land cover on it.
+func terrain_grid() -> Array:
+	var lo := INF
+	var hi := -INF
+	for h in _terrain_h:
+		lo = minf(lo, h)
+		hi = maxf(hi, h)
+	return [_terrain_grid.position, _terrain_cell, _terrain_n, lo, hi]
+
+
 func terrain_mesh_height(p: Vector2, _hint := -1) -> float:
 	if _terrain_h.is_empty():
 		return -INF
@@ -426,6 +437,13 @@ func _build_terrain() -> void:
 	_terrain_grid = Rect2(bounds.position, Vector2(nx, ny) * cell)
 	_terrain_cell = cell
 	_terrain_n = Vector2i(nx + 1, ny + 1)
+	# the grid's heights for the shader: it lights the grass from them and
+	# lays Scenery's land cover (fields, roads, water...) on the same triangles
+	var img := Image.create_from_data(_terrain_n.x, _terrain_n.y, false, Image.FORMAT_RF, _terrain_h.to_byte_array())
+	terrain_material.set_shader_parameter("heights", ImageTexture.create_from_image(img))
+	terrain_material.set_shader_parameter("grid_origin", bounds.position)
+	terrain_material.set_shader_parameter("grid_cell", cell)
+	terrain_material.set_shader_parameter("grid_n", _terrain_n)
 	var mi := _mesh_node(st, terrain_material, "Terrain")
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if has_elevation() else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 

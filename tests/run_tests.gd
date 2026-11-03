@@ -65,6 +65,7 @@ func _init() -> void:
 	test_hud_timing()
 	test_hud_layout()
 	test_graphics_effects()
+	test_land_cover()
 	test_pit_lane_blend()
 	test_settings_and_units()
 	test_pause_menu()
@@ -3382,6 +3383,47 @@ func test_pit_lane_blend() -> void:
 		var mid := (t.pit_limit_start + t.pit_limit_end) * 0.5
 		var own := absf(t.surface_height_at(t.pit_position_at(mid)) - t.pit_height_at(mid))
 		check(worst < 0.15 and own < 0.01, "%s: pit lane meets the track's edge (step %.2f m) and is level by the garages (%.2f m)" % [d["id"], worst, own])
+
+
+## Real land cover (Scenery): every track's fields, roads, water... were cut
+## for the terrain grid the game builds, unpack whole, and every triangle
+## index stays inside its own tile.
+func test_land_cover() -> void:
+	print("land cover")
+	var kinds := 0
+	for f in DirAccess.get_files_at(Scenery.DIR):
+		if not f.ends_with(".json"):
+			continue
+		var id := f.get_basename()
+		var d: Dictionary = JsonData.load_json(Scenery.DIR + f)
+		var l: Dictionary = d.get("land", {})
+		check(not d.has("ground") and l.has("verts"), "%s: ground is modelled, not a picture" % id)
+		if not l.has("verts"):
+			continue
+		var t := TrackCatalog.load_track(id)
+		var tv := TrackView.new()
+		tv.setup(t, null)
+		var g := tv.terrain_grid()
+		check(is_equal_approx(float(l["cell"]), g[1]) and Vector2(l["origin"][0], l["origin"][1]).distance_to(g[0]) < 0.05
+			and Vector2i(int(l["n"][0]) + 1, int(l["n"][1]) + 1) == g[2], "%s: land cut for the game's terrain grid" % id)
+		var verts := Scenery._unpack(l, "verts").to_vector3_array()
+		var cols := Scenery._unpack(l, "cols").to_color_array()
+		var idx := Scenery._unpack(l, "idx").to_int32_array()
+		var ok := verts.size() == cols.size() and verts.size() > 1000
+		var tv_n := 0
+		var ti_n := 0
+		for ch in l["chunks"]:
+			var nv := int(ch[1])
+			for k in range(int(ch[2]), int(ch[2]) + int(ch[3])):
+				if idx[k] < 0 or idx[k] >= nv:
+					ok = false
+			tv_n += nv
+			ti_n += int(ch[3])
+		check(ok and tv_n == verts.size() and ti_n == idx.size(), "%s: land meshes unpack (%d triangles)" % [id, idx.size() / 3])
+		kinds = (l["kinds"] as Array).size()
+		tv.free()
+	var sh := FileAccess.get_file_as_string("res://modules/graphics/shaders/terrain.gdshader")
+	check(kinds > 0 and sh.count("const int K_") == kinds, "terrain shader knows every land kind (%d)" % kinds)
 
 
 ## Graphics effects: run-off and gravel are drawn at the height cars are
