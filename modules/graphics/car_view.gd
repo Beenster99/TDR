@@ -748,6 +748,9 @@ enum Highlight { NONE, SELF, PLAYER, GIVE_BACK, SAFETY }
 const HIGHLIGHT_SHADER := preload("res://modules/graphics/shaders/car_highlight.gdshader")
 const HIGHLIGHT_SELF := Color(1.0, 0.8, 0.22)
 const HIGHLIGHT_PLAYER := Color(0.3, 0.8, 1.0)
+## The render layer the outline is on (layer 20), so cameras that shouldn't
+## show it (the strategist's onboard camera, OnboardCamera) can leave it out.
+const HIGHLIGHT_LAYER := 1 << 19
 const HIGHLIGHT_GIVE_BACK := Color(1.0, 0.3, 0.12)
 var highlight: int = Highlight.NONE
 var _hl: MeshInstance3D
@@ -783,6 +786,7 @@ func set_highlight(kind: int) -> void:
 		pm.material = _hl_mat
 		_hl.mesh = pm
 		_hl.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		_hl.layers = HIGHLIGHT_LAYER
 		_hl.position = Vector3(def.body_offset, 0.05, 0)
 		add_child(_hl)
 		set_highlight_zoom(1.0)

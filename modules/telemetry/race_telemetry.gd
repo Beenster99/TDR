@@ -314,6 +314,12 @@ func _compute_gaps(sim: RaceSim) -> void:
 		else:
 			c.gap_leader = _gap(sim, i, leader)
 			c.interval = _gap(sim, i, order[p - 1])
+			# A car that has just got by is ahead on the road before the next
+			# timing loop says so: never show it closer to the leader than
+			# the car it passed.
+			var prev := sim.entries[order[p - 1]]
+			if p > 1 and not (prev.finished or prev.dnf):
+				c.gap_leader = maxf(c.gap_leader, cars[order[p - 1]].gap_leader)
 			c.laps_down = int(floor((sim.entries[leader].distance - e.distance) / track.length))
 	for p in order.size():
 		var c := cars[order[p]]
@@ -403,7 +409,7 @@ func _derive_feed(sim: RaceSim, out: Array) -> void:
 	if not forecast.changes.is_empty():
 		var ch: Dictionary = forecast.changes[0]
 		for mark in [600.0, 300.0, 120.0]:
-			var key := "%s@%d:%d" % [ch["weather"], int(mark), int(_race_time + ch["eta"]) / 30]
+			var key := "%s@%d:%d" % [ch["weather"], int(mark), int(ch.get("k", int(_race_time + ch["eta"]) / 30))]
 			if ch["eta"] <= mark and ch["eta"] > mark - 60.0 and not _announced_eta.has(key):
 				_announced_eta[key] = true
 				_say(out, "weather", -1, "Radar: %s in %s (%d%% likely)" % [
