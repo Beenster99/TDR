@@ -23,6 +23,9 @@ OUT = os.path.join(os.path.dirname(HERE), "data")
 STEP = 2.0          # metres between centre-line points
 GRID_CLEAR = 85.0   # no jumps this far behind the start line (the grid: 16 cars, 2 abreast)
 CROSS_CLEAR = 22.0  # no jumps this close to a crossover
+RUNOFF = 1.0        # the road runs right up to the walls: just this strip (still road) before them
+SCALE = 1.5         # every arena layout is drawn this much bigger than its curve
+                    # (the AI got lost in the tight 2026-11-03 arenas)
 
 
 def lemniscate(a, squash=1.0):
@@ -63,7 +66,7 @@ def pretzel(a, b):
 
 
 def sample(curve, n=4000):
-    pts = [curve(2.0 * math.pi * i / n) for i in range(n)]
+    pts = [tuple(SCALE * v for v in curve(2.0 * math.pi * i / n)) for i in range(n)]
     # resample at STEP metres
     out = [pts[0]]
     acc = 0.0
@@ -139,7 +142,7 @@ def build(spec):
         pts = [pts[0]] + list(reversed(pts[1:]))
     xs = crossings(pts)
     k = curvature(pts)
-    half = spec["width"] * 0.5
+    half = spec["width"] * SCALE * 0.5
     cl = [[round(p[0], 2), round(p[1], 2), half, half] for p in pts]
     # Jumps: at the given fractions, nudged to the straightest spot nearby
     # that is clear of the crossovers and the grid.
@@ -224,7 +227,7 @@ def build(spec):
         "centerline": cl,
         "start_index": 0,
         "sectors": [0.0, 0.333, 0.667],
-        "runoff_m": spec.get("runoff", 5.0),
+        "runoff_m": RUNOFF,
         "kerb_width_m": 0.9,
         "default_environment": spec.get("env", {"ambient_c": 17, "track_c": 22, "time_of_day_h": 19.5, "weather": "dry"}),
         "pit_lane": None,

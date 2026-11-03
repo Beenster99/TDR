@@ -635,22 +635,34 @@ func _update_light_bar(delta: float) -> void:
 
 # --- Player highlights -----------------------------------------------------------
 
-## set_highlight: no outline, this player's own car, or another human player.
-enum Highlight { NONE, SELF, PLAYER }
+## set_highlight: no outline, this player's own car, another human player, or
+## the car race control says you must give a place back to (let it past).
+enum Highlight { NONE, SELF, PLAYER, GIVE_BACK }
 const HIGHLIGHT_SHADER := preload("res://modules/graphics/shaders/car_highlight.gdshader")
 const HIGHLIGHT_SELF := Color(1.0, 0.8, 0.22)
 const HIGHLIGHT_PLAYER := Color(0.3, 0.8, 1.0)
+const HIGHLIGHT_GIVE_BACK := Color(1.0, 0.3, 0.12)
 var highlight: int = Highlight.NONE
 var _hl: MeshInstance3D
 var _hl_mat: ShaderMaterial
 var _hl_zoom := -1.0
+var _hl_strength := 0.6
+## Settings > Gameplay "highlight_fade": seconds the outline stays before it
+## fades away (0 = always on). wake_highlight() brings it back.
+var highlight_fade_s := 0.0
+var _hl_age := 0.0
+const HIGHLIGHT_FADE_TIME := 2.0   ## seconds the fade itself takes
+var _let_past: Label3D   ## "LET PAST" tag over the car (GIVE_BACK)
 
 
 ## A soft glowing outline on the ground round the car: warm gold for your own
 ## car (gently breathing), a quieter cyan for other people online. AI cars get
-## none. Stays readable when zoomed out (set_highlight_zoom).
+## none. The car you must give a place back to gets a strong pulsing
+## orange-red outline and a "LET PAST" tag that stays the same size on screen
+## at every zoom. Stays readable when zoomed out (set_highlight_zoom).
 func set_highlight(kind: int) -> void:
 	highlight = kind
+	_show_let_past(kind == Highlight.GIVE_BACK)
 	if kind == Highlight.NONE:
 		if _hl:
 			_hl.visible = false
@@ -669,9 +681,69 @@ func set_highlight(kind: int) -> void:
 		set_highlight_zoom(1.0)
 	_hl.visible = true
 	var mine := kind == Highlight.SELF
-	_hl_mat.set_shader_parameter("tint", HIGHLIGHT_SELF if mine else HIGHLIGHT_PLAYER)
-	_hl_mat.set_shader_parameter("strength", 0.6 if mine else 0.38)
-	_hl_mat.set_shader_parameter("pulse", 1.0 if mine else 0.0)
+	var give := kind == Highlight.GIVE_BACK
+	_hl_mat.set_shader_parameter("tint", HIGHLIGHT_GIVE_BACK if give else (HIGHLIGHT_SELF if mine else HIGHLIGHT_PLAYER))
+	_hl_strength = 1.0 if give else (0.6 if mine else 0.38)
+	_hl_mat.set_shader_parameter("pulse", 1.0 if mine or give else 0.0)
+	_hl_mat.set_shader_parameter("pulse_rate", 7.0 if give else 3.0)
+	_apply_highlight_fade()
+
+
+## Shows a faded outline again, at full strength, and restarts its timer.
+func wake_highlight() -> void:
+	_hl_age = 0.0
+	_apply_highlight_fade()
+
+
+## How much of the outline is left (1 = full, 0 = faded away).
+func highlight_alpha() -> float:
+	if highlight == Highlight.NONE:
+		return 0.0
+	if highlight_fade_s <= 0.0 or highlight == Highlight.GIVE_BACK:   # race control's call never fades
+		return 1.0
+	return 1.0 - smoothstep(highlight_fade_s, highlight_fade_s + HIGHLIGHT_FADE_TIME, _hl_age)
+
+
+func _tick_highlight(delta: float) -> void:
+	if _hl == null or highlight == Highlight.NONE or highlight_fade_s <= 0.0:
+		return
+	if _hl_age > highlight_fade_s + HIGHLIGHT_FADE_TIME:
+		return
+	_hl_age += delta
+	_apply_highlight_fade()
+
+
+func _apply_highlight_fade() -> void:
+	if _hl == null:
+		return
+	var a := highlight_alpha()
+	_hl.visible = a > 0.001
+	_hl_mat.set_shader_parameter("strength", _hl_strength * a)
+
+
+## The floating "LET PAST" tag: drawn over everything, facing the camera, a
+## fixed size on screen and sitting just above the car's outline.
+func _show_let_past(show: bool) -> void:
+	if _let_past == null:
+		if not show:
+			return
+		_let_past = Label3D.new()
+		_let_past.name = "LetPast"
+		_let_past.text = "LET PAST"
+		_let_past.font_size = 40
+		_let_past.outline_size = 14
+		_let_past.modulate = Color(1.0, 0.55, 0.3)
+		_let_past.outline_modulate = Color(0.2, 0.02, 0.0, 0.9)
+		_let_past.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		_let_past.fixed_size = true
+		_let_past.pixel_size = 0.0006
+		_let_past.no_depth_test = true
+		_let_past.render_priority = 10
+		_let_past.outline_render_priority = 9
+		_let_past.offset = Vector2(0, 50)
+		_let_past.position = Vector3(def.body_offset, 2.0, 0)
+		add_child(_let_past)
+	_let_past.visible = show
 
 
 ## Zoomed out (camera far away), the outline gets thicker so a player's car
@@ -1191,6 +1263,7 @@ func _process(delta: float) -> void:
 	if state == null or not visible:
 		return
 	_update_light_bar(delta)
+	_tick_highlight(delta)
 	if not _init_done or pos2.distance_to(state.pos) > 6.0:
 		pos2 = state.pos
 		heading = state.heading

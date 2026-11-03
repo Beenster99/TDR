@@ -238,7 +238,7 @@ func item_size(id: String) -> Vector2:
 		"hint": return Vector2(260, 20)
 		"pitguide": return Vector2(440, 74)
 		"lights": return Vector2(224, 44)
-		"flags": return Vector2(520, 58)
+		"flags": return Vector2(520, 84.0 if _giving_back(me) else 58.0)
 		"radio": return _radio_size()
 		"messages": return Vector2(1000, 50)
 	return Vector2.ZERO
@@ -402,6 +402,8 @@ func _draw() -> void:
 		draw_set_transform(r.position, 0.0, Vector2(s, s))
 		_draw_item(id, me, r.size / s)
 	draw_set_transform(Vector2.ZERO)
+	if not editing:
+		_draw_give_back_pointer(me)
 	if me < 0 and not editing:
 		_text(Vector2(20, 40), "SPECTATING", 22)
 
@@ -615,6 +617,12 @@ func _pit_panel_height(me: int) -> float:
 ## of the limit, and when to brake (PitRules.guide_info). pit_guide_on:
 ## Settings > Gameplay > Pit lane guide.
 var pit_guide_on := true
+## The car race control told us to give a place back to (-1 none, -2 the
+## safety car); the race scene keeps it up to date. car_screen_pos(i) gives
+## that car's spot on screen (null when it can't), for the pointer to it.
+var give_back_to := -1
+var car_screen_pos: Callable
+const GIVE_BACK_COL := Color(1.0, 0.42, 0.2)
 const SAMPLE_GUIDE := {"stage": "approach", "to_limit": 180.0, "limit": 16.67, "speed": 52.0, "brake_at": 135.0}
 
 
@@ -1035,6 +1043,69 @@ func _draw_race_control(me: int) -> void:
 			draw_rect(r, Color(0, 0, 0, 0.6))
 		var warn := rc.give_back.has(me)
 		_text(Vector2(r.position.x, y), line, 17, Color(1, 0.5, 0.3) if warn else Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, w)
+		if _giving_back(me):
+			_draw_give_back_row(me, Vector2(0, y + 6), w)
+
+
+## Is our car under orders to give a place back (and to whom we know)?
+func _giving_back(me: int) -> bool:
+	return me >= 0 and give_back_to != -1 and session.sim.race_control.give_back.has(me)
+
+
+## Under the give-back order: the car to let past (its colour, model and
+## where it is from us), in the same orange-red as its outline on track.
+func _draw_give_back_row(me: int, at: Vector2, w: float) -> void:
+	var sim := session.sim
+	draw_rect(Rect2(at.x, at.y, w, 24), Color(0, 0, 0, 0.6))
+	draw_rect(Rect2(at.x, at.y, 4, 24), GIVE_BACK_COL)
+	var what := ""
+	var gap := 0.0
+	if give_back_to == RaceControl.GIVE_BACK_SC:
+		what = "Safety car"
+		gap = sim.race_control.gap_to_sc(me)
+		if gap > sim.track.length * 0.5:
+			gap -= sim.track.length
+	else:
+		var j := give_back_to
+		draw_rect(Rect2(at.x + 12, at.y + 5, 14, 14), sim.defs[j].colour)
+		what = "%s  P%d" % [sim.defs[j].display_name, sim.running_order.find(j) + 1]
+		gap = sim.entries[j].distance - sim.entries[me].distance
+	var where := "alongside"
+	if gap > 4.0:
+		where = "%d m ahead" % roundi(gap)
+	elif gap < -4.0:
+		where = "%d m behind you" % roundi(-gap)
+	_text(Vector2(at.x, at.y + 18), "LET PAST:  %s  -  %s" % [what, where], 15, GIVE_BACK_COL, HORIZONTAL_ALIGNMENT_CENTER, w)
+
+
+## When the car to let past is off screen, an arrow on the screen's edge
+## points to it (the 3D "LET PAST" tag marks it once it's in view).
+func _draw_give_back_pointer(me: int) -> void:
+	if not _giving_back(me) or not car_screen_pos.is_valid():
+		return
+	var sp = car_screen_pos.call(give_back_to)
+	if not (sp is Vector2):
+		return
+	var view := Rect2(Vector2.ZERO, size)
+	if view.grow(-30.0).has_point(sp):
+		return
+	var c := view.get_center()
+	var d: Vector2 = sp - c
+	if d.length() < 1.0:
+		return
+	var inner := view.grow(-44.0)
+	var half := inner.size * 0.5
+	var k := minf(half.x / maxf(absf(d.x), 0.001), half.y / maxf(absf(d.y), 0.001))
+	var tip := c + d * k
+	var dir := d.normalized()
+	var side := dir.orthogonal()
+	var pulse := 0.75 + 0.25 * sin(Time.get_ticks_msec() * 0.007)
+	var col := Color(GIVE_BACK_COL, pulse)
+	draw_colored_polygon(PackedVector2Array([tip + dir * 18.0, tip - dir * 10.0 + side * 16.0, tip - dir * 10.0 - side * 16.0]), col)
+	draw_polyline(PackedVector2Array([tip + dir * 18.0, tip - dir * 10.0 + side * 16.0, tip - dir * 10.0 - side * 16.0, tip + dir * 18.0]),
+		Color(0, 0, 0, 0.7), 2.0)
+	var label_at := tip - dir * 40.0 + Vector2(-60, 5)
+	_text(label_at, "LET PAST", 14, col, HORIZONTAL_ALIGNMENT_CENTER, 120)
 
 
 func _leader_lap() -> int:
@@ -1130,7 +1201,10 @@ func _draw_standings(me: int) -> void:
 	for p in rows:
 		var i := sim.running_order[p]
 		var e := sim.entries[i]
-		var col := Color(1, 0.9, 0.3) if i == me else (Color(0.75, 0.85, 1) if not e.is_ai else Color.WHITE)
+		var kind := row_kind(i, me)
+		var col := row_text_colour(kind)
+		if kind != ROW_AI:
+			_draw_player_row(Rect2(x0 - 6, 30 + p * 22, 320, 20), kind)
 		var right := _status_text(i)
 		if right == "" and p > 0:
 			var gap := sim.entries[sim.running_order[0]].distance - e.distance
@@ -1216,17 +1290,27 @@ func _draw_tower(me: int) -> void:
 		prev = p
 		var i := sim.running_order[p]
 		var e := sim.entries[i]
-		var mine := i == me
+		var kind := row_kind(i, me)
+		var mine := kind == ROW_ME
+		var row := Rect2(x + 2, y, TOWER_W - 4, TOWER_ROW)
 		if mine:
-			draw_rect(Rect2(x + 2, y, TOWER_W - 4, TOWER_ROW), Color(1, 0.85, 0.2, 0.22))
+			_draw_player_row(row, kind)
+		elif i == give_back_to and _giving_back(me):
+			draw_rect(row, Color(GIVE_BACK_COL, 0.3))
+		elif kind != ROW_AI:
+			_draw_player_row(row, kind)
 		elif p % 2 == 1:
-			draw_rect(Rect2(x + 2, y, TOWER_W - 4, TOWER_ROW), Color(1, 1, 1, 0.04))
-		var col := Color(1, 0.92, 0.45) if mine else (Color(0.75, 0.85, 1) if not e.is_ai else Color.WHITE)
+			draw_rect(row, Color(1, 1, 1, 0.04))
+		var col := row_text_colour(kind)
 		var base := y + TOWER_ROW - 6.0
 		draw_rect(Rect2(x + 4, y + 3, 4, TOWER_ROW - 6), sim.defs[i].colour)
-		_text(Vector2(x + 12, base), str(p + 1), 16, col, HORIZONTAL_ALIGNMENT_RIGHT, 26)
+		if kind != ROW_AI:   # position in a solid tag, like a TV graphic
+			draw_rect(Rect2(x + 11, y + 2, 30, TOWER_ROW - 4), ROW_ME_COLOUR if mine else ROW_PLAYER_COLOUR)
+			draw_string(font, Vector2(x + 12, base), str(p + 1), HORIZONTAL_ALIGNMENT_RIGHT, 26, 16, Color(0.05, 0.05, 0.08))
+		else:
+			_text(Vector2(x + 12, base), str(p + 1), 16, col, HORIZONTAL_ALIGNMENT_RIGHT, 26)
 		draw_badge(Rect2(x + 44, y + 3, 36, TOWER_ROW - 6), sim.defs[i])
-		_text(Vector2(x + 86, base), short_name(e.at_wheel()), 15, col)
+		_text(Vector2(x + 86, base), short_name(e.at_wheel()), 16 if mine else 15, col)
 		var tc: CarTelemetry = tel.cars[i] if tel != null and i < tel.cars.size() else null
 		var last := e.lap_times[-1] if e.lap_times.size() > 0 else 0.0
 		var last_col := Color(1, 1, 1, 0.8)
@@ -1245,6 +1329,45 @@ func _draw_tower(me: int) -> void:
 		if e.penalty_s > 0.0:
 			_text(Vector2(x + 166, base), "+%ds" % int(e.penalty_s), 11, Color(1, 0.55, 0.3))
 		y += TOWER_ROW
+
+
+## Tower and standings rows: this player's car (or the team's car on the pit
+## wall), a car another person online is driving, or an AI car.
+const ROW_AI := 0
+const ROW_ME := 1
+const ROW_PLAYER := 2
+const ROW_ME_COLOUR := Color(1.0, 0.8, 0.22)
+const ROW_PLAYER_COLOUR := Color(0.3, 0.75, 1.0)
+
+
+func row_kind(i: int, me: int) -> int:
+	var mine := me if me >= 0 else session.team_car
+	if i == mine:
+		return ROW_ME
+	var e := session.sim.entries[i]
+	if not e.is_ai or e.is_player_driving():
+		return ROW_PLAYER
+	return ROW_AI
+
+
+static func row_text_colour(kind: int) -> Color:
+	match kind:
+		ROW_ME: return Color(1, 0.95, 0.7)
+		ROW_PLAYER: return Color(0.8, 0.92, 1)
+	return Color.WHITE
+
+
+## A player's row stands right out: a strong tinted band with a bright frame
+## and a solid edge stripe, gold for you (gently breathing so the eye finds
+## it), blue for other people online.
+func _draw_player_row(r: Rect2, kind: int) -> void:
+	var c := ROW_ME_COLOUR if kind == ROW_ME else ROW_PLAYER_COLOUR
+	var glow := 1.0
+	if kind == ROW_ME:
+		glow = 0.85 + 0.15 * sin(Time.get_ticks_msec() * 0.004)
+	draw_rect(r, Color(c, 0.42 * glow))
+	draw_rect(r.grow(-1.0), Color(c, 0.95), false, 2.0)
+	draw_rect(Rect2(r.end.x - 7.0, r.position.y, 7.0, r.size.y), c)
 
 
 ## Gap from car `behind` to car `ahead`: whole laps when it's been lapped,

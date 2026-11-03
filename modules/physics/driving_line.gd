@@ -41,6 +41,13 @@ var zones: Array = []
 ## only" driving line shows only where this is up.
 var corner := PackedFloat32Array()
 var length := 0.0
+## Rallycross joker line only (build_joker): joker metres of each point on
+## the joker lane (-1 on the lap), and branch, 1 where the line has left the
+## lap for the joker (soft at both ends), so the view can show just that bit.
+var joker_d := PackedFloat64Array()
+var branch := PackedFloat32Array()
+const BRANCH_LEAD := 40.0      ## m of the lap shown before the joker turns off
+const BRANCH_TAIL := 12.0      ## m of the lap shown after it rejoins
 
 
 static func build(track: TrackData, def: CarDefinition, compound: TyreCompound) -> DrivingLine:
@@ -49,6 +56,53 @@ static func build(track: TrackData, def: CarDefinition, compound: TyreCompound) 
 	dl._profile(track, def, compound)
 	dl._find_zones()
 	dl._find_corners()
+	return dl
+
+
+## Rallycross: the same aid round the lap with the joker lane taken instead
+## of the stretch of lap it replaces (the line every car drives once a race).
+## Null on a track without a joker.
+static func build_joker(track: TrackData, def: CarDefinition, compound: TyreCompound) -> DrivingLine:
+	if not track.has_joker():
+		return null
+	var src := track.raceline if track.raceline.size() > 10 else track.points
+	var n := src.size()
+	var keep := PackedByteArray()
+	keep.resize(n)
+	var hint := -1
+	for k in n:
+		var q := track.project(src[k], hint)
+		hint = q["idx"]
+		keep[k] = 0 if track.joker_spans(q["s"]) else 1
+	# Start just after the skipped stretch, so the splice sits in one piece.
+	var first := 0
+	for k in n:
+		if keep[k] == 1 and keep[(k - 1 + n) % n] == 0:
+			first = k
+			break
+	var path := PackedVector2Array()
+	var jd := PackedFloat64Array()
+	var spliced := false
+	for j in n:
+		var k := (first + j) % n
+		if keep[k] == 1:
+			path.append(src[k])
+			jd.append(-1.0)
+		elif not spliced:
+			spliced = true
+			var steps := maxi(2, int(track.joker_length / 2.0))
+			for m in steps + 1:
+				var d := track.joker_length * float(m) / steps
+				path.append(track.joker_position_at(d))
+				jd.append(d)
+	if not spliced:
+		return null
+	var dl := DrivingLine.new()
+	dl._resample(track, path, jd)
+	dl._profile(track, def, compound)
+	dl._find_zones()
+	dl._find_corners()
+	dl._find_branch()
 	return dl
 
 
@@ -81,8 +135,10 @@ func locate(pos: Vector2, hint := -1) -> int:
 	return best
 
 
-func _resample(track: TrackData) -> void:
-	var src := track.raceline if track.raceline.size() > 10 else track.points
+## src_jd: joker metres of each source point (-1 = on the lap), or empty.
+func _resample(track: TrackData, src := PackedVector2Array(), src_jd := PackedFloat64Array()) -> void:
+	if src.is_empty():
+		src = track.raceline if track.raceline.size() > 10 else track.points
 	var n := src.size()
 	var total := 0.0
 	for i in n:
@@ -99,10 +155,21 @@ func _resample(track: TrackData) -> void:
 			seg_start += seg_len
 			seg = (seg + 1) % n
 			seg_len = src[seg].distance_to(src[(seg + 1) % n])
-		points.append(src[seg].lerp(src[(seg + 1) % n], (s - seg_start) / maxf(seg_len, 0.001)))
+		var f := (s - seg_start) / maxf(seg_len, 0.001)
+		points.append(src[seg].lerp(src[(seg + 1) % n], f))
 		dist.append(s)
+		if not src_jd.is_empty():
+			var ja := src_jd[seg]
+			var jb := src_jd[(seg + 1) % n]
+			joker_d.append(lerpf(ja, jb, f) if ja >= 0.0 and jb >= 0.0 else -1.0)
 	var hint := -1
 	for k in count:
+		if not joker_d.is_empty() and joker_d[k] >= 0.0:
+			# On the joker lane: it counts as the stretch of lap it replaces.
+			track_s.append(track.joker_lap_s(joker_d[k]))
+			offset.append(0.0)
+			hint = -1
+			continue
 		var q := track.project(points[k], hint)
 		hint = q["idx"]
 		track_s.append(q["s"])
@@ -133,7 +200,8 @@ func _profile(track: TrackData, def: CarDefinition, tc: TyreCompound) -> void:
 	var grade := PackedFloat64Array()
 	grade.resize(n)
 	for k in n:
-		vc[k] = track.vertical_curvature_at(track_s[k])
+		var on_joker := not joker_d.is_empty() and joker_d[k] >= 0.0
+		vc[k] = 0.0 if on_joker else track.vertical_curvature_at(track_s[k])
 		grade[k] = track.grade_at(track_s[k])
 		var mu_c := mu * CORNER_GRIP
 		var den := m * maxf(absf(curv[k]), 1e-5) - mu_c * aero * AERO_TRUST - mu_c * m * vc[k]
@@ -253,3 +321,39 @@ func _find_corners() -> void:
 			gap[k] = minf(gap[k], d)
 	for k in n:
 		corner[k] = 1.0 - smoothstep(0.0, fade, gap[k])
+
+
+## branch (see above): 1 on the joker lane, plus a lead-in before it turns
+## off the lap and a short run after it rejoins, faded at both ends.
+func _find_branch() -> void:
+	var n := points.size()
+	branch = PackedFloat32Array()
+	branch.resize(n)
+	if joker_d.size() != n or n == 0:
+		return
+	var step := length / n
+	var lead := BRANCH_LEAD / step
+	var tail := BRANCH_TAIL / step
+	var fade := maxf(CORNER_FADE / step, 1.0)
+	# Points to the next joker point ahead, and since the last one behind.
+	var far := float(n)
+	var to_next := PackedFloat32Array()
+	to_next.resize(n)
+	var since := PackedFloat32Array()
+	since.resize(n)
+	to_next.fill(far)
+	since.fill(far)
+	for _pass in 2:
+		var d := far
+		for k in n:
+			d = 0.0 if joker_d[k] >= 0.0 else d + 1.0
+			since[k] = minf(since[k], d)
+		d = far
+		for j in n:
+			var k := n - 1 - j
+			d = 0.0 if joker_d[k] >= 0.0 else d + 1.0
+			to_next[k] = minf(to_next[k], d)
+	for k in n:
+		var a := 1.0 - smoothstep(lead, lead + fade, to_next[k])
+		var b := 1.0 - smoothstep(tail, tail + fade, since[k])
+		branch[k] = maxf(a, b)
