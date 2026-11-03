@@ -3786,7 +3786,7 @@ func test_handbrake() -> void:
 		var track := TrackCatalog.load_track(track_id)
 		var env := SimEnvironment.new()
 		env.bind_track(track)
-		var s0 := 40.0
+		var s0 := 20.0 if track_id == "derby_mudflat_infinity" else 40.0   # on the tarmac before the dirt
 		var yaw := []
 		var speed := []
 		for hb in [false, true]:
