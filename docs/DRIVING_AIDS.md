@@ -39,9 +39,11 @@ be hit, knocked down or damaged. The numbers face the camera.
 
 ## Steering
 
-Steering lock falls with speed (`LocalInput.steer_lock`: full lock at a
-standstill, 50% at 58 km/h, 14% from about 350 km/h), so a full stick or a
-held key turns the car about as hard at 250 km/h as at 80. Keyboard steering
+Steering lock falls with speed (`LocalInput.steer_lock`: full lock up to
+about 29 km/h, 67% at 54 km/h, 50% at 80 km/h, 18% at 250 km/h, never below
+14%), so a full stick or a held key turns the car about as hard at 250 km/h as
+at 80, while hairpins, the pit lane and turning round after a spin get most
+or all of the lock. Keyboard steering
 winds on more slowly at speed (`LocalInput.key_steer`), so a tap is a small
 correction.
 

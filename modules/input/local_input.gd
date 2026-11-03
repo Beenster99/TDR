@@ -10,7 +10,11 @@ const KEY_STEER_RATE_FAST := 1.6 ## per second, flat out (a tap is a small corre
 const KEY_CENTER_RATE := 6.0
 ## Speed-sensitive lock: share of full lock left at speed (v in m/s), so
 ## the same stick or key moves the car about as much at 250 km/h as at 80.
-const LOCK_SPEED := 16.0
+## Full lock is kept up to LOCK_FULL_SPEED (hairpins, the pit lane, turning
+## round after a spin), then it falls off; from about 200 km/h up it is the
+## same as before.
+const LOCK_FULL_SPEED := 8.0    ## m/s (about 29 km/h)
+const LOCK_SPEED := 14.0
 const LOCK_MIN := 0.14
 const KEY_PEDAL_RATE := 8.0
 const PAD_STEER_RATE := 7.0     ## per second: takes the twitch out of stick flicks
@@ -57,7 +61,8 @@ func read(dt: float, speed_mps: float) -> CarInput:
 
 ## Speed-sensitive steering: full lock at low speed, less at high speed.
 static func steer_lock(speed_mps: float) -> float:
-	return clampf(1.0 / (1.0 + speed_mps / LOCK_SPEED), LOCK_MIN, 1.0)
+	var over := maxf(absf(speed_mps) - LOCK_FULL_SPEED, 0.0)
+	return clampf(1.0 / (1.0 + over / LOCK_SPEED), LOCK_MIN, 1.0)
 
 
 ## Keyboard steering: a held key winds the steering on like a stick (slower
