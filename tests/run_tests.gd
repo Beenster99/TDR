@@ -64,6 +64,7 @@ func _init() -> void:
 	test_graphics_effects()
 	test_pit_lane_blend()
 	test_settings_and_units()
+	test_pause_menu()
 	test_rebinding()
 	test_grid_limits()
 	test_garage_saves()
@@ -2113,6 +2114,8 @@ func test_marshals_clear_debris() -> void:
 	var limit := 0.0
 	var penalties := []
 	var snap := {}
+	var unsafe := 0
+	var waited := false
 	while sim.phase != RaceSim.Phase.FINISHED and sim.tick < 60 * 60 * 10:
 		if not placed and sim.phase == RaceSim.Phase.RACING and sim.race_time > 20.0:
 			placed = true
@@ -2136,6 +2139,14 @@ func test_marshals_clear_debris() -> void:
 				snap = rc.to_dict(true)
 			var at: float = rc.marshal_jobs[0]["s"]
 			limit = rc.double_yellow_limit(at)
+			var mj: Dictionary = rc.marshal_jobs[0]
+			waited = waited or (mj["phase"] == "wait" and float(mj["t"]) > 1.0)
+			if TrackMarshals.on_track(mj):
+				for i in sim.car_count():
+					if sim.entries[i].dnf or sim.entries[i].finished:
+						continue
+					if fposmod(at - before[i], track.length) < 40.0 and fposmod(sim.cars[i].track_s - at, track.length) < 40.0:
+						unsafe += 1
 			for i in sim.car_count():
 				if fposmod(at - before[i], track.length) < 60.0 and fposmod(sim.cars[i].track_s - at, track.length) < 60.0:
 					fastest = maxf(fastest, sim.cars[i].speed())
@@ -2143,6 +2154,7 @@ func test_marshals_clear_debris() -> void:
 	check(rc.double_yellow_at(marshal_s) == false and rc.marshal_jobs.is_empty() and ev.get("flag:clear", 0) >= 1, "debris cleared, marshals back, flags withdrawn")
 	check(fastest > 1.0 and fastest <= limit * TrackMarshals.DOUBLE_TOLERANCE, "AI slows down past the marshals (%d km/h, limit %d)" % [roundi(fastest * 3.6), roundi(limit * 3.6)])
 	check(penalties.filter(func(r): return str(r).contains("marshals")).is_empty(), "no double yellow penalties for the AI (%s)" % str(penalties))
+	check(unsafe == 0 and waited, "circuit marshals wait for a gap; no car went past while they were on the track (%d)" % unsafe)
 	check(snap.has("marshal_jobs") and snap["full"].has("debris"), "marshals and debris go into snapshots and the race state")
 	# Too fast past them: penalty.
 	var race2 := _race(settings, _data())
@@ -3122,6 +3134,31 @@ func test_settings_and_units() -> void:
 	gd.prefs["power_unit"] = "ps"
 	check(Units.power(441.0) == "600 PS", "PS when chosen (%s)" % Units.power(441.0))
 	Units.prefs = {}
+	gd.free()
+
+
+## The in-race pause menu (Esc / Start): what it offers offline, to the
+## online host and to a guest, and the settings it lets the player change.
+func test_pause_menu() -> void:
+	print("pause menu")
+	check(InputSetup.KEYS["back_to_menu"].has(KEY_ESCAPE) and InputSetup.PAD_BUTTONS["back_to_menu"].has(JOY_BUTTON_START),
+		"Esc and the controller's Start open the pause menu")
+	var off := PauseOptions.button_ids(false, false)
+	check(off == ["resume", "restart", "settings", "menu", "desktop"], "offline: resume, restart, settings, quit to menu, quit to desktop")
+	check(PauseOptions.button_ids(true, true).has("lobby"), "online host can also end the race for everyone")
+	check(not PauseOptions.button_ids(true, false).has("lobby"), "a guest can't end the race")
+	check(PauseOptions.label_for("restart", true, true).contains("everyone"), "the host's restart says it restarts for everyone")
+	var gd = load("res://modules/core/game_data.gd").new()
+	gd.persist_prefs = false
+	gd._register_defaults()
+	for sec in PauseOptions.RACE_SECTIONS:
+		check(sec in gd.SECTIONS, "in-race Settings > %s is a real section" % sec)
+	check(not "garage" in PauseOptions.RACE_SECTIONS, "the garage (car upgrades) isn't in the in-race settings")
+	for key in ["driving_help", "aid_track_assist", "manual_gears"]:
+		check(key in PauseOptions.LOCKED_IN_RACE and not gd.setting_info(key).is_empty(),
+			"%s (how the car drives) is locked during a race" % key)
+	for key in ["aid_driving_line", "units", "vol_master", "display_mode"]:
+		check(not key in PauseOptions.LOCKED_IN_RACE, "%s can still be changed in a race" % key)
 	gd.free()
 
 
