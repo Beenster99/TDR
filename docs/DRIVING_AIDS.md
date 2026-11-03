@@ -34,6 +34,21 @@ turning (tighter than 250 m radius, at most 250 m) and 20 m on; plus any bend
 tighter than 125 m radius taken flat out. The edges fade over 16 m. On most
 circuits that is about half the lap (35% at Monza, 72% at the Hungaroring).
 
+Rallycross joker: `DrivingLine.build_joker` makes a second line round the lap
+that takes the joker lane instead of the stretch of lap it replaces (the
+racing line up to the turn-off, the joker's centre line, then the racing line
+again; braking speeds from the same car model). `joker_d` marks the points on
+the joker lane and `branch` is 1 there, plus 40 m of lead-in before the
+turn-off and 12 m after it rejoins. The race scene draws it with a second
+`DrivingLineView` (`WorldView.add_joker_line`, same Full / Corners only / Off
+and braking colour settings as the lap's line):
+
+- joker still owed (not in qualifying): the lap's line as usual, plus the
+  joker branch only, dashed, so the fork shows which way the joker goes;
+- on the joker lane (`CarState.in_joker`): the joker line all the way, solid,
+  and the lap's line hidden;
+- joker done: the joker line is hidden.
+
 ## Brake marker boards
 
 `BrakeBoards` (graphics) puts numbered boards before every braking zone on the
