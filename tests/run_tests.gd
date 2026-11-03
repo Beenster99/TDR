@@ -48,6 +48,7 @@ func _init() -> void:
 	test_telemetry(replay)
 	test_weather_forecast()
 	test_race_control_rules()
+	test_give_back_highlight()
 	test_yellow_flags_for_incidents()
 	test_safety_car_race()
 	test_car_recovery()
@@ -62,6 +63,7 @@ func _init() -> void:
 	test_race_start()
 	test_driving_aids()
 	test_active_pad()
+	test_pointer_hider()
 	test_hud_timing()
 	test_hud_layout()
 	test_graphics_effects()
@@ -75,6 +77,7 @@ func _init() -> void:
 	test_rallycross()
 	test_rallycross_marshals()
 	test_joker_lanes()
+	test_joker_driving_line()
 	test_handbrake()
 	print("\n%s (%d failures, %.1fs)" % ["PASS" if failures == 0 else "FAIL", failures, (Time.get_ticks_msec() - t0) / 1000.0])
 	quit(1 if failures > 0 else 0)
@@ -2407,6 +2410,48 @@ func test_yellow_flags_for_incidents() -> void:
 	print("    AI race: %d contacts, %d yellow flags" % [contacts, yellow_flags])
 
 
+## The car you must give a place back to is picked out (outline + "LET PAST"
+## tag) until you've let it past, and the HUD names it.
+func test_give_back_highlight() -> void:
+	print("give-back highlight")
+	var d := _data()
+	var settings := RaceSettings.new()
+	settings.ai_count = 4
+	settings.laps = 1
+	var sim: RaceSim = _race(settings, d)["sim"]
+	var rc := sim.race_control
+	sim.phase = RaceSim.Phase.RACING
+	for c in sim.cars:
+		c.vel = Vector2.from_angle(c.heading) * 40.0
+	check(rc.give_back_target(1) == -1, "no give-back order: nothing highlighted")
+	rc._deploy_sc("test")
+	rc._prev_order = [0, 1, 2, 3]
+	sim.entries[1].distance = sim.entries[0].distance + 10.0
+	sim._update_positions()
+	rc._check_overtakes()
+	check(rc.give_back_target(1) == 0, "passed car 0 under the SC: car 0 is the one to let past")
+	check(rc.give_back_target(2) == -1, "other cars have nothing to give back")
+	# The 3D marker on that car.
+	var v := CarView.new()
+	v.setup(sim.defs[0], sim.cars[0], "test", false)
+	v.set_highlight(CarView.Highlight.GIVE_BACK)
+	var tag := v.get_node_or_null("LetPast") as Label3D
+	check(tag != null and tag.visible and tag.text == "LET PAST" and tag.fixed_size and tag.no_depth_test,
+		"the car to let past gets a LET PAST tag, same size on screen at every zoom, never hidden")
+	check(v.get_node_or_null("Highlight") != null and v.get_node("Highlight").visible, "and an outline on the ground")
+	v.set_highlight(CarView.Highlight.NONE)
+	check(not tag.visible and not v.get_node("Highlight").visible, "both go when the order is over")
+	v.free()
+	# Let it back past: the order and the highlight clear.
+	sim.entries[0].distance = sim.entries[1].distance + 5.0
+	sim._update_positions()
+	rc._check_overtakes()
+	check(rc.give_back_target(1) == -1 and sim.entries[1].penalty_s == 0.0, "place given back: highlight cleared, no penalty")
+	# Passing the safety car: the safety car is the one to drop behind.
+	rc.give_back[2] = {"victim": -2, "until": sim.race_time + 5.0, "why": "test"}
+	check(rc.give_back_target(2) == RaceControl.GIVE_BACK_SC, "passing the safety car: the safety car is highlighted")
+
+
 ## Rules without driving: penalties, classification, overtaking rules, sync.
 func test_race_control_rules() -> void:
 	print("race control rules")
@@ -3302,6 +3347,12 @@ func test_pause_menu() -> void:
 	check(PauseOptions.button_ids(true, true).has("lobby"), "online host can also end the race for everyone")
 	check(not PauseOptions.button_ids(true, false).has("lobby"), "a guest can't end the race")
 	check(PauseOptions.label_for("restart", true, true).contains("everyone"), "the host's restart says it restarts for everyone")
+	for id in ["restart", "lobby", "menu", "desktop"]:
+		check(PauseOptions.confirm_text(id, true, true).size() == 3 and PauseOptions.confirm_text(id, false, false).size() == 3,
+			"%s asks \"are you sure?\" (Yes / No popup)" % id)
+	check(PauseOptions.confirm_text("resume", false, false).is_empty() and PauseOptions.confirm_text("settings", false, false).is_empty(),
+		"resume and settings don't ask")
+	check(PauseOptions.confirm_text("menu", true, true)[1].contains("everyone"), "the host is told quitting closes the race for everyone")
 	var gd = load("res://modules/core/game_data.gd").new()
 	gd.persist_prefs = false
 	gd._register_defaults()
@@ -3522,6 +3573,35 @@ func test_race_start() -> void:
 ## A second "controller" with an axis stuck off centre (a pedal set, a
 ## motion sensor, a virtual pad) must not steer or zoom: only the pad in use
 ## feeds the stick and trigger actions.
+func test_pointer_hider() -> void:
+	print("mouse pointer while driving")
+	var p := PointerHider.new()
+	p.step(1.0, true)
+	check(not p.hidden, "the pointer stays a moment after the race starts")
+	p.step(1.0, true)
+	check(p.hidden, "driving: the pointer hides when the mouse is left alone")
+	var wheel := InputEventMouseButton.new()
+	wheel.button_index = MOUSE_BUTTON_WHEEL_UP
+	wheel.pressed = true
+	p._input(wheel)
+	check(p.hidden, "zooming with the wheel keeps it hidden")
+	var jitter := InputEventMouseMotion.new()
+	jitter.relative = Vector2(1, 0)
+	p._input(jitter)
+	check(p.hidden, "a pixel of jitter keeps it hidden")
+	var move := InputEventMouseMotion.new()
+	move.relative = Vector2(20, 5)
+	p._input(move)
+	check(not p.hidden, "moving the mouse brings it back")
+	p.step(2.0, true)
+	check(p.hidden, "... and it hides again when the mouse stops")
+	p.step(0.1, false)
+	check(not p.hidden, "a menu, pit wall or crew job shows it straight away")
+	p.step(5.0, false)
+	check(not p.hidden, "... and keeps it while not driving")
+	p.free()
+
+
 func test_active_pad() -> void:
 	print("active controller")
 	if not InputMap.has_action("steer_right"):
@@ -3972,6 +4052,41 @@ func test_rallycross() -> void:
 ## Rallycross: no yellow flags, VSC or safety car. Marshals only go onto the
 ## track in the gaps between cars, run off when one is coming, and finish the
 ## job over several gaps; a retired car is pushed off in a gap.
+## The driving line through the joker lane (rallycross): one line round the
+## lap that takes the joker, its branch flag up on the joker, none on circuits.
+func test_joker_driving_line() -> void:
+	print("joker driving line")
+	var d := _data()
+	var def: CarDefinition = d["cars"].get("skoda_fabia_rx")
+	var tc: TyreCompound = TyreCatalog.load_all().get(def.tyre_compound_id)
+	for id in TrackCatalog.ids_for(TrackCatalog.list_all(), RaceSettings.DISCIPLINE_RALLYCROSS):
+		var t := TrackCatalog.load_track(id)
+		if not t.has_joker():
+			continue
+		var jl := DrivingLine.build_joker(t, def, tc)
+		var n := jl.size() if jl else 0
+		var on := 0
+		var off_lane := 0
+		var branch_ok := true
+		var lap_branch := 0
+		for k in n:
+			if jl.joker_d[k] >= 0.0:
+				on += 1
+				if t.project_joker(jl.points[k])["dist"] > t.joker_width * 0.5:
+					off_lane += 1
+				branch_ok = branch_ok and jl.branch[k] > 0.99
+			elif jl.branch[k] > 0.5:
+				lap_branch += 1
+		var span := fposmod(t.joker_exit_s - t.joker_entry_s, t.length)
+		var want := t.length - span + t.joker_length
+		check(n > 0 and on * DrivingLine.SPACING > t.joker_length * 0.8 and off_lane == 0 and branch_ok
+			and lap_branch * DrivingLine.SPACING < 120.0 and absf(jl.length - want) < want * 0.12
+			and jl.speed.size() == n and jl.corner.size() == n,
+			"%s: joker line %d m (%d m on the joker lane, %d m of lap lead-in shown)"
+			% [id, int(jl.length) if jl else 0, int(on * DrivingLine.SPACING), int(lap_branch * DrivingLine.SPACING)])
+	check(DrivingLine.build_joker(TrackCatalog.load_track("spa"), def, tc) == null, "no joker line on a circuit")
+
+
 func test_rallycross_marshals() -> void:
 	print("rallycross marshals")
 	var track := TrackCatalog.load_track("holjes")

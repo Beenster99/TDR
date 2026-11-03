@@ -70,6 +70,7 @@ const VSC_ENDING_S := 6.0
 const SC_GAP_TARGET := 25.0      ## leader keeps this far behind the safety car
 const SC_SPAWN_AHEAD := 160.0
 const SC_PIT_SPEED := 17.0
+const GIVE_BACK_SC := -2          ## give_back victim: the safety car
 const GIVE_BACK_S := 12.0        ## time to give a place back before a penalty
 const PENALTY_S := 5.0
 const VSC_DELTA_WARN := -0.5
@@ -334,6 +335,14 @@ func sc_train_leader() -> int:
 ## Is car i the one leading the field to the restart (SC already gone)?
 func controls_restart(i: int) -> bool:
 	return mode == Mode.SC and stage == "restart" and sc_train_leader() == i
+
+
+## The car that car i has been told to give a place back to: a car index,
+## GIVE_BACK_SC for the safety car, or -1 when there's no such order.
+func give_back_target(i: int) -> int:
+	if not give_back.has(i):
+		return -1
+	return int(give_back[i]["victim"])
 
 
 ## A short line for the HUD about what car i must do (empty = nothing).

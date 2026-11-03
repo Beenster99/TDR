@@ -735,28 +735,35 @@ func _update_beacons() -> void:
 		_hl_mat.set_shader_parameter("tint", col)
 	if _beacon_tag:
 		# Only needed once the car is small on screen.
-		_beacon_tag.visible = on and _hl_zoom >= 2.5
+		_beacon_tag.visible = on and _hl_zoom >= 2.5 and highlight != Highlight.GIVE_BACK
 		_beacon_tag.modulate = col if half == 0 else col.lerp(Color.WHITE, 0.5)
 
 
 # --- Player highlights -----------------------------------------------------------
 
-## set_highlight: no outline, this player's own car, or another human player.
-enum Highlight { NONE, SELF, PLAYER, SAFETY }
+## set_highlight: no outline, this player's own car, another human player, or
+## the car race control says you must give a place back to (let it past),
+## or the safety car (always outlined, see add_safety_beacons).
+enum Highlight { NONE, SELF, PLAYER, GIVE_BACK, SAFETY }
 const HIGHLIGHT_SHADER := preload("res://modules/graphics/shaders/car_highlight.gdshader")
 const HIGHLIGHT_SELF := Color(1.0, 0.8, 0.22)
 const HIGHLIGHT_PLAYER := Color(0.3, 0.8, 1.0)
+const HIGHLIGHT_GIVE_BACK := Color(1.0, 0.3, 0.12)
 var highlight: int = Highlight.NONE
 var _hl: MeshInstance3D
 var _hl_mat: ShaderMaterial
 var _hl_zoom := -1.0
+var _let_past: Label3D   ## "LET PAST" tag over the car (GIVE_BACK)
 
 
 ## A soft glowing outline on the ground round the car: warm gold for your own
 ## car (gently breathing), a quieter cyan for other people online. AI cars get
-## none. Stays readable when zoomed out (set_highlight_zoom).
+## none. The car you must give a place back to gets a strong pulsing
+## orange-red outline and a "LET PAST" tag that stays the same size on screen
+## at every zoom. Stays readable when zoomed out (set_highlight_zoom).
 func set_highlight(kind: int) -> void:
 	highlight = kind
+	_show_let_past(kind == Highlight.GIVE_BACK)
 	if kind == Highlight.NONE:
 		if _hl:
 			_hl.visible = false
@@ -775,13 +782,40 @@ func set_highlight(kind: int) -> void:
 		set_highlight_zoom(1.0)
 	_hl.visible = true
 	var mine := kind == Highlight.SELF
-	_hl_mat.set_shader_parameter("tint", HIGHLIGHT_SELF if mine else HIGHLIGHT_PLAYER)
-	_hl_mat.set_shader_parameter("strength", 0.6 if mine else 0.38)
-	_hl_mat.set_shader_parameter("pulse", 1.0 if mine else 0.0)
+	var give := kind == Highlight.GIVE_BACK
+	_hl_mat.set_shader_parameter("tint", HIGHLIGHT_GIVE_BACK if give else (HIGHLIGHT_SELF if mine else HIGHLIGHT_PLAYER))
+	_hl_mat.set_shader_parameter("strength", 1.0 if give else (0.6 if mine else 0.38))
+	_hl_mat.set_shader_parameter("pulse", 1.0 if mine or give else 0.0)
+	_hl_mat.set_shader_parameter("pulse_rate", 7.0 if give else 3.0)
 	if kind == Highlight.SAFETY:   # the safety car: a strong, fast-flashing amber ring
 		_hl_mat.set_shader_parameter("tint", BEACON_AMBER)
 		_hl_mat.set_shader_parameter("strength", 0.95)
 		_hl_mat.set_shader_parameter("pulse", 2.0)
+
+
+## The floating "LET PAST" tag: drawn over everything, facing the camera, a
+## fixed size on screen and sitting just above the car's outline.
+func _show_let_past(show: bool) -> void:
+	if _let_past == null:
+		if not show:
+			return
+		_let_past = Label3D.new()
+		_let_past.name = "LetPast"
+		_let_past.text = "LET PAST"
+		_let_past.font_size = 40
+		_let_past.outline_size = 14
+		_let_past.modulate = Color(1.0, 0.55, 0.3)
+		_let_past.outline_modulate = Color(0.2, 0.02, 0.0, 0.9)
+		_let_past.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		_let_past.fixed_size = true
+		_let_past.pixel_size = 0.0006
+		_let_past.no_depth_test = true
+		_let_past.render_priority = 10
+		_let_past.outline_render_priority = 9
+		_let_past.offset = Vector2(0, 50)
+		_let_past.position = Vector3(def.body_offset, 2.0, 0)
+		add_child(_let_past)
+	_let_past.visible = show
 
 
 ## Zoomed out (camera far away), the outline gets thicker so a player's car
