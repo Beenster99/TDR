@@ -82,7 +82,7 @@ func _build() -> void:
 	_button(buttons, "Recommended", _recommend).focus_entered.connect(func(): _show_help("", "Recommended",
 		"A setup worked out for this car on this track and the race conditions: the same kind of setup the AI drivers use. A good starting point."))
 	_button(buttons, "Default", _reset).focus_entered.connect(func(): _show_help("", "Default", "Back to the car's standard setup."))
-	_first.focus_entered.connect(func(): _show_help("", "Save and back", "Keeps this setup for %s at %s. You can also press B (Esc)." % [car.display_name, track.short_name]))
+	_first.focus_entered.connect(func(): _show_help("", "Save and back", "Keeps this setup for %s at %s. You can also press %s." % [car.display_name, track.short_name, InputPrompt.key("ui_cancel")]))
 	var group := ""
 	for item in CarSetup.ITEMS:
 		var key: String = item[0]
@@ -116,7 +116,8 @@ func _build() -> void:
 	_info = _wrapped(side, Color(0.8, 0.92, 1.0))
 	_notes = _wrapped(side, Color(1, 0.85, 0.55))
 	var keys := Label.new()
-	keys.text = "Up/down: pick a setting  ·  Left/right: change it  ·  B / Esc: save and back"
+	InputPrompt.live(keys, func(): keys.text = InputPrompt.fill(InputPrompt.pick("↑↓", "D-pad ↑↓")
+		+ ": pick a setting  ·  ←→: change it  ·  {ui_cancel}: save and back"))
 	keys.modulate = Color(1, 1, 1, 0.45)
 	keys.add_theme_font_size_override("font_size", 13)
 	root.add_child(keys)
