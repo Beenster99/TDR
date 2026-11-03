@@ -134,6 +134,9 @@ func _ready() -> void:
 		pit_wall.open()
 	results = _build_results()
 	layer.add_child(results)
+	var pointer := PointerHider.new()   # no mouse pointer over the track while driving
+	pointer.driving = _driving_view
+	add_child(pointer)
 	_make_autodrive()
 	# Filming (tools/record_highlights.sh): --no-hud shows just the race,
 	# --rotate-camera turns the view with the car.
@@ -323,6 +326,13 @@ func _make_autodrive() -> void:
 
 
 ## True when this player is in a car's crew but not driving it (co-op).
+## At the wheel with nothing on screen that wants the mouse (PointerHider).
+func _driving_view() -> bool:
+	return session.local_car >= 0 and not _results_shown and not pause_menu.visible and not hud.editing \
+		and not pit_wall.visible and not planner.visible and not pit_menu.visible and not driver_radio.visible \
+		and not crew_game.is_active()
+
+
 func _is_crew() -> bool:
 	return session.local_car < 0 and session.team_car >= 0
 
