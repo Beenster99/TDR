@@ -4,8 +4,9 @@ extends Node3D
 ## tools/build_scenery.py (OpenStreetMap footprints and landuse, Environment
 ## Agency LIDAR heights in England): every building at its real size and
 ## height, the named grandstands full of people with their roofs, footbridges
-## and road bridges, and a painted ground map under it all (fields, woods,
-## car parks with their bays, roads, paths, ponds, the circuit's other loops).
+## and road bridges, and the ground itself modelled under it all (fields with
+## their crop rows, woods, car parks with their bays, roads with their lines,
+## paths, ponds, the circuit's other loops), laid on the hillside.
 ## Trees come back as a list for Trackside to plant with its own tree meshes.
 ## Tracks without a data/scenery/<id>.json keep the made-up trackside.
 
@@ -39,7 +40,7 @@ func setup(p_tv: TrackView, p_data: Dictionary, crowd_mat: Material) -> void:
 	_mat.vertex_color_use_as_albedo = true
 	_mat.roughness = 0.85
 	_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-	_apply_ground_map()
+	_build_land()
 	if GfxSettings.buildings or GfxSettings.grandstands:
 		_build_buildings()
 	if GfxSettings.buildings:
@@ -79,25 +80,59 @@ func trees() -> Array:
 	return data.get("trees", [])
 
 
-# --- Ground map ------------------------------------------------------------------
+# --- Land cover ------------------------------------------------------------------
 
-func _apply_ground_map() -> void:
-	var g: Dictionary = data.get("ground", {})
-	if not g.has("webp"):
+## The real ground (fields, woods, roads with their lines, car parks with
+## their bays, water, paths...) as meshes, already cut along the terrain's
+## triangles by build_scenery.py. They come flat; the terrain shader lays them
+## on the hillside (drape), so they follow it exactly. One mesh per tile so
+## tiles off screen are culled.
+func _build_land() -> void:
+	var l: Dictionary = data.get("land", {})
+	if not l.has("verts"):
 		return
-	var img := Image.new()
-	if img.load_webp_from_buffer(Marshalls.base64_to_raw(g["webp"])) != OK:
-		push_warning("Scenery: ground map unreadable")
+	var g := tv.terrain_grid()
+	var cell: float = l.get("cell", 0.0)
+	var o: Array = l.get("origin", [0, 0])
+	if not is_equal_approx(cell, g[1]) or Vector2(o[0], o[1]).distance_to(g[0]) > 0.05:
+		push_warning("Scenery: land cover was cut for another terrain grid (rebuild it with build_scenery.py)")
+	var verts := _unpack(l, "verts").to_vector3_array()
+	var cols := _unpack(l, "cols").to_color_array()
+	var idx := _unpack(l, "idx").to_int32_array()
+	if verts.size() != cols.size() or verts.is_empty():
+		push_warning("Scenery: land cover unreadable")
 		return
-	img.convert(Image.FORMAT_RGBA8)
-	img.generate_mipmaps()
-	var tex := ImageTexture.create_from_image(img)
-	var o: Array = g["origin"]
-	var s: Array = g["size"]
-	var m := tv.terrain_material
-	m.set_shader_parameter("ground_map", tex)
-	m.set_shader_parameter("ground_rect", Vector4(o[0], o[1], s[0], s[1]))
-	m.set_shader_parameter("ground_on", 1.0)
+	var y0: float = g[3] - 1.0
+	var y1: float = g[4] + 1.0
+	var mat := tv.terrain_material
+	var n := 0
+	for ch in l.get("chunks", []):
+		var v0 := int(ch[0])
+		var nv := int(ch[1])
+		var i0 := int(ch[2])
+		var ni := int(ch[3])
+		var arr := []
+		arr.resize(Mesh.ARRAY_MAX)
+		arr[Mesh.ARRAY_VERTEX] = verts.slice(v0, v0 + nv)
+		arr[Mesh.ARRAY_COLOR] = cols.slice(v0, v0 + nv)
+		arr[Mesh.ARRAY_INDEX] = idx.slice(i0, i0 + ni)
+		var mesh := ArrayMesh.new()
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+		var mi := MeshInstance3D.new()
+		mi.name = "Land%d" % n
+		mi.mesh = mesh
+		mi.material_override = mat
+		mi.set_instance_shader_parameter("drape", 1.0)
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mi.custom_aabb = AABB(Vector3(ch[4], y0, ch[5]), Vector3(ch[6] - ch[4], y1 - y0, ch[7] - ch[5]))
+		add_child(mi)
+		n += 1
+	print_verbose("[scenery] land cover: %d tiles, %d triangles" % [n, idx.size() / 3])
+
+
+static func _unpack(l: Dictionary, key: String) -> PackedByteArray:
+	var raw := Marshalls.base64_to_raw(l.get(key, ""))
+	return raw.decompress(int(l.get(key + "_bytes", 0)), FileAccess.COMPRESSION_DEFLATE)
 
 
 # --- Buildings -----------------------------------------------------------------------
