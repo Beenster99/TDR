@@ -60,29 +60,6 @@ func setup(opts: Dictionary) -> void:
 	_build()
 
 
-## The buttons shown, in order, for these options (also used by the tests).
-static func button_ids(p_online: bool, p_host: bool) -> Array:
-	var ids := ["resume", "restart", "settings"]
-	if p_online and p_host:
-		ids.append("lobby")
-	ids.append_array(["menu", "desktop"])
-	return ids
-
-
-static func label_for(id: String, p_online: bool, p_host: bool) -> String:
-	match id:
-		"resume": return "Resume"
-		"restart": return "Restart race (everyone)" if p_online else "Restart race"
-		"settings": return "Settings"
-		"lobby": return "End race: everyone back to the lobby"
-		"menu":
-			if p_online and p_host:
-				return "Quit to menu (closes the online race)"
-			return "Leave race, quit to menu" if p_online else "Quit to menu"
-		"desktop": return "Quit to desktop"
-	return id
-
-
 func _build() -> void:
 	_shade = ColorRect.new()
 	# Offline the race is frozen behind it; online keep the race in view.
@@ -116,9 +93,9 @@ func _build() -> void:
 	var gap := Control.new()
 	gap.custom_minimum_size = Vector2(0, 6)
 	v.add_child(gap)
-	for id in button_ids(online, is_host):
+	for id in PauseOptions.button_ids(online, is_host):
 		var b := Button.new()
-		b.text = label_for(id, online, is_host)
+		b.text = PauseOptions.label_for(id, online, is_host)
 		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		b.custom_minimum_size = Vector2(420, 48)
 		b.add_theme_font_size_override("font_size", 20)
@@ -179,7 +156,7 @@ func _on_pressed(id: String) -> void:
 				_disarm()
 				_armed = id
 				_armed_until = Time.get_ticks_msec() / 1000.0 + CONFIRM_TIME
-				_buttons[id].text = label_for(id, online, is_host) + "  ·  sure? press again"
+				_buttons[id].text = PauseOptions.label_for(id, online, is_host) + "  ·  sure? press again"
 				return
 			_disarm()
 			visible = false
@@ -192,7 +169,7 @@ func _on_pressed(id: String) -> void:
 
 func _disarm() -> void:
 	if _armed != "" and _buttons.has(_armed):
-		_buttons[_armed].text = label_for(_armed, online, is_host)
+		_buttons[_armed].text = PauseOptions.label_for(_armed, online, is_host)
 	_armed = ""
 
 

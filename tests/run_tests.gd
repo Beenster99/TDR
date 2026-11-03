@@ -3121,22 +3121,22 @@ func test_pause_menu() -> void:
 	print("pause menu")
 	check(InputSetup.KEYS["back_to_menu"].has(KEY_ESCAPE) and InputSetup.PAD_BUTTONS["back_to_menu"].has(JOY_BUTTON_START),
 		"Esc and the controller's Start open the pause menu")
-	var off := PauseMenu.button_ids(false, false)
+	var off := PauseOptions.button_ids(false, false)
 	check(off == ["resume", "restart", "settings", "menu", "desktop"], "offline: resume, restart, settings, quit to menu, quit to desktop")
-	check(PauseMenu.button_ids(true, true).has("lobby"), "online host can also end the race for everyone")
-	check(not PauseMenu.button_ids(true, false).has("lobby"), "a guest can't end the race")
-	check(PauseMenu.label_for("restart", true, true).contains("everyone"), "the host's restart says it restarts for everyone")
+	check(PauseOptions.button_ids(true, true).has("lobby"), "online host can also end the race for everyone")
+	check(not PauseOptions.button_ids(true, false).has("lobby"), "a guest can't end the race")
+	check(PauseOptions.label_for("restart", true, true).contains("everyone"), "the host's restart says it restarts for everyone")
 	var gd = load("res://modules/core/game_data.gd").new()
 	gd.persist_prefs = false
 	gd._register_defaults()
-	for sec in SettingsScreen.RACE_SECTIONS:
+	for sec in PauseOptions.RACE_SECTIONS:
 		check(sec in gd.SECTIONS, "in-race Settings > %s is a real section" % sec)
-	check(not "garage" in SettingsScreen.RACE_SECTIONS, "the garage (car upgrades) isn't in the in-race settings")
+	check(not "garage" in PauseOptions.RACE_SECTIONS, "the garage (car upgrades) isn't in the in-race settings")
 	for key in ["driving_help", "aid_track_assist", "manual_gears"]:
-		check(key in SettingsScreen.LOCKED_IN_RACE and not gd.setting_info(key).is_empty(),
+		check(key in PauseOptions.LOCKED_IN_RACE and not gd.setting_info(key).is_empty(),
 			"%s (how the car drives) is locked during a race" % key)
 	for key in ["aid_racing_line", "units", "vol_master", "display_mode"]:
-		check(not key in SettingsScreen.LOCKED_IN_RACE, "%s can still be changed in a race" % key)
+		check(not key in PauseOptions.LOCKED_IN_RACE, "%s can still be changed in a race" % key)
 	gd.free()
 
 

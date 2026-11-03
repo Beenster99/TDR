@@ -32,18 +32,15 @@ const LISTEN_TIME := 6.0
 var _hud_preview: Control = null
 ## In a race (the pause menu, PauseMenu): only the player's own game settings.
 ## The garage is left out, the settings that change how the car drives are
-## locked until the next race (LOCKED_IN_RACE), and Edit HUD layout opens the
+## locked until the next race (PauseOptions.LOCKED_IN_RACE), and Edit HUD layout opens the
 ## editor over the race itself (edit_hud; left out when it isn't set).
 var in_race := false
 var edit_hud: Callable
-const RACE_SECTIONS := ["gameplay", "controller", "graphics", "sound", "debug"]
-const LOCKED_IN_RACE := ["driving_help", "aid_track_assist", "manual_gears", "pit_crew_coop"]
-const LOCKED_HELP := "Locked during a race: change it from the main menu's Settings before the next race."
 
 
 ## The sections this screen shows.
 func sections() -> Array:
-	return RACE_SECTIONS if in_race else GameData.SECTIONS
+	return PauseOptions.RACE_SECTIONS if in_race else GameData.SECTIONS
 
 
 func open(p_profile: TeamProfile, section := "gameplay") -> void:
@@ -177,9 +174,9 @@ func _row(e: Dictionary) -> Stepper:
 	st.focus_exited.connect(st.queue_redraw)
 	st.set_meta("help", e.get("help", ""))
 	st.value_changed.connect(func(nv): GameData.set_pref(e["key"], nv))
-	if in_race and e["key"] in LOCKED_IN_RACE:
+	if in_race and e["key"] in PauseOptions.LOCKED_IN_RACE:
 		st.disabled = true
-		st.set_meta("help", (str(e.get("help", "")) + "\n\n" + LOCKED_HELP).strip_edges())
+		st.set_meta("help", (str(e.get("help", "")) + "\n\n" + PauseOptions.LOCKED_HELP).strip_edges())
 	return st
 
 
