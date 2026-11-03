@@ -32,6 +32,7 @@ from barriers import add_barriers
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pit_limit_zone import limit_zone  # noqa: E402
 import raceline as raceline_opt  # noqa: E402
+import widen  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(os.path.dirname(HERE), "data")
@@ -480,6 +481,18 @@ def build(cfg, cache):
         pit_source = "estimated alongside the main straight (no mapped pit lane found)"
     print(f"   pit lane: {pit_source}")
 
+    # The game's road is wider than the real one (see widen.py); the pit lane
+    # moves out with the edge beside it. Here (Y up) the normal (-ty, tx)
+    # points left of the race direction.
+    tang = np.roll(centre, -1, 0) - np.roll(centre, 1, 0)
+    nrm = np.column_stack([-tang[:, 1], tang[:, 0]])
+    pmid = pit[len(pit) // 2]
+    pi = int(nearest(pmid[None], centre)[0][0])
+    nwl, nwr = widen.widths(centre, wl, wr)
+    pit = widen.shift_pit(centre, wl, wr, pit, nwl, nwr,
+                          1.0 if ((pmid - centre[pi]) * nrm[pi]).sum() > 0 else -1.0)
+    wr, wl = nwr, nwl
+
     # Godot axes: flip Y. That mirrors left/right, so the widths swap.
     flip = np.array([1.0, -1.0])
     centre_g = centre * flip
@@ -544,6 +557,7 @@ def build(cfg, cache):
         "sectors": cfg.get("sectors", [0.0, 0.333, 0.667]),
         "runoff_m": cfg.get("runoff_m", 30.0),
         "kerb_width_m": 1.2,
+        "width_scale": widen.WIDTH_SCALE,
         "default_environment": env,
         "pit_lane": pit_lane,
     }

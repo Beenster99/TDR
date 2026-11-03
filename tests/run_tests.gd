@@ -67,6 +67,7 @@ func _init() -> void:
 	test_pointer_hider()
 	test_hud_timing()
 	test_hud_layout()
+	test_pit_wall_layout()
 	test_graphics_effects()
 	test_pit_lane_blend()
 	test_settings_and_units()
@@ -1125,7 +1126,12 @@ func test_pit_self_drive() -> void:
 		var rel := aim - c.pos
 		var alpha := atan2(rel.dot(c.right()), rel.dot(c.forward()))
 		inp.steer = clampf(atan(2.0 * sim.defs[i].wheelbase * sin(alpha) / maxf(rel.length(), 1.0)) / sim.defs[i].max_steer, -1, 1)
+		# Like a driver, look a moment ahead for where the guide slows down.
 		var target := sp[k]
+		var look := k
+		while look < pts.size() - 1 and ds[look] < ds[k] + c.speed() * 0.4:
+			look += 1
+			target = minf(target, sp[look])
 		if ph == PitRules.PHASE_LIMIT and stop_on_box:
 			var m := pits.box_marks(i, c.pos)
 			target = minf(t.pit_speed_limit - 0.5, sqrt(2.0 * 3.0 * maxf(overshoot_m - float(m["along"]), 0.0)))
@@ -2125,7 +2131,10 @@ func test_car_recovery() -> void:
 			sim.entries[victim].dnf = true
 			start_pos = c.pos
 		if victim >= 0 and not sim.race_control.out_of_play(victim):
-			inputs[victim] = CarInput.neutral()
+			# Brakes on, so a crashed car on a slope stays against the wall.
+			var held := CarInput.neutral()
+			held.brake = 1.0
+			inputs[victim] = held
 		sim.step(inputs)
 		for e in sim.events:
 			var key: String = e["type"] + ":" + str(e.get("state", e.get("flag", "")))
@@ -3862,6 +3871,122 @@ func test_driving_aids() -> void:
 	check(c2.manual_gears and c2.assist_track == 2, "manual gearbox and track assist survive a snapshot")
 ## HUD layout editor: items keep their spot on any screen shape, resizes are
 ## clamped, hidden items come back, and the saved form round-trips.
+## The pit wall screens' panels: dragged by the title bar, resized by the
+## corner grip, snapped, kept on screen, saved and loaded back.
+func test_pit_wall_layout() -> void:
+	print("pit wall layout:")
+	var l := PanelLayout.new("console")
+	l.autosave = false     # no GameData autoload in a test run
+	l.spec("timing", Vector2(430, 260), Vector2(720, 4000))
+	l.spec("pip", Vector2(192, 108), Vector2(960, 540), 16.0 / 9.0, true)
+	var b := Rect2(4, 54, 1592, 842)
+	var d := Rect2(12, 58, 430, 830)
+	l.begin(b)
+	check(l.place("timing", d) == d and not l.customised(), "a panel never moved sits as designed")
+	check(not l.press(Vector2(200, 300)), "a press inside a panel (not its title bar) is the panel's own click")
+	check(l.press(Vector2(200, 66)), "a press on the title bar is the layout's")
+	l.motion(Vector2(202, 67))
+	check(l.release() == "click" and not l.customised(), "a press that doesn't move is still a click")
+	l.press(Vector2(200, 66))
+	l.motion(Vector2(800, 66))
+	check(l.dragging, "moving past a few pixels drags")
+	check(l.release() == "moved" and l.is_moved("timing"), "letting go keeps the new spot")
+	var r := l.rect_of("timing", d)
+	check(absf(r.position.x - 612.0) < 0.5 and r.size == d.size, "the panel moved with the mouse, same size")
+	l.begin(b)
+	l.place("timing", d)
+	l.press(Vector2(r.position.x + 100, 66))
+	l.motion(Vector2(r.position.x + 100 + 4000, 66 + 4000))
+	l.release()
+	r = l.rect_of("timing", d)
+	check(b.encloses(r), "dragged far off: it stays on screen")
+	check(is_equal_approx(r.end.x, b.end.x), "and sits against the right edge")
+	# Snapping: dropped 6 px from the left edge, it goes onto it.
+	l.begin(b)
+	l.place("timing", r)
+	l.press(r.position + Vector2(50, 10))
+	l.motion(r.position + Vector2(50, 10) + Vector2(b.position.x + 6 - r.position.x, 0))
+	l.release()
+	check(is_equal_approx(l.rect_of("timing", d).position.x, b.position.x), "snaps onto the screen edge")
+	# The corner grip zooms the whole panel, text and all.
+	l.reset_all()
+	l.begin(b)
+	var t := l.place("timing", Rect2(b.position.x, 100, 430, 500))
+	l.press(t.end - Vector2(4, 4))
+	l.motion(t.end - Vector2(4, 4) + Vector2(86, 100))
+	l.release()
+	var big := l.rect_of("timing", d)
+	check(is_equal_approx(l.scale_of("timing"), 1.2), "dragging the corner out zooms the panel to 120 %% (%.2f)" % l.scale_of("timing"))
+	check(big.size.is_equal_approx(Vector2(516, 600)), "the box grows with it, same shape (%s)" % big.size)
+	check(l.content_rect("timing", big).size.is_equal_approx(Vector2(430, 500)), "its contents are laid out as before, just bigger")
+	l.begin(b)
+	l.place("timing", big)
+	l.press(big.end - Vector2(4, 4))
+	l.motion(big.end - Vector2(4, 4) - Vector2(2000, 2000))
+	l.release()
+	check(is_equal_approx(l.scale_of("timing"), PanelLayout.MIN_SCALE), "zooming out stops at %d %%" % roundi(PanelLayout.MIN_SCALE * 100.0))
+	# The right and bottom edges resize without zooming, within the panel's limits.
+	l.begin(b)
+	t = l.place("timing", l.rect_of("timing", d))
+	var sc0 := l.scale_of("timing")
+	l.press(Vector2(t.end.x - 2, t.get_center().y))
+	l.motion(Vector2(t.end.x - 2 - 600, t.get_center().y + 300))
+	l.release()
+	var narrow := l.rect_of("timing", d)
+	check(is_equal_approx(narrow.size.x, 430.0 * sc0) and is_equal_approx(narrow.size.y, t.size.y) and l.scale_of("timing") == sc0,
+		"the right edge only changes the width, down to the smallest that fits (%s)" % narrow.size)
+	l.begin(b)
+	t = l.place("timing", narrow)
+	l.press(Vector2(t.get_center().x, t.end.y - 2))
+	l.motion(Vector2(t.get_center().x, t.end.y - 2 - 2000))
+	l.release()
+	var small := l.rect_of("timing", d)
+	check(is_equal_approx(small.size.y, 260.0 * sc0) and is_equal_approx(small.size.x, narrow.size.x), "the bottom edge only changes the height (%s)" % small.size)
+	# The picture keeps 16:9 and grabs anywhere.
+	l.begin(b)
+	var pr := l.place("pip", Rect2(900, 70, 352, 198))
+	check(l.press(pr.get_center()), "the onboard picture moves from anywhere on it")
+	l.release()
+	l.press(pr.end - Vector2(3, 3))
+	l.motion(pr.end + Vector2(200, 20))
+	l.release()
+	var ps := l.rect_of("pip", pr).size
+	check(absf(ps.x / ps.y - 16.0 / 9.0) < 0.01 and ps.x > 352.0, "a resized picture stays 16:9 (%s)" % ps)
+	# The last panel picked up is drawn on top.
+	l.begin(b)
+	l.place("timing", l.rect_of("timing", d))
+	var rr := l.place("role", Rect2(1108, 58, 480, 830))
+	check(l.draw_order(["timing", "role", "radio"]) == ["role", "radio", "timing"], "the panel moved last comes on top")
+	l.press(rr.position + Vector2(100, 10))
+	l.motion(rr.position + Vector2(60, 10))
+	l.release()
+	check(l.draw_order(["timing", "role", "radio"]) == ["radio", "timing", "role"], "move another and that one comes on top")
+	# Saved and loaded back; another screen's layout is left alone.
+	var prefs := {PanelLayout.PREF: {"full": {"feed": {"x": 1.0, "y": 0.0, "w": 400, "h": 300}}}}
+	l.store_in(prefs)
+	var back := PanelLayout.new("console")
+	back.load_from(prefs)
+	check(back.rect_of("timing", d, b) == l.rect_of("timing", d, b), "the layout loads back")
+	check((prefs[PanelLayout.PREF] as Dictionary).has("full"), "the full pit wall's layout is kept")
+	var other := PanelLayout.new("full")
+	other.load_from(prefs)
+	check(other.is_moved("feed") and not other.is_moved("timing"), "each screen has its own layout")
+	var wide := Rect2(4, 54, 2552, 842)
+	check(is_equal_approx(other.rect_of("feed", Rect2(), wide).end.x, wide.end.x), "a panel on the right edge stays there on a wider screen")
+	back.reset_all()
+	back.store_in(prefs)
+	check(not (prefs[PanelLayout.PREF] as Dictionary).has("console"), "reset: nothing left to save")
+	var junk := PanelLayout.new("console")
+	junk.load_from({PanelLayout.PREF: "junk"})
+	check(not junk.customised(), "a broken saved layout is ignored")
+	# The free space the 3D race frames itself in.
+	var area := Rect2(12, 58, 1576, 830)
+	var free := PanelLayout.largest_free(area, [Rect2(12, 58, 430, 830), Rect2(1108, 58, 480, 830)])
+	check(free == Rect2(442, 58, 666, 830), "the race shows between two side panels (%s)" % free)
+	free = PanelLayout.largest_free(area, [Rect2(12, 58, 430, 830), Rect2(442, 58, 900, 830)])
+	check(free == Rect2(1342, 58, 246, 830), "both panels on the left: the race goes right (%s)" % free)
+
+
 func test_hud_layout() -> void:
 	print("hud layout:")
 	var l := HudLayout.new()
