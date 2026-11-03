@@ -304,7 +304,7 @@ created by `RaceSession` and fed after each `sim.step()`.
 `InputSetup` (input module) registers all actions in code at start-up. Keyboard: WASD or arrows.
 Gamepad: RT throttle, LT brake, left-stick steering (analog, with
 deadzones), A/X as digital throttle/brake for pads without triggers, Y
-camera, Back restart, Start menu. `LocalInput` passes analog input straight
+camera, Back restart, Start pause menu. `LocalInput` passes analog input straight
 through with a steering expo curve. It smooths digital keys, and both get
 speed-sensitive steering lock. Menus and lobby use Godot's `ui_*` actions,
 so the D-pad/stick move focus, A selects and B goes back. `Stepper` makes

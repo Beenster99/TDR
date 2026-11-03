@@ -597,6 +597,15 @@ func _begin_race(start_data: Dictionary) -> void:
 	race_started.emit(start_data)
 
 
+## Host: restart the race for everyone (the in-race pause menu): a new start
+## from the same lobby and settings, sent the same way as the first start, so
+## every machine's race scene starts over (Net.race_started).
+func restart_race() -> void:
+	if is_server() and in_race:
+		in_race = false
+		start_race()
+
+
 ## Host: everyone back to the lobby (after results).
 func end_race() -> void:
 	if is_server():
