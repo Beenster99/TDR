@@ -48,6 +48,7 @@ func _init() -> void:
 	test_telemetry(replay)
 	test_weather_forecast()
 	test_race_control_rules()
+	test_give_back_highlight()
 	test_yellow_flags_for_incidents()
 	test_safety_car_race()
 	test_car_recovery()
@@ -2392,6 +2393,48 @@ func test_yellow_flags_for_incidents() -> void:
 			elif e["type"] == "flag" and e.get("flag", "") == "yellow":
 				yellow_flags += 1
 	print("    AI race: %d contacts, %d yellow flags" % [contacts, yellow_flags])
+
+
+## The car you must give a place back to is picked out (outline + "LET PAST"
+## tag) until you've let it past, and the HUD names it.
+func test_give_back_highlight() -> void:
+	print("give-back highlight")
+	var d := _data()
+	var settings := RaceSettings.new()
+	settings.ai_count = 4
+	settings.laps = 1
+	var sim: RaceSim = _race(settings, d)["sim"]
+	var rc := sim.race_control
+	sim.phase = RaceSim.Phase.RACING
+	for c in sim.cars:
+		c.vel = Vector2.from_angle(c.heading) * 40.0
+	check(rc.give_back_target(1) == -1, "no give-back order: nothing highlighted")
+	rc._deploy_sc("test")
+	rc._prev_order = [0, 1, 2, 3]
+	sim.entries[1].distance = sim.entries[0].distance + 10.0
+	sim._update_positions()
+	rc._check_overtakes()
+	check(rc.give_back_target(1) == 0, "passed car 0 under the SC: car 0 is the one to let past")
+	check(rc.give_back_target(2) == -1, "other cars have nothing to give back")
+	# The 3D marker on that car.
+	var v := CarView.new()
+	v.setup(sim.defs[0], sim.cars[0], "test", false)
+	v.set_highlight(CarView.Highlight.GIVE_BACK)
+	var tag := v.get_node_or_null("LetPast") as Label3D
+	check(tag != null and tag.visible and tag.text == "LET PAST" and tag.fixed_size and tag.no_depth_test,
+		"the car to let past gets a LET PAST tag, same size on screen at every zoom, never hidden")
+	check(v.get_node_or_null("Highlight") != null and v.get_node("Highlight").visible, "and an outline on the ground")
+	v.set_highlight(CarView.Highlight.NONE)
+	check(not tag.visible and not v.get_node("Highlight").visible, "both go when the order is over")
+	v.free()
+	# Let it back past: the order and the highlight clear.
+	sim.entries[0].distance = sim.entries[1].distance + 5.0
+	sim._update_positions()
+	rc._check_overtakes()
+	check(rc.give_back_target(1) == -1 and sim.entries[1].penalty_s == 0.0, "place given back: highlight cleared, no penalty")
+	# Passing the safety car: the safety car is the one to drop behind.
+	rc.give_back[2] = {"victim": -2, "until": sim.race_time + 5.0, "why": "test"}
+	check(rc.give_back_target(2) == RaceControl.GIVE_BACK_SC, "passing the safety car: the safety car is highlighted")
 
 
 func test_race_control_rules() -> void:
