@@ -3353,6 +3353,17 @@ func _pad_motion(dev: int, axis: JoyAxis, v: float) -> InputEventJoypadMotion:
 
 func test_driving_aids() -> void:
 	print("driving aids")
+	# Speed-sensitive lock: full lock at walking pace and through a slow
+	# hairpin's entry speed, unchanged at the top end.
+	check(is_equal_approx(LocalInput.steer_lock(0.0), 1.0), "full steering lock at a standstill")
+	check(is_equal_approx(LocalInput.steer_lock(LocalInput.LOCK_FULL_SPEED), 1.0), "full steering lock up to about 29 km/h")
+	check(LocalInput.steer_lock(60.0 / 3.6) > 0.6, "most of the lock left at 60 km/h (%.2f)" % LocalInput.steer_lock(60.0 / 3.6))
+	var lock_250 := LocalInput.steer_lock(250.0 / 3.6)
+	check(lock_250 > 0.17 and lock_250 < 0.2, "high-speed lock unchanged at 250 km/h (%.3f)" % lock_250)
+	var falls := true
+	for k in range(1, 100):
+		falls = falls and LocalInput.steer_lock(float(k)) <= LocalInput.steer_lock(float(k - 1))
+	check(falls, "steering lock never grows with speed")
 	var d := _data()
 	var track: TrackData = d["track"]
 	var def: CarDefinition = d["cars"]["bmw_m4_gt3"]
