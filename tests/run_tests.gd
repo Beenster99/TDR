@@ -1125,7 +1125,12 @@ func test_pit_self_drive() -> void:
 		var rel := aim - c.pos
 		var alpha := atan2(rel.dot(c.right()), rel.dot(c.forward()))
 		inp.steer = clampf(atan(2.0 * sim.defs[i].wheelbase * sin(alpha) / maxf(rel.length(), 1.0)) / sim.defs[i].max_steer, -1, 1)
+		# Like a driver, look a moment ahead for where the guide slows down.
 		var target := sp[k]
+		var look := k
+		while look < pts.size() - 1 and ds[look] < ds[k] + c.speed() * 0.4:
+			look += 1
+			target = minf(target, sp[look])
 		if ph == PitRules.PHASE_LIMIT and stop_on_box:
 			var m := pits.box_marks(i, c.pos)
 			target = minf(t.pit_speed_limit - 0.5, sqrt(2.0 * 3.0 * maxf(overshoot_m - float(m["along"]), 0.0)))
@@ -2125,7 +2130,10 @@ func test_car_recovery() -> void:
 			sim.entries[victim].dnf = true
 			start_pos = c.pos
 		if victim >= 0 and not sim.race_control.out_of_play(victim):
-			inputs[victim] = CarInput.neutral()
+			# Brakes on, so a crashed car on a slope stays against the wall.
+			var held := CarInput.neutral()
+			held.brake = 1.0
+			inputs[victim] = held
 		sim.step(inputs)
 		for e in sim.events:
 			var key: String = e["type"] + ":" + str(e.get("state", e.get("flag", "")))
