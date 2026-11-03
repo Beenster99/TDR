@@ -586,8 +586,8 @@ func _panel(r: Rect2, title := "") -> void:
 
 func _draw() -> void:
 	_hits.clear()
-	if session == null:
-		return
+	if session == null or (cover and cover.visible):
+		return     # the full pit wall is open over the console
 	var vp := size
 	var car := team_car()
 	_draw_header(Rect2(12, 8, vp.x - 24, 42), car)
@@ -615,7 +615,7 @@ func _draw() -> void:
 		OnboardPip.draw(self, font, onboard, pip_r, session, cam_car, cam_mode == CAM_REAR)
 	var hy := mid.position.y - 10 if mid.position.y > 90 else mid.end.y + 18
 	_text(Vector2(mid.position.x, hy), "Click: act   Right-click / wheel: change   ↑↓ ←→ Enter   %sV radio   P pit wall   Drag a title bar to move" % (
-		"C switch tab   " if tabs.size() > 1 else ""), 13, Color(1, 1, 1, 0.75), HORIZONTAL_ALIGNMENT_LEFT, maxf(mid.size.x, 520.0))
+		"C switch tab   " if tabs.size() > 1 else ""), 13, Color(1, 1, 1, 0.75), HORIZONTAL_ALIGNMENT_LEFT, maxf(mid.size.x, 760.0))
 	layout.draw_handles(self, _hover)
 
 
