@@ -116,7 +116,10 @@ def car(spec):
         "tyre_compound": "road_semi_slick",
         "fuel": {"capacity_l": 60, "bsfc_l_per_kwh": 0.36},
         "tuning_ranges": {"brake_bias_front": [0.55, 0.72], "aero_cla": [0.0, 0.1], "final_drive": [3.0, 4.6]},
-        "chassis": {"front_grip": 0.94, "rear_grip": 1.0, "roll_stiffness_front": 0.6},
+        # On loose dirt the tail steps out a lot (old road tyres, worn
+        # suspension): rear-drive cars most, front-drive least.
+        "chassis": {"front_grip": 0.94, "rear_grip": 1.0, "roll_stiffness_front": 0.6,
+                    "dirt_rear_grip": {"RWD": 0.6, "AWD": 0.68, "FWD": 0.74}[drive]},
     }
 
 

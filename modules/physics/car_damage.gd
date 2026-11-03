@@ -57,8 +57,11 @@ const SPREAD := [
 ## An engine this damaged catches fire (visuals; 1 = ablaze when it fails).
 const FIRE_FROM := 0.72
 ## Demolition Derby: a car whose bodywork adds up to this much (of 4, the
-## four zones) is a wreck and is out (RaceSim retires it).
+## four zones) is a wreck: it drives on, but its engine boils dry at
+## WRECK_BOIL_RATE (engine damage a second at full throttle) until it stops.
+## There are no pit stops or repairs in a derby.
 const WRECKED_BODY := 3.0
+const WRECK_BOIL_RATE := 0.02
 
 ## Engine past this damage gets worse under load (oil / water leaking).
 const ENGINE_LEAK_FROM := 0.5
