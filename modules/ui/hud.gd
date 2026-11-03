@@ -40,10 +40,12 @@ const ITEMS := [
 	["map", "Track map"],
 	["tower", "Timing tower"],
 	["standings", "Compact standings"],
-	["timing", "Position and lap times"],
+	["timing", "Position and laps"],
 	["pit", "Pit panel"],
 	["damage", "Damage"],
-	["tyres", "Tyres and conditions"],
+	["tyres", "Tyres and grip"],
+	["conditions", "Time, weather and track"],
+	["fuel", "Fuel"],
 	["sectors", "Sectors and gaps"],
 	["speed", "Speed, gear and revs"],
 	["hint", "Pit wall hint"],
@@ -54,7 +56,7 @@ const ITEMS := [
 	["messages", "Messages"],
 ]
 ## Items about the player's own car (a placeholder when spectating).
-const CAR_ITEMS := ["timing", "pit", "damage", "tyres", "sectors", "speed", "pitguide"]
+const CAR_ITEMS := ["timing", "pit", "damage", "tyres", "fuel", "sectors", "speed", "pitguide"]
 ## Where the player put each item, how big, shown or not.
 var layout := HudLayout.new()
 ## True while the HUD layout editor is open: every item that's switched on is
@@ -203,6 +205,7 @@ func item_shown(id: String) -> bool:
 	match id:
 		"pit": return sim.pits.enabled and _pit_panel_height(me) > 0.0
 		"damage": return sim.damage_level != CarDamage.Level.OFF
+		"fuel": return sim.settings.fuel_enabled
 		"flags": return _flag_lines(me)[0] != "" or _flag_lines(me)[1] != ""
 		"radio": return radio_time > 0.0 and not radio_msg.is_empty()
 		"messages": return message_time > 0.0
@@ -221,12 +224,14 @@ func item_size(id: String) -> Vector2:
 			return _mm_rect.size * scale_f + Vector2(20, 20)
 		"tower": return Vector2(TOWER_W, _tower_height())
 		"standings": return Vector2(330, 34 + _standings_rows() * 22)
-		"timing": return Vector2(300, 150)
+		"timing": return Vector2(300, _timing_height(me))
 		"pit":
 			var h := _pit_panel_height(me) if me >= 0 and sim.pits.enabled else 0.0
 			return Vector2(300, maxf(h, 136.0) if editing else h)
 		"damage": return Vector2(300, 116)
-		"tyres": return Vector2(300, 186)
+		"tyres": return Vector2(136, 164)
+		"conditions": return Vector2(260, 84.0 if _forecast_text(sim.env) == "" else 106.0)
+		"fuel": return Vector2(200, 56)
 		"sectors": return Vector2(_sectors_width(), 82)
 		"speed": return Vector2(250, 120)
 		"hint": return Vector2(260, 20)
@@ -254,9 +259,11 @@ func default_pos(id: String, sz: Vector2, vp: Vector2) -> Vector2:
 		"tower": return Vector2(10, 10)
 		"standings": return Vector2(vp.x - 340, 10)
 		"timing": return Vector2(lx, 10)
-		"pit": return Vector2(lx, 170)
+		"pit": return Vector2(lx, 20.0 + _timing_height(session.local_car))
 		"damage": return Vector2(lx, vp.y - 322)
-		"tyres": return Vector2(10, vp.y - 196)
+		"tyres": return Vector2(10, vp.y - 174)
+		"conditions": return Vector2(vp.x - 270, vp.y - 246)
+		"fuel": return Vector2(156, vp.y - 66)
 		"sectors": return Vector2((vp.x - sz.x) * 0.5, vp.y - 110)
 		"speed": return Vector2(vp.x - 260, vp.y - 130)
 		"hint": return Vector2((vp.x - sz.x) * 0.5, vp.y - 28)
@@ -420,6 +427,12 @@ func _draw_item(id: String, me: int, sz: Vector2) -> void:
 			else:
 				_placeholder(sz, "Damage", "shows in races with damage on")
 		"tyres": _draw_tyres(me)
+		"conditions": _draw_conditions()
+		"fuel":
+			if sim.settings.fuel_enabled:
+				_draw_fuel(me)
+			else:
+				_placeholder(sz, "Fuel", "shows in races with fuel on")
 		"sectors": _draw_sectors_and_gaps(me)
 		"speed": _draw_speed(me)
 		"hint": _text(Vector2(0, 14), "P / D-pad →  Pit wall", 13, Color(1, 1, 1, 0.45), HORIZONTAL_ALIGNMENT_CENTER, sz.x)
@@ -453,26 +466,38 @@ func _draw_lights() -> void:
 
 
 ## Position, lap, current / last / best lap time.
+## The position panel's height: one row, plus a second for a penalty or the
+## rallycross joker.
+func _timing_height(me: int) -> float:
+	return 84.0 if _timing_extra_row(me) else 56.0
+
+
+func _timing_extra_row(me: int) -> bool:
+	if me < 0:
+		return false
+	var sim := session.sim
+	var e := sim.entries[me]
+	return e.penalty_s > 0.0 or (sim.settings.is_rallycross() and sim.track.has_joker() and not e.finished)
+
+
+## Position and lap count (lap times are on the timing tower and the
+## sectors panel).
 func _draw_timing(me: int) -> void:
 	var sim := session.sim
 	var e := sim.entries[me]
-	_panel(Rect2(0, 0, 300, 150))
-	_text(Vector2(14, 38), "P%d / %d" % [e.position, sim.car_count()], 34)
+	_panel(Rect2(0, 0, 300, _timing_height(me)))
+	_text(Vector2(14, 42), "P%d / %d" % [e.position, sim.car_count()], 34)
 	var lap_now := mini(e.laps_done + 1, sim.settings.laps)
-	_text(Vector2(160, 38), "LAP %d/%d" % [lap_now, sim.settings.laps], 20)
-	var cur := sim.race_time - e.lap_start_time if e.started_lap and not e.finished else 0.0
-	_text(Vector2(14, 72), "Time  " + fmt_time(cur), 18)
-	_text(Vector2(14, 96), "Last  " + fmt_time(e.lap_times[-1] if e.lap_times.size() > 0 else 0.0), 18, Color(1, 1, 1, 0.8))
-	_text(Vector2(14, 120), "Best  " + fmt_time(e.best_lap), 18, Color(0.6, 1, 0.6))
+	_text(Vector2(160, 40), "LAP %d/%d" % [lap_now, sim.settings.laps], 20)
 	if e.penalty_s > 0.0:
-		_text(Vector2(160, 72), "+%d s penalty" % int(e.penalty_s), 16, Color(1, 0.55, 0.3))
+		_text(Vector2(14, 72), "+%d s penalty" % int(e.penalty_s), 16, Color(1, 0.55, 0.3))
 	# Rallycross: has the joker been taken yet? Amber until it has, and a
 	# warning on the last lap it can still be taken.
 	if sim.settings.is_rallycross() and sim.track.has_joker() and not e.finished:
 		var done := e.jokers >= sim.settings.joker_laps
 		var last_lap := sim.settings.laps - (1 if sim.track.joker_entry_s > sim.track.joker_exit_s and sim.settings.laps > 1 else 0)
 		var col := Color(0.45, 1.0, 0.55) if done else (Color(1, 0.35, 0.25) if lap_now >= last_lap else Color(1, 0.75, 0.3))
-		_text(Vector2(160, 120), "JOKER " + ("DONE" if done else ("NOW!" if lap_now >= last_lap else "TO DO")), 16, col)
+		_text(Vector2(160, 72), "JOKER " + ("DONE" if done else ("NOW!" if lap_now >= last_lap else "TO DO")), 16, col)
 
 
 ## Speed, gear and the rev bar.
@@ -493,40 +518,52 @@ func _draw_speed(me: int) -> void:
 		_text(br + Vector2(120, 110), "OFF TRACK", 14, Color(1, 0.5, 0.3))
 
 
-## Tyre temperatures and wear, time of day, weather, grip and fuel.
+## Grip, then each tyre's temperature (and wear) in a 2 x 2 grid.
 func _draw_tyres(me: int) -> void:
 	var sim := session.sim
 	var c := sim.cars[me]
-	var bl := Vector2.ZERO
-	_panel(Rect2(bl, Vector2(300, 186)))
-	var tc := sim.compounds[me]
-	_text(bl + Vector2(14, 24), "TYRES  " + tc.display_name.to_upper(), 14, Color(1, 1, 1, 0.7))
-	var pos := [Vector2(20, 36), Vector2(80, 36), Vector2(20, 92), Vector2(80, 92)]
-	for k in 4:
-		var t := c.tyre_temp[k]
-		var r := Rect2(bl + pos[k], Vector2(48, 48))
-		draw_rect(r, _temp_colour(t, tc))
-		_text(r.position + Vector2(0, 30), "%d°" % roundi(Units.temp_value(t)), 16, Color.BLACK, HORIZONTAL_ALIGNMENT_CENTER, 48)
-		if sim.settings.tyre_wear_enabled:
-			_text(r.position + Vector2(0, 46), "%d%%" % roundi((1.0 - c.tyre_wear[k]) * 100.0), 11, Color(0, 0, 0, 0.75), HORIZONTAL_ALIGNMENT_CENTER, 48)
 	var env := sim.env
-	var h := env.time_of_day_h
-	_text(bl + Vector2(146, 50), "%02d:%02d  %s" % [int(h), int(fmod(h, 1.0) * 60.0), SimEnvironment.weather_name(env.weather)], 15)
-	_text(bl + Vector2(146, 72), "Air %s  Track %s" % [Units.temp(env.ambient_c), Units.temp(env.track_c)], 15)
-	_text(bl + Vector2(146, 94), _surface_text(env), 15, Color(0.6, 0.85, 1) if env.wetness > 0.05 else Color.WHITE)
-	var forecast := _forecast_text(env)
-	if forecast != "":
-		_text(bl + Vector2(146, 116), forecast, 14, Color(1, 0.85, 0.5))
+	var tc := sim.compounds[me]
+	_panel(Rect2(0, 0, 136, 164))
 	var avg := 0.0
 	for k in 4:
 		avg += tc.temp_grip_factor(c.tyre_temp[k])
 	var off_line := c.lateral_offset - env.raceline_offset(c.track_idx)
 	var grip := avg / 4.0 * env.grip_factor(tc, off_line, c.speed())
-	_text(bl + Vector2(146, 138), "Grip %d%%" % int(grip * 100.0), 15, Color(0.6, 1, 0.6) if grip > 0.85 else Color(1, 0.7, 0.4))
-	if sim.settings.fuel_enabled:
-		var fl := sim.pits.fuel_laps(me)
-		_text(bl + Vector2(146, 160), "Fuel %s  %s" % [Units.fuel(c.fuel_l), "(%.1f laps)" % fl if fl < 99.0 else ""], 15,
-			Color(1, 0.5, 0.3) if fl < 1.5 else Color.WHITE)
+	_text(Vector2(12, 24), "GRIP %d%%" % int(grip * 100.0), 18, Color(0.6, 1, 0.6) if grip > 0.85 else Color(1, 0.7, 0.4))
+	_text(Vector2(12, 40), tc.display_name.to_upper(), 11, Color(1, 1, 1, 0.6), HORIZONTAL_ALIGNMENT_LEFT, 116)
+	var pos := [Vector2(14, 50), Vector2(74, 50), Vector2(14, 106), Vector2(74, 106)]
+	for k in 4:
+		var t := c.tyre_temp[k]
+		var r := Rect2(pos[k], Vector2(48, 48))
+		draw_rect(r, _temp_colour(t, tc))
+		_text(r.position + Vector2(0, 30), "%d°" % roundi(Units.temp_value(t)), 16, Color.BLACK, HORIZONTAL_ALIGNMENT_CENTER, 48)
+		if sim.settings.tyre_wear_enabled:
+			_text(r.position + Vector2(0, 46), "%d%%" % roundi((1.0 - c.tyre_wear[k]) * 100.0), 11, Color(0, 0, 0, 0.75), HORIZONTAL_ALIGNMENT_CENTER, 48)
+
+
+## Time of day and weather, the track's state, air and track temperature,
+## and the forecast.
+func _draw_conditions() -> void:
+	var env := session.sim.env
+	var forecast := _forecast_text(env)
+	_panel(Rect2(0, 0, 260, 84.0 if forecast == "" else 106.0))
+	var h := env.time_of_day_h
+	_text(Vector2(14, 26), "%02d:%02d  %s" % [int(h), int(fmod(h, 1.0) * 60.0), SimEnvironment.weather_name(env.weather)], 15)
+	_text(Vector2(14, 48), _surface_text(env), 15, Color(0.6, 0.85, 1) if env.wetness > 0.05 else Color.WHITE)
+	_text(Vector2(14, 70), "Air %s  Track %s" % [Units.temp(env.ambient_c), Units.temp(env.track_c)], 15)
+	if forecast != "":
+		_text(Vector2(14, 92), forecast, 14, Color(1, 0.85, 0.5))
+
+
+## Fuel on board and the laps it's good for.
+func _draw_fuel(me: int) -> void:
+	var sim := session.sim
+	var fl := sim.pits.fuel_laps(me)
+	_panel(Rect2(0, 0, 200, 56))
+	_text(Vector2(12, 20), "FUEL", 12, Color(1, 1, 1, 0.6))
+	_text(Vector2(12, 44), "%s  %s" % [Units.fuel(sim.cars[me].fuel_l), "(%.1f laps)" % fl if fl < 99.0 else ""], 18,
+		Color(1, 0.5, 0.3) if fl < 1.5 else Color.WHITE)
 
 
 ## The pit panel's height (0: nothing to show).
