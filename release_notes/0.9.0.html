@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Top Down Racer Release Notes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<style>
+/* Same layout as the Torque Shed release notes, every release: masthead, at a glance,
+   one entry per feature (rail on the left: area, day, part of the game), then Try it / Known limits / Coming next. */
+:root {
+  --paper: #efede7; --sheet: #ffffff; --ink: #1b1d20; --muted: #5b6168; --rule: #d5d2c9;
+  --accent: #c0341d; --link: #1d6b8a;
+  --display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --body: "Literata", Georgia, "Times New Roman", serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #121417; --sheet: #1b1e22; --ink: #e5e6e8; --muted: #9ca3aa; --rule: #2d3238;
+    --accent: #ff7552; --link: #6cc3e0; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #121417; --sheet: #1b1e22; --ink: #e5e6e8; --muted: #9ca3aa; --rule: #2d3238;
+  --accent: #ff7552; --link: #6cc3e0; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--paper); color: var(--ink); font-family: var(--body); font-size: 17px; line-height: 1.6; margin: 0;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.wrap { max-width: 1060px; margin: 0 auto; padding-block: 40px 72px; }
+h1, h2, h3 { font-family: var(--display); font-weight: 700; line-height: 1.05; text-wrap: balance; margin: 0; letter-spacing: 0.01em; }
+a { color: var(--link); text-underline-offset: 3px; }
+header.top { display: grid; gap: 18px; padding-bottom: 28px; border-bottom: 2px solid var(--ink); }
+.kicker { font-family: var(--mono); font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px 18px; }
+h1 { font-size: clamp(46px, 8vw, 84px); text-transform: uppercase; }
+h1 span { color: var(--accent); }
+.lede { max-width: 64ch; font-size: 19px; margin: 0; }
+.cta { display: flex; flex-wrap: wrap; gap: 10px; }
+.play { font-family: var(--display); font-size: 19px; letter-spacing: 0.04em; text-transform: uppercase; padding: 8px 16px; border: 2px solid var(--ink); color: var(--ink); background: var(--sheet); overflow-wrap: anywhere; }
+.play.main { background: var(--accent); border-color: var(--accent); color: #fff; }
+.glance { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); margin-block: 28px 8px; }
+.glance div { background: var(--sheet); padding: 14px 16px; min-width: 0; }
+.glance b { display: block; font-family: var(--display); font-size: 21px; letter-spacing: 0.02em; text-transform: uppercase; }
+.glance p { margin: 4px 0 0; font-size: 15px; color: var(--muted); }
+.log { margin-top: 44px; display: grid; }
+.entry { display: grid; grid-template-columns: 118px minmax(0, 1fr); gap: 28px; padding-block: 34px; border-top: 1px solid var(--rule); }
+.rail .m { font-family: var(--display); font-size: 40px; color: var(--accent); line-height: 1; text-transform: uppercase; }
+.rail .d { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-top: 6px; letter-spacing: 0.04em; }
+.rail .area { font-family: var(--mono); font-size: 11px; color: var(--link); margin-top: 10px; letter-spacing: 0.06em; text-transform: uppercase; }
+.body { min-width: 0; }
+.body h2 { font-size: clamp(28px, 4vw, 38px); text-transform: uppercase; }
+.body .sum { margin: 8px 0 14px; max-width: 66ch; }
+.body ul { margin: 0 0 18px; padding-left: 1.2em; max-width: 68ch; }
+.body li { margin-block: 3px; }
+.body li::marker { color: var(--accent); }
+.after { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 28px; margin-top: 40px; padding-top: 30px; border-top: 2px solid var(--ink); }
+.after h3 { font-size: 26px; text-transform: uppercase; margin-bottom: 8px; }
+.after ul { margin: 0; padding-left: 1.1em; }
+.after li { margin-block: 4px; }
+.after li::marker { color: var(--link); }
+footer { margin-top: 44px; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+@media (max-width: 720px) {
+  .entry { grid-template-columns: 1fr; gap: 10px; }
+  .rail { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  .rail .d, .rail .area { margin-top: 0; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="kicker"><span>Release notes</span><span>3 Nov 2026</span><span>v0.9.0</span><span>Wider roads, solid pit walls, spectating</span></div>
+    <h1>Top Down <span>Racer</span></h1>
+    <p class="lede">The circuits are 50% wider, and a real pit wall now stands between the track and the pit lane. When you finish, you can watch the rest of the race and then see a full results screen. Cars crumple like real cars, the scenery stays sharp at 4K, yellow flags come out only for real incidents, and the strategist gets a real weather radar.</p>
+    <div class="cta">
+      <span class="play main">Download TopDownRacer-v0.9.0-windows.zip</span>
+    </div>
+    <section class="glance" aria-label="At a glance">
+      <div><b>Wider roads</b><p>Every circuit 1.5 times its real width.</p></div>
+      <div><b>Pit wall</b><p>A solid wall between the track and the pit lane.</p></div>
+      <div><b>Spectate</b><p>Watch the race after you finish, with trackside TV cameras.</p></div>
+      <div><b>Results</b><p>Gaps, best laps, sectors, pit stops, penalties and points.</p></div>
+      <div><b>Crumple</b><p>Noses, tails and doors crush the way real cars do.</p></div>
+      <div><b>Sharp scenery</b><p>Modelled fields, woods and roads round every circuit.</p></div>
+      <div><b>Fewer yellows</b><p>Only real incidents, and a new Safety car Off setting.</p></div>
+      <div><b>Weather radar</b><p>Rain cells, arrows and arrival times for the strategist.</p></div>
+      <div><b>Your buttons</b><p>Every hint names the key or button you have mapped.</p></div>
+    </section>
+  </header>
+
+  <main class="log">
+
+    <article class="entry" id="roads">
+      <div class="rail"><div class="m">Tracks</div><div class="d">3 Nov</div><div class="area">Circuits</div></div>
+      <div class="body">
+        <h2>Roads 50% wider</h2>
+        <p class="sum">Every circuit's road is now one and a half times its real width, so there is room to race side by side. Rallycross and Demolition Derby are unchanged.</p>
+        <ul>
+          <li>The inside of the tightest hairpins widens less, so they keep their shape.</li>
+          <li>Pit lanes moved out with the road edge, and the racing lines were worked out again for the wider roads.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="pitwall">
+      <div class="rail"><div class="m">Pits</div><div class="d">3 Nov</div><div class="area">Pit lane</div></div>
+      <div class="body">
+        <h2>A solid pit wall</h2>
+        <p class="sum">On most circuits the pit lane sat on top of the main straight, so cars drove straight through the pit wall. Now there's a real wall between the track and the lane.</p>
+        <ul>
+          <li>Pit lanes moved out until they sit clear of the track along the garages.</li>
+          <li>The wall is 1 m thick, with a debris fence on the track side, and it stops cars from either side like a concrete wall.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="ground">
+      <div class="rail"><div class="m">Graphics</div><div class="d">3 Nov</div><div class="area">Scenery</div></div>
+      <div class="body">
+        <h2>Sharp ground round every circuit</h2>
+        <p class="sum">The fields, woods, roads, car parks and water round each circuit are now modelled, not painted on a low-resolution picture. They stay sharp at any zoom, even at 4K.</p>
+        <ul>
+          <li>Stray lines of map gravel no longer show round the circuit.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="crumple">
+      <div class="rail"><div class="m">Damage</div><div class="d">3 Nov</div><div class="area">Bodywork</div></div>
+      <div class="body">
+        <h2>Cars crumple like real cars</h2>
+        <p class="sum">Damaged bodywork now crushes on every car, not just derby cars, and the dents can be seen from above.</p>
+        <ul>
+          <li>Noses and tails fold like an accordion, with the bonnet or boot lid buckled up behind. An offset hit crushes that corner more.</li>
+          <li>Side hits cave the doors in and drag the roof rail down. A second hit somewhere else on the same side makes a second dent.</li>
+          <li>Paint darkens in the folds, and the lights, wings, splitters and glass bend with the body.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="pits">
+      <div class="rail"><div class="m">Pits</div><div class="d">3 Nov</div><div class="area">Co-op</div></div>
+      <div class="body">
+        <h2>Pit stops: the crew game is co-op only</h2>
+        <p class="sum">In single player the AI crew now does the whole stop for you. In co-op, players still work the crew.</p>
+        <ul>
+          <li>Your crew member is marked by a yellow hoop.</li>
+          <li>Tips name the button you have actually mapped, on the keyboard or the controller, whichever you used last.</li>
+          <li>With no fuel to put in, the fuel man stands by at the rig instead of vanishing.</li>
+          <li>A stop never runs past the crew's give-up time.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="spectate">
+      <div class="rail"><div class="m">Race</div><div class="d">3 Nov</div><div class="area">After the flag</div></div>
+      <div class="body">
+        <h2>Watch the race after you finish, then a full results screen</h2>
+        <p class="sum">Once you've finished or retired, you can watch the rest of the race. When every car is home, a detailed results screen fades in.</p>
+        <ul>
+          <li>Pick any car (left and right, or click the running order) and any camera (C or Y): follow, chase, onboard, rear onboard, trackside TV or whole track.</li>
+          <li>Trackside TV uses real broadcast cameras on poles round the circuit. They pan and zoom to follow the car, then cut to the next one.</li>
+          <li>The results show positions, race time and gaps, best and average laps, best sectors (field bests in purple), best potential lap, pit stops, penalties with reasons, points, and the championship standings in a season.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="flags">
+      <div class="rail"><div class="m">Rules</div><div class="d">3 Nov</div><div class="area">Race control</div></div>
+      <div class="body">
+        <h2>Fewer yellow flags, and Safety car Off</h2>
+        <p class="sum">Yellow flags now come out only for real incidents, and there's a new setting to turn flags off altogether.</p>
+        <ul>
+          <li>Rubbing between cars no longer brings out a yellow flag. A real crash, a spun car, or a car crawling through the gravel still does.</li>
+          <li>Safety car setting: On, Yellow flags only, or Off (no flags and no safety car).</li>
+          <li>The flag board sits higher and is see-through.</li>
+          <li>The safety car is far easier to spot: a flashing roof light bar, corner strobes, amber light on the road, a flashing ring that grows as you zoom out, and an SC tag you can read with the whole track in view.</li>
+          <li>When the safety car is coming in this lap, the board turns green and tells you to get ready.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="giveback">
+      <div class="rail"><div class="m">Rules</div><div class="d">3 Nov</div><div class="area">Penalties</div></div>
+      <div class="body">
+        <h2>The car you must let past is highlighted</h2>
+        <p class="sum">When race control tells you to give a place back, the car you have to let past gets a pulsing outline and a LET PAST tag.</p>
+        <ul>
+          <li>The race control box names that car and says how far ahead or behind it is. Its row on the timing tower turns orange, and an arrow at the edge of the screen points to it when it's out of view.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="tower">
+      <div class="rail"><div class="m">HUD</div><div class="d">3 Nov</div><div class="area">Timing tower</div></div>
+      <div class="body">
+        <h2>You stand out on the timing tower</h2>
+        <p class="sum">Your row on the timing tower has a gold band. Other players online are shown in blue.</p>
+        <ul>
+          <li>New option, Settings &gt; Gameplay &gt; Car highlights fade: never (the default), or after 5, 15, 30 or 60 seconds. The outlines come back at the green light and whenever you zoom.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="radar">
+      <div class="rail"><div class="m">Strategy</div><div class="d">3 Nov</div><div class="area">Pit wall</div></div>
+      <div class="body">
+        <h2>A real weather radar for the strategist</h2>
+        <p class="sum">The pit wall radar now looks like a real rain radar, with forecasts.</p>
+        <ul>
+          <li>Rain shows from light blue through green and yellow to red, on a map with range rings. Arrows show where each cell is heading, and lines mark rain 10, 20 and 30 minutes from the track.</li>
+          <li>Play it as a loop from 15 minutes ago to 30 minutes ahead, and zoom in.</li>
+          <li>The forecast is close but not perfect, and it gets better as the rain gets nearer. Each change says how long it will last and how sure the forecast is.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="layout">
+      <div class="rail"><div class="m">Strategy</div><div class="d">3 Nov</div><div class="area">Pit wall</div></div>
+      <div class="body">
+        <h2>Move, resize and zoom the pit wall panels</h2>
+        <p class="sum">Drag a panel's title bar to move it. Drag its corner to zoom its contents from 60 to 200%, and its edges to resize it.</p>
+        <ul>
+          <li>Panels snap to the screen edges and to each other. The layout is remembered, and Reset layout puts it back.</li>
+          <li>The highlight rings no longer show in the onboard picture.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="joker">
+      <div class="rail"><div class="m">Aids</div><div class="d">3 Nov</div><div class="area">Rallycross</div></div>
+      <div class="body">
+        <h2>Driving line through the joker</h2>
+        <p class="sum">In rallycross, while you still owe your joker lap, a dashed branch of the driving line shows the way into the joker lane.</p>
+        <ul>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="derby">
+      <div class="rail"><div class="m">Race</div><div class="d">3 Nov</div><div class="area">Derby</div></div>
+      <div class="body">
+        <h2>Derby cars get off the line</h2>
+        <p class="sum">Derby cars now have grip on dirt, so every car can get going from a standstill.</p>
+        <ul>
+          <li>0 to 40 km/h on dirt now takes about 4 seconds. Before it was over 5, and some cars never got going. The tails still step out.</li>
+          <li>Arenas are 50% bigger so the AI copes, and the road runs right up to the walls.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="controls">
+      <div class="rail"><div class="m">Menus</div><div class="d">3 Nov</div><div class="area">Controls</div></div>
+      <div class="body">
+        <h2>Button prompts show your own buttons</h2>
+        <p class="sum">Every hint in the game now names the key or button you have mapped, on the device you used last (keyboard and mouse, or controller). PlayStation pads get Cross, L1 and so on.</p>
+        <ul>
+          <li>Pad A and B now work as accept and back in every menu.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="menus">
+      <div class="rail"><div class="m">Menus</div><div class="d">3 Nov</div><div class="area">Quality of life</div></div>
+      <div class="body">
+        <h2>Smaller fixes</h2>
+        <p class="sum">A few things that make the game nicer to use.</p>
+        <ul>
+          <li>"Are you sure?" Yes / No popups for restarting, ending the race and quitting, in the pause menu and on the main menu. No is picked first.</li>
+          <li>The mouse pointer hides while you drive and comes back when you move the mouse.</li>
+          <li>The lobby fits on one screen at 720p and 1080p without scrolling.</li>
+          <li>The exhaust pops and crackles are gone. They sounded like constant banging.</li>
+        </ul>
+      </div>
+    </article>
+
+  </main>
+
+  <section class="after">
+    <div>
+      <h3>Try it</h3>
+      <ul>
+        <li>Unzip the folder and double-click TopDownRacer.exe, as before.</li>
+        <li>Online, everyone needs v0.9.0. Older games are turned away at the lobby.</li>
+        <li>Finish a race and watch the rest of the field on the trackside TV cameras.</li>
+        <li>Try a race at Spa on the wider road, and look for the new pit wall.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Known limits</h3>
+      <ul>
+        <li>The pit crew game is co-op only now. In single player the AI crew does the stop.</li>
+        <li>Online, handing a co-op car back from an AI co-driver to a player is still unreliable.</li>
+        <li>Co-op isn't available in Rallycross or Demolition Derby.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Coming next</h3>
+      <ul>
+        <li>Your notes from playing this build.</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>Build of main at da70fa0 with PRs #71 to #89.</footer>
+</div>
+</body>
+</html>
