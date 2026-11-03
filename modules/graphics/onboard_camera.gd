@@ -39,6 +39,9 @@ func setup(p_world: WorldView) -> void:
 	camera.fov = 62.0
 	camera.near = 0.1
 	camera.far = 2500.0
+	# No player highlight rings in the onboard picture: they're for the
+	# view from above.
+	camera.cull_mask &= ~CarView.HIGHLIGHT_LAYER
 	add_child(camera)
 	camera.current = true
 
