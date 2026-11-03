@@ -93,7 +93,7 @@ func _build() -> void:
 	tag.modulate = Color(1, 1, 1, 0.85)
 	box.add_child(tag)
 	_prompt = Label.new()
-	_prompt.text = "Press any button"
+	InputPrompt.live(_prompt, func(): _prompt.text = InputPrompt.pick("Press any key", "Press any button"))
 	_prompt.add_theme_font_size_override("font_size", 18)
 	_prompt.modulate = Color(1, 1, 1, 0.6)
 	box.add_child(_prompt)

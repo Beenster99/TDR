@@ -167,4 +167,4 @@ func _draw() -> void:
 			draw_rect(row, Color(1, 0.88, 0.35, 0.7), false, 1.5)
 		draw_string(font, Vector2(row.position.x + 10, y + 24), str(k + 1), HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(1, 1, 1, 0.45))
 		draw_string(font, Vector2(row.position.x + 38, y + 24), list[k][1], HORIZONTAL_ALIGNMENT_LEFT, w - 70, 18, Color.WHITE)
-	draw_string(font, Vector2(r.position.x + 18, r.end.y - 12), "Click a call or press its number   Esc close", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(1, 1, 1, 0.5))
+	draw_string(font, Vector2(r.position.x + 18, r.end.y - 12), InputPrompt.fill(InputPrompt.pick("Click a call or press its number   {ui_cancel} close", "D-pad ↑↓ choose   {ui_accept} send   {ui_cancel} close")), HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(1, 1, 1, 0.5))

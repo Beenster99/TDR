@@ -508,7 +508,7 @@ func _build_items() -> void:
 				if plan.has("setup"):
 					_items.append(["setup_reset", "Setup changes", "Cancel them", true])
 	else:
-		_items.append(["pit_wall", "Full pit wall", "radar, all timing (P)", true])
+		_items.append(["pit_wall", "Full pit wall", "radar, all timing (%s)" % InputPrompt.key("strategy_screen"), true])
 		_items.append(["watch", "Watch", sim.entries[watch_car].driver_name if watch_car >= 0 else "-", true])
 		if onboard:
 			var who := "-"
@@ -516,12 +516,12 @@ func _build_items() -> void:
 				who = "P%d %s%s" % [sim.entries[cam_car].position, sim.entries[cam_car].at_wheel(), " (us)" if cam_car == car else ""]
 			_items.append(["cam_car", "Onboard camera", who, true])
 			_items.append(["cam_view", "Camera view", {CAM_FRONT: "Front", CAM_REAR: "Rear", CAM_OFF: "Off"}[cam_mode], true])
-	_items.append(["radio", "Radio the driver", "quick calls (V)", true])
+	_items.append(["radio", "Radio the driver", "quick calls (%s)" % InputPrompt.key("team_radio"), true])
 	var mates := crew_mates()
 	if not mates.is_empty():
 		var pend: Dictionary = session.pending_swap(car)
 		if not pend.is_empty():
-			_items.append(["swap", "Role swap", "waiting for the stop: A to cancel", true])
+			_items.append(["swap", "Role swap", "waiting for the stop: %s to cancel" % InputPrompt.pick("click or " + InputPrompt.key("ui_accept"), InputPrompt.key("ui_accept")), true])
 		else:
 			var m: Dictionary = mates[swap_pick % mates.size()]
 			if m.get("ai", false):
@@ -607,8 +607,9 @@ func _draw() -> void:
 		_hits.append([pip_r, "panel", null])
 		OnboardPip.draw(self, font, onboard, pip_r, session, cam_car, cam_mode == CAM_REAR)
 	var hy := mid.position.y - 10 if mid.position.y > 90 else mid.end.y + 18
-	_text(Vector2(mid.position.x, hy), "Click: act   Right-click / wheel: change   ↑↓ ←→ Enter   %sV radio   P pit wall   Drag a title bar to move, the corner to zoom" % (
-		"C switch tab   " if tabs.size() > 1 else ""), 13, Color(1, 1, 1, 0.75), HORIZONTAL_ALIGNMENT_LEFT, maxf(mid.size.x, 760.0))
+	_text(Vector2(mid.position.x, hy), InputPrompt.fill(InputPrompt.pick("Click: act   Right-click / wheel: change   ↑↓ ←→ {ui_accept}   ",
+		"D-pad ↑↓ choose   ←→ change   {ui_accept} act   ") + ("{crew_tab} switch tab   " if tabs.size() > 1 else "")
+		+ "{team_radio} radio   {strategy_screen} pit wall   Drag a title bar to move, the corner to zoom"), 13, Color(1, 1, 1, 0.75), HORIZONTAL_ALIGNMENT_LEFT, maxf(mid.size.x, 760.0))
 	layout.draw_handles(self, _hover, font)
 
 
@@ -1012,7 +1013,7 @@ func _draw_radio(r: Rect2) -> void:
 		y -= 20
 		lines += 1
 	if lines == 0:
-		_text(Vector2(r.position.x + 12, r.position.y + 50), "No calls yet. Click here or press V to radio the driver.", 14, DIM)
+		_text(Vector2(r.position.x + 12, r.position.y + 50), "No calls yet. %s to radio the driver." % InputPrompt.pick("Click here or press " + InputPrompt.key("team_radio"), "Press " + InputPrompt.key("team_radio")), 14, DIM)
 	# Race control: the latest call, top right of the strip.
 	var rc := session.telemetry.feed.latest(1, ["race_control"])
 	if not rc.is_empty():

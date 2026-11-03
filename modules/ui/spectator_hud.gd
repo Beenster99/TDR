@@ -108,8 +108,9 @@ func _build() -> void:
 	_view_btn = _button("Camera", func(): view_step.emit())
 	_view_btn.custom_minimum_size = Vector2(260, 32)
 	vrow.add_child(_view_btn)
-	_hint = _label("◀ ▶  A / D / stick: change car   ·   C / Y: camera   ·   Space / A: your car   ·   Z / R3: whole track",
-		12, DIM)
+	_hint = _label("", 12, DIM)
+	InputPrompt.live(_hint, func(): _hint.text = InputPrompt.fill("◀ ▶  %s: change car   ·   {camera_toggle}: camera   ·   {handbrake}: your car   ·   {zoom_full}: whole track"
+		% InputPrompt.pair("steer_left", "steer_right")))
 	_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	cv.add_child(_hint)
 
