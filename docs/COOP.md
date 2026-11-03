@@ -21,8 +21,13 @@ share holds up to three players and races the car of its first player
 rest shared out by `RaceEntry.share_roles`. Taking a role someone else
 holds swaps it with them.
 
+In a car share each player also has a **pit stop job** row: the driver and
+a pit crew player pick the tyre job they do at co-op pit stops (left / right
+gun man or wheel man, no two the same, `RaceEntry.share_pit_jobs`); the
+strategist is always the fuel man. See docs/PIT_CREW_GAME.md.
+
 Command line (testing): `--team 1 --role pit_wall` joins car share 1 as pit
-crew + strategist.
+crew + strategist; `--pit-job wheel_r` picks the right wheel man.
 
 ## Swapping roles in a race
 

@@ -482,13 +482,18 @@ func _process(delta: float) -> void:
 	if speed < 3.0:
 		offset *= speed / 3.0
 	var follow := target + offset
-	# A player gunning a wheel (PitCrewGame): close in on the box, north up.
-	_box_mix = move_toward(_box_mix, 1.0 if crew_game.wants_close_view() else 0.0, delta * 2.5)
+	# A player doing a crew job (PitCrewGame): close in on the box, north up.
+	# On the pit wall the console steps aside for it, and comes back when the
+	# lollipop sends the car.
+	var box_view := crew_game.wants_close_view()
+	if _is_crew() and crew.visible == box_view:
+		crew.visible = not box_view
+	_box_mix = move_toward(_box_mix, 1.0 if box_view else 0.0, delta * 2.5)
 	if _box_mix > 0.0:
 		var k := smoothstep(0.0, 1.0, _box_mix)
 		var box_z := minf(_view_rect().size.x, _view_rect().size.y) / BOX_VIEW_M
 		z = exp(lerpf(log(z), log(box_z), k))
-		follow = follow.lerp(car_views[crew_game.car].pos2 if crew_game.car >= 0 else target, k)
+		follow = follow.lerp(crew_game.view_centre() if crew_game.car >= 0 else target, k)
 	var centre_mix := smoothstep(0.85, 1.0, _zoom) * (1.0 - _box_mix)
 	# Put the view's centre (not the window's) on the target.
 	var shift := (_view_rect().get_center() - vs * 0.5) / z
@@ -557,11 +562,13 @@ func _update_pit_crews() -> void:
 			state = PitCrews.Stop.SERVICE
 		elif ph == PitRules.PHASE_LEAVE:
 			state = PitCrews.Stop.LEAVING
-		elif p["box"] and (ph == PitRules.PHASE_ENTRY or ph == PitRules.PHASE_LIMIT):
+		elif p["box"] and (ph == PitRules.PHASE_ENTRY or ph == PitRules.PHASE_LIMIT or ph == PitRules.PHASE_APPROACH
+				or (ph == PitRules.PHASE_NONE and int(p.get("crew_play", 0)) & PitRules.job_bit(PitRules.JOB_LANCE))):
+			# On their way in (a co-op crew laying out the tyres: from the call).
 			state = PitCrews.Stop.COMING
-			if not _pit_work.has(i):
+			if not _pit_work.has(i) or int(p.get("crew_play", 0)) != 0:
 				var coming := pits.service_for(i, p["plan"])
-				coming["crew"] = pits.crew_timeline(i, coming)
+				coming["crew"] = pits.crew_timeline(i, coming, PitRules.played_jobs(p))
 				_pit_work[i] = coming
 			work = _pit_work[i]
 		if state != PitCrews.Stop.COMING:
