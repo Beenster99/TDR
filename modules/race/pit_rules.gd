@@ -1045,6 +1045,7 @@ func _limited(i: int, inp: CarInput) -> CarInput:
 		r.throttle = 0.0
 		r.brake = inp.brake
 		r.steer = inp.steer
+		r.handbrake = inp.handbrake
 		return r.quantized()
 	return inp
 

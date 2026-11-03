@@ -14,6 +14,7 @@ const KEYS := {
 	"brake": [KEY_S, KEY_DOWN],
 	"steer_left": [KEY_A, KEY_LEFT],
 	"steer_right": [KEY_D, KEY_RIGHT],
+	"handbrake": [KEY_SPACE],
 	"camera_toggle": [KEY_C],
 	"restart_race": [KEY_R],
 	"back_to_menu": [KEY_ESCAPE],
@@ -57,21 +58,21 @@ const PAD_AXES := {
 	"crew_gun": [JOY_AXIS_TRIGGER_RIGHT, 1.0],
 }
 const PAD_BUTTONS := {
-	"accelerate": [JOY_BUTTON_A],          # for pads without analog triggers
-	"brake": [JOY_BUTTON_X],
+	"brake": [JOY_BUTTON_X],               # for pads without analog triggers
+	"handbrake": [JOY_BUTTON_A],
 	"camera_toggle": [JOY_BUTTON_Y],
 	"restart_race": [JOY_BUTTON_BACK],
 	"back_to_menu": [JOY_BUTTON_START],
-	"zoom_in": [JOY_BUTTON_LEFT_SHOULDER, JOY_BUTTON_DPAD_UP],      # hold
+	"zoom_in": [JOY_BUTTON_LEFT_SHOULDER],                          # hold
 	"zoom_out": [JOY_BUTTON_RIGHT_SHOULDER, JOY_BUTTON_DPAD_DOWN],  # hold
 	"zoom_full": [JOY_BUTTON_RIGHT_STICK],
 	"strategy_screen": [JOY_BUTTON_DPAD_RIGHT],  # pit wall (strategist screen); B closes
 	"pit_box": [JOY_BUTTON_DPAD_LEFT],
 	"pit_limiter": [JOY_BUTTON_LEFT_STICK],
-	"pit_tyres": [JOY_BUTTON_B],  # B closes the pit wall when it's open
+	"pit_tyres": [JOY_BUTTON_DPAD_UP],
 	"team_radio": [JOY_BUTTON_BACK],
 	"crew_tab": [JOY_BUTTON_Y],
-	"shift_up": [JOY_BUTTON_A],     # manual gearbox: A up, X down (pedals stay on the triggers)
+	"shift_up": [JOY_BUTTON_B],     # manual gearbox: B up, X down (pedals stay on the triggers, A is the handbrake)
 	"shift_down": [JOY_BUTTON_X],
 	"crew_gun": [JOY_BUTTON_A],
 	"crew_grab": [JOY_BUTTON_X],
@@ -82,6 +83,7 @@ const TRIGGER_DEADZONE := 0.05
 ## the name shown there.
 const REBINDABLE := [
 	["accelerate", "Throttle"], ["brake", "Brake"], ["steer_left", "Steer left"], ["steer_right", "Steer right"],
+	["handbrake", "Handbrake"],
 	["shift_up", "Shift up (manual gears)"], ["shift_down", "Shift down (manual gears)"],
 	["zoom_in", "Zoom in"], ["zoom_out", "Zoom out"], ["zoom_full", "Whole track"], ["camera_toggle", "Camera"],
 	["pit_box", "Box this lap"], ["pit_limiter", "Pit limiter"], ["pit_tyres", "Next tyres"], ["pit_fuel", "Next fuel"],
