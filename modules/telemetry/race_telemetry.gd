@@ -409,7 +409,7 @@ func _derive_feed(sim: RaceSim, out: Array) -> void:
 	if not forecast.changes.is_empty():
 		var ch: Dictionary = forecast.changes[0]
 		for mark in [600.0, 300.0, 120.0]:
-			var key := "%s@%d:%d" % [ch["weather"], int(mark), int(_race_time + ch["eta"]) / 30]
+			var key := "%s@%d:%d" % [ch["weather"], int(mark), int(ch.get("k", int(_race_time + ch["eta"]) / 30))]
 			if ch["eta"] <= mark and ch["eta"] > mark - 60.0 and not _announced_eta.has(key):
 				_announced_eta[key] = true
 				_say(out, "weather", -1, "Radar: %s in %s (%d%% likely)" % [

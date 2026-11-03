@@ -3,7 +3,9 @@ extends Control
 ## The pit wall: a full-screen strategist view over the race. Timing tower
 ## with every car's sector and lap times, last-5-lap average, gaps,
 ## intervals, tyres and where a stop now would rejoin; weather radar and
-## forecast; the selected car's details and pit window; and the feed of
+## forecast (WeatherRadar: rain radar over a map with range rings, where
+## the rain is heading, a 30-minute forecast loop and the coming changes);
+## the selected car's details and pit window; and the feed of
 ## other teams' radio and strategy calls.
 ##
 ## Mouse and keyboard first: click a car in the timing to look at it, click
@@ -33,7 +35,6 @@ var session: RaceSession
 var selected: int = -1          ## car index
 var filter: int = 0
 var font: Font
-var _sweep := 0.0
 var _note := ""                 ## a short line after a pit call (driver change)
 var _note_time := 0.0
 var _track_pts := PackedVector2Array()
@@ -44,6 +45,8 @@ var _hover := Vector2(-1, -1)
 ## Onboard camera for the selected car (set by the race scene; null = none).
 var onboard: OnboardCamera
 var cam_mode := 0               ## 0 off, 1 front, 2 rear
+## The weather radar panel (zoom, forecast loop).
+var radar := WeatherRadar.new()
 
 
 func setup(p_session: RaceSession) -> void:
@@ -156,6 +159,8 @@ func _click(pos: Vector2, button: int) -> void:
 			"close":
 				if dir == 1:
 					close()
+			"radar":
+				radar.click(h[2], dir, pos.x)
 		if absi(dir) == 1:
 			Sound.ui("ui_select", -6.0)
 		return
@@ -173,7 +178,7 @@ func _process(delta: float) -> void:
 	if not visible:
 		return
 	size = get_viewport_rect().size
-	_sweep = fmod(_sweep + delta * 1.6, TAU)
+	radar.process(delta)
 	_note_time = maxf(_note_time - delta, 0.0)
 	if _pip_on():
 		OnboardPip.feed(self, onboard, _pip_rect(), selected, cam_mode == 2)
@@ -384,53 +389,7 @@ func _draw_timing(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 
 func _draw_weather(r: Rect2, tel: RaceTelemetry) -> void:
 	_panel(r, "WEATHER RADAR")
-	var f := tel.forecast
-	var R := minf(r.size.y * 0.5 - 14, r.size.x * 0.28)
-	var rc := r.position + Vector2(R + 16, r.size.y * 0.5 + 6)
-	draw_circle(rc, R, Color(0.02, 0.08, 0.06))
-	for ring in [0.5, 1.0]:
-		draw_arc(rc, R * ring, 0, TAU, 48, Color(0.3, 1.0, 0.6, 0.25), 1.0)
-	var to_radar := func(p: Vector2) -> Vector2: return rc + (p - f.centre) / f.radar_range * R
-	for cell in f.radar_cells:
-		var cp: Vector2 = to_radar.call(cell["pos"])
-		var cr: float = cell["radius"] / f.radar_range * R
-		if cp.distance_to(rc) - cr > R:
-			continue
-		var col: Color
-		if cell["rain"] < 0.05:
-			col = Color(0.7, 0.75, 0.8, 0.12)
-		else:
-			var x: float = cell["rain"]
-			col = Color(0.2, 0.85, 0.3).lerp(Color(1.0, 0.9, 0.2), clampf(x * 1.6, 0.0, 1.0))
-			col = col.lerp(Color(1.0, 0.25, 0.2), clampf((x - 0.6) * 2.5, 0.0, 1.0))
-			col.a = 0.35
-		draw_circle(cp, minf(cr, R), col)
-	var pts := PackedVector2Array()
-	for p in _track_pts:
-		pts.append(to_radar.call(p))
-	draw_polyline(pts, Color(1, 1, 1, 0.9), 1.5)
-	draw_line(rc, rc + Vector2.from_angle(_sweep) * R, Color(0.4, 1.0, 0.6, 0.5), 1.5)
-	draw_arc(rc, R, 0, TAU, 64, Color(0.4, 1.0, 0.6, 0.5), 1.5)
-	# Wind: where the weather comes from.
-	var wa := rc - f.wind_dir * (R + 2)
-	draw_line(wa, wa + f.wind_dir * 16, Color(1, 1, 1, 0.7), 2.0)
-	_text(rc + Vector2(-R, R + 2), "outer ring ≈ %d min" % int(WeatherForecast.RADAR_LEAD_S / 60.0 * 1.2), 11, DIM)
-	# Forecast.
-	var tx := rc.x + R + 18
-	var tw := r.end.x - tx - 8
-	_text(Vector2(tx, r.position.y + 44), "Now: " + WeatherForecast.weather_label(f.weather), 17)
-	_text(Vector2(tx, r.position.y + 66), "Air %d°C  Track %d°C" % [int(f.ambient_c), int(f.track_c)], 14, DIM, HORIZONTAL_ALIGNMENT_LEFT, tw)
-	_text(Vector2(tx, r.position.y + 86), "Rain %d%%  Track wet %d%%" % [int(f.rain * 100.0), int(f.wetness * 100.0)], 14, DIM, HORIZONTAL_ALIGNMENT_LEFT, tw)
-	_text(Vector2(tx, r.position.y + 118), "FORECAST", 12, DIM)
-	if f.changes.is_empty():
-		_text(Vector2(tx, r.position.y + 140), f.summary(), 15, Color(0.75, 0.85, 1.0), HORIZONTAL_ALIGNMENT_LEFT, tw)
-	for n in mini(f.changes.size(), 4):
-		var ch: Dictionary = f.changes[n]
-		var y := r.position.y + 140 + n * 24
-		_text(Vector2(tx, y), WeatherForecast.weather_label(ch["weather"]), 15,
-			Color(0.5, 0.75, 1.0) if ch["rain"] > 0.05 else Color.WHITE, HORIZONTAL_ALIGNMENT_LEFT, tw * 0.45)
-		_text(Vector2(tx + tw * 0.45, y), WeatherForecast.eta_text(ch), 14, Color.WHITE, HORIZONTAL_ALIGNMENT_LEFT, tw * 0.35)
-		_text(Vector2(tx + tw * 0.8, y), "%d%%" % int(ch["confidence"] * 100.0), 14, DIM)
+	radar.draw(self, font, r, tel.forecast, _track_pts, session.sim.track.short_name, _hover, _hits)
 
 
 func _draw_car(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
