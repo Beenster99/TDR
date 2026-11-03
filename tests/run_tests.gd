@@ -25,6 +25,8 @@ func _init() -> void:
 	test_input_wire_format()
 	test_tyre_temperature_matters()
 	test_ai_drivers()
+	test_ai_racing_room()
+	test_launch_wheelspin()
 	test_car_classes()
 	test_every_track()
 	test_derby()
@@ -1845,6 +1847,29 @@ func test_ai_drivers() -> void:
 	check(vf > vs * 1.03, "pace trait: faster plan for the faster driver (%.1f vs %.1f m/s avg)" % [vf / slow.target_speed.size(), vs / slow.target_speed.size()])
 
 
+## Standing starts: flooring it spins the rear tyres even with traction
+## control, and costs time against feathering the throttle.
+func test_launch_wheelspin() -> void:
+	print("launch wheelspin")
+	var probe = load("res://tests/launch_probe.gd")
+	var floored: Dictionary = probe.run("GT3", true, 1.0)
+	var feathered: Dictionary = probe.run("GT3", true, 0.5)
+	check(floored["spin"] > 0.5 and feathered["spin"] < 0.2, "floored launch spins the tyres with TC on (%.2f s vs %.2f s feathered)" % [floored["spin"], feathered["spin"]])
+	check(floored["t100"] > feathered["t100"], "... and loses time to 100 km/h (%.2f s vs %.2f s)" % [floored["t100"], feathered["t100"]])
+
+
+## Racing room: a car that holds the inside line with its nose level with an
+## AI car's rear wheels must not be turned in on or pushed off, at any corner.
+## (Players saw AI swerve into them: overlap was only counted from half a car
+## alongside, and the AI followed its line across into the other car.)
+func test_ai_racing_room() -> void:
+	print("ai racing room")
+	var probe = load("res://tests/racecraft_corners.gd")
+	var r: Dictionary = probe.run("spielberg", 7)
+	check(r["trials"] >= 6 and r["contacts"] == 0 and r["bot_off"] == 0,
+		"AI leaves room for a car on the inside at %d corners (contacts %d, pushed off %d, closest %s m)" % [r["trials"], r["contacts"], r["bot_off"], r["min_gap"].min()])
+
+
 # --- Wave 3: race control (flags, VSC, safety car, penalties) -------------
 
 ## Runs an AI race in which one car stops and retires at stop_at seconds.
@@ -3283,6 +3308,9 @@ func test_race_start() -> void:
 	var stopped := 0
 	var reversing := 0
 	var green_tick := -1
+	var left := 0
+	var right := 0
+	var mean_v := 0.0
 	while sim.tick < 60 * 30:
 		var inputs := []
 		for i in n:
@@ -3294,11 +3322,21 @@ func test_race_start() -> void:
 			for i in n:
 				if ai[i].recover_time > 0.0:
 					reversing = maxi(reversing, i + 1)
+		if green_tick >= 0 and sim.tick - green_tick == 60 * 5:
+			# Side by side to turn 1, not single file: count each half of the track.
+			for i in n:
+				if sim.cars[i].lateral_offset < -0.5:
+					left += 1
+				elif sim.cars[i].lateral_offset > 0.5:
+					right += 1
+				mean_v += sim.cars[i].speed() / n
 		if green_tick >= 0 and sim.tick - green_tick == 60 * 12:
 			for i in n:
 				if sim.cars[i].speed() < 5.0:
 					stopped += 1
 	check(reversing == 0, "no AI car reverses on the opening lap (first one reversing: %d)" % reversing)
+	check(mini(left, right) >= n / 3, "the field races two wide off the line (%d left, %d right of 5 s in)" % [left, right])
+	check(mean_v * 3.6 > 70.0, "nobody hangs back off the line (%.0f km/h on average 5 s in)" % (mean_v * 3.6))
 	check(stopped == 0, "every AI car is moving 12 s after the start (%d stopped)" % stopped)
 
 
