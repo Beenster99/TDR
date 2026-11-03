@@ -30,6 +30,20 @@ var _listen := {}
 const LISTEN_TIME := 6.0
 ## The HUD layout editor's preview, while it's open.
 var _hud_preview: Control = null
+## In a race (the pause menu, PauseMenu): only the player's own game settings.
+## The garage is left out, the settings that change how the car drives are
+## locked until the next race (LOCKED_IN_RACE), and Edit HUD layout opens the
+## editor over the race itself (edit_hud; left out when it isn't set).
+var in_race := false
+var edit_hud: Callable
+const RACE_SECTIONS := ["gameplay", "controller", "graphics", "sound", "debug"]
+const LOCKED_IN_RACE := ["driving_help", "aid_track_assist", "manual_gears", "pit_crew_coop"]
+const LOCKED_HELP := "Locked during a race: change it from the main menu's Settings before the next race."
+
+
+## The sections this screen shows.
+func sections() -> Array:
+	return RACE_SECTIONS if in_race else GameData.SECTIONS
 
 
 func open(p_profile: TeamProfile, section := "gameplay") -> void:
@@ -66,7 +80,7 @@ func _build() -> void:
 	tabs.custom_minimum_size = Vector2(260, 0)
 	tabs.add_theme_constant_override("separation", 6)
 	cols.add_child(tabs)
-	for id in GameData.SECTIONS:
+	for id in sections():
 		var b := Button.new()
 		b.text = TITLES.get(id, id.capitalize())
 		b.toggle_mode = true
@@ -104,6 +118,8 @@ func _build() -> void:
 	right.add_child(_help)
 	var keys := Label.new()
 	keys.text = "Up/down: choose  ·  Left/right: change  ·  LB/RB or Q/E: section  ·  B/Esc: back.  Changes are saved straight away."
+	if in_race:
+		keys.text += "  Race settings and car settings are locked during a race."
 	keys.modulate = Color(1, 1, 1, 0.4)
 	keys.add_theme_font_size_override("font_size", 13)
 	right.add_child(keys)
@@ -125,7 +141,12 @@ func _show_section(id: String, focus_list := false) -> void:
 		_build_controls()
 	if id == "debug":
 		_build_debug()
-	if id == "gameplay":
+	if id == "gameplay" and in_race and edit_hud.is_valid():
+		_action("Edit HUD layout", func():
+			_close()
+			edit_hud.call(),
+			"Move, resize, hide and bring back each part of the race screen, over this race. Also F2 during a race.")
+	elif id == "gameplay" and not in_race:
 		_action("Edit HUD layout", _open_hud_editor,
 			"Move, resize, hide and bring back each part of the race screen (timing tower, map, speed, tyres...) with the mouse and keyboard, over a live preview race. Also F2 during a race. Co-op drivers (sharing a car with team mates) have their own layout, minimal by default.")
 	if id == "sound":
@@ -156,6 +177,9 @@ func _row(e: Dictionary) -> Stepper:
 	st.focus_exited.connect(st.queue_redraw)
 	st.set_meta("help", e.get("help", ""))
 	st.value_changed.connect(func(nv): GameData.set_pref(e["key"], nv))
+	if in_race and e["key"] in LOCKED_IN_RACE:
+		st.disabled = true
+		st.set_meta("help", (str(e.get("help", "")) + "\n\n" + LOCKED_HELP).strip_edges())
 	return st
 
 
@@ -350,10 +374,11 @@ func _set_help_later(message: String) -> void:
 func _build_debug() -> void:
 	_action("Open the save folder", func(): OS.shell_open(ProjectSettings.globalize_path("user://")),
 		"Settings, garage, seasons, setups and race logs are kept here.")
-	_confirm_action("Reset all settings to default", func():
-		GameData.reset_settings()
-		_show_section("debug", true)
-		_help.text = "Settings reset.")
+	if not in_race:   # it would reset the locked ones too
+		_confirm_action("Reset all settings to default", func():
+			GameData.reset_settings()
+			_show_section("debug", true)
+			_help.text = "Settings reset.")
 	_note("Version %s  ·  Godot %s  ·  %s  ·  %s" % [ProjectSettings.get_setting("application/config/version", "dev"),
 		Engine.get_version_info().get("string", ""), RenderingServer.get_video_adapter_name(), OS.get_name()], Color(1, 1, 1, 0.5))
 
@@ -422,8 +447,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event is InputEventJoypadButton and event.pressed:
 		dir = {JOY_BUTTON_LEFT_SHOULDER: -1, JOY_BUTTON_RIGHT_SHOULDER: 1}.get(event.button_index, 0)
 	if dir != 0:
-		var i := GameData.SECTIONS.find(_section)
-		_show_section(GameData.SECTIONS[posmod(i + dir, GameData.SECTIONS.size())])
+		var list := sections()
+		var i := list.find(_section)
+		_show_section(list[posmod(i + dir, list.size())])
 		get_viewport().set_input_as_handled()
 
 

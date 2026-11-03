@@ -45,7 +45,7 @@ address into the join box and pick **Connect**. The game uses UDP port
 | Steer | A D / Left Right | Left stick |
 | Camera rotate | C | Y |
 | Restart (single race) | R | Back |
-| Menu | Esc | Start |
+| Pause menu (resume, restart, settings, quit; online the race carries on) | Esc | Start |
 | Zoom in / out (hold) | E / Q, + / -, mouse wheel | LB / RB, right stick up / down, D-pad up / down |
 | Whole track and back | Z or Tab | Click the right stick |
 | Timing tower on / off | H | Settings > Gameplay |
