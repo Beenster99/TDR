@@ -180,6 +180,7 @@ func _on_pref_changed(key, _v) -> void:
 	var k := str(key)
 	if k.begins_with("highlight_"):
 		_refresh_highlights()
+		_wake_highlights()
 	elif k == "aid_driving_line" or k == "aid_braking_zones":
 		# The line view is built once; build a fresh one with the new choice.
 		if world.driving_line:
@@ -314,7 +315,16 @@ func _refresh_highlights() -> void:
 			kind = CarView.Highlight.SELF if show_me else CarView.Highlight.NONE
 		elif session.mode != RaceSession.Mode.OFFLINE and show_others and session.sim.entries[i].is_player_driving():
 			kind = CarView.Highlight.PLAYER
+		car_views[i].highlight_fade_s = float(GameData.prefs.get("highlight_fade", 0))
 		car_views[i].set_highlight(kind)
+
+
+## Car highlights that fade (Settings > Gameplay "highlight_fade") come back at
+## the green light and whenever the camera zooms.
+func _wake_highlights() -> void:
+	for v in car_views:
+		if v.highlight != CarView.Highlight.NONE:
+			v.wake_highlight()
 
 
 ## Testing: --autodrive lets the AI drive this player's car.
@@ -528,6 +538,7 @@ func _view_rect() -> Rect2:
 
 
 func _set_zoom(z: float) -> void:
+	_wake_highlights()
 	_zoom_target = clampf(z, 0.0, 1.0)
 	GameData.prefs["zoom"] = _zoom_target
 
@@ -843,6 +854,7 @@ func _on_events(evs: Array) -> void:
 				world.car_hit(e["car"], c.pos + nrm * session.sim.defs[e["car"]].width * 0.5)
 			"countdown": pass
 			"green":
+				_wake_highlights()
 				if session.sim.settings.is_qualifying():
 					hud.flash("QUALIFYING: %d laps, your best lap sets your grid slot" % session.sim.settings.laps, 3.5)
 				elif session.sim.settings.is_rallycross() and session.sim.track.has_joker():
