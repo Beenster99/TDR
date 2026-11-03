@@ -5,6 +5,7 @@ extends Node
 ##   preview - the editor from Settings, over its own preview race
 ##   coop    - a co-op driver's race screen (minimal HUD), team mate on the pit wall
 ##   coopedit - the Settings editor showing the co-op driver layout
+##   players - the timing tower with two other people online in the field
 ##   godot --path . res://tests/hud_editor_shot.tscn -- <out.png> <mode> [race seconds] --autodrive --zoom 0.3
 
 var out := "user://hud_editor.png"
@@ -65,6 +66,13 @@ func _ready() -> void:
 		if e.crew.is_empty():
 			e.crew.append({"peer_id": session.local_peer, "name": "You", "role": RaceEntry.ROLE_DRIVER})
 		e.crew.append({"peer_id": 77, "name": "Sam", "role": RaceEntry.ROLE_PIT_WALL})
+	if mode == "players":   # two of the field driven by other people
+		var peer := 50
+		for i in [3, 8]:
+			var e := session.sim.entries[i]
+			e.is_ai = false
+			e.crew = [{"peer_id": peer, "name": e.driver_name, "role": RaceEntry.ROLE_DRIVER}]
+			peer += 1
 	GameData.active_session = session
 	var scene: Node = load("res://modules/game/race.tscn").instantiate()
 	add_child(scene)
