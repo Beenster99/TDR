@@ -55,7 +55,7 @@ play your crew job**, per player (off: the AI does that player's jobs).
    has the tyres and guns out already and does the lance.
 4. **Tyres.** Once the hose is off, the driver and a pit crew player each
    do the tyre job they picked in the lobby: left / right **gun man** (pick
-   up the gun, hold use at the wheel to undo the nut, wait for the wheel
+   up the gun with grab or the gun button, hold use at the wheel to undo the nut, wait for the wheel
    man, hold again and let go in the green to do it up, then the rear) or
    left / right **wheel man** (grab the old wheel once the nut is off, put
    it down out of the way, pick up the new one, grab at the hub to put it
@@ -74,7 +74,7 @@ play your crew job**, per player (off: the AI does that player's jobs).
 | Strategist / pit wall | fuel man | (done) |
 | Driver | windscreen | their lobby pick |
 | Pit crew (3rd player) | tyres and guns laid out after the call, air lance in at the stop | their lobby pick |
-| One player on their own (mini-game setting) | | left gun man |
+| One player on their own (mini-game setting) | | left gun man, gun already in hand |
 
 The lobby's car share rows have a **Pit stop job** picker for the driver and
 a pit crew player (left gun man, left wheel man, right gun man, right wheel
