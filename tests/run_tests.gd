@@ -69,6 +69,8 @@ func _init() -> void:
 	test_garage_saves()
 	test_online_contacts()
 	test_rallycross()
+	test_rallycross_marshals()
+	test_joker_lanes()
 	test_handbrake()
 	print("\n%s (%d failures, %.1fs)" % ["PASS" if failures == 0 else "FAIL", failures, (Time.get_ticks_msec() - t0) / 1000.0])
 	quit(1 if failures > 0 else 0)
@@ -2126,7 +2128,7 @@ func test_marshals_clear_debris() -> void:
 			phases.append(job["phase"])
 		for m in TrackMarshals.view(job):
 			swept = swept or m["action"] == "sweep"
-	check(phases == ["out", "sweep", "back", "done"] and swept, "marshals run out, sweep, run back (%s, %.0f s)" % [" > ".join(phases), t])
+	check(phases == ["wait", "out", "sweep", "back", "done"] and swept, "marshals run out, sweep, run back (%s, %.0f s)" % [" > ".join(phases), t])
 	check(job["crew"].size() == TrackMarshals.CREW and t < 60.0, "a crew of %d, done in %.0f s" % [job["crew"].size(), t])
 	# In a race: a pile of debris ahead of the field.
 	var settings := RaceSettings.new()
@@ -3758,6 +3760,122 @@ func test_rallycross() -> void:
 	var e0: RaceEntry = sim.entries[0]
 	check(e0.jokers == 0 and e0.penalty_s >= RaceSettings.JOKER_MISSED_PENALTY_S,
 		"a missed joker costs %.0f s at the flag (got %.0f s)" % [RaceSettings.JOKER_MISSED_PENALTY_S, e0.penalty_s])
+
+
+## Rallycross: no yellow flags, VSC or safety car. Marshals only go onto the
+## track in the gaps between cars, run off when one is coming, and finish the
+## job over several gaps; a retired car is pushed off in a gap.
+func test_rallycross_marshals() -> void:
+	print("rallycross marshals")
+	var track := TrackCatalog.load_track("holjes")
+	var job := TrackMarshals.plan(track, {"s": 300.0, "pos": track.position_at(300.0, 2.0), "amount": 2.0}, 1)
+	for k in 120:
+		TrackMarshals.step(job, 1.0 / 60.0, 3.0)
+	check(job["phase"] == "wait" and not TrackMarshals.on_track(job), "marshals wait behind the barrier with a car 3 s away")
+	var phases := [job["phase"]]
+	var t := 0.0
+	var clear := 18.0
+	while not job["done"] and t < 200.0:
+		# A car every 18 s: the gap closes as it comes and opens once it's by.
+		clear = 18.0 - fmod(t, 18.0)
+		TrackMarshals.step(job, 1.0 / 60.0, clear)
+		t += 1.0 / 60.0
+		if phases[phases.size() - 1] != job["phase"]:
+			phases.append(job["phase"])
+		if TrackMarshals.on_track(job) and clear < 0.5:
+			break
+	var gaps := phases.count("out")
+	check(job["done"] and gaps >= 2 and phases.has("sweep"),
+		"they sweep in the gaps, off before each car (%d gaps, %.0f s: %s)" % [gaps, t, " > ".join(phases)])
+	# A race with a pile of debris ahead of the field and a car retiring.
+	var d := _data()
+	var s := RaceSettings.new()
+	s.discipline = RaceSettings.DISCIPLINE_RALLYCROSS
+	s.track_id = "holjes"
+	s.ai_count = 7
+	s.laps = 4
+	s.seed = 77
+	var start := RaceFactory.plan(s, [], d["cars"], d["drivers"], track)
+	var sim := RaceFactory.build_sim(start, d["cars"], d["tyres"], track)
+	var ai := AIDriver.for_all_ai(sim)
+	var rc := sim.race_control
+	var flags := {}
+	var neutral_ok := true
+	var placed := false
+	var swept_out := false
+	var unsafe := 0
+	var retired := -1
+	var pushed := false
+	var max_jobs_seen := 0
+	while sim.phase != RaceSim.Phase.FINISHED and sim.tick < 60 * 60 * 8:
+		if not placed and sim.phase == RaceSim.Phase.RACING and sim.race_time > 10.0:
+			placed = true
+			var at := fposmod(sim.cars[sim.running_order[0]].track_s + 300.0, track.length)
+			TrackMarshals.add_debris(rc.debris, track.length, at, track.position_at(at, 1.0), 2.0)
+			retired = sim.running_order[sim.running_order.size() - 1]
+		var inputs := []
+		for i in sim.cars.size():
+			inputs.append(ai[i].get_input(sim, i))
+		if retired >= 0 and not pushed:
+			sim.entries[retired].dnf = true
+			inputs[retired] = CarInput.neutral()
+		var before := PackedFloat64Array()
+		for c in sim.cars:
+			before.append(c.track_s)
+		sim.step(inputs)
+		neutral_ok = neutral_ok and rc.neutralisation() == "green" and not rc.double_yellow_at(sim.cars[0].track_s)
+		for e in sim.events:
+			if e.get("type", "") == "flag":
+				flags[str(e.get("flag", ""))] = flags.get(str(e.get("flag", "")), 0) + 1
+		max_jobs_seen = maxi(max_jobs_seen, rc.marshal_jobs.size())
+		if retired >= 0 and rc.recovered[retired] == 1:
+			pushed = true
+		for job2 in rc.marshal_jobs:
+			if not TrackMarshals.on_track(job2):
+				continue
+			swept_out = true
+			var at2: float = job2["s"]
+			for i in sim.cars.size():
+				if i == retired or sim.entries[i].dnf or sim.entries[i].finished:
+					continue
+				var f := fposmod(at2 - before[i], track.length)
+				if f < 40.0 and fposmod(sim.cars[i].track_s - at2, track.length) < 40.0:
+					unsafe += 1
+	var bad := []
+	for f in flags:
+		if f != "recovered":
+			bad.append(f)
+	check(bad.is_empty() and neutral_ok and sim.settings.safety_car_enabled == false,
+		"no yellow flags, double yellows, VSC or safety car in rallycross (%s)" % str(flags))
+	check(max_jobs_seen >= 1 and swept_out and rc.marshal_jobs.is_empty()
+		and rc.debris.all(func(p): return float(p["amount"]) < TrackMarshals.CLEAR_AT),
+		"marshals cleared the debris (%d crews)" % max_jobs_seen)
+	check(unsafe == 0, "no car went past the marshals while they were on the track (%d)" % unsafe)
+	check(pushed and flags.get("recovered", 0) >= 1, "marshals pushed the retired car off in a gap")
+
+
+## Every rallycross track has a joker lane that leaves the lap and lies on the
+## ground (no steps, never sunk under the hillside beside it).
+func test_joker_lanes() -> void:
+	print("joker lanes")
+	for id in TrackCatalog.ids_for(TrackCatalog.list_all(), RaceSettings.DISCIPLINE_RALLYCROSS):
+		var t := TrackCatalog.load_track(id)
+		if not t.has_joker():
+			check(false, "%s has a joker lane" % id)
+			continue
+		var sep := 0.0
+		var step := 0.0
+		var sunk := 0.0
+		for i in t.joker_path.size():
+			var p := t.joker_path[i]
+			sep = maxf(sep, absf(float(t.project(p)["offset"])))
+			if i > 0:
+				var dd := maxf(t.joker_cum[i] - t.joker_cum[i - 1], 0.5)
+				step = maxf(step, absf(t.joker_heights[i] - t.joker_heights[i - 1]) / dd)
+			if t.terrain_size != Vector2i.ZERO and absf(float(t.project(p)["offset"])) > 20.0:
+				sunk = maxf(sunk, t.ground_height_at(p) - t.surface_height_at(p))
+		check(t.joker_length > 100.0 and sep > t.joker_width and step < 0.35 and sunk < 1.0,
+			"%s: joker %.0f m, up to %.0f m from the lap, steepest %.0f %%, %.1f m under the ground" % [id, t.joker_length, sep, step * 100.0, sunk])
 
 
 ## The handbrake: on the wire, bound to A / Space, locks the rear wheels so

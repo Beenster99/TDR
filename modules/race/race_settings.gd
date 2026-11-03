@@ -133,6 +133,12 @@ func effective_damage_level() -> String:
 	return damage_level
 
 
+## The pit wall (strategist screen) and its HUD hint: circuit racing only
+## (rallycross and demolition derby have no stops, flags or safety car).
+func has_pit_wall() -> bool:
+	return discipline == DISCIPLINE_CIRCUIT
+
+
 func is_derby() -> bool:
 	return discipline == DISCIPLINE_DERBY
 
