@@ -2104,6 +2104,8 @@ func test_marshals_clear_debris() -> void:
 	var limit := 0.0
 	var penalties := []
 	var snap := {}
+	var unsafe := 0
+	var waited := false
 	while sim.phase != RaceSim.Phase.FINISHED and sim.tick < 60 * 60 * 10:
 		if not placed and sim.phase == RaceSim.Phase.RACING and sim.race_time > 20.0:
 			placed = true
@@ -2127,6 +2129,14 @@ func test_marshals_clear_debris() -> void:
 				snap = rc.to_dict(true)
 			var at: float = rc.marshal_jobs[0]["s"]
 			limit = rc.double_yellow_limit(at)
+			var mj: Dictionary = rc.marshal_jobs[0]
+			waited = waited or (mj["phase"] == "wait" and float(mj["t"]) > 1.0)
+			if TrackMarshals.on_track(mj):
+				for i in sim.car_count():
+					if sim.entries[i].dnf or sim.entries[i].finished:
+						continue
+					if fposmod(at - before[i], track.length) < 40.0 and fposmod(sim.cars[i].track_s - at, track.length) < 40.0:
+						unsafe += 1
 			for i in sim.car_count():
 				if fposmod(at - before[i], track.length) < 60.0 and fposmod(sim.cars[i].track_s - at, track.length) < 60.0:
 					fastest = maxf(fastest, sim.cars[i].speed())
@@ -2134,6 +2144,7 @@ func test_marshals_clear_debris() -> void:
 	check(rc.double_yellow_at(marshal_s) == false and rc.marshal_jobs.is_empty() and ev.get("flag:clear", 0) >= 1, "debris cleared, marshals back, flags withdrawn")
 	check(fastest > 1.0 and fastest <= limit * TrackMarshals.DOUBLE_TOLERANCE, "AI slows down past the marshals (%d km/h, limit %d)" % [roundi(fastest * 3.6), roundi(limit * 3.6)])
 	check(penalties.filter(func(r): return str(r).contains("marshals")).is_empty(), "no double yellow penalties for the AI (%s)" % str(penalties))
+	check(unsafe == 0 and waited, "circuit marshals wait for a gap; no car went past while they were on the track (%d)" % unsafe)
 	check(snap.has("marshal_jobs") and snap["full"].has("debris"), "marshals and debris go into snapshots and the race state")
 	# Too fast past them: penalty.
 	var race2 := _race(settings, _data())

@@ -152,7 +152,7 @@ func time_to_traffic(s: float) -> float:
 	var best := INF
 	for i in sim.cars.size():
 		var e := sim.entries[i]
-		if e.finished or e.dnf or out_of_play(i):
+		if e.finished or e.dnf or out_of_play(i) or _pitting(i):
 			continue
 		var c := sim.cars[i]
 		var v := c.speed()
@@ -165,11 +165,11 @@ func time_to_traffic(s: float) -> float:
 	return best
 
 
-## What the marshals at s go by (TrackMarshals.step clear_s). With no flags
-## to protect them (rallycross) they only go out in the gaps between cars; on
-## circuits double yellows cover them, so they go straight out.
+## What the marshals at s go by (TrackMarshals.step clear_s). Everywhere they
+## only go out in the gaps between cars: on circuits the double yellows slow
+## the field down as well, in rallycross there are no flags to protect them.
 func marshal_clear_s(s: float) -> float:
-	return INF if flags_used() else time_to_traffic(s)
+	return time_to_traffic(s)
 
 
 ## True once car i is no longer driven by the physics: craned / towed away,
