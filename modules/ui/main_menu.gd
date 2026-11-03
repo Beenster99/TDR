@@ -220,7 +220,8 @@ func _handle_cmdline() -> void:
 	if GameData.arg("drivers"):
 		drivers_stepper.set_value(int(GameData.arg("drivers")))
 	if GameData.arg("safety-car"):
-		safety_car_stepper.set_value(str(GameData.arg("safety-car")) != "off")
+		var sc := str(GameData.arg("safety-car"))
+		safety_car_stepper.set_value(sc if sc in [RaceSettings.RC_ON, RaceSettings.RC_YELLOWS, RaceSettings.RC_OFF] else RaceSettings.RC_ON)
 	if GameData.arg("damage"):
 		damage_stepper.set_value(str(GameData.arg("damage")))
 	if GameData.arg("upgrades"):
@@ -469,7 +470,8 @@ func _build_ui() -> void:
 	stops_stepper = Stepper.numeric("Mandatory pit stops", 0, 3, 1, 0)
 	drivers_stepper = Stepper.choice("Drivers per car", [[1, "1 (no driver changes)"],
 		[2, "2 (AI co-driver at stops)"], [3, "3 (endurance line-ups)"]], 2)
-	safety_car_stepper = Stepper.choice("Safety car", [[true, "On (yellows, VSC, SC)"], [false, "Off (yellow flags only)"]], true)
+	safety_car_stepper = Stepper.choice("Safety car", [[RaceSettings.RC_ON, "On (yellows, VSC, SC)"],
+		[RaceSettings.RC_YELLOWS, "Yellow flags only"], [RaceSettings.RC_OFF, "Off (no flags or safety car)"]], RaceSettings.RC_ON)
 	damage_stepper = Stepper.choice("Damage", [["off", "Off"], ["visual", "Visual only"],
 		["full", "Full (affects the car)"]], "full")
 	tuning_stepper = Stepper.choice("Car setups", [[true, "Free (tune per track)"], [false, "Fixed (all on default)"]], true)
@@ -1119,7 +1121,7 @@ func _settings_from_ui() -> RaceSettings:
 	s.tyre_wear_enabled = s.tyre_wear_rate > 0.0
 	s.mandatory_pit_stops = int(stops_stepper.value)
 	s.drivers_per_car = int(drivers_stepper.value)
-	s.safety_car_enabled = bool(safety_car_stepper.value)
+	s.set_race_control_mode(str(safety_car_stepper.value))
 	s.set_damage_level(str(damage_stepper.value))
 	s.upgrades_mode = str(upgrades_stepper.value)
 	s.tuning_enabled = bool(tuning_stepper.value)
@@ -1581,7 +1583,7 @@ func _refresh_lobby() -> void:
 		wear_stepper.set_value(Net.settings.tyre_wear_rate if Net.settings.tyre_wear_enabled else 0.0)
 		stops_stepper.set_value(Net.settings.mandatory_pit_stops)
 		drivers_stepper.set_value(Net.settings.drivers_per_car)
-		safety_car_stepper.set_value(Net.settings.safety_car_enabled)
+		safety_car_stepper.set_value(Net.settings.race_control_mode())
 		damage_stepper.set_value(Net.settings.effective_damage_level())
 		upgrades_stepper.set_value(Net.settings.upgrades_mode)
 		if tuning_stepper.value != Net.settings.tuning_enabled:

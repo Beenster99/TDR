@@ -390,7 +390,7 @@ func _refresh_highlights() -> void:
 		car_views[i].highlight_fade_s = float(GameData.prefs.get("highlight_fade", 0))
 		car_views[i].set_highlight(kind)
 	if world.safety_car:
-		world.safety_car.set_highlight(CarView.Highlight.GIVE_BACK if _give_back_to == RaceControl.GIVE_BACK_SC else CarView.Highlight.NONE)
+		world.safety_car.set_highlight(CarView.Highlight.GIVE_BACK if _give_back_to == RaceControl.GIVE_BACK_SC else CarView.Highlight.SAFETY)
 	if hud:
 		hud.give_back_to = _give_back_to
 
@@ -993,7 +993,7 @@ func _on_events(evs: Array) -> void:
 					"lapped_may_overtake": "LAPPED CARS MAY OVERTAKE", "in_this_lap": "SAFETY CAR IN THIS LAP",
 					"restart": "SAFETY CAR IN - RESTART", "green": "GREEN FLAG"}
 				if says.has(e.get("state", "")):
-					hud.flash(says[e["state"]], 2.5)
+					hud.flash(says[e["state"]], 4.0 if e["state"] == "in_this_lap" else 2.5)
 			"penalty":
 				_penalties.append({"car": int(e["car"]), "seconds": float(e.get("seconds", 0.0)), "reason": str(e.get("reason", ""))})
 				if e["car"] == session.local_car:
