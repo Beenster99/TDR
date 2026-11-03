@@ -95,6 +95,7 @@
  "chassis": {
   "front_grip": 0.94,
   "rear_grip": 1.0,
-  "roll_stiffness_front": 0.6
+  "roll_stiffness_front": 0.6,
+  "dirt_rear_grip": 0.6
  }
 }

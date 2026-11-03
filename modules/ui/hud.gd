@@ -204,13 +204,13 @@ func item_shown(id: String) -> bool:
 		return false
 	match id:
 		"pit": return sim.pits.enabled and _pit_panel_height(me) > 0.0
+		"hint": return sim.settings.has_pit_wall()   # no pit wall in rallycross or derby
 		"damage": return sim.damage_level != CarDamage.Level.OFF
 		"fuel": return sim.settings.fuel_enabled
 		"flags": return _flag_lines(me)[0] != "" or _flag_lines(me)[1] != ""
 		"radio": return radio_time > 0.0 and not radio_msg.is_empty()
 		"messages": return message_time > 0.0
 		"lights": return sim.phase == RaceSim.Phase.COUNTDOWN
-		"hint": return not sim.settings.is_rallycross()   # no pit wall in rallycross
 		"pitguide": return pit_guide_on and sim.pits.self_drives(me) and str(sim.pits.guide_info(me)["stage"]) != ""
 	return true
 

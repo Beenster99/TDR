@@ -10,13 +10,19 @@ every hit.
 - Only the 20 Derby cars race (class "Derby", `discipline: "derby"`), on the
   5 derby arenas. Circuit cars and tracks never appear in a derby, and derby
   cars never appear in circuit races, seasons or multi-class grids.
-- Damage is always full. There is no safety car, no yellow flags or
-  penalties, no recovery trucks (wrecks stay where they stop and become part
-  of the arena), no pit stops, fuel or tyre wear.
+- Damage is always full. There is no safety car, VSC, yellow flags,
+  penalties or marshals, no recovery trucks (wrecks stay where they stop and
+  become part of the arena), no pit stops or repairs, fuel or tyre wear. The
+  pit wall screen and its HUD hint are off.
 - No co-op: one driver per car, the co-op car shares are hidden in the
   lobby. Normal online multiplayer works as usual.
-- A car is out when its engine fails or its bodywork adds up to
-  `CarDamage.WRECKED_BODY` (3.0 of 4: all four sides badly bent).
+- You drive the wreck until it won't drive any more. A car is out when its
+  engine fails, or when it hasn't moved for `RaceSim.DERBY_STILL_OUT_S`
+  (15 s; reason "stopped"). Once its bodywork adds up to
+  `CarDamage.WRECKED_BODY` (3.0 of 4) the engine boils dry at
+  `CarDamage.WRECK_BOIL_RATE` (about a minute of driving) and then dies.
+- Up to 16 cars (`RaceSettings.MAX_CARS_DERBY`), two abreast in tight rows
+  on the grid (`TrackData.DERBY_ROW_M`, 7.5 m).
 - First to finish the laps wins, unless everyone else is out first: the
   last car still running wins (`last_car_standing` event).
 
@@ -24,18 +30,29 @@ every hit.
 
 | Arena | Length | Crossovers | Jumps | Dirt |
 |---|---|---|---|---|
-| Rustbelt Figure Eight | 652 m | 1 | 1 | 37% |
-| Scrapyard Knot | 1072 m | 3 | 2 | 72% |
-| Harbour Bowtie | 974 m | 1 | 1 | 22% |
-| Quarry Pretzel | 1504 m | 2 | 3 | 32% |
-| Mudflat Infinity | 1052 m | 1 | 2 | 85% |
+| Rustbelt Figure Eight | 336 m | 1 | 1 | 28% |
+| Scrapyard Knot | 408 m | 3 | 2 | 59% |
+| Harbour Bowtie | 458 m | 1 | 1 | 22% |
+| Quarry Pretzel | 568 m | 2 | 3 | 27% |
+| Mudflat Infinity | 398 m | 1 | 2 | 69% |
+
+The arenas are small and 11-12 m wide so the field keeps running into
+itself.
 
 Crossovers are flat: both roads meet at the same height, so cars T-bone
 each other there. `TrackData.crossovers` lists them; the second pass is drawn
 a touch higher so the two roads don't flicker. Jumps are table-tops baked
 into the heights (up ramp, flat top, landing ramp), kept clear of the
-crossovers and the grid. Dirt stretches (`TrackData.dirt_at`) grip 28% less
-and drag a little more.
+crossovers and the grid, and kept off the dirt (packed hard, so a car that
+stalls on one can still drive up it). The ramps are painted to read from
+above (`TrackView._build_jump_markings`): yellow chevrons up the take-off
+ramp, a yellow and black hazard stripe on the lip, white chevrons down the
+landing. No braking boards in the arenas.
+
+Dirt (`TrackData.dirt_at`, shared with rallycross) grips less (the tyre's
+`dirt_grip`) and on derby cars the rear loses much more than the front
+(`chassis.dirt_rear_grip`: 0.6 rear-drive, 0.68 four-wheel drive, 0.74
+front-drive), so they slide their tails out on the dirt.
 
 ## Jumps and flying (`CarPhysics`)
 

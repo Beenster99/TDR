@@ -28,6 +28,9 @@ var body_offset: float = 0.0
 var inertia: float = 2000.0
 var front_grip: float = 1.0          ## tyre size / setup grip multipliers
 var rear_grip: float = 1.1
+## Rear grip on loose dirt as a share of the dry figure (below 1: the tail
+## steps out on dirt; Demolition Derby cars on old road tyres oversteer a lot).
+var dirt_rear_grip: float = 1.0
 var roll_stiffness_front: float = 0.6  ## share of lateral load transfer taken by the front
 var idle_rpm: float = 1000.0
 var redline_rpm: float = 7500.0
@@ -105,6 +108,7 @@ static func from_dict(d: Dictionary) -> CarDefinition:
 	var ch: Dictionary = d.get("chassis", {})
 	c.front_grip = ch.get("front_grip", c.front_grip)
 	c.rear_grip = ch.get("rear_grip", c.rear_grip)
+	c.dirt_rear_grip = clampf(float(ch.get("dirt_rear_grip", 1.0)), 0.3, 1.2)
 	c.roll_stiffness_front = ch.get("roll_stiffness_front", c.roll_stiffness_front)
 	var e: Dictionary = d.get("engine", {})
 	c.idle_rpm = e.get("idle_rpm", c.idle_rpm)

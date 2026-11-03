@@ -8,6 +8,7 @@ extends Node
 ##            off, steam, smoke and fire, parts on the ground
 ##   jump   - shot while your car is in the air off a jump
 ##   dirt   - shot while your car is flat out on the dirt (dust and mud)
+##   ramp   - your car parked in front of the first jump (its painted chevrons)
 
 var session: RaceSession
 var scene: Node
@@ -57,11 +58,25 @@ func _physics_process(_delta: float) -> void:
 			if sim.race_time >= wait:
 				_shoot()
 		"jump":
-			if me.air_h > 0.8 and sim.race_time > 3.0:
+			if me.air_h > 0.5 and sim.race_time > 3.0:
 				_shoot()
 		"dirt":
 			if sim.track.dirt_at(me.track_s) > 0.9 and me.speed() > 18.0 and sim.race_time > wait:
 				_shoot()
+		"ramp":
+			if not _armed and sim.race_time > 1.0:
+				_armed = true
+				_t0 = sim.race_time
+			if _armed:
+				var j: Dictionary = sim.track.jumps[0]
+				var at := float(j["s"]) - float(j["up_m"]) - 9.0
+				me.pos = sim.track.position_at(at)
+				me.heading = sim.track.heading_at(at)
+				me.vel = Vector2.ZERO
+				me.yaw_rate = 0.0
+				me.track_idx = sim.track.index_at(at)
+				if sim.race_time - _t0 >= wait:
+					_shoot()
 		"wrecks":
 			if not _armed and sim.race_time > 1.0:
 				_armed = true

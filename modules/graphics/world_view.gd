@@ -81,10 +81,11 @@ func setup(p_track: TrackData, p_env: SimEnvironment = null) -> void:
 ## braking colours (show_brake), plus the brake marker boards, which are
 ## always there. line: DrivingLine for the player's car. Call once after setup.
 func add_driving_aids(line: DrivingLine, show_line: bool, show_brake: bool) -> void:
-	brake_boards = BrakeBoards.new()
-	brake_boards.name = "BrakeBoards"
-	add_child(brake_boards)
-	brake_boards.setup(line, track_view)
+	if track.discipline != "derby":   # no braking boards in a demolition derby arena
+		brake_boards = BrakeBoards.new()
+		brake_boards.name = "BrakeBoards"
+		add_child(brake_boards)
+		brake_boards.setup(line, track_view)
 	driving_line = DrivingLineView.new()
 	driving_line.name = "DrivingLineAid"
 	add_child(driving_line)
