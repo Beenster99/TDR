@@ -270,7 +270,7 @@ func default_pos(id: String, sz: Vector2, vp: Vector2) -> Vector2:
 		"hint": return Vector2((vp.x - sz.x) * 0.5, vp.y - 28)
 		"pitguide": return Vector2((vp.x - sz.x) * 0.5, vp.y - 200)
 		"lights": return Vector2((vp.x - sz.x) * 0.5, 48)
-		"flags": return Vector2((vp.x - sz.x) * 0.5, 96)
+		"flags": return Vector2((vp.x - sz.x) * 0.5, 70)
 		"radio": return Vector2((vp.x - sz.x) * 0.5, 196)
 		"messages": return Vector2((vp.x - sz.x) * 0.5, 115)
 	return Vector2.ZERO
@@ -999,6 +999,7 @@ func _flag_lines(me: int) -> Array:
 			title = "SAFETY CAR"
 			if rc.stage == "in_this_lap":
 				title = "SAFETY CAR IN THIS LAP"
+				col = Color(0.3, 0.9, 0.4)   # its lights have gone green
 			elif rc.stage == "restart":
 				title = "RESTART"
 				col = Color(0.3, 0.9, 0.4)
@@ -1010,6 +1011,10 @@ func _flag_lines(me: int) -> Array:
 			elif me >= 0 and rc.yellow_at(sim.cars[me].track_s):
 				title = "YELLOW FLAG"
 	return [title, line, col]
+
+
+## How opaque the flag board is (0..1): see-through over the track.
+const FLAG_BOARD_ALPHA := 0.55
 
 
 func _draw_race_control(me: int) -> void:
@@ -1024,15 +1029,18 @@ func _draw_race_control(me: int) -> void:
 		line = "Race control: slow down, no overtaking"
 	var w := 520.0
 	var r := Rect2(0, 0, w, 58 if line != "" and title != "" else 34)
+	# See-through, so the track ahead still shows under it.
 	if title != "":
-		draw_rect(r, Color(0, 0, 0, 0.6))
+		draw_rect(r, Color(0, 0, 0, FLAG_BOARD_ALPHA * 0.6))
 		var flash := int(Time.get_ticks_msec() / 400) % 2 == 0 or rc.neutralisation() == "sc" or sample
-		draw_rect(Rect2(r.position, Vector2(w, 34)), col if flash else col.darkened(0.35))
-		_text(r.position + Vector2(0, 25), title, 22, Color.BLACK, HORIZONTAL_ALIGNMENT_CENTER, w)
+		var bar := col if flash else col.darkened(0.35)
+		bar.a = FLAG_BOARD_ALPHA
+		draw_rect(Rect2(r.position, Vector2(w, 34)), bar)
+		_text(r.position + Vector2(0, 25), title, 22, Color(0, 0, 0, 0.9), HORIZONTAL_ALIGNMENT_CENTER, w)
 	if line != "" and line.to_upper() != title:
 		var y := r.position.y + (52 if title != "" else 24)
 		if title == "":
-			draw_rect(r, Color(0, 0, 0, 0.6))
+			draw_rect(r, Color(0, 0, 0, FLAG_BOARD_ALPHA * 0.6))
 		var warn := rc.give_back.has(me)
 		_text(Vector2(r.position.x, y), line, 17, Color(1, 0.5, 0.3) if warn else Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, w)
 

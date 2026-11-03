@@ -18,9 +18,11 @@ race state and just move the safety car along between updates.
 | Retired car stopped on the circuit for 6 s | Safety car ("Recovery vehicle on track") and a recovery vehicle: a crane if the car is in the wall, a tractor anywhere else (see below) |
 | A live car stopped for the recovery time (VSC 25 s, SC 40 s, plus 6 s) | Marshals push it clear: yellow flag only from then on |
 
-No new SC is sent out on the leader's final lap. With the host setting
-"Safety car: Off" (`RaceSettings.safety_car_enabled = false`) there is no VSC or
-SC, but yellow flags still apply.
+No new SC is sent out on the leader's final lap. The host's "Safety car" setting
+(`RaceSettings.race_control_mode()`): "On" (yellows, VSC and SC), "Yellow flags
+only" (`safety_car_enabled = false`: no VSC or SC) or "Off" (`flags_enabled = false`
+too: no yellow or double yellow flags either; marshals still clear debris in the
+gaps and recovery vehicles still fetch retired cars, with no flags or penalties).
 
 ## Marshals clearing debris (double yellows)
 

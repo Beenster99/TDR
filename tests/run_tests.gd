@@ -2310,9 +2310,22 @@ func test_safety_car_off() -> void:
 	check(ev.has("flag:yellow"), "a stopped car still brings out yellow flags")
 	check(not ev.has("safety_car:sc") and not ev.has("safety_car:vsc") and not r["sc_seen"], "no VSC or safety car when the host turns it off")
 	check(r["sim"].phase == RaceSim.Phase.FINISHED, "race finishes")
+	# "Safety car: Off": no flags of any kind either.
+	var s2 := RaceSettings.new()
+	s2.laps = 2
+	s2.ai_count = 5
+	s2.seed = 99
+	s2.set_race_control_mode(RaceSettings.RC_OFF)
+	check(s2.race_control_mode() == RaceSettings.RC_OFF and not s2.safety_car_enabled
+		and RaceSettings.from_dict(s2.to_dict()).race_control_mode() == RaceSettings.RC_OFF, "Safety car: Off survives the trip to the clients")
+	var r2 := _sc_race(s2, 30.0, false)
+	var ev2: Dictionary = r2["events"]
+	var flags := ev2.keys().filter(func(k): return str(k).begins_with("flag:yellow") or str(k).begins_with("flag:double") or str(k).begins_with("safety_car:"))
+	check(flags.is_empty() and not r2["sc_seen"], "Safety car: Off: no yellow flags, VSC or safety car (%s)" % str(flags))
+	check(ev2.has("flag:recovered") or r2["sim"].race_control.recovered[r2["victim"]] == 1, "the retired car is still taken away")
+	check(r2["sim"].phase == RaceSim.Phase.FINISHED, "race finishes")
 
 
-## Rules without driving: penalties, classification, overtaking rules, sync.
 ## Yellow flags only for real incidents: contact between cars (rubbing, a tap,
 ## a bump) raises nothing; a heavy crash, a spun car, a car crawling off the
 ## track or into the wall does.
@@ -2394,6 +2407,7 @@ func test_yellow_flags_for_incidents() -> void:
 	print("    AI race: %d contacts, %d yellow flags" % [contacts, yellow_flags])
 
 
+## Rules without driving: penalties, classification, overtaking rules, sync.
 func test_race_control_rules() -> void:
 	print("race control rules")
 	var d := _data()

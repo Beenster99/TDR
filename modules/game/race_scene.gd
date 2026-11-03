@@ -860,7 +860,7 @@ func _on_events(evs: Array) -> void:
 					"lapped_may_overtake": "LAPPED CARS MAY OVERTAKE", "in_this_lap": "SAFETY CAR IN THIS LAP",
 					"restart": "SAFETY CAR IN - RESTART", "green": "GREEN FLAG"}
 				if says.has(e.get("state", "")):
-					hud.flash(says[e["state"]], 2.5)
+					hud.flash(says[e["state"]], 4.0 if e["state"] == "in_this_lap" else 2.5)
 			"penalty":
 				if e["car"] == session.local_car:
 					hud.flash("+%d s penalty: %s" % [int(e["seconds"]), e["reason"]], 4.0)

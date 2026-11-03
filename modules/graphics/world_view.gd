@@ -172,6 +172,7 @@ func set_safety_car(p_visible: bool, pos: Vector2, p_heading: float, speed: floa
 		safety_car.ground_normal = track_view.surface_normal
 		add_child(safety_car)
 		safety_car.add_roof_text("SAFETY\nCAR")
+		safety_car.add_safety_beacons()
 	safety_car.visible = p_visible
 	if not p_visible:
 		return
@@ -339,6 +340,8 @@ func set_camera(centre: Vector2, zoom: float, rotation_rad := 0.0) -> void:
 	for v in cars:
 		if v.highlight != CarView.Highlight.NONE:
 			v.set_highlight_zoom(hk)
+	if safety_car and safety_car.visible:
+		safety_car.set_highlight_zoom(hk * 1.4)
 
 
 func _process(_delta: float) -> void:

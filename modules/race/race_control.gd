@@ -26,7 +26,8 @@ extends RefCounted
 ##    slow down) and then a time penalty (RaceSim.add_penalty), added to the
 ##    car's race time in the final classification.
 ##  * The host setting RaceSettings.safety_car_enabled switches the VSC and
-##    SC on or off. Local yellow flags always apply.
+##    SC on or off; flags_enabled switches the yellow flags (both off =
+##    "Safety car: Off", no flags at all).
 
 enum Mode { GREEN, VSC, SC }
 const MODE_NAMES := ["green", "vsc", "sc"]
@@ -155,10 +156,11 @@ func _init(p_sim: RaceSim) -> void:
 
 # --- Queries (AI, HUD, other race rules) ------------------------------------
 
-## False in rallycross (and derby): no yellow flags, VSC, safety car or
-## double yellows there. Marshals still clear debris, in the gaps.
+## False in rallycross (and derby), and on circuits with "Safety car: Off":
+## no yellow flags, VSC, safety car or double yellows. Marshals still clear
+## debris, in the gaps, and recovery vehicles still fetch retired cars.
 func flags_used() -> bool:
-	return sim.settings.discipline == RaceSettings.DISCIPLINE_CIRCUIT
+	return sim.settings.discipline == RaceSettings.DISCIPLINE_CIRCUIT and sim.settings.flags_enabled
 
 
 ## Seconds until the next car reaches track distance s (INF with none
@@ -350,7 +352,7 @@ func instruction_for(i: int) -> String:
 			if unlapping[i]:
 				return "SAFETY CAR - lapped cars may overtake: unlap yourself"
 			match stage:
-				"in_this_lap": return "SAFETY CAR IN THIS LAP"
+				"in_this_lap": return "Get ready: green flag when the safety car is in"
 				"restart":
 					if controls_restart(i):
 						return "Restart: you control the pace, go when ready"
@@ -601,7 +603,7 @@ func _update_marshals(dt: float, prev_s: PackedFloat64Array) -> void:
 				_event({"type": "flag", "flag": "clear", "car": -1, "reason": "Debris cleared, marshals back behind the barrier"})
 			marshal_jobs.remove_at(k)
 			continue
-		if not prev_s.is_empty() and mode == Mode.GREEN:
+		if not prev_s.is_empty() and mode == Mode.GREEN and flags_used():
 			_check_double_yellow_speed(job, prev_s)
 		k += 1
 

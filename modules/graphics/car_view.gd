@@ -631,12 +631,118 @@ func _update_light_bar(delta: float) -> void:
 	var flash := 1.0 if fmod(_bar_t, 0.5) < 0.25 else 0.15
 	_bar_amber.emission_energy_multiplier = 6.0 * flash if _bar_mode == "amber" else 0.0
 	_bar_green.emission_energy_multiplier = 6.0 * flash if _bar_mode == "green" else 0.0
+	_update_beacons()
+
+
+# --- Safety car beacons ----------------------------------------------------------
+
+## Extra lights that make the safety car stand out from above, close up or
+## zoomed right out: a wide roof bar that wig-wags left/right, strobes on all
+## four corners, amber glow thrown on the road, and a big pulsing ring on the
+## ground that grows as the camera pulls back (set_highlight_zoom).
+const BEACON_AMBER := Color(1.0, 0.55, 0.05)
+const BEACON_GREEN := Color(0.15, 1.0, 0.3)
+var _beacons: Array = []          ## [material, phase (0 or 1), strobe?]
+var _beacon_lights: Array = []    ## [OmniLight3D, phase]
+var _beacon_tag: Label3D
+
+
+func add_safety_beacons() -> void:
+	if not _beacons.is_empty():
+		return
+	var top := float(def.raw.get("height_m", 1.3)) + 0.1
+	var roof := _find(self, "number_roof") as Node3D
+	var bar_x := (roof.position.x + 0.55) if roof else def.body_offset + 0.3
+	var half_w := def.width * 0.5
+	# Roof bar: six lamps across the roof, left three and right three flash in turn.
+	var lamp := Vector3(0.32, 0.12, def.width * 0.86 / 6.0)
+	for k in 6:
+		var z := -def.width * 0.4 + lamp.z * (k + 0.5)
+		_beacon_box(Vector3(bar_x, top, z), lamp * Vector3(1, 1, 0.92), 0 if k < 3 else 1, false)
+	# Corner strobes, front and rear, diagonals flash together.
+	var fx := def.body_offset + def.length * 0.5 - 0.12
+	var rx := def.body_offset - def.length * 0.5 + 0.12
+	for c in [[fx, -1.0, 0], [fx, 1.0, 1], [rx, -1.0, 1], [rx, 1.0, 0]]:
+		_beacon_box(Vector3(c[0], 0.62, c[1] * (half_w - 0.25)), Vector3(0.12, 0.08, 0.34), c[2], true)
+	# Amber light thrown on the road either side.
+	for side in [-1.0, 1.0]:
+		var o := OmniLight3D.new()
+		o.position = Vector3(bar_x, top + 0.6, side * (half_w + 0.4))
+		o.omni_range = 9.0
+		o.omni_attenuation = 1.2
+		o.light_color = BEACON_AMBER
+		o.light_energy = 0.0
+		o.shadow_enabled = false
+		_sprung.add_child(o)
+		_beacon_lights.append([o, 0 if side < 0.0 else 1])
+	# A tag that stays the same size on screen at any zoom, so the safety
+	# car can be found even with the whole track in view.
+	_beacon_tag = Label3D.new()
+	_beacon_tag.text = "SC"
+	_beacon_tag.font_size = 40
+	_beacon_tag.outline_size = 12
+	_beacon_tag.outline_modulate = Color(0, 0, 0, 0.85)
+	_beacon_tag.modulate = BEACON_AMBER
+	_beacon_tag.fixed_size = true
+	_beacon_tag.pixel_size = 0.0012
+	_beacon_tag.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	_beacon_tag.no_depth_test = true
+	_beacon_tag.render_priority = 10
+	_beacon_tag.position = Vector3(def.body_offset, top + 1.5, 0)
+	_beacon_tag.offset = Vector2(0, 46)   # drawn above the car, not on it
+	add_child(_beacon_tag)
+	set_highlight(Highlight.SAFETY)
+
+
+func _beacon_box(at: Vector3, size: Vector3, phase: int, strobe: bool) -> void:
+	var mi := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = size
+	var m := StandardMaterial3D.new()
+	m.albedo_color = Color(0.35, 0.2, 0.03)
+	m.emission_enabled = true
+	m.emission = BEACON_AMBER
+	m.emission_energy_multiplier = 0.0
+	m.roughness = 0.15
+	bm.material = m
+	mi.mesh = bm
+	mi.position = at
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_sprung.add_child(mi)
+	_beacons.append([m, phase, strobe])
+
+
+func _update_beacons() -> void:
+	if _beacons.is_empty():
+		return
+	var on := _bar_mode != "off"
+	var col := BEACON_GREEN if _bar_mode == "green" else BEACON_AMBER
+	# Wig-wag: half a second per side; strobes double-flash each half.
+	var half := int(_bar_t / 0.3) % 2
+	var t := fmod(_bar_t, 0.3)
+	var strobe_on := t < 0.05 or (t > 0.1 and t < 0.15)
+	for b in _beacons:
+		var m: StandardMaterial3D = b[0]
+		m.emission = col
+		var lit: bool = on and b[1] == half and (strobe_on if b[2] else true)
+		m.emission_energy_multiplier = (9.0 if b[2] else 7.0) if lit else (0.6 if on else 0.0)
+	for l in _beacon_lights:
+		var o: OmniLight3D = l[0]
+		o.light_color = col
+		o.light_energy = 3.5 if on and l[1] == half else 0.0
+	if _hl and highlight == Highlight.SAFETY:
+		_hl.visible = on
+		_hl_mat.set_shader_parameter("tint", col)
+	if _beacon_tag:
+		# Only needed once the car is small on screen.
+		_beacon_tag.visible = on and _hl_zoom >= 2.5
+		_beacon_tag.modulate = col if half == 0 else col.lerp(Color.WHITE, 0.5)
 
 
 # --- Player highlights -----------------------------------------------------------
 
 ## set_highlight: no outline, this player's own car, or another human player.
-enum Highlight { NONE, SELF, PLAYER }
+enum Highlight { NONE, SELF, PLAYER, SAFETY }
 const HIGHLIGHT_SHADER := preload("res://modules/graphics/shaders/car_highlight.gdshader")
 const HIGHLIGHT_SELF := Color(1.0, 0.8, 0.22)
 const HIGHLIGHT_PLAYER := Color(0.3, 0.8, 1.0)
@@ -672,6 +778,10 @@ func set_highlight(kind: int) -> void:
 	_hl_mat.set_shader_parameter("tint", HIGHLIGHT_SELF if mine else HIGHLIGHT_PLAYER)
 	_hl_mat.set_shader_parameter("strength", 0.6 if mine else 0.38)
 	_hl_mat.set_shader_parameter("pulse", 1.0 if mine else 0.0)
+	if kind == Highlight.SAFETY:   # the safety car: a strong, fast-flashing amber ring
+		_hl_mat.set_shader_parameter("tint", BEACON_AMBER)
+		_hl_mat.set_shader_parameter("strength", 0.95)
+		_hl_mat.set_shader_parameter("pulse", 2.0)
 
 
 ## Zoomed out (camera far away), the outline gets thicker so a player's car
@@ -679,7 +789,7 @@ func set_highlight(kind: int) -> void:
 func set_highlight_zoom(k: float) -> void:
 	if _hl == null:
 		return
-	k = clampf(k, 1.0, 12.0)
+	k = clampf(k, 1.0, 40.0 if highlight == Highlight.SAFETY else 12.0)
 	if absf(k - _hl_zoom) < 0.03 * k:
 		return
 	_hl_zoom = k
