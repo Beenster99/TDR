@@ -193,8 +193,6 @@ func _register_defaults() -> void:
 		"Single player: calling a stop opens a quick menu (tyres, which tyres, front splitter, rear wing, fuel) and pauses the race while it's open.")
 	register_setting("gameplay", "manual_gears", "Gears", [[false, "Automatic"], [true, "Manual"]], false,
 		"Manual: change gear yourself with the shift buttons.")
-	register_setting("gameplay", "pit_crew_game", "Pit crew mini-game: be a wheel gunner", [[false, "Off: the AI crew do the stop"], [true, "On"]], false,
-		"At your stops you're one of the two wheel gunners in the box: run to each wheel (stick / WASD), hold the gun (RT / A / Space) to undo the nut, then hold it again and let go in the green. The driver guns the left side, a co-op team mate the right. Off, your AI crew do the stop at their own pace.")
 	register_setting("gameplay", "pit_crew_coop", "Co-op pit stops: play your crew job", [[true, "On"], [false, "Off: the AI crew do the stop"]], true,
 		"Sharing a car: at each stop the guide drives the car down the lane and everyone's camera closes in on the box. The strategist is the fuel man, the driver cleans the windscreen, a third player lays out the tyres and guns and plugs in the air jacks; then each of you does the tyre job you picked in the lobby. Grab (pad X / G key) picks up and puts down, use (RT or A / Space) works the wheel gun and the cloth.")
 	register_setting("gameplay", "hud_timing_tower", "Timing tower", [[true, "Show"], [false, "Hide"]], true,

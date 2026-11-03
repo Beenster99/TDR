@@ -24,8 +24,7 @@ extends Control
 ## car to the end of the lane and gives it back to the driver there, and the
 ## pit wall is back at its screens.
 ##
-## On your own (Settings > Gameplay > Pit crew mini-game, off by default) you
-## are the left gun man and the AI crew do everything else.
+## On your own there's no crew game: the AI crew do the whole stop.
 ##
 ## Controls: run (stick / WASD), grab (pad X / G key: pick up, put down, plug in,
 ## take off), use (RT or A / Space, held: the wheel gun, the windscreen).
@@ -33,7 +32,6 @@ extends Control
 ## machine that simulates the car through RaceSession.request_pit, and team
 ## mates see each other's crew members (RaceSession.send_crew_pose).
 
-const PREF := "pit_crew_game"
 const PREF_COOP := "pit_crew_coop"
 
 enum Stage { IDLE, READY, BOX, DONE }
@@ -88,6 +86,9 @@ var cur := 0                     ## the one being done now
 var clock := 0.0                 ## seconds since the stage started (in the box: the stop's clock)
 var enabled_override = null      ## tests: true / false instead of the player's setting
 var autoplay := false            ## testing (--crew-autoplay): plays like a sharp player
+## The race scene: world position -> screen position (Vector2(-1000, -1000)
+## when off screen), for the "YOU" tag over this player's crew member.
+var screen_pos: Callable
 var ring_colour := YELLOW        ## the ring under this player's crew member (team mates' are blue)
 
 # The player's crew member.
@@ -137,8 +138,8 @@ func _hook_poses() -> void:
 		_signal_hooked = true
 
 
-## On/off: Settings > Gameplay (registered by core): co-op pit stops for a
-## shared car, the solo mini-game otherwise.
+## On/off: Settings > Gameplay (registered by core), co-op pit stops for a
+## shared car only.
 func enabled(p_coop := false) -> bool:
 	if enabled_override != null:
 		return bool(enabled_override)
@@ -149,14 +150,14 @@ func enabled(p_coop := false) -> bool:
 	var gd := get_node_or_null("/root/GameData")
 	if gd == null:
 		return false
-	return bool(gd.prefs.get(PREF_COOP, true)) if p_coop else bool(gd.prefs.get(PREF, false))
+	return p_coop and bool(gd.prefs.get(PREF_COOP, true))
 
 
 ## The jobs this player does at their car's stops: {car, jobs: [...], coop}.
 ## Co-op (two or more players in the car's crew): the strategist / pit wall
 ## refuels, the driver cleans the windscreen then does their tyre job, a pit
 ## crew player lays out the tyres and guns and plugs the air lance in, then
-## does theirs. On your own: the left gun man (a strategist alone doesn't play).
+## does theirs. On your own: nothing (the AI crew do it all).
 static func jobs_for(s) -> Dictionary:
 	var none := {"car": -1, "jobs": [], "coop": false}
 	if s == null:
@@ -169,9 +170,7 @@ static func jobs_for(s) -> Dictionary:
 	var humans := e.human_crew()
 	var role := RaceEntry.ROLE_DRIVER if s.local_car == c else str(s.local_role)
 	if humans.size() < 2:
-		if role == RaceEntry.ROLE_STRATEGIST:
-			return none
-		return {"car": c, "jobs": [PitRules.JOB_GUN_L], "coop": false}
+		return none   # on your own the AI crew do the whole stop
 	var me := int(s.local_peer) if "local_peer" in s else 0
 	var tyre := tyre_job_for(e, me, role)
 	match role:
@@ -384,17 +383,8 @@ func _start(want: Dictionary) -> void:
 	job_wheel = -1
 	wipe = 0.0
 	stage = Stage.READY
-	var w := _sim().pits.service_for(car, _pit()["plan"])
-	# On your own with no tyres to change there's nothing to play.
-	if not coop and PitRules._side_wheels(w, 0).is_empty():
-		stage = Stage.IDLE
-		return
 	pos = _start_spot()
 	face = 0.0
-	if not coop and current_job() in [PitRules.JOB_GUN_L, PitRules.JOB_GUN_R]:
-		# On your own the gun man has the gun in hand from the start.
-		hold = Hold.GUN
-		sent["gun_taken:%d" % _side()] = true
 	for j in jobs:
 		session.request_pit(car, {"crew": {"job": j, "play": true, "lane_auto": coop}})
 
@@ -411,8 +401,12 @@ func _start_spot() -> Vector2:
 	return _spot("wait", _side())[0]
 
 
+var _no_fuel_stop := false   ## this stop puts no fuel in (the fuel man stands by)
+
+
 func _start_box() -> void:
 	stage = Stage.BOX
+	_no_fuel_stop = float(_work().get("fuel_s", 0.0)) <= 0.0
 	clock = float(_pit()["service_total"]) - float(_pit()["service_left"])
 	_skip_empty_jobs()
 
@@ -425,7 +419,7 @@ func _skip_empty_jobs() -> void:
 		var empty := false
 		match j:
 			PitRules.JOB_FUEL:
-				empty = float(work.get("fuel_s", 0.0)) <= 0.0
+				empty = false   # no fuel this stop: the fuel man stays out and says so (_step_fuel)
 			PitRules.JOB_LANCE:
 				empty = false
 			PitRules.JOB_SCREEN:
@@ -459,7 +453,8 @@ func _stop(next: Stage) -> void:
 
 
 func _finish() -> void:
-	var gave_up := cur < jobs.size()
+	# Standing by as fuel man with no fuel to put in counts as done.
+	var gave_up := cur < jobs.size() and not (current_job() == PitRules.JOB_FUEL and _no_fuel_stop and cur == jobs.size() - 1)
 	_stop(Stage.DONE)
 	var perfect := 0
 	for w in done:
@@ -606,7 +601,15 @@ func _hose_on() -> bool:
 	return sent.has("fuel:on::") and not sent.has("fuel:off::")
 
 
+## No fuel goes in this stop (none planned, or the tank's full).
+func _no_fuel() -> bool:
+	return stage == Stage.BOX and float(_work().get("fuel_s", 0.0)) <= 0.0
+
+
 func _step_fuel(dt: float, move: Vector2, grab: bool) -> void:
+	if _no_fuel():
+		_run(dt, move)   # nothing to plug in: the fuel man stands by
+		return
 	var filler := _spot("filler")
 	if _hose_on():
 		pos = filler[0]
@@ -1036,7 +1039,7 @@ func _auto() -> Array:
 		return []
 	match j:
 		PitRules.JOB_FUEL:
-			if stage != Stage.BOX:
+			if stage != Stage.BOX or _no_fuel():
 				return [Vector2.ZERO, false, false]
 			if _hose_on():
 				return [Vector2.ZERO, false, fuel_in() >= float(_work().get("fuel_l", 0.0)) - 0.05]
@@ -1174,6 +1177,7 @@ func _text(at: Vector2, s: String, fs := 16, col := Color.WHITE, align := HORIZO
 func _draw() -> void:
 	if session == null or stage == Stage.IDLE or font == null:
 		return
+	_draw_you_tag()
 	var r := Rect2((size.x - W) * 0.5, size.y - H - 196.0, W, H)
 	draw_rect(r, PANEL)
 	draw_rect(r, Color(YELLOW, 0.45), false, 2.0)
@@ -1184,6 +1188,51 @@ func _draw() -> void:
 	if _flash_t > 0.0 and _flash != "":
 		_text(Vector2(r.position.x, r.position.y - 12), _flash, 20, RED if _flash.begins_with("LOOSE") or _flash.begins_with("Wrong") else YELLOW,
 			HORIZONTAL_ALIGNMENT_CENTER, W)
+
+
+## A "YOU" tag with an arrow over the crew member this player drives, so the
+## eye goes straight to them (with the ring and arrow PitCrews draws).
+func _draw_you_tag() -> void:
+	if crews == null or not screen_pos.is_valid() or not hands_free() or current_job() == "":
+		return
+	var wp = crews.member_world_pos(car, current_job())
+	if wp == null:
+		return
+	var sp: Vector2 = screen_pos.call((wp as Vector3) + Vector3(0, 3.4, 0))
+	if sp.x < -500.0:
+		return
+	var bob := 4.0 * sin(Time.get_ticks_msec() / 160.0)
+	var tip := sp + Vector2(0, 18 + bob)
+	var w := 64.0
+	var box := Rect2(tip.x - w * 0.5, tip.y - 52.0, w, 28.0)
+	draw_rect(box, Color(0, 0, 0, 0.7))
+	draw_rect(box, ring_colour, false, 3.0)
+	_text(Vector2(box.position.x, box.position.y + 21), "YOU", 20, ring_colour, HORIZONTAL_ALIGNMENT_CENTER, w)
+	draw_colored_polygon(PackedVector2Array([tip, tip + Vector2(-11, -20), tip + Vector2(11, -20)]), ring_colour)
+
+
+## A tip with the real buttons in: "(grab)" and "USE" become this player's
+## bindings, e.g. "(G / X)" and "Space / A".
+static func with_keys(tip: String) -> String:
+	return tip.replace("(grab)", "(%s)" % key_name("crew_grab")).replace("grab at", key_name("crew_grab") + " at") \
+		.replace("Grab the", key_name("crew_grab") + ": grab the").replace("Hold USE", "Hold " + key_name("crew_gun")) \
+		.replace("HOLD the gun", "HOLD " + key_name("crew_gun"))
+
+
+## The first key and pad button bound to an action, e.g. "Space / A".
+static func key_name(action: String) -> String:
+	if not InputMap.has_action(action):
+		return action
+	var key := ""
+	var pad := ""
+	for ev in InputMap.action_get_events(action):
+		if ev is InputEventKey and key == "":
+			var code: int = ev.physical_keycode if ev.physical_keycode != KEY_NONE else ev.keycode
+			key = OS.get_keycode_string(code as Key)
+		elif ev is InputEventJoypadButton and pad == "":
+			pad = InputSetup.describe("pad", {"button": int(ev.button_index)})
+	var parts := [key, pad].filter(func(x): return x != "")
+	return " / ".join(parts) if not parts.is_empty() else action
 
 
 func _bar(x: float, y: float, w: float, f: float, col: Color) -> void:
@@ -1217,6 +1266,9 @@ func _draw_job(r: Rect2) -> void:
 			_bar(gx, gy, gw, got / maxf(want, 0.1), Color(GREEN if got >= want - 0.05 else YELLOW, 0.7))
 			if stage != Stage.BOX:
 				tip = "Car coming in: be ready at the fuel rig"
+			elif _no_fuel():
+				tip = "No fuel this stop (none planned, or the tank's full): stand by"
+				tip_col = GREEN
 			elif _hose_on():
 				tip = "Take the hose off (grab) when the tank's full" if got < want - 0.05 else "FULL: take the hose off now (grab)"
 				tip_col = YELLOW if got < want - 0.05 else GREEN
@@ -1265,7 +1317,7 @@ func _draw_job(r: Rect2) -> void:
 			tip = res[0]
 			tip_col = res[1]
 	if tip != "":
-		_text(Vector2(gx, o.y + H - 12), tip, 15, tip_col)
+		_text(Vector2(gx, o.y + H - 12), with_keys(tip), 15, tip_col)
 
 
 ## What to do now on a tyre job: [tip, colour] (and draws the gun gauge).

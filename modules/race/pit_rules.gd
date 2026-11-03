@@ -965,6 +965,11 @@ func _step_car(i: int, inp: CarInput) -> CarInput:
 			c.vel = Vector2.ZERO
 			c.yaw_rate = 0.0
 			p["service_left"] = maxf(float(p["service_left"]) - dt, 0.0)
+			# Never longer than the crew's give-up time, whatever the players did.
+			var std := float(p.get("service_std", 0.0))
+			if std > 0.0 and float(p["service_total"]) - float(p["service_left"]) \
+					>= maxf(std * CREW_GIVE_UP, float(p.get("service_floor", 0.0))) + 0.5:
+				p["service_left"] = 0.0
 			if p["service_left"] <= 0.0:
 				_finish_service(i)
 				p["phase"] = PHASE_LEAVE

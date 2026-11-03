@@ -74,7 +74,7 @@ play your crew job**, per player (off: the AI does that player's jobs).
 | Strategist / pit wall | fuel man | (done) |
 | Driver | windscreen | their lobby pick |
 | Pit crew (3rd player) | tyres and guns laid out after the call, air lance in at the stop | their lobby pick |
-| One player on their own (mini-game setting) | | left gun man, gun already in hand |
+| One player on their own | (the AI crew do the whole stop) | |
 
 The lobby's car share rows have a **Pit stop job** picker for the driver and
 a pit crew player (left gun man, left wheel man, right gun man, right wheel
@@ -94,6 +94,12 @@ Grab and use are rebindable (Settings > Controller, "Pit crew: ...").
 
 ### Rules (race module)
 
+- A stop never lasts longer than the crew's give-up time (`CREW_GIVE_UP` x
+  the standard stop, or a driver change's minimum), whatever the players did.
+- Single player has no crew game: the AI crew do the whole stop.
+- Your crew member has a pulsing ring, an arrow overhead and a "YOU" tag; a
+  team mate's is blue. Tips name your real buttons (`PitCrewGame.with_keys`).
+  With no fuel to put in, the fuel man stands by at the rig.
 - Before the car stops, each player's screen sends `crew: {job, play: true,
   lane_auto}` for each of its jobs (`PitRules.JOBS`: fuel, screen, lance,
   wheel_l, gun_l, wheel_r, gun_r; bits of `crew_play`). The tyres and guns

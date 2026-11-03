@@ -279,7 +279,8 @@ func _handle_cmdline() -> void:
 
 func _process(_dt: float) -> void:
 	# Dedicated server auto-starts once enough players are ready.
-	if Net.is_server() and Net.dedicated and not Net.in_race:
+	# A playing host started with --host --min-players N (tests) does the same.
+	if Net.is_server() and (Net.dedicated or (GameData.arg("host") and GameData.arg("min-players"))) and not Net.in_race:
 		if Net.players.size() >= int(GameData.arg("min-players", 1)) and Net.all_ready():
 			_ready_all_check()
 
