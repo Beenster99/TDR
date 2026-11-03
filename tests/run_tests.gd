@@ -3970,6 +3970,20 @@ func test_online_contacts() -> void:
 	check(p.is_player_driving(), "a person at the wheel is highlighted")
 	p.crew = [{"peer_id": RaceEntry.AI_PEER, "role": RaceEntry.ROLE_DRIVER}]
 	check(not p.is_player_driving(), "an AI co-driver is not")
+	# Settings > Gameplay "highlight_fade": the outline fades away after its time
+	# and comes back (wake_highlight) when the camera zooms.
+	var cv := CarView.new()
+	cv.highlight = CarView.Highlight.SELF
+	cv._hl_age = 100.0
+	check(cv.highlight_alpha() == 1.0, "highlight never fades by default")
+	cv.highlight_fade_s = 15.0
+	cv._hl_age = 10.0
+	check(cv.highlight_alpha() == 1.0, "highlight stays full before its fade time")
+	cv._hl_age = 15.0 + CarView.HIGHLIGHT_FADE_TIME + 0.1
+	check(cv.highlight_alpha() == 0.0, "highlight has faded away after its time")
+	cv.wake_highlight()
+	check(cv.highlight_alpha() == 1.0, "zooming brings a faded highlight back")
+	cv.free()
 
 
 ## Rallycross: RX tracks and cars only appear in rallycross, dirt is looser
