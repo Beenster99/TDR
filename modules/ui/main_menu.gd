@@ -113,6 +113,12 @@ const SETUP_PAGES := ["single", "lobby", "season_new", "season_hub"]
 var lobby_season_label: Label
 var _settings_steppers: Array[Stepper] = []
 var help_label: Label
+## The main menu's list of controls, named by what the player has mapped, on
+## the keyboard or the controller (whichever they used last).
+const CONTROLS_HELP := "Drive: {accelerate} throttle, {brake} brake, %s steer  ·  {handbrake} handbrake\n" \
+	+ "Zoom (hold): %s%s, {zoom_full} whole track  ·  {camera_toggle} camera  ·  {restart_race} restart  ·  {back_to_menu} menu\n" \
+	+ "Pits: {pit_box} box this lap  ·  {pit_limiter} pit limiter  ·  {pit_tyres} next tyres  ·  {pit_fuel} next fuel\n" \
+	+ "Change any of them in Settings > Controller."
 # Seasons
 var season_name_edit: LineEdit
 var points_stepper: Stepper
@@ -578,7 +584,8 @@ func _build_ui() -> void:
 	head.add_child(status_label)
 	var help := Label.new()
 	help_label = help
-	help.text = "Drive: W/S/A/D or arrows  ·  Pad: RT throttle, LT brake, left stick steer  ·  Space / A handbrake\nZoom (hold): Q/E or mouse wheel, Z whole track  ·  Pad: LB/RB or right stick, R3 whole track  ·  C/Y camera  ·  R/Back restart  ·  Esc/Start menu\nPits: B or D-pad left box this lap  ·  L or L3 pit limiter  ·  T or D-pad up next tyres  ·  F next fuel\nThese are the defaults: change any of them in Settings > Controller."
+	InputPrompt.live(help, func(): help.text = InputPrompt.fill(CONTROLS_HELP % [InputPrompt.pair("steer_left", "steer_right"),
+		InputPrompt.pair("zoom_in", "zoom_out"), InputPrompt.pick(" or mouse wheel", "")]))
 	help.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	help.modulate = Color(1, 1, 1, 0.45)
 	help.add_theme_font_size_override("font_size", 13)

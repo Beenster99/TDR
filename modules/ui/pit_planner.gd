@@ -706,7 +706,7 @@ func _draw_controls(r: Rect2) -> void:
 	var w := r.size.x
 	var y := r.position.y + 6
 	# Picked tyres: which, compound, pressure.
-	_section(Vector2(x, y + 12), "PICKED TYRES  (1-4, A all)")
+	_section(Vector2(x, y + 12), "PICKED TYRES" + _shortcut("  (1-4, A all)"))
 	y += 20
 	var sets := [["all", "All"], ["front", "Fronts"], ["rear", "Rears"], ["left", "Left"], ["right", "Right"]]
 	var bw := (w - 4 * 6) / 5.0
@@ -719,7 +719,7 @@ func _draw_controls(r: Rect2) -> void:
 		_button(Rect2(x + k * (bw + 6), y, bw, 30), sets[k][1], "pick_set", sets[k][0], on)
 	y += 40
 	var opts := [""] + compound_options()
-	var keys := ["Q", "W", "E", "R"]
+	var keys := ["Q", "W", "E", "R"] if not InputPrompt.pad else []
 	bw = (w - (opts.size() - 1) * 6) / opts.size()
 	for k in opts.size():
 		var id: String = opts[k]
@@ -728,11 +728,11 @@ func _draw_controls(r: Rect2) -> void:
 		for q in 4:
 			if picked[q] and str(draft["tyres"][q]) != id:
 				on = false
-		_button(Rect2(x + k * (bw + 6), y, bw, 34), "%s  %s" % [keys[k] if k < keys.size() else "", name], "fit", id,
+		_button(Rect2(x + k * (bw + 6), y, bw, 34), ("%s  %s" % [keys[k], name]) if k < keys.size() else name, "fit", id,
 			on and picked.has(true), true, 14, compound_colour(id) if id != "" else Color.WHITE)
 	y += 42
 	if can_tune():
-		_text(Vector2(x, y + 20), "Pressure (↑ ↓)", 14, Color(1, 1, 1, 0.8))
+		_text(Vector2(x, y + 20), "Pressure" + InputPrompt.pick(" (↑ ↓)", " (D-pad ↑ ↓)"), 14, Color(1, 1, 1, 0.8))
 		_button(Rect2(x + w - 220, y, 104, 30), "− 0.5 psi", "psi_picked", -1)
 		_button(Rect2(x + w - 108, y, 104, 30), "+ 0.5 psi", "psi_picked", 1)
 	else:
@@ -742,26 +742,26 @@ func _draw_controls(r: Rect2) -> void:
 	y += 10
 	# Fuel, repairs, driver change, the call.
 	if sim.settings.fuel_enabled:
-		_text(Vector2(x, y + 21), "Fuel (F G)", 15)
+		_text(Vector2(x, y + 21), "Fuel" + _shortcut(" (F G)"), 15)
 		_stepper(Vector2(x + 110, y), 170, RaceHud.fuel_plan_text(float(draft["fuel"])), "fuel", -1, 1, true, Color.WHITE, 0)
 		_button(Rect2(x + 290, y, 80, 30), "To end", "fuel_auto", null, float(draft["fuel"]) < 0.0, true, 14)
 		_button(Rect2(x + 376, y, w - 376, 30), "None", "fuel_none", null, float(draft["fuel"]) == 0.0, true, 14)
 		y += 40
 	if sim.damage_level != CarDamage.Level.OFF:
 		var parts := CarDamage.repair_plan(sim.cars[car])
-		_text(Vector2(x, y + 21), "Repairs (H)", 15)
+		_text(Vector2(x, y + 21), "Repairs" + _shortcut(" (H)"), 15)
 		var dmg_txt := "nothing to fix" if parts.is_empty() else "%d parts" % parts.size()
 		_button(Rect2(x + 110, y, 170, 30), "Fix everything" if draft["repair"] else "No repairs", "repair", null, draft["repair"])
 		_text(Vector2(x + 292, y + 21), dmg_txt, 14, DIM if parts.is_empty() else RED)
 		y += 40
-	_text(Vector2(x, y + 21), "Driver (D)", 15)
+	_text(Vector2(x, y + 21), "Driver" + _shortcut(" (D)"), 15)
 	if can_change_driver():
 		var label := "Change: %s takes over" % _crew_name(int(draft["driver_to"])) if draft["driver_change"] else "No driver change"
 		_button(Rect2(x + 110, y, w - 110, 30), label, "driver", null, draft["driver_change"])
 	else:
 		_text(Vector2(x + 110, y + 21), "%s drives (no co-driver in this car)" % session.sim.entries[car].at_wheel(), 14, DIM, HORIZONTAL_ALIGNMENT_LEFT, w - 110)
 	y += 40
-	_text(Vector2(x, y + 21), "Call (B)", 15)
+	_text(Vector2(x, y + 21), "Call" + _shortcut(" (B)"), 15)
 	_button(Rect2(x + 110, y, w - 110, 30), "BOX THIS LAP" if draft["box"] else "Plan only, box later", "box", null, draft["box"])
 	y += 46
 	draw_line(Vector2(x, y), Vector2(x + w, y), Color(1, 1, 1, 0.12))
@@ -800,10 +800,17 @@ func _draw_controls(r: Rect2) -> void:
 	_text(Vector2(x, by + 2), status, 13, scol, HORIZONTAL_ALIGNMENT_LEFT, w)
 	_button(Rect2(x, by + 14, 120, 54), "Start again", "reset", null, false, true, 14)
 	var to_driver := session.local_car != car
-	_button(Rect2(x + 130, by + 14, w - 130, 54), ("SEND TO DRIVER  ⏎" if to_driver else "SET MY STOP  ⏎"), "send", null,
+	_button(Rect2(x + 130, by + 14, w - 130, 54), ("SEND TO DRIVER" if to_driver else "SET MY STOP") + "  " + InputPrompt.pick("⏎", InputPrompt.key("ui_accept")), "send", null,
 		dirty(), true, 20, YELLOW)
-	_text(Vector2(x, r.end.y + 6), "Wheel / right-click: change   Q W E R tyres   Z X / C V downforce   Esc close",
+	_text(Vector2(x, r.end.y + 6), InputPrompt.pick("Wheel / right-click: change   Q W E R tyres   Z X / C V downforce   Esc close",
+		InputPrompt.fill("D-pad ←→: tyre for the picked wheels   ↑↓: pressure   {ui_accept} send   {ui_cancel} close   (mouse for the rest)")),
 		12, Color(1, 1, 1, 0.45), HORIZONTAL_ALIGNMENT_LEFT, w)
+
+
+## A keyboard shortcut's hint, left out while the player is on a controller
+## (the planner's letter keys are fixed keyboard shortcuts).
+static func _shortcut(hint: String) -> String:
+	return "" if InputPrompt.pad else hint
 
 
 static func _ago(s: float) -> String:

@@ -114,9 +114,13 @@ func _build() -> void:
 	_help.modulate = Color(1, 1, 1, 0.72)
 	right.add_child(_help)
 	var keys := Label.new()
-	keys.text = "Up/down: choose  ·  Left/right: change  ·  LB/RB or Q/E: section  ·  B/Esc: back.  Changes are saved straight away."
-	if in_race:
-		keys.text += "  Race settings and car settings are locked during a race."
+	InputPrompt.live(keys, func():
+		keys.text = InputPrompt.fill(InputPrompt.pick("↑↓: choose  ·  ←→: change  ·  Q / E: section  ·  {ui_cancel}: back.",
+			"D-pad ↑↓: choose  ·  ←→: change  ·  %s / %s: section  ·  {ui_cancel}: back." % [
+				InputPrompt.button(JOY_BUTTON_LEFT_SHOULDER), InputPrompt.button(JOY_BUTTON_RIGHT_SHOULDER)]))
+		keys.text += "  Changes are saved straight away."
+		if in_race:
+			keys.text += "  Race settings and car settings are locked during a race.")
 	keys.modulate = Color(1, 1, 1, 0.4)
 	keys.add_theme_font_size_override("font_size", 13)
 	right.add_child(keys)
@@ -393,7 +397,7 @@ static func _copy(from: String, to: String) -> Error:
 
 func _on_row_focus(b: Control) -> void:
 	var h := str(b.get_meta("help", ""))
-	_help.text = h
+	_help.text = InputPrompt.fill(h)   # a setting's help can name controls: {crew_grab}
 
 
 ## Left from a row goes to the section list, right from the list to the rows.

@@ -100,6 +100,14 @@ const PAD_BUTTON_NAMES := {
 	JOY_BUTTON_DPAD_DOWN: "D-pad down", JOY_BUTTON_DPAD_LEFT: "D-pad left", JOY_BUTTON_DPAD_RIGHT: "D-pad right",
 	JOY_BUTTON_MISC1: "Share", JOY_BUTTON_TOUCHPAD: "Touchpad",
 }
+## The same buttons on a PlayStation pad, for prompts and the keybinds page.
+const PAD_BUTTON_NAMES_PS := {
+	JOY_BUTTON_A: "Cross", JOY_BUTTON_B: "Circle", JOY_BUTTON_X: "Square", JOY_BUTTON_Y: "Triangle",
+	JOY_BUTTON_BACK: "Share / Create", JOY_BUTTON_START: "Options", JOY_BUTTON_GUIDE: "PS",
+	JOY_BUTTON_LEFT_STICK: "L3", JOY_BUTTON_RIGHT_STICK: "R3", JOY_BUTTON_LEFT_SHOULDER: "L1", JOY_BUTTON_RIGHT_SHOULDER: "R1",
+}
+## The player's bindings in use now (the overrides last applied).
+static var applied: Dictionary = {}
 ## Stick and trigger moves past this count when you pick a pad binding.
 const LISTEN_AXIS := 0.6
 
@@ -113,6 +121,7 @@ static func register_actions(overrides: Dictionary = {}, deadzone := STICK_DEADZ
 
 ## Puts every action back to its defaults, then lays the player's bindings over them.
 static func apply_bindings(overrides: Dictionary) -> void:
+	applied = overrides.duplicate(true)
 	for action in _all_actions():
 		if not InputMap.has_action(action):
 			InputMap.add_action(action, STICK_DEADZONE)
@@ -124,9 +133,31 @@ static func apply_bindings(overrides: Dictionary) -> void:
 			var ev := pad_event(b)
 			if ev:
 				InputMap.action_add_event(action, ev)
+	_pad_menu_buttons()
 	# Sticks and triggers listen to one controller only (the one in use).
 	ActivePad.start()
 	ActivePad.bind_axes()
+	InputPrompt.start()   # prompts name the new bindings
+
+
+## Godot's menu actions have no controller buttons for "choose" and "back"
+## (ui_accept is Enter / Space, ui_cancel is Esc): give them pad A and pad B,
+## as every menu hint says.
+static func _pad_menu_buttons() -> void:
+	for pair in [["ui_accept", JOY_BUTTON_A], ["ui_cancel", JOY_BUTTON_B]]:
+		if not InputMap.has_action(pair[0]):
+			continue
+		var has := false
+		for ev in InputMap.action_get_events(pair[0]):
+			if ev is InputEventJoypadButton and ev.button_index == pair[1]:
+				has = true
+		if not has:
+			InputMap.action_add_event(pair[0], pad_event({"button": pair[1]}))
+
+
+## Is this one of the game's own actions (not one of Godot's ui_* ones)?
+static func is_ours(action: String) -> bool:
+	return KEYS.has(action) or PAD_AXES.has(action) or PAD_BUTTONS.has(action)
 
 
 ## The stick dead zone for every action (0..1); the pedals keep a small one
@@ -259,7 +290,10 @@ static func describe(kind: String, value) -> String:
 		return "-"
 	if kind == "keys":
 		return OS.get_keycode_string(int(value) as Key)   # named by its place on a US keyboard
+	var ps := ActivePad.is_playstation()
 	if value is Dictionary and value.has("button"):
+		if ps and PAD_BUTTON_NAMES_PS.has(int(value["button"])):
+			return PAD_BUTTON_NAMES_PS[int(value["button"])]
 		return PAD_BUTTON_NAMES.get(int(value["button"]), "Button %d" % int(value["button"]))
 	if value is Dictionary and value.has("axis"):
 		var neg: bool = float(value.get("dir", 1.0)) < 0.0
@@ -268,7 +302,7 @@ static func describe(kind: String, value) -> String:
 			JOY_AXIS_LEFT_Y: return "Left stick up" if neg else "Left stick down"
 			JOY_AXIS_RIGHT_X: return "Right stick left" if neg else "Right stick right"
 			JOY_AXIS_RIGHT_Y: return "Right stick up" if neg else "Right stick down"
-			JOY_AXIS_TRIGGER_LEFT: return "LT"
-			JOY_AXIS_TRIGGER_RIGHT: return "RT"
+			JOY_AXIS_TRIGGER_LEFT: return "L2" if ps else "LT"
+			JOY_AXIS_TRIGGER_RIGHT: return "R2" if ps else "RT"
 		return "Axis %d %s" % [int(value["axis"]), "-" if neg else "+"]
 	return "?"

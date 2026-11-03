@@ -371,11 +371,15 @@ func _draw() -> void:
 		draw_rect(rb, Color(1, 1, 1, 0.5 if hot else 0.25), false, 1.0)
 		_text(Vector2(rb.position.x, rb.position.y + 21), "Reset layout", 14, Color.WHITE if hot else DIM, HORIZONTAL_ALIGNMENT_CENTER, rb.size.x)
 		_hits.append([rb, "reset_layout", null])
-	var keys := "Click a car to look at it    ↑↓ choose car    ←→ or wheel filter feed    Drag a title bar to move, the corner to zoom    P / Esc close"
-	if _can_plan():
+	var keys := InputPrompt.fill("Click a car to look at it    ↑↓ choose car    ←→ or wheel filter feed    Drag a title bar to move, the corner to zoom    {strategy_screen} / {ui_cancel} close")
+	if InputPrompt.pad:
+		keys = InputPrompt.fill("D-pad ↑↓ choose car    ←→ filter feed    {ui_cancel} close")
+		if session.local_car >= 0 and session.sim.pits.enabled:
+			keys += "    %s / %s tyres to change" % [InputPrompt.button(JOY_BUTTON_LEFT_SHOULDER), InputPrompt.button(JOY_BUTTON_RIGHT_SHOULDER)]
+	if _can_plan() and not InputPrompt.pad:
 		keys += "    Enter plan the stop"
 	if _cam_allowed():
-		keys += "    C onboard camera: " + ["off", "front", "rear"][cam_mode]
+		keys += "    %s onboard camera: %s" % [InputPrompt.key("camera_toggle"), ["off", "front", "rear"][cam_mode]]
 	_text(Vector2(16, vp.y - 12), keys + "    The race keeps running", 13, DIM)
 	_button(Rect2(vp.x - 52, 14, 36, 32), "✕", "close", 18)
 	if _note_time > 0.0:

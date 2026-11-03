@@ -261,7 +261,6 @@ func _process(delta: float) -> void:
 ## Keeps the crew controls to the game while it's on (the crew console
 ## would take A / Enter as its own button).
 func _input(event: InputEvent) -> void:
-	note_device(event)
 	if not hands_free():
 		return
 	for a in ["crew_gun", "crew_grab", "crew_up", "crew_down", "crew_left", "crew_right"]:
@@ -1187,54 +1186,11 @@ func _draw() -> void:
 			HORIZONTAL_ALIGNMENT_CENTER, W)
 
 
-## A tip with the player's own buttons in: {grab} and {gun} become what
-## they mapped those actions to, on the device they touched last (keyboard
-## and mouse, or the controller), e.g. "G" and "Space", or "X" and "RT".
-static func with_keys(tip: String, pad = null) -> String:
-	var on_pad: bool = using_pad if pad == null else bool(pad)
-	return tip.replace("{grab}", key_name("crew_grab", on_pad)).replace("{gun}", key_name("crew_gun", on_pad))
-
-
-## The first binding of an action on the keyboard (pad false) or the
-## controller (pad true), taken from the live bindings so a remapped
-## button shows. Falls back to the other device when there's none.
-static func key_name(action: String, pad := false) -> String:
-	if not InputMap.has_action(action):
-		return action
-	var key := ""
-	var btn := ""
-	for ev in InputMap.action_get_events(action):
-		if ev is InputEventKey and key == "":
-			var code: int = ev.physical_keycode if ev.physical_keycode != KEY_NONE else ev.keycode
-			key = OS.get_keycode_string(code as Key)
-		elif ev is InputEventMouseButton and key == "":
-			key = {MOUSE_BUTTON_LEFT: "Left mouse", MOUSE_BUTTON_RIGHT: "Right mouse", MOUSE_BUTTON_MIDDLE: "Middle mouse"} \
-				.get(ev.button_index, "Mouse %d" % ev.button_index)
-		elif ev is InputEventJoypadButton and btn == "":
-			btn = InputSetup.describe("pad", {"button": int(ev.button_index)})
-		elif ev is InputEventJoypadMotion and btn == "":
-			btn = InputSetup.describe("pad", {"axis": int(ev.axis), "dir": signf(ev.axis_value) if ev.axis_value != 0.0 else 1.0})
-	var first := btn if pad else key
-	var other := key if pad else btn
-	return first if first != "" else (other if other != "" else action)
-
-
-## Whether the player last touched a controller (true) or the keyboard /
-## mouse (false). Tips show that device's buttons.
-static var using_pad := false
-
-
-## Follows which device the player touched last.
-static func note_device(event: InputEvent) -> void:
-	if event is InputEventKey or event is InputEventMouseButton:
-		using_pad = false
-	elif event is InputEventMouseMotion:
-		if (event as InputEventMouseMotion).relative.length() > 4.0:
-			using_pad = false
-	elif event is InputEventJoypadButton:
-		using_pad = true
-	elif event is InputEventJoypadMotion and absf(event.axis_value) > 0.5:
-		using_pad = true
+## A tip with the player's own buttons in: {crew_grab} and {crew_gun}
+## become what they mapped those actions to, on the device they touched
+## last (keyboard and mouse, or the controller), e.g. "G" / "X".
+static func with_keys(tip: String) -> String:
+	return InputPrompt.fill(tip)
 
 
 func _bar(x: float, y: float, w: float, f: float, col: Color) -> void:
@@ -1272,15 +1228,15 @@ func _draw_job(r: Rect2) -> void:
 				tip = "No fuel this stop (none planned, or the tank's full): stand by"
 				tip_col = GREEN
 			elif _hose_on():
-				tip = "Take the hose off ({grab}) when the tank's full" if got < want - 0.05 else "FULL: take the hose off now ({grab})"
+				tip = "Take the hose off ({crew_grab}) when the tank's full" if got < want - 0.05 else "FULL: take the hose off now ({crew_grab})"
 				tip_col = YELLOW if got < want - 0.05 else GREEN
 			elif hold == Hold.HOSE:
-				tip = "Plug the hose into the car ({grab} at the filler)"
+				tip = "Plug the hose into the car ({crew_grab} at the filler)"
 			else:
-				tip = "{grab}: grab the hose at the fuel rig"
+				tip = "{crew_grab}: grab the hose at the fuel rig"
 		PitRules.JOB_SCREEN:
 			_bar(gx, gy, gw, wipe / SCREEN_WIPE_S, Color(BLUE, 0.7))
-			tip = "Car coming in: get to the nose" if stage != Stage.BOX else "Hold {gun} at the windscreen to wipe it clean"
+			tip = "Car coming in: get to the nose" if stage != Stage.BOX else "Hold {crew_gun} at the windscreen to wipe it clean"
 		PitRules.JOB_LANCE:
 			var n := _prep_needs()
 			var x := o.x + 16
@@ -1295,11 +1251,11 @@ func _draw_job(r: Rect2) -> void:
 			if not prep_done():
 				tip = "Lay out the new tyres (stacks by the garage) and the wheel guns (trolley)"
 				if hold == Hold.NEW_TYRE:
-					tip = "Carrying a %s tyre: put it by its wheel ({grab})" % KIND_NAMES[hold_kind]
+					tip = "Carrying a %s tyre: put it by its wheel ({crew_grab})" % KIND_NAMES[hold_kind]
 				elif hold == Hold.GUN:
-					tip = "Carrying a wheel gun: lay it by the car ({grab})"
+					tip = "Carrying a wheel gun: lay it by the car ({crew_grab})"
 			elif stage == Stage.BOX:
-				tip = "Air lance in: {grab} at the socket, back of the car"
+				tip = "Air lance in: {crew_grab} at the socket, back of the car"
 				tip_col = YELLOW
 			else:
 				tip = "All laid out: wait by the air lance socket for the car"
@@ -1331,7 +1287,7 @@ func _tyre_tip(j: String) -> Array:
 	if stage != Stage.BOX:
 		return ["Car coming in: get to the %s" % WHEEL_NAMES[w] if w >= 0 else "No tyres on your side this stop", Color.WHITE]
 	if w < 0:
-		return ["Your side's done%s" % (": put the gun down ({grab})" if hold == Hold.GUN else ""), GREEN]
+		return ["Your side's done%s" % (": put the gun down ({crew_grab})" if hold == Hold.GUN else ""), GREEN]
 	var tj := PitRules.tyre_job(_tl(), _side(), w)
 	if j.begins_with("gun"):
 		match job:
@@ -1341,7 +1297,7 @@ func _tyre_tip(j: String) -> Array:
 			Job.SWAP:
 				return ["Nut off: the wheel man swaps the wheel...", Color.WHITE]
 			Job.LOOSE:
-				return ["HOLD {gun} on the new nut, let go in the green", YELLOW]
+				return ["HOLD {crew_gun} on the new nut, let go in the green", YELLOW]
 			Job.GUN:
 				var full := GUN_AUTO
 				draw_rect(Rect2(gx, gy, gw, 14), Color(1, 1, 1, 0.08))
@@ -1353,26 +1309,26 @@ func _tyre_tip(j: String) -> Array:
 				draw_rect(Rect2(mx - 2, gy - 4, 4, 22), Color.WHITE)
 				return ["Let go in the green", Color.WHITE]
 		if hold != Hold.GUN:
-			return ["Pick up your wheel gun ({grab} or {gun})", YELLOW]
+			return ["Pick up your wheel gun ({crew_grab} or {crew_gun})", YELLOW]
 		if not _near(wheel_spot(w)[0]):
 			return ["Run to the %s" % WHEEL_NAMES[w], Color.WHITE]
 		if tj.is_empty() or float(tj.get("start", INF)) > clock:
 			return [_why_wait(tj), AMBER]
-		return ["HOLD {gun} to undo the nut", YELLOW]
+		return ["HOLD {crew_gun} to undo the nut", YELLOW]
 	# wheel man
 	var me := current_job()
 	match hold:
 		Hold.OLD_TYRE:
-			return ["Put the old wheel down, out of the way ({grab})", YELLOW]
+			return ["Put the old wheel down, out of the way ({crew_grab})", YELLOW]
 		Hold.NEW_TYRE:
-			return ["Put the new wheel on the %s ({grab} at the hub)" % WHEEL_NAMES[w], YELLOW]
+			return ["Put the new wheel on the %s ({crew_grab} at the hub)" % WHEEL_NAMES[w], YELLOW]
 	if not sent.has("%s:wheel_off:%d:" % [me, w]):
 		if not _near(wheel_spot(w)[0]):
 			return ["Run to the %s" % WHEEL_NAMES[w], Color.WHITE]
 		if tj.is_empty() or float(tj.get("nut_off", INF)) > clock:
 			return ["Wait for the gun man to undo the nut", AMBER]
-		return ["Pull the old wheel off ({grab})", YELLOW]
-	return ["Pick up the new wheel by the corner ({grab})", YELLOW]
+		return ["Pull the old wheel off ({crew_grab})", YELLOW]
+	return ["Pick up the new wheel by the corner ({crew_grab})", YELLOW]
 
 
 func _draw_result(r: Rect2) -> void:
