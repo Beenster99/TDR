@@ -1576,6 +1576,7 @@ func test_pit_crew_game() -> void:
 	p5["phase"] = PitRules.PHASE_APPROACH
 	g0.step(1.0 / 60.0)
 	check(g0.stage == PitCrewGame.Stage.READY and g0.jobs == ["gun_l"] and not g0.coop and not bool(p5["crew_auto"]), "solo: the left gun man, the driver still drives in")
+	check(g0.hold == PitCrewGame.Hold.GUN, "solo: the gun man starts with the gun in hand")
 	p5["phase"] = PitRules.PHASE_LIMIT
 	sim5.pits._arrive(0)
 	g0.step(1.0 / 60.0)
@@ -1607,6 +1608,13 @@ func test_pit_crew_game() -> void:
 	g0._use_was = true
 	g0._step_gun(1.0 / 60.0, Vector2.ZERO, false, false)
 	check(g0.loose == 1 and g0.job == PitCrewGame.Job.LOOSE and not g0.done.has(0), "too early off the wheel gun: loose nut, go again")
+	g0.job = PitCrewGame.Job.NONE
+	g0.hold = PitCrewGame.Hold.NONE
+	g0.gun_at = {0: g0.pos}
+	g0.sent = {}
+	g0._use_was = false
+	g0._step_gun(1.0 / 60.0, Vector2.ZERO, true, false)
+	check(g0.hold == PitCrewGame.Hold.GUN, "the gun button next to the gun on the ground picks it up")
 	g0.free()
 
 
