@@ -288,5 +288,6 @@ func _draw() -> void:
 		if sel:
 			draw_rect(br, Color(1, 1, 1, 0.8), false, 2.0)
 		draw_string(font, Vector2(br.position.x, br.position.y + 29), rows[k]["label"], HORIZONTAL_ALIGNMENT_CENTER, bw, 18, Color.WHITE)
-	draw_string(font, Vector2(r.position.x + 20, r.end.y - 14), "↑↓ choose   ←→ change   A / Enter box this lap   B / Esc cancel",
+	draw_string(font, Vector2(r.position.x + 20, r.end.y - 14), InputPrompt.fill(InputPrompt.pick("↑↓ choose   ←→ change", "D-pad ↑↓ choose   ←→ change")
+		+ "   {ui_accept} box this lap   {ui_cancel} cancel"),
 		HORIZONTAL_ALIGNMENT_LEFT, W - 40, 13, Color(1, 1, 1, 0.5))

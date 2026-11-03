@@ -284,11 +284,15 @@ func _draw() -> void:
 		OnboardPip.draw(self, font, onboard, _pip_at, session, selected, cam_mode == 2)
 		fy += _pip_at.size.y + 12
 	_draw_feed(Rect2(rx, fy, rw, vp.y - fy - 34), tel)
-	var keys := "Click a car to look at it    ↑↓ choose car    ←→ or wheel filter feed    P / Esc close"
-	if _can_plan():
+	var keys := InputPrompt.fill("Click a car to look at it    ↑↓ choose car    ←→ or wheel filter feed    {strategy_screen} / {ui_cancel} close")
+	if InputPrompt.pad:
+		keys = InputPrompt.fill("D-pad ↑↓ choose car    ←→ filter feed    {ui_cancel} close")
+		if session.local_car >= 0 and session.sim.pits.enabled:
+			keys += "    %s / %s tyres to change" % [InputPrompt.button(JOY_BUTTON_LEFT_SHOULDER), InputPrompt.button(JOY_BUTTON_RIGHT_SHOULDER)]
+	if _can_plan() and not InputPrompt.pad:
 		keys += "    Enter plan the stop"
 	if _cam_allowed():
-		keys += "    C onboard camera: " + ["off", "front", "rear"][cam_mode]
+		keys += "    %s onboard camera: %s" % [InputPrompt.key("camera_toggle"), ["off", "front", "rear"][cam_mode]]
 	_text(Vector2(16, vp.y - 12), keys + "    The race keeps running", 13, DIM)
 	_button(Rect2(vp.x - 52, 14, 36, 32), "✕", "close", 18)
 	if _note_time > 0.0:

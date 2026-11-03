@@ -63,6 +63,7 @@ func _init() -> void:
 	test_race_start()
 	test_driving_aids()
 	test_active_pad()
+	test_input_prompts()
 	test_pointer_hider()
 	test_hud_timing()
 	test_hud_layout()
@@ -3684,6 +3685,56 @@ func test_active_pad() -> void:
 		if ev is InputEventJoypadMotion:
 			ui_ok = ui_ok and ev.device == 4
 	check(ui_ok, "menu navigation sticks follow the pad in use too")
+	ActivePad._choose(-1)
+
+
+func test_input_prompts() -> void:
+	print("button prompts follow the last-used device")
+	if not InputMap.has_action("crew_grab"):
+		InputMap.load_from_project_settings()
+	InputSetup.register_actions()
+	ActivePad._choose(0)
+	var key := InputEventKey.new()
+	key.physical_keycode = KEY_G
+	key.pressed = true
+	InputPrompt.observe(key)
+	check(not InputPrompt.pad, "pressing a key switches prompts to the keyboard")
+	check(InputPrompt.key("crew_grab") == "G" and InputPrompt.key("handbrake") == "Space", "keyboard prompts name keys (%s, %s)" % [
+		InputPrompt.key("crew_grab"), InputPrompt.key("handbrake")])
+	check(InputPrompt.fill("Put it down ({crew_grab}), {not_an_action}") == "Put it down (G), {not_an_action}", "fill swaps action names only")
+	var serial := InputPrompt.serial
+	var b := InputEventJoypadButton.new()
+	b.device = 0
+	b.button_index = JOY_BUTTON_A
+	b.pressed = true
+	check(InputPrompt.observe(b) and InputPrompt.pad and InputPrompt.serial > serial, "pressing a pad button switches prompts to the controller")
+	check(InputPrompt.key("crew_grab") == "X" and InputPrompt.key("crew_gun") == "RT" and InputPrompt.key("ui_cancel") == "B",
+		"controller prompts name buttons (%s, %s, %s)" % [InputPrompt.key("crew_grab"), InputPrompt.key("crew_gun"), InputPrompt.key("ui_cancel")])
+	check(InputPrompt.key("pit_fuel") == "F", "an action with no pad button names its key instead")
+	var jitter := InputEventMouseMotion.new()
+	jitter.relative = Vector2(1, 1)
+	check(not InputPrompt.observe(jitter) and InputPrompt.pad, "a nudged mouse doesn't switch away from the controller")
+	# A rebound action is named by its new binding.
+	var o := InputSetup.with_binding({}, "crew_grab", "pad", 0, {"button": JOY_BUTTON_Y})
+	o = InputSetup.with_binding(o, "crew_grab", "keys", 0, KEY_K)
+	InputSetup.apply_bindings(o)
+	check(InputPrompt.key("crew_grab") == "Y", "a rebound pad button is what the prompt names")
+	var click := InputEventMouseButton.new()
+	click.button_index = MOUSE_BUTTON_LEFT
+	click.pressed = true
+	check(InputPrompt.observe(click) and not InputPrompt.pad, "a mouse click switches prompts back to keyboard and mouse")
+	check(InputPrompt.key("crew_grab") == "K", "... naming the rebound key")
+	# A label kept up to date: refreshed when the device changes.
+	var label := Label.new()
+	InputPrompt.live(label, func(): label.text = InputPrompt.fill("{handbrake}"))
+	check(label.text == "Space", "a live label starts on the device in use")
+	InputPrompt.set_pad(true)
+	for c in label.get_children(true):
+		c._process(0.0)
+	check(label.text == "A", "... and follows a switch to the controller")
+	label.free()
+	InputSetup.register_actions()
+	InputPrompt.set_pad(false)
 	ActivePad._choose(-1)
 
 

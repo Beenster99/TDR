@@ -115,7 +115,8 @@ func _build() -> void:
 	_note = Label.new()
 	_note.modulate = Color(1, 1, 1, 0.4)
 	_note.add_theme_font_size_override("font_size", 13)
-	_note.text = "A / Enter: choose  ·  B / Esc / Start: back to the race"
+	InputPrompt.live(_note, func(): _note.text = InputPrompt.fill(
+		"{ui_accept}: choose  ·  " + InputPrompt.keys(["ui_cancel", "back_to_menu"]) + ": back to the race"))
 	v.add_child(_note)
 	Sound.wire_buttons(_panel)
 	_build_confirm(sb)
@@ -161,7 +162,7 @@ func _build_confirm(sb: StyleBoxFlat) -> void:
 	var hint := Label.new()
 	hint.modulate = Color(1, 1, 1, 0.4)
 	hint.add_theme_font_size_override("font_size", 13)
-	hint.text = "A / Enter: choose  ·  B / Esc: no, back to the menu"
+	InputPrompt.live(hint, func(): hint.text = InputPrompt.fill("{ui_accept}: choose  ·  {ui_cancel}: no, back to the menu"))
 	v.add_child(hint)
 	Sound.wire_buttons(_confirm)
 

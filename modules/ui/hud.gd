@@ -438,7 +438,7 @@ func _draw_item(id: String, me: int, sz: Vector2) -> void:
 				_placeholder(sz, "Fuel", "shows in races with fuel on")
 		"sectors": _draw_sectors_and_gaps(me)
 		"speed": _draw_speed(me)
-		"hint": _text(Vector2(0, 14), "P / D-pad →  Pit wall", 13, Color(1, 1, 1, 0.45), HORIZONTAL_ALIGNMENT_CENTER, sz.x)
+		"hint": _text(Vector2(0, 14), InputPrompt.key("strategy_screen") + "  Pit wall", 13, Color(1, 1, 1, 0.45), HORIZONTAL_ALIGNMENT_CENTER, sz.x)
 		"lights": _draw_lights()
 		"pitguide": _draw_pit_guide(me)
 		"flags": _draw_race_control(me)
@@ -754,7 +754,7 @@ func _draw_pit_panel(me: int) -> void:
 		y += 22
 		if mates:
 			var pend := session.pending_swap(me)
-			var txt := "Driver change: no (N)"
+			var txt := "Driver change: no (%s)" % InputPrompt.key("pit_driver")
 			var col := Color(1, 1, 1, 0.7)
 			if not pend.is_empty():
 				var other := int(pend["b"]) if int(pend["a"]) == session.local_peer else int(pend["a"])
