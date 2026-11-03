@@ -1,7 +1,7 @@
 shader_type spatial;
 render_mode blend_mix, depth_draw_opaque, cull_back;
-// Car glass on a Demolition Derby car. Crumples with the body
-// (car_deform.gdshaderinc), and a windscreen cracks from where it was hit:
+// Car glass on any car. Crumples with the body
+// (car_deform.gdshaderinc), and a separate windscreen (derby cars) cracks from where it was hit:
 // a spider web of radial cracks and rings that spreads with `crack` (0..1);
 // past 0.85 it's crazed white all over (shattered, held by the laminate).
 // The side and rear glass only get the crumple.

@@ -97,8 +97,9 @@ var _part_alias := {}
 var _ride_drop := 0.0
 var _bar_t := 0.0
 
-## Demolition Derby cars (CarDefinition.discipline "derby"): bodywork that
-## crumples where it's hit (car_deform.gdshaderinc), a windscreen that
+## Every car's bodywork crumples where it's hit (car_deform.gdshaderinc):
+## noses and tails crushed in, doors caved in around the hit. Demolition
+## Derby cars (CarDefinition.discipline "derby") also get a windscreen that
 ## cracks then shatters, a bonnet and boot lid that spring open then tear
 ## off and stay on the track, radiator steam, smoke and fire, and dust and
 ## mud thrown up on dirt.
@@ -111,7 +112,13 @@ var _crumple_mats: Array[ShaderMaterial] = []
 var _glass_ws: ShaderMaterial
 var _tail_d: Array[ShaderMaterial] = []
 var _head_d: Array[ShaderMaterial] = []
+## Where on each zone the hits landed (front/rear: across the car, z; sides:
+## along it, x), and a second dent for a hit well away from the first, with
+## its share of that zone's crush (0..0.5).
 var _dent := Vector4.ZERO
+var _dent2 := Vector4.ZERO
+var _dent2_w := Vector4.ZERO
+var _dent_set := [false, false, false, false]
 var _crush_shown := Vector4(-1, -1, -1, -1)
 var _roof_shown := -1.0
 var _lid_gone := {}
@@ -226,6 +233,7 @@ func _build(livery: Dictionary) -> void:
 			_box = _box.merge((n as MeshInstance3D).get_aabb()) if _box.has_volume() else (n as MeshInstance3D).get_aabb()
 	if not _box.has_volume():
 		_box = AABB(Vector3(-def.length * 0.5, 0.1, -def.width * 0.5), Vector3(def.length, 1.1, def.width))
+	_setup_crumple()
 	if def.discipline == "derby":
 		_setup_derby()
 
@@ -627,22 +635,28 @@ func _update_light_bar(delta: float) -> void:
 
 # --- Player highlights -----------------------------------------------------------
 
-## set_highlight: no outline, this player's own car, or another human player.
-enum Highlight { NONE, SELF, PLAYER }
+## set_highlight: no outline, this player's own car, another human player, or
+## the car race control says you must give a place back to (let it past).
+enum Highlight { NONE, SELF, PLAYER, GIVE_BACK }
 const HIGHLIGHT_SHADER := preload("res://modules/graphics/shaders/car_highlight.gdshader")
 const HIGHLIGHT_SELF := Color(1.0, 0.8, 0.22)
 const HIGHLIGHT_PLAYER := Color(0.3, 0.8, 1.0)
+const HIGHLIGHT_GIVE_BACK := Color(1.0, 0.3, 0.12)
 var highlight: int = Highlight.NONE
 var _hl: MeshInstance3D
 var _hl_mat: ShaderMaterial
 var _hl_zoom := -1.0
+var _let_past: Label3D   ## "LET PAST" tag over the car (GIVE_BACK)
 
 
 ## A soft glowing outline on the ground round the car: warm gold for your own
 ## car (gently breathing), a quieter cyan for other people online. AI cars get
-## none. Stays readable when zoomed out (set_highlight_zoom).
+## none. The car you must give a place back to gets a strong pulsing
+## orange-red outline and a "LET PAST" tag that stays the same size on screen
+## at every zoom. Stays readable when zoomed out (set_highlight_zoom).
 func set_highlight(kind: int) -> void:
 	highlight = kind
+	_show_let_past(kind == Highlight.GIVE_BACK)
 	if kind == Highlight.NONE:
 		if _hl:
 			_hl.visible = false
@@ -661,9 +675,36 @@ func set_highlight(kind: int) -> void:
 		set_highlight_zoom(1.0)
 	_hl.visible = true
 	var mine := kind == Highlight.SELF
-	_hl_mat.set_shader_parameter("tint", HIGHLIGHT_SELF if mine else HIGHLIGHT_PLAYER)
-	_hl_mat.set_shader_parameter("strength", 0.6 if mine else 0.38)
-	_hl_mat.set_shader_parameter("pulse", 1.0 if mine else 0.0)
+	var give := kind == Highlight.GIVE_BACK
+	_hl_mat.set_shader_parameter("tint", HIGHLIGHT_GIVE_BACK if give else (HIGHLIGHT_SELF if mine else HIGHLIGHT_PLAYER))
+	_hl_mat.set_shader_parameter("strength", 1.0 if give else (0.6 if mine else 0.38))
+	_hl_mat.set_shader_parameter("pulse", 1.0 if mine or give else 0.0)
+	_hl_mat.set_shader_parameter("pulse_rate", 7.0 if give else 3.0)
+
+
+## The floating "LET PAST" tag: drawn over everything, facing the camera, a
+## fixed size on screen and sitting just above the car's outline.
+func _show_let_past(show: bool) -> void:
+	if _let_past == null:
+		if not show:
+			return
+		_let_past = Label3D.new()
+		_let_past.name = "LetPast"
+		_let_past.text = "LET PAST"
+		_let_past.font_size = 40
+		_let_past.outline_size = 14
+		_let_past.modulate = Color(1.0, 0.55, 0.3)
+		_let_past.outline_modulate = Color(0.2, 0.02, 0.0, 0.9)
+		_let_past.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		_let_past.fixed_size = true
+		_let_past.pixel_size = 0.0006
+		_let_past.no_depth_test = true
+		_let_past.render_priority = 10
+		_let_past.outline_render_priority = 9
+		_let_past.offset = Vector2(0, 50)
+		_let_past.position = Vector3(def.body_offset, 2.0, 0)
+		add_child(_let_past)
+	_let_past.visible = show
 
 
 ## Zoomed out (camera far away), the outline gets thicker so a player's car
@@ -1120,6 +1161,7 @@ func _apply_damage() -> void:
 	var smoke: float = d.get("smoke", 0.0)
 	_smoke.emitting = smoke > 0.02
 	_smoke.amount_ratio = smoke
+	_apply_crumple(d)
 	if derby:
 		_apply_derby(d)
 	_shed_bodywork()
@@ -1240,11 +1282,11 @@ func _process(delta: float) -> void:
 		wet = env.wetness_at(state.lateral_offset - env.raceline_offset(state.track_idx))
 	_tail.emission_energy_multiplier = (4.0 if braking else 0.25) + dark * 1.5
 	_head.emission_energy_multiplier = dark * 6.0
+	for m in _tail_d:
+		m.set_shader_parameter("emission_energy", _tail.emission_energy_multiplier)
+	for m in _head_d:
+		m.set_shader_parameter("emission_energy", _head.emission_energy_multiplier)
 	if derby:
-		for m in _tail_d:
-			m.set_shader_parameter("emission_energy", _tail.emission_energy_multiplier)
-		for m in _head_d:
-			m.set_shader_parameter("emission_energy", _head.emission_energy_multiplier)
 		if _fire_light:
 			_fire_light.visible = _fire_k > 0.02
 			_fire_light.light_energy = _fire_k * (2.2 + 1.4 * sin(Time.get_ticks_msec() * 0.023) * sin(Time.get_ticks_msec() * 0.0071))
@@ -1261,26 +1303,31 @@ func _process(delta: float) -> void:
 		_apply_damage()
 
 
-# --- Demolition Derby ------------------------------------------------------------
+# --- Crumpled bodywork (every car) ------------------------------------------
 
-## Swaps every material on the body parts for one that crumples, adds the
-## steam, fire, smoke and mud emitters.
-func _setup_derby() -> void:
-	derby = true
+## Swaps every material on the body parts (not the wheels) for one that
+## crumples with the paint, so lights, grilles, glass, wings and splitters
+## stay on the bent bodywork. The safety car never takes damage: left as is.
+func _setup_crumple() -> void:
+	if _bar_amber or _bar_green:
+		return
 	_crumple_mats.append(_paint)
 	_crumple_mats.append(_carbon_decals)
-	for name_k in DERBY_PARTS:
-		var part: Array = _parts.get(name_k, [])
-		if part.is_empty() or not part[0] is MeshInstance3D:
+	for name_k in _parts:
+		var part: Array = _parts[name_k]
+		if not part[0] is MeshInstance3D:
 			continue
 		var mi := part[0] as MeshInstance3D
+		if mi.mesh == null:
+			continue
 		for sidx in mi.mesh.get_surface_count():
 			var cur := mi.get_surface_override_material(sidx)
+			var src := mi.mesh.surface_get_material(sidx)
 			if cur == null:
-				cur = mi.mesh.surface_get_material(sidx)
-			if cur == _paint:
+				cur = src
+			if cur == _paint or cur == _carbon_decals:
 				continue
-			var src_name := mi.mesh.surface_get_material(sidx).resource_name if mi.mesh.surface_get_material(sidx) else ""
+			var src_name := src.resource_name if src else ""
 			var sm := ShaderMaterial.new()
 			if src_name == "glass" or src_name == "windscreen":
 				sm.shader = GLASS_SHADER
@@ -1306,12 +1353,80 @@ func _setup_derby() -> void:
 	for m in _crumple_mats:
 		m.set_shader_parameter("car_ext", Vector3(_box.end.x, _box.position.x, maxf(-_box.position.z, _box.end.z)))
 		m.set_shader_parameter("roof_y", _box.end.y)
-		m.set_shader_parameter("crush_depth", clampf(def.length * 0.13, 0.4, 0.8))
-	if _glass_ws:
-		_glass_ws.set_shader_parameter("crack_at", Vector3(_box.end.x * 0.4, _box.end.y * 0.85, 0.2))
+		m.set_shader_parameter("crush_depth", crush_depth(def))
 	var nr := _find(self, "number_roof") as Node3D
 	if nr:
 		_number_y = nr.position.y
+
+
+## How far (m) a fully crushed nose or tail is pushed in: about a sixth of
+## the car's length (a supermini loses ~0.6 m, a big saloon ~0.9 m).
+static func crush_depth(d: CarDefinition) -> float:
+	return clampf(d.length * 0.18, 0.55, 0.95)
+
+
+## Where a hit landed (world 2D point): the crumple centres on it. A hit well
+## away from the zone's first dent starts a second one.
+func note_hit(at: Vector2) -> void:
+	if _crumple_mats.is_empty() or state == null:
+		return
+	var local := (at - state.pos).rotated(-state.heading)
+	var zone := CarDamage.zone_of(local, def)
+	var along := local.y if zone == CarDamage.FRONT or zone == CarDamage.REAR else local.x
+	var first: float = _dent[zone]
+	if not _dent_set[zone]:
+		_dent_set[zone] = true
+		_dent[zone] = along
+		_dent2[zone] = along
+		_dent2_w[zone] = 0.0
+	elif absf(along - first) < (0.5 if zone < CarDamage.LEFT else 0.8):
+		_dent[zone] = lerpf(first, along, 0.4)
+	else:
+		# A fresh dent somewhere else on the same panel: it takes a growing
+		# share of that zone's crush.
+		_dent2[zone] = along if _dent2_w[zone] < 0.02 else lerpf(_dent2[zone], along, 0.5)
+		_dent2_w[zone] = minf(_dent2_w[zone] + 0.25, 0.5)
+	if _glass_ws and _crush_shown.x < 0.2 and zone == CarDamage.FRONT:
+		_glass_ws.set_shader_parameter("crack_at", Vector3(_box.end.x * 0.4, _box.end.y * 0.85, clampf(local.y, -0.5, 0.5)))
+	_crush_shown = Vector4(-1, -1, -1, -1)   # push the new dents on the next look
+
+
+## Bodywork crush from CarDamage.visual_parts()["crush"] into the shaders;
+## a car that's taken a pile of hits gets its roof squashed down too.
+func _apply_crumple(d: Dictionary) -> void:
+	if _crumple_mats.is_empty():
+		return
+	var c: Array = d.get("crush", [0.0, 0.0, 0.0, 0.0])
+	var crush := Vector4(c[0], c[1], c[2], c[3])
+	var roof := clampf((CarDamage.body_total(state) - 1.6) * 0.1, 0.0, 0.24)
+	if (crush - _crush_shown).length() <= 0.004 and absf(roof - _roof_shown) <= 0.004:
+		return
+	for z in 4:
+		if crush[z] < 0.02:   # undamaged (or repaired): the next hit starts a fresh dent
+			_dent_set[z] = false
+			_dent2_w[z] = 0.0
+	_crush_shown = crush
+	_roof_shown = roof
+	for m in _crumple_mats:
+		m.set_shader_parameter("crush", crush)
+		m.set_shader_parameter("dent_at", _dent)
+		m.set_shader_parameter("dent_at2", _dent2)
+		m.set_shader_parameter("dent2_w", _dent2_w)
+		m.set_shader_parameter("roof_crush", roof)
+	if not is_nan(_number_y):
+		var nr := _find(self, "number_roof") as Node3D
+		if nr:
+			nr.position.y = _number_y - roof
+
+
+# --- Demolition Derby ------------------------------------------------------------
+
+## Windscreen cracks, the steam, fire, smoke and mud emitters (the crumpling
+## materials are already on from _setup_crumple).
+func _setup_derby() -> void:
+	derby = true
+	if _glass_ws:
+		_glass_ws.set_shader_parameter("crack_at", Vector3(_box.end.x * 0.4, _box.end.y * 0.85, 0.2))
 	var bay := Vector3(maxf(def.cg_to_front * 0.75, _box.end.x - 1.0), _box.end.y * 0.62, 0.0)
 	_steam = _emitter(28, 1.6, Vector3(_box.end.x - 0.25, 0.75, 0.0), Vector3(0.3, 1.0, 0.0), 30.0, [1.5, 3.5], 1.2,
 		[0.8, 2.2], Color(0.96, 0.97, 1.0, 0.5), Color(0.96, 0.97, 1.0, 0.0))
@@ -1408,35 +1523,7 @@ func _emitter(amount: int, life: float, at: Vector3, dir: Vector3, spread: float
 	return p
 
 
-## Where a hit landed (world 2D point): the crumple centres on it.
-func note_hit(at: Vector2) -> void:
-	if not derby:
-		return
-	var local := (at - state.pos).rotated(-state.heading)
-	match CarDamage.zone_of(local, def):
-		CarDamage.FRONT: _dent.x = lerpf(_dent.x, local.y, 0.6) if _crush_shown.x > 0.02 else local.y
-		CarDamage.REAR: _dent.y = lerpf(_dent.y, local.y, 0.6) if _crush_shown.y > 0.02 else local.y
-		CarDamage.LEFT: _dent.z = lerpf(_dent.z, local.x, 0.6) if _crush_shown.z > 0.02 else local.x
-		_: _dent.w = lerpf(_dent.w, local.x, 0.6) if _crush_shown.w > 0.02 else local.x
-	if _glass_ws and _crush_shown.x < 0.2 and CarDamage.zone_of(local, def) == CarDamage.FRONT:
-		_glass_ws.set_shader_parameter("crack_at", Vector3(_box.end.x * 0.4, _box.end.y * 0.85, clampf(local.y, -0.5, 0.5)))
-
-
 func _apply_derby(d: Dictionary) -> void:
-	var c: Array = d.get("crush", [0.0, 0.0, 0.0, 0.0])
-	var crush := Vector4(c[0], c[1], c[2], c[3])
-	var roof := clampf((CarDamage.body_total(state) - 1.6) * 0.1, 0.0, 0.24)
-	if (crush - _crush_shown).length() > 0.004 or absf(roof - _roof_shown) > 0.004:
-		_crush_shown = crush
-		_roof_shown = roof
-		for m in _crumple_mats:
-			m.set_shader_parameter("crush", crush)
-			m.set_shader_parameter("dent_at", _dent)
-			m.set_shader_parameter("roof_crush", roof)
-		if not is_nan(_number_y):
-			var nr := _find(self, "number_roof") as Node3D
-			if nr:
-				nr.position.y = _number_y - roof
 	_paint.set_shader_parameter("dirt", _grime)
 	# Windscreen: cracks spread, then it shatters (a shower of glass).
 	var ws: float = d.get("windscreen", 0.0)
