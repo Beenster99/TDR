@@ -10,7 +10,9 @@ extends Node2D
 ## crackles, turbo whistle and wastegate flutter, supercharger whine, hybrid
 ## motor whine, straight-cut gearbox whine.
 ## Tyres and road: squeal (cornering past the grip peak), scrub (just under
-## it), lock-up and wheelspin, road roar, kerbs, gravel, grass, wind, rain spray.
+## it), lock-up, wheelspin and the handbrake, road roar, kerbs, gravel,
+## grass, wind, rain spray. Tyres only squeal on tarmac and kerbs: sliding
+## on gravel, grass, dirt or mud makes that surface's own noise instead.
 ## Passing cars get a Doppler shift.
 
 const SPEED_OF_SOUND := 343.0
@@ -79,6 +81,7 @@ func setup(p_def: CarDefinition, p_state: CarState, p_local: bool) -> void:
 	_layers["road"] = _player(SoundBank.get_sound("road_roar"))
 	_layers["kerb"] = _player(SoundBank.get_sound("kerb"))
 	_layers["gravel"] = _player(SoundBank.get_sound("gravel"))
+	_layers["dirt"] = _player(SoundBank.get_sound("dirt"))
 	_layers["grass"] = _player(SoundBank.get_sound("grass"))
 	if is_local:
 		_layers["scrub"] = _player(SoundBank.get_sound("tyre_scrub"))
@@ -355,27 +358,34 @@ func _update_tyres(delta: float, speed: float, vs: float) -> void:
 	var kerb := state.surface == SURF_KERB
 	var moving := clampf(speed / 8.0, 0.0, 1.0)
 	var wet := clampf(wetness, 0.0, 1.0)
+	# Loose earth under the car (rallycross and derby dirt, mud when wet).
+	var loose := clampf(state.dirt, 0.0, 1.0) if (on_tarmac or kerb) else 0.0
 	# Sideways: past the grip peak it squeals, just under it the tyres scrub.
 	var lat := maxf(absf(state.slip_angle_rear) - 0.06, absf(state.slip_angle_front) - 0.085)
 	var squeal := clampf(lat * 6.0, 0.0, 1.0)
 	var scrub := clampf((maxf(absf(state.slip_angle_rear), absf(state.slip_angle_front)) - 0.03) * 12.0, 0.0, 1.0)
-	# Lengthways: wheelspin, and heavy braking (locking without ABS, ABS chatter with it).
+	# Lengthways: wheelspin, the handbrake, and heavy braking (locking without
+	# ABS, ABS chatter with it).
 	var lock := 0.0
 	if state.wheelspin:
 		lock = 0.55
+	if state.handbrake:
+		lock = maxf(lock, 0.7)
+		squeal = maxf(squeal, 0.35)
 	if state.ax < -11.0:
 		var b := clampf((-state.ax - 11.0) / 9.0, 0.0, 1.0)
 		if state.assist_abs:
 			b *= 0.35 * (0.5 + 0.5 * sin(_time * TAU * 16.0))
 		lock = maxf(lock, b)
-	var grip_surface := 1.0 if (on_tarmac or kerb) else 0.0
+	# Rubber only squeals on a hard surface: none on gravel, grass, dirt or mud.
+	var grip_surface := (1.0 if (on_tarmac or kerb) else 0.0) * (1.0 - loose)
 	var dry := 1.0 - 0.75 * wet  # wet tyres hiss more than they squeal
 	_squeal_level = lerpf(_squeal_level, squeal * moving * grip_surface * dry, 1.0 - exp(-15.0 * delta))
 	_scrub_level = lerpf(_scrub_level, scrub * (1.0 - squeal) * moving * grip_surface, 1.0 - exp(-12.0 * delta))
 	_lock_level = lerpf(_lock_level, lock * moving * grip_surface * dry, 1.0 - exp(-20.0 * delta))
 	var load := clampf(state.load_factor, 0.6, 1.4)
-	_level(_layers["squeal"], 0.55 * _squeal_level * vs, (0.92 + 0.18 * _squeal_level + 0.06 * (load - 1.0)) * _doppler)
-	_level(_layers["lock"], 0.6 * _lock_level * vs, (0.85 + 0.2 * clampf(speed / 60.0, 0.0, 1.0)) * _doppler)
+	_level(_layers["squeal"], 0.45 * _squeal_level * vs, (0.9 + 0.1 * _squeal_level + 0.05 * (load - 1.0)) * _doppler)
+	_level(_layers["lock"], 0.55 * _lock_level * vs, (0.85 + 0.15 * clampf(speed / 60.0, 0.0, 1.0)) * _doppler)
 	if _layers.has("scrub"):
 		_level(_layers["scrub"], 0.3 * _scrub_level * vs, 0.9 + 0.3 * clampf(speed / 50.0, 0.0, 1.0))
 	var sp := clampf(speed / 70.0, 0.0, 1.0)
@@ -389,6 +399,11 @@ func _update_tyres(delta: float, speed: float, vs: float) -> void:
 		0.75 + 0.5 * clampf(speed / 40.0, 0.0, 1.0))
 	_level(_layers["grass"], (0.6 * clampf(speed / 20.0, 0.1, 1.0) if grass and speed > 0.5 else 0.0) * vs,
 		0.7 + 0.5 * clampf(speed / 40.0, 0.0, 1.0))
+	# Dirt: a rolling rumble that grows into a scrabble of grit and clods
+	# when the car slides, spins its wheels or locks them. Mud is lower.
+	var churn := maxf(maxf(squeal, scrub * 0.5), lock)
+	var dirt_vol := loose * (0.35 * clampf(speed / 25.0, 0.0, 1.0) + 0.5 * churn * moving) if speed > 0.5 else 0.0
+	_level(_layers["dirt"], dirt_vol * vs, (0.7 + 0.45 * clampf(speed / 40.0, 0.0, 1.0) + 0.15 * churn) * (1.0 - 0.25 * wet) * _doppler)
 	if _layers.has("wind"):
 		_level(_layers["wind"], 0.16 * sp * sp * vs, 0.7 + 0.6 * sp)
 	if _layers.has("spray"):

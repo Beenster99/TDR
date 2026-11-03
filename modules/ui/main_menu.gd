@@ -575,7 +575,7 @@ func _build_ui() -> void:
 	head.add_child(status_label)
 	var help := Label.new()
 	help_label = help
-	help.text = "Drive: W/S/A/D or arrows  ·  Pad: RT throttle, LT brake, left stick steer\nZoom (hold): Q/E or mouse wheel, Z whole track  ·  Pad: LB/RB or right stick, R3 whole track  ·  C/Y camera  ·  R/Back restart  ·  Esc/Start menu\nPits: B or D-pad left box this lap  ·  L or L3 pit limiter  ·  T or pad B next tyres  ·  F next fuel\nThese are the defaults: change any of them in Settings > Controller."
+	help.text = "Drive: W/S/A/D or arrows  ·  Pad: RT throttle, LT brake, left stick steer  ·  Space / A handbrake\nZoom (hold): Q/E or mouse wheel, Z whole track  ·  Pad: LB/RB or right stick, R3 whole track  ·  C/Y camera  ·  R/Back restart  ·  Esc/Start menu\nPits: B or D-pad left box this lap  ·  L or L3 pit limiter  ·  T or D-pad up next tyres  ·  F next fuel\nThese are the defaults: change any of them in Settings > Controller."
 	help.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	help.modulate = Color(1, 1, 1, 0.45)
 	help.add_theme_font_size_override("font_size", 13)
