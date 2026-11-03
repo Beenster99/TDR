@@ -19,7 +19,7 @@ signal internet_status_changed
 const DEFAULT_PORT := 24690
 const MAX_PEERS := 16
 ## Bump whenever a message changes shape; mismatched games are told at the lobby.
-const PROTOCOL_VERSION := 18  # 18: Demolition Derby (cars in the air off jumps: air_h and vz in car states), 17: race type (discipline), joker laps and jokers taken, joker state in car states, 16: pit crew mini-game (pit plan "crew": players as wheel gunners), 15: per-wheel tyre compounds and pressures in pit plans and pit state, strategist pit plans read out on the radio, 14: car states stamped with the host's clock (synced by pings) so remote cars are placed in the present, 13: tyre choice per wheel, driver line-ups and AI co-drivers, 12: co-op crews (teams and roles in the lobby, role swaps, driver changes, team radio), 4: track elevation, 5: damage in car states, 6: barrier types and run-off surfaces, 7: race control in the race state, 8: pit stops, 9: car upgrades, liveries and upgrades_mode, 10: car setups (tuning), 11: seasons (season_info in the lobby)
+const PROTOCOL_VERSION := 19  # 19: co-op pit stops (crew jobs: fuel, windscreen, air lance, wheel and gun men; pit jobs in the lobby; crew poses), 18: Demolition Derby (cars in the air off jumps: air_h and vz in car states), 17: race type (discipline), joker laps and jokers taken, joker state in car states, 16: pit crew mini-game (pit plan "crew": players as wheel gunners), 15: per-wheel tyre compounds and pressures in pit plans and pit state, strategist pit plans read out on the radio, 14: car states stamped with the host's clock (synced by pings) so remote cars are placed in the present, 13: tyre choice per wheel, driver line-ups and AI co-drivers, 12: co-op crews (teams and roles in the lobby, role swaps, driver changes, team radio), 4: track elevation, 5: damage in car states, 6: barrier types and run-off surfaces, 7: race control in the race state, 8: pit stops, 9: car upgrades, liveries and upgrades_mode, 10: car setups (tuning), 11: seasons (season_info in the lobby)
 const COMPRESSION := ENetConnection.COMPRESS_ZSTD
 ## How long a player's game may go silent before they're taken to have left (ms).
 const TIMEOUT_MS := 15000
@@ -457,6 +457,8 @@ func _apply_update(id: int, fields: Dictionary) -> void:
 		p["livery"] = fields["livery"]
 	if fields.has("team") or fields.has("role"):
 		_set_team(id, int(fields.get("team", p.get("team", -1))), str(fields.get("role", "")))
+	if fields.has("pit_job"):
+		_set_pit_job(id, str(fields["pit_job"]))
 	_broadcast_lobby()
 
 
@@ -465,6 +467,13 @@ func _apply_update(id: int, fields: Dictionary) -> void:
 func set_player_team(id: int, team: int, role := "") -> void:
 	if is_server() and players.has(id):
 		_set_team(id, team, role)
+		_broadcast_lobby()
+
+
+## Host: set a co-op player's tyre job for pit stops (RaceEntry.PIT_JOBS).
+func set_player_pit_job(id: int, job: String) -> void:
+	if is_server() and players.has(id):
+		_set_pit_job(id, job)
 		_broadcast_lobby()
 
 
@@ -509,6 +518,21 @@ func _share_team_roles(team: int) -> void:
 	for id in team_members(team):
 		members.append(players[id])
 	RaceEntry.share_roles(members)
+	RaceEntry.share_pit_jobs(members)
+
+
+## Co-op pit stops: the tyre job a player picks (RaceEntry.PIT_JOBS). Taking
+## a team mate's job swaps with them.
+func _set_pit_job(id: int, job: String) -> void:
+	var p: Dictionary = players[id]
+	var team := int(p.get("team", -1))
+	if team < 0 or not job in RaceEntry.PIT_JOBS or not RaceEntry.picks_pit_job(str(p.get("role", ""))):
+		return
+	for other in team_members(team):
+		if other != id and str(players[other].get("pit_job", "")) == job:
+			players[other]["pit_job"] = p.get("pit_job", "")
+	p["pit_job"] = job
+	_share_team_roles(team)
 
 
 ## Host only: race options.
@@ -556,7 +580,7 @@ func start_race() -> void:
 				"setup": p.get("setup", {}), "livery": p.get("livery", {})}
 			humans.append(teams[key])
 		var role: String = RaceEntry.ROLE_DRIVER if str(key).begins_with("solo") else str(p.get("role", RaceEntry.ROLE_DRIVER))
-		teams[key]["crew"].append({"peer_id": id, "name": p["name"], "role": role})
+		teams[key]["crew"].append({"peer_id": id, "name": p["name"], "role": role, "pit_job": str(p.get("pit_job", ""))})
 	settings.seed = randi()
 	var start_data: Dictionary = start_planner.call(settings, humans) if start_planner.is_valid() \
 		else RaceFactory.plan(settings, humans, GameData.cars, GameData.drivers)
@@ -713,3 +737,17 @@ func _rpc_team_radio(car: int, msg: Dictionary) -> void:
 			session.on_team_radio(sender, car, msg)
 		elif sender == 1:
 			session.on_team_radio(1, car, msg)
+
+
+## Co-op pit stops: where a player's crew member is, for their team mates
+## (relayed by the host; unreliable, a few times a second).
+func send_crew_pose(to_peer: int, car: int, pose: Dictionary) -> void:
+	if multiplayer.multiplayer_peer != null and to_peer != multiplayer.get_unique_id():
+		_rpc_crew_pose.rpc_id(to_peer, car, pose)
+
+
+@rpc("any_peer", "unreliable_ordered", "call_remote", 7)
+func _rpc_crew_pose(car: int, pose: Dictionary) -> void:
+	if session:
+		var sender := multiplayer.get_remote_sender_id()
+		session.on_crew_pose(sender, car, pose)

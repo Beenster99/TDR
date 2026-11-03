@@ -1212,15 +1212,23 @@ func _refresh_crews() -> void:
 			rs.custom_minimum_size = Vector2(400, 40)
 			ts.value_changed.connect(func(v): _set_crew(id, {"team": int(v)}))
 			rs.value_changed.connect(func(v): _set_crew(id, {"role": str(v)}))
+			# Co-op pit stops: the crew job this player does in the tyre change.
+			var js := Stepper.choice("Pit stop job", [["fuel", "fuel man"]], "fuel")
+			js.value_changed.connect(func(v): _set_crew(id, {"pit_job": str(v)}))
+			js.tooltip_text = "Co-op pit stops: the strategist refuels; the driver cleans the windscreen first, a third player lays out the tyres and guns and puts the air jacks in, then each of them does this job."
 			row.add_child(ts)
 			row.add_child(rs)
-			crew_box.add_child(row)
-			for st in [ts, rs]:   # after add_child: Stepper._ready sets its own size
+			var block := VBoxContainer.new()
+			block.add_theme_constant_override("separation", 1)
+			block.add_child(row)
+			block.add_child(js)
+			crew_box.add_child(block)
+			for st in [ts, rs, js]:   # after add_child: Stepper._ready sets its own size
 				st.custom_minimum_size = Vector2(0, 32)
 				st.size_flags_horizontal = SIZE_EXPAND_FILL
-				st.value_column = 130.0 if st == ts else 60.0
+				st.value_column = 130.0 if st == ts else (200.0 if st == js else 60.0)
 				st.add_theme_font_size_override("font_size", 15)
-			_crew_rows[id] = {"row": row, "team": ts, "role": rs}
+			_crew_rows[id] = {"row": block, "team": ts, "role": rs, "job": js}
 		Sound.wire_buttons(crew_box)
 	var me := Net.my_id()
 	for id in ids:
@@ -1237,6 +1245,20 @@ func _refresh_crews() -> void:
 		r["role"].options = opts
 		r["role"].set_value(p.get("role", RaceEntry.ROLE_DRIVER))
 		r["role"].disabled = not mine or size <= 1 or Net.in_race
+		# Pit stop job: only in a car share, picked by the driver and a pit crew player.
+		var role := str(p.get("role", ""))
+		r["job"].visible = team >= 0 and size > 1
+		if RaceEntry.picks_pit_job(role):
+			var jobs := []
+			for j in RaceEntry.PIT_JOBS:
+				jobs.append([j, RaceEntry.PIT_JOB_NAMES[j]])
+			r["job"].options = jobs
+			r["job"].set_value(str(p.get("pit_job", "gun_l")) if str(p.get("pit_job", "")) in RaceEntry.PIT_JOBS else "gun_l")
+			r["job"].disabled = not mine or Net.in_race
+		else:
+			r["job"].options = [["fuel", "fuel man (strategist)"]]
+			r["job"].set_value("fuel")
+			r["job"].disabled = true
 
 
 ## Guests: the host's changes show straight away (the lobby is sent to every
@@ -1386,6 +1408,8 @@ func _player_row(id: int, p: Dictionary) -> Control:
 func _set_crew(id: int, fields: Dictionary) -> void:
 	if id == Net.my_id():
 		Net.update_me(fields)
+	elif Net.is_server() and fields.has("pit_job"):
+		Net.set_player_pit_job(id, str(fields["pit_job"]))
 	elif Net.is_server():
 		Net.set_player_team(id, int(fields.get("team", Net.players.get(id, {}).get("team", -1))), str(fields.get("role", "")))
 
@@ -1455,6 +1479,8 @@ func _refresh_lobby() -> void:
 	if GameData.arg("team") and Net.players.has(me) and not _cmdline_team_sent:
 		_cmdline_team_sent = true  # testing: --team 1 --role strategist
 		Net.update_me({"team": int(GameData.arg("team")) - 1, "role": str(GameData.arg("role", ""))})
+		if GameData.arg("pit-job"):
+			Net.update_me({"pit_job": str(GameData.arg("pit-job"))})
 	var host := Net.is_server()
 	var in_season := not Net.season_info.is_empty()
 	for s in _settings_steppers:

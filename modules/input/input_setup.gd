@@ -39,6 +39,7 @@ const KEYS := {
 	"crew_left": [KEY_A, KEY_LEFT],
 	"crew_right": [KEY_D, KEY_RIGHT],
 	"crew_gun": [KEY_SPACE, KEY_ENTER],
+	"crew_grab": [KEY_G, KEY_X],   # pick up / put down / plug in (co-op pit stops)
 }
 ## Gamepad: analog triggers + left stick. Buttons use the Xbox layout names
 ## (Godot maps PlayStation/Nintendo pads to the same positions).
@@ -73,6 +74,7 @@ const PAD_BUTTONS := {
 	"shift_up": [JOY_BUTTON_A],     # manual gearbox: A up, X down (pedals stay on the triggers)
 	"shift_down": [JOY_BUTTON_X],
 	"crew_gun": [JOY_BUTTON_A],
+	"crew_grab": [JOY_BUTTON_X],
 }
 const STICK_DEADZONE := 0.12
 const TRIGGER_DEADZONE := 0.05
@@ -85,7 +87,7 @@ const REBINDABLE := [
 	["pit_box", "Box this lap"], ["pit_limiter", "Pit limiter"], ["pit_tyres", "Next tyres"], ["pit_fuel", "Next fuel"],
 	["pit_wheels", "Which tyres to change"], ["pit_driver", "Driver change"],
 	["strategy_screen", "Pit wall"], ["crew_tab", "Pit wall: switch tab"], ["team_radio", "Team radio"],
-	["crew_gun", "Pit crew: wheel gun"], ["hud_tower", "Timing tower"], ["hud_edit", "Edit HUD layout"], ["restart_race", "Restart race"], ["back_to_menu", "Pause / menu"],
+	["crew_gun", "Pit crew: use (wheel gun, windscreen)"], ["crew_grab", "Pit crew: grab / put down"], ["hud_tower", "Timing tower"], ["hud_edit", "Edit HUD layout"], ["restart_race", "Restart race"], ["back_to_menu", "Pause / menu"],
 ]
 ## Bindings shown (and changeable) per action: keyboard 1 and 2, controller 1 and 2.
 const SLOTS := 2

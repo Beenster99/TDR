@@ -132,6 +132,53 @@ static func share_roles(members: Array) -> void:
 		m["role"] = free.pop_front() if not free.is_empty() else ""
 
 
+## Co-op pit stops: the crew job each player picks in the lobby for the
+## tyre change (docs/PIT_CREW_GAME.md), kept in a crew member's "pit_job".
+## The strategist (or the two-player pit wall) is always the refueller, so
+## only the driver and a pit crew player pick one; no two the same.
+const PIT_JOBS := ["gun_l", "wheel_l", "gun_r", "wheel_r"]
+const PIT_JOB_NAMES := {"gun_l": "left gun man", "wheel_l": "left wheel man", "gun_r": "right gun man",
+	"wheel_r": "right wheel man", "fuel": "fuel man"}
+
+
+## Whether someone in this role picks a tyre job (the strategist refuels).
+static func picks_pit_job(role: String) -> bool:
+	return role == ROLE_DRIVER or role == ROLE_PIT_CREW
+
+
+## Gives each crew member who picks a tyre job (driver, pit crew) a different
+## one, keeping what they chose where it can (the driver gets the left gun
+## and a pit crew player the right gun by default); the strategist and the
+## pit wall get "fuel".
+static func share_pit_jobs(members: Array) -> void:
+	var free := PIT_JOBS.duplicate()
+	var unset := []
+	for m in members:
+		if not picks_pit_job(str(m.get("role", ""))):
+			if str(m.get("role", "")) != "":
+				m["pit_job"] = "fuel"
+			continue
+		var j := str(m.get("pit_job", ""))
+		if j in free:
+			free.erase(j)
+		else:
+			unset.append(m)
+	for m in unset:
+		var want := "gun_l" if str(m.get("role", "")) == ROLE_DRIVER else "gun_r"
+		if not want in free:
+			want = free[0] if not free.is_empty() else ""
+		free.erase(want)
+		m["pit_job"] = want
+
+
+## The tyre job a crew member does at a co-op stop ("" none).
+func member_pit_job(peer_id: int) -> String:
+	for m in crew:
+		if int(m.get("peer_id", 0)) == peer_id:
+			return str(m.get("pit_job", ""))
+	return ""
+
+
 ## Role of a crew member (peer), "" if they're not in this car's crew.
 func member_role(peer_id: int) -> String:
 	for m in crew:
