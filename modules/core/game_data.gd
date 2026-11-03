@@ -203,6 +203,9 @@ func _register_defaults() -> void:
 		"A soft gold outline on the ground round your own car (or your team's car on the pit wall), so you can find it at any zoom.")
 	register_setting("gameplay", "highlight_players", "Highlight other players", [[true, "On"], [false, "Off"]], true,
 		"Online: a faint blue outline round cars driven by other people, so you can tell them from the AI.")
+	register_setting("gameplay", "highlight_fade", "Car highlights fade", [[0, "Never: always shown"],
+		[5, "After 5 seconds"], [15, "After 15 seconds"], [30, "After 30 seconds"], [60, "After 1 minute"]], 0,
+		"The outlines round your car and other players' cars fade away after a while, counted from the green light. Zooming the camera brings them back for the same time again.")
 	register_setting("gameplay", "units", "Units of measure", [["metric", "Metric (km/h, °C, km, litres)"],
 		["uk", "UK (mph, °C, miles, litres)"], ["imperial", "US (mph, °F, miles, gallons)"]], "metric",
 		"How speeds, temperatures, distances and fuel are shown.")

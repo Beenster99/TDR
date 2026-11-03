@@ -12,7 +12,8 @@ extends Control
 ## locked until the next race. Race settings and car setups aren't in it.
 ##
 ## Up / down (D-pad, stick, arrows) choose, A / Enter picks, B / Esc / Start
-## go back to the race. Restarting and quitting ask once more ("press again").
+## go back to the race. Restarting and quitting open an "Are you sure?" popup
+## (Yes / No, No picked first; B / Esc there goes back to the menu).
 
 signal resumed
 signal restart_requested
@@ -25,7 +26,6 @@ signal end_race_requested
 signal edit_hud_requested
 
 const ACCENT := Color(0.94, 0.26, 0.2)
-const CONFIRM_TIME := 3.0
 
 ## What this race allows (set by setup):
 var online := false
@@ -41,8 +41,13 @@ var settings: SettingsScreen = null
 var _panel: PanelContainer
 var _shade: ColorRect
 var _buttons := {}           ## id -> Button
-var _armed := ""             ## the button waiting for its second press
-var _armed_until := 0.0
+## The "Are you sure?" popup, and the button it's asking about ("" = closed).
+var _confirm: PanelContainer
+var _confirm_title: Label
+var _confirm_body: Label
+var _confirm_yes: Button
+var _confirm_no: Button
+var confirming := ""
 var _note: Label
 
 
@@ -113,12 +118,58 @@ func _build() -> void:
 	_note.text = "A / Enter: choose  ·  B / Esc / Start: back to the race"
 	v.add_child(_note)
 	Sound.wire_buttons(_panel)
+	_build_confirm(sb)
+
+
+func _build_confirm(sb: StyleBoxFlat) -> void:
+	_confirm = PanelContainer.new()
+	_confirm.add_theme_stylebox_override("panel", sb)
+	_confirm.visible = false
+	add_child(_confirm)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 12)
+	_confirm.add_child(v)
+	_confirm_title = Label.new()
+	_confirm_title.add_theme_font_size_override("font_size", 34)
+	v.add_child(_confirm_title)
+	_confirm_body = Label.new()
+	_confirm_body.add_theme_font_size_override("font_size", 18)
+	_confirm_body.modulate = Color(1, 1, 1, 0.75)
+	_confirm_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_confirm_body.custom_minimum_size = Vector2(460, 0)
+	v.add_child(_confirm_body)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 12)
+	v.add_child(row)
+	_confirm_no = Button.new()
+	_confirm_no.text = "No, go back"
+	_confirm_yes = Button.new()
+	for b in [_confirm_no, _confirm_yes]:
+		b.custom_minimum_size = Vector2(224, 52)
+		b.add_theme_font_size_override("font_size", 20)
+		row.add_child(b)
+	var red := StyleBoxFlat.new()
+	red.bg_color = ACCENT.darkened(0.35)
+	red.set_corner_radius_all(4)
+	_confirm_yes.add_theme_stylebox_override("normal", red)
+	var red_hi := red.duplicate()
+	red_hi.bg_color = ACCENT
+	_confirm_yes.add_theme_stylebox_override("hover", red_hi)
+	_confirm_yes.add_theme_stylebox_override("focus", red_hi)
+	_confirm_no.pressed.connect(cancel_confirm)
+	_confirm_yes.pressed.connect(_on_confirmed)
+	var hint := Label.new()
+	hint.modulate = Color(1, 1, 1, 0.4)
+	hint.add_theme_font_size_override("font_size", 13)
+	hint.text = "A / Enter: choose  ·  B / Esc: no, back to the menu"
+	v.add_child(hint)
+	Sound.wire_buttons(_confirm)
 
 
 func open() -> void:
 	if visible:
 		return
-	_disarm()
+	_hide_confirm()
 	visible = true
 	_panel.visible = true
 	_place.call_deferred()
@@ -130,18 +181,15 @@ func resume() -> void:
 	if not visible:
 		return
 	_close_settings()
+	_hide_confirm()
 	visible = false
 	resumed.emit()
 
 
 func _place() -> void:
-	_panel.reset_size()
-	_panel.position = ((get_viewport_rect().size - _panel.size) * 0.5).round()
-
-
-func _process(_dt: float) -> void:
-	if _armed != "" and Time.get_ticks_msec() / 1000.0 > _armed_until:
-		_disarm()
+	for p in [_panel, _confirm]:
+		p.reset_size()
+		p.position = ((get_viewport_rect().size - p.size) * 0.5).round()
 
 
 func _on_pressed(id: String) -> void:
@@ -151,26 +199,49 @@ func _on_pressed(id: String) -> void:
 		"settings":
 			_open_settings()
 		_:
-			# Restart and quitting can't be undone: press twice.
-			if _armed != id:
-				_disarm()
-				_armed = id
-				_armed_until = Time.get_ticks_msec() / 1000.0 + CONFIRM_TIME
-				_buttons[id].text = PauseOptions.label_for(id, online, is_host) + "  ·  sure? press again"
-				return
-			_disarm()
-			visible = false
-			match id:
-				"restart": restart_requested.emit()
-				"lobby": end_race_requested.emit()
-				"menu": quit_to_menu_requested.emit()
-				"desktop": quit_to_desktop_requested.emit()
+			ask_confirm(id)
 
 
-func _disarm() -> void:
-	if _armed != "" and _buttons.has(_armed):
-		_buttons[_armed].text = PauseOptions.label_for(_armed, online, is_host)
-	_armed = ""
+## Restart and quitting can't be undone: ask first, with No picked.
+func ask_confirm(id: String) -> void:
+	var t := PauseOptions.confirm_text(id, online, is_host)
+	if t.is_empty():
+		return
+	confirming = id
+	_confirm_title.text = t[0]
+	_confirm_body.text = t[1]
+	_confirm_yes.text = t[2]
+	_panel.visible = false
+	_confirm.visible = true
+	_place.call_deferred()
+	_confirm_no.grab_focus.call_deferred()
+
+
+func cancel_confirm() -> void:
+	if confirming == "":
+		return
+	var id := confirming
+	_hide_confirm()
+	_panel.visible = true
+	if _buttons.has(id):
+		_buttons[id].grab_focus.call_deferred()
+
+
+func _hide_confirm() -> void:
+	confirming = ""
+	if _confirm:
+		_confirm.visible = false
+
+
+func _on_confirmed() -> void:
+	var id := confirming
+	_hide_confirm()
+	visible = false
+	match id:
+		"restart": restart_requested.emit()
+		"lobby": end_race_requested.emit()
+		"menu": quit_to_menu_requested.emit()
+		"desktop": quit_to_desktop_requested.emit()
 
 
 func _open_settings() -> void:
@@ -211,4 +282,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event.is_action_pressed("back_to_menu") or event.is_action_pressed("ui_cancel"):
 		get_viewport().set_input_as_handled()
-		resume()
+		if confirming != "":
+			cancel_confirm()
+		else:
+			resume()

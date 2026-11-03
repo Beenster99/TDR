@@ -410,8 +410,11 @@ func _build_ui() -> void:
 	for b in [["Single race", func(): _restore_race(MEMORY_SINGLE); _show("single")], ["Season / championship", func(): _show("season_list")],
 			["Garage", _open_garage], ["Host online race", _on_host], ["Join online race", func(): _show("join")],
 			["Settings", _open_settings],
-			["Quit", func(): GameData.save_prefs(); get_tree().quit()]]:
+			["Quit", func(): pass]]:
 		var btn := _button(main, b[0], b[1])
+		if b[0] == "Quit":
+			_quit_button = btn
+			btn.pressed.connect(_on_quit_pressed)
 		btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		btn.custom_minimum_size = Vector2(440, 54)
 		btn.size_flags_horizontal = SIZE_SHRINK_BEGIN
@@ -510,7 +513,7 @@ func _build_ui() -> void:
 	lobby.add_child(players_card)
 	var pbox := _card_box(players_card)
 	lobby_title = Label.new()
-	lobby_title.add_theme_font_size_override("font_size", 22)
+	lobby_title.add_theme_font_size_override("font_size", 20)
 	lobby_title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	pbox.add_child(lobby_title)
 	lobby_ready_label = Label.new()
@@ -520,7 +523,7 @@ func _build_ui() -> void:
 	var list_scroll := ScrollContainer.new()
 	list_scroll.size_flags_vertical = SIZE_EXPAND_FILL
 	list_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	list_scroll.custom_minimum_size = Vector2(0, 200)
+	list_scroll.custom_minimum_size = Vector2(0, 120)
 	pbox.add_child(list_scroll)
 	var list_v := VBoxContainer.new()
 	list_v.size_flags_horizontal = SIZE_EXPAND_FILL
@@ -540,7 +543,7 @@ func _build_ui() -> void:
 	crew_box.add_child(crew_head)
 	join_info_label = Label.new()
 	join_info_label.modulate = Color(0.75, 0.9, 1)
-	join_info_label.add_theme_font_size_override("font_size", 14)
+	join_info_label.add_theme_font_size_override("font_size", 13)
 	join_info_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	pbox.add_child(join_info_label)
 	lobby_season_label = Label.new()
@@ -549,19 +552,18 @@ func _build_ui() -> void:
 	lobby_season_label.modulate = Color(1, 0.95, 0.75)
 	pbox.add_child(lobby_season_label)
 	lobby.set_meta("settings_box", _settings_holder)
-	var actions := GridContainer.new()
-	actions.columns = 2
-	actions.add_theme_constant_override("h_separation", 10)
-	actions.add_theme_constant_override("v_separation", 8)
+	# One row of buttons, so the drivers list gets the height.
+	var actions := HBoxContainer.new()
+	actions.add_theme_constant_override("separation", 10)
 	lobby.add_child(actions)
 	ready_button = _button(actions, "Ready", func(): Net.update_me({"ready": not _my_ready()}))
 	start_button = _button(actions, "Start race", _on_start_online)
 	for big in [ready_button, start_button]:
-		big.add_theme_font_size_override("font_size", 20)
+		big.add_theme_font_size_override("font_size", 19)
 	var gb := _button(actions, "Garage", _open_garage)
 	var lb := _button(actions, "Leave", _on_leave)
 	for btn in [ready_button, start_button, gb, lb]:
-		btn.custom_minimum_size = Vector2(0, 48)
+		btn.custom_minimum_size = Vector2(0, 46)
 		btn.size_flags_horizontal = SIZE_EXPAND_FILL
 
 	for s in _settings_steppers:
@@ -820,6 +822,28 @@ func _page(parent: Node, id: String) -> VBoxContainer:
 	return v
 
 
+## Main menu Quit asks once more: the first press says "Sure? Press again",
+## a second press within QUIT_CONFIRM_TIME closes the game.
+const QUIT_CONFIRM_TIME := 3.0
+var _quit_button: Button
+var _quit_armed_until := -1.0
+
+
+func _on_quit_pressed() -> void:
+	var now := Time.get_ticks_msec() / 1000.0
+	if now <= _quit_armed_until:
+		GameData.save_prefs()
+		get_tree().quit()
+		return
+	_quit_armed_until = now + QUIT_CONFIRM_TIME
+	_quit_button.text = "Quit  ·  sure? press again"
+	var armed_at := _quit_armed_until
+	get_tree().create_timer(QUIT_CONFIRM_TIME).timeout.connect(func():
+		if is_instance_valid(_quit_button) and _quit_armed_until == armed_at:
+			_quit_armed_until = -1.0
+			_quit_button.text = "Quit")
+
+
 func _button(parent: Node, text: String, cb: Callable) -> Button:
 	var b := Button.new()
 	b.text = text
@@ -925,12 +949,16 @@ func _layout(id: String) -> void:
 	_move(_circuit_card, _cols[0])
 	_move(_car_card, _cols[1] if single else _cols[0])
 	_circuit_card.visible = id != "season_hub" or (GameData.season != null and not GameData.season.is_complete())
-	# Big pictures when each card has a column to itself, smaller stacked.
-	_track_map.custom_minimum_size = Vector2(0, 300 if single else 170)
+	# Big pictures when each card has a column to itself, smaller stacked
+	# (they still grow into any spare height). Stacked, the descriptions are
+	# cut to two lines so both cards fit one screen without scrolling.
+	_track_map.custom_minimum_size = Vector2(0, 300 if single else 120)
 	_track_map.show_profile = single
-	_car_preview.custom_minimum_size = Vector2(0, 260 if single else 120)
+	_car_preview.custom_minimum_size = Vector2(0, 260 if single else 90)
 	for l in [_track_desc, _car_desc]:
 		l.add_theme_font_size_override("font_size", 15 if single else 14)
+		l.max_lines_visible = -1 if single else 2
+		l.text_overrun_behavior = TextServer.OVERRUN_NO_TRIMMING if single else TextServer.OVERRUN_TRIM_ELLIPSIS
 	_circuit_card.size_flags_vertical = SIZE_EXPAND_FILL
 	_car_card.size_flags_vertical = SIZE_EXPAND_FILL
 	if single or lobby:
@@ -1248,10 +1276,11 @@ func _refresh_crews() -> void:
 			block.add_child(js)
 			crew_box.add_child(block)
 			for st in [ts, rs, js]:   # after add_child: Stepper._ready sets its own size
-				st.custom_minimum_size = Vector2(0, 32)
+				st.custom_minimum_size = Vector2(0, 28)   # low rows: a full lobby fits one screen
 				st.size_flags_horizontal = SIZE_EXPAND_FILL
-				st.value_column = 130.0 if st == ts else (200.0 if st == js else 60.0)
+				st.value_column = 100.0 if st == ts else (200.0 if st == js else 58.0)
 				st.add_theme_font_size_override("font_size", 15)
+			ts.size_flags_stretch_ratio = 1.25
 			_crew_rows[id] = {"row": block, "team": ts, "role": rs, "job": js}
 		Sound.wire_buttons(crew_box)
 	var me := Net.my_id()
@@ -1345,8 +1374,8 @@ func _player_row(id: int, p: Dictionary) -> Control:
 	sb.set_corner_radius_all(6)
 	sb.content_margin_left = 0
 	sb.content_margin_right = 10
-	sb.content_margin_top = 6
-	sb.content_margin_bottom = 6
+	sb.content_margin_top = 4
+	sb.content_margin_bottom = 4
 	if me:
 		sb.border_color = Color(1, 0.8, 0.3, 0.6)
 		sb.set_border_width_all(1)
@@ -1367,11 +1396,17 @@ func _player_row(id: int, p: Dictionary) -> Control:
 	text.size_flags_horizontal = SIZE_EXPAND_FILL
 	text.add_theme_constant_override("separation", 0)
 	row.add_child(text)
+	# Two lines per driver, so a full lobby fits one screen: the name with
+	# what they're doing on the right, then their car.
+	var name_row := HBoxContainer.new()
+	name_row.add_theme_constant_override("separation", 10)
+	text.add_child(name_row)
 	var name_l := Label.new()
 	name_l.text = str(p["name"]) + ("  (you)" if me else "")
-	name_l.add_theme_font_size_override("font_size", 21)
+	name_l.add_theme_font_size_override("font_size", 20)
 	name_l.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	text.add_child(name_l)
+	name_l.size_flags_horizontal = SIZE_EXPAND_FILL
+	name_row.add_child(name_l)
 	var bits := [car.display_name if car else str(p["car_id"])]
 	if TYRE_NAMES.get(p.get("tyre", "auto"), "") != "":
 		bits.append(TYRE_NAMES[p["tyre"]])
@@ -1403,7 +1438,8 @@ func _player_row(id: int, p: Dictionary) -> Control:
 		act.add_theme_color_override("font_color", Color(0.65, 0.85, 1) if doing != "" else Color(1, 1, 1, 0.5))
 		if ping > 150:
 			act.add_theme_color_override("font_color", Color(1, 0.6, 0.4))
-		text.add_child(act)
+		act.size_flags_vertical = SIZE_SHRINK_CENTER
+		name_row.add_child(act)
 	var tag := Label.new()
 	var tag_sb := StyleBoxFlat.new()
 	tag_sb.set_corner_radius_all(5)
