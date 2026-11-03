@@ -536,17 +536,112 @@ func _draw_speed(me: int) -> void:
 	var sim := session.sim
 	var c := sim.cars[me]
 	var br := Vector2.ZERO
-	_panel(Rect2(br, Vector2(250, 120)))
-	_text(br + Vector2(14, 56), "%3d" % int(Units.speed_value(c.speed())), 48)
-	_text(br + Vector2(120, 56), Units.speed_unit(), 16, Color(1, 1, 1, 0.7))
-	_text(br + Vector2(190, 58), "R" if c.gear < 0 else str(c.gear), 44, Color(1, 0.9, 0.3))
+	var sz := Vector2(250, 120)
+	# Like a GT3 car's TFT dash: the whole screen flashes the flag colour.
+	var flag := dash_preview if dash_preview.a > 0.0 else dash_flag(me)
+	var lit := false
+	var ink := Color.WHITE
+	if flag.a > 0.0:
+		var flashing := not (flag == DASH_WHITE and sim.entries[me].finished
+			and sim.race_time - sim.entries[me].finish_time > DASH_WHITE_FLASH_S)
+		lit = not flashing or dash_preview.a > 0.0 or int(Time.get_ticks_msec() / DASH_FLASH_MS) % 2 == 0
+	if lit:
+		draw_rect(Rect2(br, sz), Color(flag, 0.92))
+		ink = Color(0.04, 0.04, 0.04) if flag.get_luminance() > 0.45 else Color.WHITE
+	else:
+		_panel(Rect2(br, sz))
+		if flag.a > 0.0:
+			draw_rect(Rect2(br, sz).grow(-2.0), Color(flag, 0.9), false, 4.0)
+	var dim := Color(ink, 0.7)
+	_text(br + Vector2(14, 56), "%3d" % int(Units.speed_value(c.speed())), 48, ink)
+	_text(br + Vector2(120, 56), Units.speed_unit(), 16, dim)
+	_text(br + Vector2(190, 58), "R" if c.gear < 0 else str(c.gear), 44, ink if lit else Color(1, 0.9, 0.3))
 	var d := sim.defs[me]
 	var frac := clampf(c.rpm / d.redline_rpm, 0.0, 1.0)
-	draw_rect(Rect2(br + Vector2(14, 78), Vector2(222, 12)), Color(1, 1, 1, 0.15))
-	draw_rect(Rect2(br + Vector2(14, 78), Vector2(222 * frac, 12)), Color(1, 0.25, 0.2) if frac > 0.92 else Color(0.4, 0.85, 1))
-	_text(br + Vector2(14, 110), "%5d rpm" % int(c.rpm), 14, Color(1, 1, 1, 0.7))
+	draw_rect(Rect2(br + Vector2(14, 78), Vector2(222, 12)), Color(0, 0, 0, 0.3) if lit else Color(1, 1, 1, 0.15))
+	var rev := Color(1, 0.25, 0.2) if frac > 0.92 else Color(0.4, 0.85, 1)
+	draw_rect(Rect2(br + Vector2(14, 78), Vector2(222 * frac, 12)), Color(0.05, 0.05, 0.05) if lit else rev)
+	_text(br + Vector2(14, 110), "%5d rpm" % int(c.rpm), 14, dim)
 	if c.surface >= TrackData.Surface.GRASS:
-		_text(br + Vector2(120, 110), "OFF TRACK", 14, Color(1, 0.5, 0.3))
+		_text(br + Vector2(120, 110), "OFF TRACK", 14, ink if lit else Color(1, 0.5, 0.3))
+
+
+## Dash flag colours (GT3 TFT style).
+const DASH_YELLOW := Color(1.0, 0.85, 0.05)
+const DASH_RED := Color(0.95, 0.1, 0.1)
+const DASH_BLUE := Color(0.15, 0.45, 1.0)
+const DASH_WHITE := Color(1, 1, 1)
+const DASH_GREEN := Color(0.2, 0.85, 0.3)
+const DASH_FLASH_MS := 250
+## How long the dash flashes white after your own finish (then holds a frame).
+const DASH_WHITE_FLASH_S := 8.0
+## How long the dash shows green once a yellow, VSC or safety car ends.
+const DASH_GREEN_S := 3.0
+## A car this close behind (m) that has lapped us shows a blue flag.
+const DASH_BLUE_M := 80.0
+
+var _dash_was_yellow := false
+## Screenshot tools set this to show a flag on the dash, lit, without
+## flashing (alpha 0: off).
+var dash_preview := Color(0, 0, 0, 0)
+var _dash_green_until := -1.0
+
+
+## Which flag the dash shows for car `me` right now (alpha 0: none).
+## Priority: red, yellow (local yellows, VSC, safety car), blue, white
+## (chequered flag is out), then a short green when the track goes clear.
+func dash_flag(me: int) -> Color:
+	var sim := session.sim
+	if me < 0 or me >= sim.cars.size():
+		return Color(0, 0, 0, 0)
+	var rc := sim.race_control
+	var state := rc.neutralisation()
+	var e := sim.entries[me]
+	# Yellow: safety car, VSC, or a local yellow where we are now.
+	var yellow := not e.finished and (state == "sc" or state == "vsc"
+		or (state == "yellow" and rc.yellow_at(sim.cars[me].track_s)))
+	var now := sim.race_time
+	if _dash_was_yellow and not yellow and not e.finished:
+		_dash_green_until = now + DASH_GREEN_S   # track clear again
+	_dash_was_yellow = yellow
+	var chequered := e.finished or sim.phase == RaceSim.Phase.CHEQUERED or sim.phase == RaceSim.Phase.FINISHED
+	# There's no red flag in race control yet: a "red" state lights it.
+	return dash_flag_colour(state == "red", yellow, not chequered and _blue_flag(me), chequered,
+		now < _dash_green_until)
+
+
+## The colour for a set of flags, highest priority first.
+static func dash_flag_colour(red: bool, yellow: bool, blue: bool, chequered: bool, green: bool) -> Color:
+	if red:
+		return DASH_RED
+	if yellow:
+		return DASH_YELLOW
+	if blue:
+		return DASH_BLUE
+	if chequered:
+		return DASH_WHITE
+	if green:
+		return DASH_GREEN
+	return Color(0, 0, 0, 0)
+
+
+## Blue flag: a car that has lapped us is right behind (not under the safety
+## car or VSC, and not in the pit lane).
+func _blue_flag(me: int) -> bool:
+	var sim := session.sim
+	if sim.race_control.safety_car_active() or sim.phase != RaceSim.Phase.RACING or sim.in_pit_lane(me):
+		return false
+	var mine := sim.entries[me].distance
+	var lap_len := sim.track.length
+	for j in sim.cars.size():
+		if j == me or sim.entries[j].finished or sim.entries[j].dnf or sim.in_pit_lane(j):
+			continue
+		if sim.entries[j].distance <= mine + lap_len * 0.5:
+			continue
+		var gap := fposmod(sim.cars[me].track_s - sim.cars[j].track_s, lap_len)
+		if gap > 0.0 and gap < DASH_BLUE_M:
+			return true
+	return false
 
 
 ## Grip, then each tyre's temperature (and wear) in a 2 x 2 grid.
@@ -1447,11 +1542,12 @@ func _draw_sectors_and_gaps(me: int) -> void:
 	var tc: CarTelemetry = session.telemetry.cars[me] if session.telemetry != null and me < session.telemetry.cars.size() else null
 	var left := Rect2(r.position.x + 12, r.position.y + 10, gap_w - 12, 62)
 	var right := Rect2(r.end.x - gap_w, r.position.y + 10, gap_w - 12, 62)
-	_draw_gap(left, "AHEAD", ahead, my_pos, _interval_text(ahead, me, tc.interval if tc != null else 0.0) if ahead >= 0 else "", -_gap_trend.x, HORIZONTAL_ALIGNMENT_LEFT)
+	# Car behind on the left, car in front on the right (the way you're going).
+	_draw_gap(right, "AHEAD", ahead, my_pos, _interval_text(ahead, me, tc.interval if tc != null else 0.0) if ahead >= 0 else "", -_gap_trend.x, HORIZONTAL_ALIGNMENT_RIGHT)
 	var behind_txt := ""
 	if behind >= 0:
 		behind_txt = _interval_text(me, behind, tc.gap_behind if tc != null else 0.0).replace("+", "-")
-	_draw_gap(right, "BEHIND", behind, my_pos + 2, behind_txt, _gap_trend.y, HORIZONTAL_ALIGNMENT_RIGHT)
+	_draw_gap(left, "BEHIND", behind, my_pos + 2, behind_txt, _gap_trend.y, HORIZONTAL_ALIGNMENT_LEFT)
 
 
 ## One side of the gap readout. `trend` > 0 means the gap is growing in the

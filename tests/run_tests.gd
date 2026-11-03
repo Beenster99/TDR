@@ -4296,6 +4296,12 @@ func test_hud_timing() -> void:
 			break
 	check(RaceHud.short_name("Driver 727") == "Driver 727" and RaceHud.short_name("Alessandro Bellini-Rossi") == "A. Bellini-Ross", "driver names fit the tower")
 	check(RaceHud.fmt_sector(32.4567) == "32.457" and RaceHud.fmt_sector(0.0) == "--.---", "sector times format")
+	# GT3-style dash: red beats yellow beats blue beats the chequered white.
+	check(RaceHud.dash_flag_colour(true, true, true, true, true) == RaceHud.DASH_RED, "dash: red flag first")
+	check(RaceHud.dash_flag_colour(false, true, true, true, false) == RaceHud.DASH_YELLOW, "dash: yellow over blue")
+	check(RaceHud.dash_flag_colour(false, false, true, false, true) == RaceHud.DASH_BLUE, "dash: blue over green")
+	check(RaceHud.dash_flag_colour(false, false, false, true, false) == RaceHud.DASH_WHITE, "dash: white at the end of the race")
+	check(RaceHud.dash_flag_colour(false, false, false, false, false).a == 0.0, "dash: no flag, normal screen")
 
 
 ## Online play: hit boxes match the bodywork, remote cars are placed where
