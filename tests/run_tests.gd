@@ -2735,17 +2735,54 @@ func test_weather_forecast() -> void:
 	if env.get("timeline") == null:
 		print("       (environment has no weather timeline in this build: forecast is current conditions only)")
 		return
+	check(f.radar_range >= f.wind_speed * WeatherForecast.HORIZON_S and f.radar_range / f.ring_step <= 6.0,
+		"the radar covers 30 minutes of weather in %d rings of %.1f km" % [int(f.radar_range / f.ring_step), f.ring_step / 1000.0])
 	env.set("timeline", [[0.0, 0.1, 0.0], [400.0, 0.85, 0.0], [700.0, 0.95, 0.35], [1300.0, 0.85, 0.0]])
 	f.update(env)
-	check(f.changes.size() == 3 and f.changes[0]["weather"] == "overcast", "forecast lists the coming changes")
-	check(f.changes[1]["eta"] == 700.0 and f.changes[1]["confidence"] < f.changes[0]["confidence"], "later changes are less certain")
-	check(f.radar_cells.size() > 0, "rain shows on the radar before it arrives (%d cells)" % f.radar_cells.size())
-	var nearest := INF
-	for c in f.radar_cells:
-		if c["rain"] > 0.05:
-			nearest = minf(nearest, c["pos"].distance_to(f.centre))
-	check(nearest > f.track_radius, "rain still upwind of the track")
+	check(f.changes.size() == 3 and f.changes[0]["weather"] == "overcast", "forecast lists the coming changes %s" % [f.changes.map(func(c): return c["weather"])])
+	check(absf(f.changes[1]["eta"] - 700.0) < 700.0 * WeatherForecast.SPEED_ERR * 1.05 and f.changes[1]["confidence"] < f.changes[0]["confidence"],
+		"later changes are less certain, and the ETA is close (%s for 11.7 min)" % WeatherForecast.eta_text(f.changes[1]))
+	check(f.changes[1]["lasts"] > 0.0, "the rain's forecast to last about %d min" % int(f.changes[1]["lasts"]))
+	var upwind := f.centre - f.wind_dir * f.wind_speed * 720.0
+	var rain_up := 0.0
+	for k in 9:
+		rain_up = maxf(rain_up, f.rain_at(upwind + Vector2(-f.wind_dir.y, f.wind_dir.x) * (k - 4) * 200.0))
+	check(rain_up > 0.05 and f.rain_at(f.centre) == 0.0, "rain shows on the radar upwind before it arrives (%.2f)" % rain_up)
+	check(f.radar_cells.size() > 0, "the old radar cells still read (%d)" % f.radar_cells.size())
+	var grid := f.sample_grid(Rect2(f.centre - Vector2.ONE * f.radar_range, Vector2.ONE * f.radar_range * 2.0), 24, 24)
+	var same := true
+	for j in 24:
+		for i in 24:
+			var p := f.centre - Vector2.ONE * f.radar_range + Vector2(i + 0.5, j + 0.5) * f.radar_range * 2.0 / 24.0
+			same = same and absf(grid[j * 24 + i] - f.rain_at(p)) < 0.03
+	check(same, "the radar picture matches the rain field point by point")
 	print("       " + f.summary())
+	# Real changing weather: what the radar and forecast say is what happens.
+	var max_err := 0.0
+	var inside := 0
+	var total := 0
+	var right := 0
+	var near := 0
+	for seed in [3, 11, 27, 64, 91]:
+		var e := SimEnvironment.create({"climate": {"rain_chance": 0.7}}, {"weather": "light_rain", "weather_changes": true}, seed)
+		var fc := WeatherForecast.new()
+		fc.setup(d["track"], seed)
+		for step in 240:
+			e.update(15.0)
+			fc.update(e)
+			max_err = maxf(max_err, absf(fc.truth_at(fc.centre, e.elapsed_s) - e.rain))
+			for ch in fc.changes:
+				var real: float = e.timeline[ch["k"]][0] - e.elapsed_s
+				total += 1
+				inside += 1 if real >= ch["eta_lo"] and real <= ch["eta_hi"] else 0
+				if ch["eta"] < 300.0:
+					near += 1
+					var tl: Array = e.timeline[ch["k"]]
+					right += 1 if SimEnvironment.weather_for(tl[1], tl[2]) == ch["weather"] else 0
+	check(max_err < 0.001, "the radar's rain over the track is the race's own rain (off by %.4f)" % max_err)
+	check(total > 50 and inside >= total * 0.8 and inside < total,
+		"forecast ETAs are close but not perfect: %d of %d ranges held the real time" % [inside, total])
+	check(near > 10 and right >= near * 0.95, "within 5 minutes the forecast names the right weather (%d of %d)" % [right, near])
 
 
 ## Points presets, custom lists and bonus points.
