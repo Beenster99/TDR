@@ -1,7 +1,7 @@
 {
   "id": "game",
   "name": "Game",
-  "version": "1.4.27",
+  "version": "1.4.28",
   "status": "active",
   "summary": "Puts the modules together: starts the game (Game autoload loads content and controls), and the race scene that joins input, graphics, HUD and the race session.",
   "depends": {

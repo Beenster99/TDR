@@ -46,6 +46,7 @@ func _init() -> void:
 	test_deterministic_replay(replay)
 	test_snapshot_restore(replay)
 	test_telemetry(replay)
+	test_results_and_spectator(replay)
 	test_weather_forecast()
 	test_race_control_rules()
 	test_give_back_highlight()
@@ -3412,6 +3413,87 @@ func test_settings_and_units() -> void:
 
 ## The in-race pause menu (Esc / Start): what it offers offline, to the
 ## online host and to a guest, and the settings it lets the player change.
+## TDR_ONLY=test_end_of_race: a race, then the results and spectator checks.
+func test_end_of_race() -> void:
+	test_results_and_spectator(test_ai_race_completes())
+
+
+## End of the race: the results table (ResultsTable) from a finished race and
+## its race data, and the spectator's car picker.
+func test_results_and_spectator(rep: Dictionary) -> void:
+	print("results screen and spectator")
+	var sim: RaceSim = rep["sim"]
+	var tel: RaceTelemetry = rep["telemetry"]
+	var me: int = sim.running_order[2]
+	var pens := [{"car": me, "seconds": 5.0, "reason": "Speeding in the pit lane"}]
+	var d := ResultsTable.build(sim, tel, {"me": me, "penalties": pens, "single_race_points": true})
+	var rows: Array = d["rows"]
+	check(rows.size() == sim.car_count(), "one row per car (%d)" % rows.size())
+	var order_ok := true
+	var potential_ok := true
+	var avg_ok := true
+	var sectors_ok := true
+	for k in rows.size():
+		var r: Dictionary = rows[k]
+		var e := sim.entries[int(r["car"])]
+		if int(r["pos"]) != k + 1 or int(r["car"]) != sim.running_order[k]:
+			order_ok = false
+		var sum := 0.0
+		for v in r["best_sectors"]:
+			sum += float(v)
+		if float(r["potential"]) > 0.0 and (absf(float(r["potential"]) - sum) > 1e-6 or float(r["potential"]) > e.best_lap + 1e-6):
+			potential_ok = false   # the best sectors can only add up to the best lap or quicker
+		if e.laps_done > 0 and (float(r["avg_lap"]) < e.best_lap - 1e-6 or float(r["avg_lap"]) <= 0.0):
+			avg_ok = false
+		for s in r["best_sectors"].size():
+			if float(r["best_sectors"][s]) > 0.0 and float(r["best_sectors"][s]) < float(d["best_sectors"][s]) - 1e-6:
+				sectors_ok = false
+	check(order_ok, "rows in finishing order")
+	check(potential_ok, "best potential lap = the driver's best sectors added up, never slower than their best lap")
+	check(avg_ok, "average lap is never quicker than the best lap")
+	check(sectors_ok, "nobody's best sector beats the field's best sector")
+	var fl: Dictionary = d["fastest"]
+	check(not fl.is_empty() and is_equal_approx(float(fl["time"]), tel.fastest_lap) and int(fl["lap"]) >= 1,
+		"fastest lap %s on lap %s, the same as the race data's" % [str(fl.get("time", 0)), str(fl.get("lap", 0))])
+	var flagged := rows.filter(func(r): return r["fastest"])
+	check(flagged.size() == 1 and int(flagged[0]["car"]) == int(fl["car"]), "exactly one row has the fastest lap")
+	check(rows.filter(func(r): return r["is_me"]).size() == 1 and rows[2]["is_me"], "the player's own row is marked")
+	check(d["penalties"].size() == 1 and d["penalties"][0]["name"] == sim.entries[me].driver_name, "penalties listed with the driver and reason")
+	check(d["has_points"] and int(rows[0]["points"]) >= 25 and (rows[0]["status"] != "" or int(rows[0]["points"]) <= 26),
+		"single race scored with F1 points (P1 %d)" % int(rows[0]["points"]))
+	var gaps_ok := true
+	for k in range(1, rows.size()):
+		var r: Dictionary = rows[k]
+		if r["status"] == "" and str(r["gap"]) == "":
+			gaps_ok = false
+	check(gaps_ok, "every classified car behind the winner has a gap or laps down")
+	var season := ResultsTable.build(sim, tel, {"points": {SeasonResults.key_for(sim.entries[sim.running_order[0]].is_ai,
+		sim.entries[sim.running_order[0]].driver_name): 30}, "points_name": "Test"})
+	check(int(season["rows"][0]["points"]) == 30 and int(season["rows"][1]["points"]) == 0, "a season's points are shown as given")
+	var quali_sim := sim
+	quali_sim.settings.session_type = "qualifying"
+	var q := ResultsTable.build(quali_sim, tel, {"single_race_points": true})
+	check(not q["has_points"] and q["quali"], "no points in qualifying")
+	quali_sim.settings.session_type = "race"
+	# Spectator car picker: steps round the running order and wraps.
+	var first: int = sim.running_order[0]
+	var last: int = sim.running_order[sim.running_order.size() - 1]
+	check(ResultsTable.next_car(sim, first, 1) == sim.running_order[1], "next car after the leader is P2")
+	check(ResultsTable.next_car(sim, first, -1) == last or sim.race_control.recovered[last], "before the leader wraps round to last place")
+	check(ResultsTable.still_racing(sim).is_empty(), "nobody still racing once the race is over")
+	# The results screen builds from the table without errors.
+	var screen := RaceResults.new()
+	root.add_child(screen)
+	screen.show_results(d, {"buttons": [["menu", "Main menu"]], "instant": true,
+		"standings": {"title": "CHAMPIONSHIP", "drivers": [{"name": "A", "team": "T", "points": 10, "is_me": true}], "teams": [{"team": "T", "points": 10}]}})
+	check(screen.is_shown() and screen.visible, "results screen shows (instant)")
+	var picked := []
+	screen.chosen.connect(func(id): picked.append(id))
+	screen._buttons[0].pressed.emit()
+	check(picked == ["menu"], "results screen buttons report their id")
+	screen.queue_free()
+
+
 func test_pause_menu() -> void:
 	print("pause menu")
 	check(InputSetup.KEYS["back_to_menu"].has(KEY_ESCAPE) and InputSetup.PAD_BUTTONS["back_to_menu"].has(JOY_BUTTON_START),
