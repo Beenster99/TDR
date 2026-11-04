@@ -64,6 +64,7 @@ func _init() -> void:
 	test_tyre_choice_and_line_ups()
 	test_mixed_tyres_per_wheel()
 	test_race_start()
+	test_ai_rejoin()
 	test_driving_aids()
 	test_active_pad()
 	test_input_prompts()
@@ -4118,6 +4119,68 @@ func test_race_start() -> void:
 	check(mini(left, right) >= n / 3, "the field races two wide off the line (%d left, %d right of 5 s in)" % [left, right])
 	check(mean_v * 3.6 > 70.0, "nobody hangs back off the line (%.0f km/h on average 5 s in)" % (mean_v * 3.6))
 	check(stopped == 0, "every AI car is moving 12 s after the start (%d stopped)" % stopped)
+
+
+## An AI car that has gone off waits beside the track for the car coming up
+## behind, then comes back on along its own edge, without cutting across.
+func test_ai_rejoin() -> void:
+	print("ai rejoin")
+	var d := _data()
+	var settings := RaceSettings.new()
+	settings.ai_count = 2
+	settings.laps = 3
+	settings.seed = 3
+	var r := _race(settings, d)
+	var sim: RaceSim = r["sim"]
+	var ai: Dictionary = r["ai"]
+	while sim.phase != RaceSim.Phase.RACING:
+		sim.step([CarInput.new(), CarInput.new()])
+	# Spielberg: car 0 has run onto the grass on the left, car 1 comes up
+	# 90 m behind it at 200 km/h.
+	var tr := sim.track
+	var s0 := 900.0
+	var k := tr.index_at(s0)
+	var a := sim.cars[0]
+	a.pos = tr.position_at(s0, -(tr.width_left[k] + tr.kerb_width + 3.0))
+	a.heading = tr.heading_at(s0) + 0.35   # nose pointing back at the track
+	a.vel = Vector2.from_angle(a.heading) * 8.0
+	var b := sim.cars[1]
+	b.pos = tr.position_at(s0 - 90.0, 0.0)
+	b.heading = tr.heading_at(s0 - 90.0)
+	b.vel = Vector2.from_angle(b.heading) * 55.0
+	for c in [a, b]:
+		c.yaw_rate = 0.0
+		sim._refresh_track_position(c)
+	ai[0].idx = -1
+	ai[1].idx = -1
+	var waited := false
+	var on_before_pass := false
+	var contact := false
+	var rejoined_at := -1.0
+	var crossed := false
+	var t := 0.0
+	while t < 20.0:
+		sim.step([ai[0].get_input(sim, 0), ai[1].get_input(sim, 1)])
+		t += RaceSim.TICK_DT
+		for ev in sim.events:
+			if ev.get("type") == "incident" and int(ev.get("other", -1)) >= 0:
+				contact = true
+		var gap := fposmod(a.track_s - b.track_s, tr.length)
+		var passed := gap > tr.length * 0.5
+		if not passed:
+			if ai[0].rejoin_side == -1 and a.surface >= TrackData.Surface.GRASS:
+				waited = true
+			if a.surface == TrackData.Surface.TRACK:
+				on_before_pass = true
+		if a.surface <= TrackData.Surface.KERB and ai[0].rejoin_side != 0 and a.lateral_offset > 0.0:
+			crossed = true
+		if rejoined_at < 0.0 and a.surface == TrackData.Surface.TRACK and ai[0].rejoin_side == 0:
+			rejoined_at = t
+	check(waited, "the car off the track waits for the car coming")
+	check(not on_before_pass, "... and stays off the road until it has gone by")
+	check(not contact, "... with no contact")
+	check(not crossed, "it comes back on along its own edge, not across the track")
+	check(rejoined_at > 0.0 and rejoined_at < 18.0, "it is back racing %.1f s after the off" % rejoined_at)
 
 
 ## Settings > Gameplay aids: the driving line and its braking zones, the
