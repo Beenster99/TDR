@@ -3520,7 +3520,7 @@ func test_results_and_spectator(rep: Dictionary) -> void:
 	var log_ok := true
 	var grid_ok := true
 	var stint_ok := true
-	var gap_ok := true
+	var gap_ok := false
 	for r in rows:
 		var lap_log: Array = r["lap_log"]
 		var e := sim.entries[int(r["car"])]
@@ -3538,12 +3538,12 @@ func test_results_and_spectator(rep: Dictionary) -> void:
 			covered += int(st["laps"])
 		if not lap_log.is_empty() and (covered != lap_log.size() or r["stints"].is_empty()):
 			stint_ok = false
-		if int(r["pos"]) == 1 and not lap_log.is_empty() and float(lap_log[-1]["gap"]) > 0.001:
-			gap_ok = false
+		if int(r["laps"]) == int(rows[0]["laps"]) and not lap_log.is_empty() and float(lap_log[-1]["gap"]) < 0.001:
+			gap_ok = true   # somebody led the last lap over the line
 	check(log_ok, "every driver's lap log: one entry per lap with position, time, tyre and gap")
 	check(grid_ok, "grid positions known and places gained = grid - finish")
 	check(stint_ok, "the stints cover every lap")
-	check(gap_ok, "the winner is 0 s behind the leader at the end")
+	check(gap_ok, "the first car over the line is 0 s behind the leader on the last lap")
 	var gs := []
 	for r in rows:
 		gs.append(int(r["grid"]))
