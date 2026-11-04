@@ -72,6 +72,20 @@ const SC_SPAWN_AHEAD := 160.0
 const SC_PIT_SPEED := 17.0
 const GIVE_BACK_SC := -2          ## give_back victim: the safety car
 const GIVE_BACK_S := 12.0        ## time to give a place back before a penalty
+## Only clear gains count as overtakes for the rules: the passer has to be
+## this far ahead (more than a car length), so cars side by side or nose to
+## tail in a queue don't trade "overtakes".
+const PASS_MARGIN_M := 6.0
+## A car that has been off, spun or stopped in the last few seconds is in
+## trouble: passing it is never an offence (it costs the passer nothing).
+const TROUBLE_GRACE_S := 6.0
+## A car this much slower than the passer is in trouble too.
+const SLOW_CAR_FRAC := 0.7
+## A move started before the flag: if the passer was already within this
+## distance of the car ahead (alongside or right on its tail) a moment
+## before, while both were racing under green, the pass stands.
+const ALONGSIDE_M := 8.0
+const PASS_LOOKBACK_S := 0.5     ## how often the "a moment before" picture is taken
 const PENALTY_S := 5.0
 const VSC_DELTA_WARN := -0.5
 const VSC_DELTA_PENALTY := -2.0
@@ -128,6 +142,14 @@ var released: PackedByteArray = []        ## crossed the line since the restart:
 var give_back: Dictionary = {}
 var _prev_order: Array[int] = []
 var _sc_behind: PackedByteArray = []      ## car was behind the SC last tick
+var _trouble_until: PackedFloat64Array = []  ## race_time until which the car counts as in trouble
+## Pictures of the field PASS_LOOKBACK_S apart (the older one is 0.5-1 s old):
+## distance and whether the car was free to race (green, no yellow there).
+var _ago_dist: PackedFloat64Array = []
+var _ago_free: PackedByteArray = []
+var _now_dist: PackedFloat64Array = []
+var _now_free: PackedByteArray = []
+var _ago_t: float = -1.0
 
 var _sc_profile: PackedFloat64Array = []
 var _vsc_profile: PackedFloat64Array = []
@@ -151,6 +173,12 @@ func _init(p_sim: RaceSim) -> void:
 	unlap_from.resize(n)
 	released.resize(n)
 	_sc_behind.resize(n)
+	_trouble_until.resize(n)
+	_trouble_until.fill(-1.0)
+	_ago_dist.resize(n)
+	_ago_free.resize(n)
+	_now_dist.resize(n)
+	_now_free.resize(n)
 	released.fill(1)
 	_build_profiles()
 
@@ -281,8 +309,9 @@ func may_pass(i: int, j: int) -> bool:
 	var ej := sim.entries[j]
 	if ej.finished or ej.dnf or recovered[j] or stranded_t[j] >= 1.0 or _pitting(j) or _pitting(i):
 		return true
-	# A car that has gone off or is crawling back after a spin may be passed.
-	if cj.surface >= TrackData.Surface.GRASS or cj.speed() < maxf(STOPPED_SPEED + 2.0, sim.cars[i].speed() * 0.5):
+	# A car that has gone off, spun or is crawling back (or did a moment ago)
+	# may be passed.
+	if in_trouble(j) or cj.speed() < maxf(STOPPED_SPEED + 2.0, sim.cars[i].speed() * SLOW_CAR_FRAC):
 		return true
 	# Taking back a place someone has to give back.
 	if give_back.has(j) and int(give_back[j]["victim"]) == i:
@@ -293,6 +322,20 @@ func may_pass(i: int, j: int) -> bool:
 		return not (yellow_at(sim.cars[i].track_s) or yellow_at(cj.track_s))
 	if unlapping[i]:
 		return true
+	return false
+
+
+## Car j is off, spun, stopped or crawling, or was in the last few seconds.
+func in_trouble(j: int) -> bool:
+	var cj := sim.cars[j]
+	return cj.surface >= TrackData.Surface.GRASS or stranded_t[j] >= 1.0 \
+			or sim.race_time < _trouble_until[j] or _causes_yellow(j)
+
+
+func _causes_yellow(j: int) -> bool:
+	for y in yellows:
+		if int(y["car"]) == j:
+			return true
 	return false
 
 
@@ -518,6 +561,8 @@ func _track_hazards(dt: float) -> void:
 				or c.surface == TrackData.Surface.GRASS or c.surface == TrackData.Surface.BARRIER):
 			hazard = true
 		_hazard_t[i] = _hazard_t[i] + dt if hazard else 0.0
+		if hazard or c.surface >= TrackData.Surface.GRASS or stranded_t[i] >= 1.0:
+			_trouble_until[i] = sim.race_time + TROUBLE_GRACE_S
 		if _hazard_t[i] >= HAZARD_YELLOW_S:
 			_add_yellow(c.track_s, i, "Car off" if c.surface != TrackData.Surface.TRACK and c.surface != TrackData.Surface.KERB else "Car spun")
 
@@ -940,7 +985,7 @@ func _check_overtakes() -> void:
 			var j := order[q]
 			if prev_pos[j] >= prev_pos[i]:
 				continue
-			if may_pass(i, j) or _lapped_pair(i, j):
+			if may_pass(i, j) or _lapped_pair(i, j) or _started_under_green(i, j):
 				continue
 			var why := ""
 			if mode == Mode.SC:
@@ -957,6 +1002,7 @@ func _check_overtakes() -> void:
 			_event({"type": "warning", "car": i, "victim": j,
 				"text": "%s: give the place back to %s" % [why, sim.entries[j].driver_name]})
 	_prev_order = order.duplicate()
+	_take_lookback()
 	_check_sc_passes(neutral)
 	# Settle the give-backs.
 	for i in give_back.keys():
@@ -966,10 +1012,15 @@ func _check_overtakes() -> void:
 		if j == -2:
 			gave_back = gap_to_sc(i) < sim.track.length * 0.5 or not sc_visible or sc_in_pit
 		else:
-			gave_back = sim.entries[j].distance > sim.entries[i].distance + 3.0 or sim.entries[j].dnf or sim.entries[j].finished
+			# Given back, or the victim has since lost the place by itself
+			# (gone off, spun, into the pits): no further action.
+			gave_back = sim.entries[j].distance > sim.entries[i].distance + 3.0 or sim.entries[j].dnf \
+					or sim.entries[j].finished or in_trouble(j) or _pitting(j)
 		if gave_back:
 			give_back.erase(i)
 			_event({"type": "warning", "car": i, "text": "Place given back, no further action"})
+			if j >= 0:
+				_settle_behind(i, j)
 		elif sim.race_time >= float(g["until"]):
 			give_back.erase(i)
 			sim.add_penalty(i, PENALTY_S, String(g["why"]))
@@ -989,11 +1040,45 @@ func _settled_order() -> Array[int]:
 		for p in order.size() - 1:
 			var a := order[p]
 			var b := order[p + 1]
-			if rank[b] < rank[a] and sim.entries[a].distance - sim.entries[b].distance < 3.0 \
+			if rank[b] < rank[a] and sim.entries[a].distance - sim.entries[b].distance < PASS_MARGIN_M \
 					and not sim.entries[a].finished and not sim.entries[b].finished:
 				order[p] = b
 				order[p + 1] = a
 	return order
+
+
+## A give-back is done: from now on j counts as ahead of i, even while it's
+## still less than PASS_MARGIN_M up the road (else j "overtakes" i again).
+func _settle_behind(i: int, j: int) -> void:
+	var pi := _prev_order.find(i)
+	var pj := _prev_order.find(j)
+	if pi < 0 or pj < 0 or pj < pi:
+		return
+	_prev_order.remove_at(pj)
+	_prev_order.insert(pi, j)
+
+
+## Was car i already alongside or right behind j a moment ago, with both
+## racing under green? Then the move started before the flag and stands.
+func _started_under_green(i: int, j: int) -> bool:
+	if _ago_t < 0.0:
+		return false
+	return _ago_free[i] and _ago_free[j] and _ago_dist[j] - _ago_dist[i] < ALONGSIDE_M
+
+
+func _take_lookback() -> void:
+	if _ago_t >= 0.0 and sim.race_time - _ago_t < PASS_LOOKBACK_S:
+		return
+	var first := _ago_t < 0.0
+	_ago_dist = _now_dist.duplicate()
+	_ago_free = _now_free.duplicate()
+	_ago_t = sim.race_time
+	for i in sim.cars.size():
+		_now_dist[i] = sim.entries[i].distance
+		_now_free[i] = 1 if mode == Mode.GREEN and released[i] and not yellow_at(sim.cars[i].track_s) else 0
+	if first:
+		_ago_dist = _now_dist.duplicate()
+		_ago_free = _now_free.duplicate()
 
 
 ## Passing the safety car itself is only for lapped cars that were waved by.
@@ -1208,7 +1293,10 @@ func to_dict(full := false) -> Dictionary:
 			"unlap_from": unlap_from.duplicate(), "prev_order": _prev_order.duplicate(),
 			"sc_behind": _sc_behind.duplicate(), "big_until": _big_incident_until,
 			"leader_laps_at": _leader_laps_at, "danger": _danger,
-			"debris": debris.duplicate(true), "marshal_ids": _marshal_ids}
+			"debris": debris.duplicate(true), "marshal_ids": _marshal_ids,
+			"trouble_until": _trouble_until.duplicate(), "ago_t": _ago_t,
+			"ago_dist": _ago_dist.duplicate(), "ago_free": _ago_free.duplicate(),
+			"now_dist": _now_dist.duplicate(), "now_free": _now_free.duplicate()}
 	return d
 
 
@@ -1250,5 +1338,9 @@ func apply_dict(d: Dictionary) -> void:
 		_danger = f["danger"]
 		debris = f.get("debris", []).duplicate(true)
 		_marshal_ids = f.get("marshal_ids", 0)
+		for k in ["trouble_until", "ago_dist", "ago_free", "now_dist", "now_free"]:
+			if f.has(k) and f[k].size() == stranded_t.size():
+				set("_" + k, f[k].duplicate())
+		_ago_t = f.get("ago_t", -1.0)
 	if sc_visible:
 		_place_sc()
