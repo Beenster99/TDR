@@ -88,8 +88,12 @@ clear: "VSC ending", then green 6 s later.
 
 1. The SC (Mercedes-AMG GT Black Series, amber lights) comes out of the pit
    exit if it's just ahead of the leader, otherwise about 160 m ahead of the
-   leader. It waits for the leader, then laps about 40 % slower than race
-   pace with the leader about 25 m behind.
+   leader. It waits for the leader, then laps with the leader about 25 m
+   behind. It drives the same racing line as the AI (the track's line,
+   pulled in from the edges the same way), quick through the corners (about
+   1 g) but held to 137 km/h on the straights, easing in from the pit exit
+   and over to the pit entry. `sc_d` is its distance along that line;
+   `sc_s` (track distance) follows from it.
 2. Cars close up to the queue at race pace, then follow. No overtaking.
 3. Once the track is clear and the leader has done a lap behind the SC,
    "lapped cars may overtake": they pass the queue and the SC and go round

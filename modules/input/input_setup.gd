@@ -110,6 +110,9 @@ const PAD_BUTTON_NAMES_PS := {
 static var applied: Dictionary = {}
 ## Stick and trigger moves past this count when you pick a pad binding.
 const LISTEN_AXIS := 0.6
+## The controller button that clears the picked binding on the keybinds page
+## (A picks one, B leaves). Right-click and Delete / Backspace clear it too.
+const CLEAR_BUTTON := JOY_BUTTON_X
 
 
 ## Builds every action: the defaults above, then the player's own bindings
@@ -219,6 +222,36 @@ static func with_binding(overrides: Dictionary, action: String, kind: String, sl
 	o[kind] = list
 	out[action] = o
 	return out
+
+
+## Does this input clear the binding it is aimed at on the keybinds page?
+## Right-click it, or with it picked press Delete / Backspace or the
+## controller's CLEAR_BUTTON. Clearing is instant: there is no "are you sure".
+static func is_clear_event(event: InputEvent) -> bool:
+	if event is InputEventMouseButton:
+		return event.pressed and event.button_index == MOUSE_BUTTON_RIGHT
+	if event is InputEventKey:
+		return event.pressed and not event.echo and event.keycode in [KEY_DELETE, KEY_BACKSPACE]
+	if event is InputEventJoypadButton:
+		return event.pressed and event.button_index == CLEAR_BUTTON
+	return false
+
+
+## The name a control has on the keybinds page ("Handbrake").
+static func label_of(action: String) -> String:
+	for r in REBINDABLE:
+		if r[0] == action:
+			return r[1]
+	return action
+
+
+## What clearing a binding says: which control, and what it still has on
+## that device (or that it has nothing there now).
+static func cleared_message(overrides: Dictionary, action: String, kind: String) -> String:
+	var left: Array = keys_of(overrides, action) if kind == "keys" else pads_of(overrides, action)
+	if left.is_empty():
+		return "Cleared. %s has no %s binding now." % [label_of(action), "keyboard" if kind == "keys" else "controller"]
+	return "Cleared. %s is still on %s." % [label_of(action), ", ".join(left.map(func(v): return describe(kind, v)))]
 
 
 static func same_binding(a, b) -> bool:
