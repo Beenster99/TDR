@@ -872,14 +872,11 @@ func _maybe_screenshot() -> void:
 		return
 	if session.sim.race_time + session.sim.phase_time * float(session.sim.phase == RaceSim.Phase.COUNTDOWN) >= float(GameData.arg("screenshot-at", 10)):
 		_shot_taken = true
-		# --screenshot-pause [settings|restart|menu|desktop|lobby]: with the pause menu
-		# (or its Settings, or its "Are you sure?" popup for that button) open.
+		# --screenshot-pause [settings]: with the pause menu (or its Settings) open.
 		if GameData.arg("screenshot-pause"):
 			_open_pause_menu()
 			if str(GameData.arg("screenshot-pause")) == "settings":
 				pause_menu._open_settings()
-			elif str(GameData.arg("screenshot-pause")) in ["restart", "menu", "desktop", "lobby"]:
-				pause_menu.ask_confirm(str(GameData.arg("screenshot-pause")))
 			for _f in 4:
 				await RenderingServer.frame_post_draw
 		await RenderingServer.frame_post_draw

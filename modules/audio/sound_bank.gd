@@ -14,17 +14,27 @@ const RATE := 22050
 ## was made at.
 const ENGINE_BASE_HZ := 110.0
 const BAKED_DIR := "res://modules/audio/baked/"
+## Recorded sounds win over the synthesised ones (see docs/AUDIO.md):
+## samples/<name>.wav|.ogg replaces a baked loop or one-shot (tyre_squeal,
+## road_roar ...), and samples/engines/<voice>/on_<rpm>.wav + off_<rpm>.wav
+## replace an engine family's rpm bands (or give one car its own voice with
+## "engine": {"sound": {"samples": "<voice>"}}).
+const SAMPLE_DIR := "res://modules/audio/samples/"
 ## Engine families baked by tools/engine_synth.py (see docs/AUDIO.md).
 const FAMILIES := ["i4_turbo", "i6_turbo", "v6_turbo", "v6_na", "flat6_na", "v8_cross_na",
 	"v8_cross_turbo", "v8_flat_na", "v8_flat_turbo", "v10_na", "v12_na"]
 
 static var _cache: Dictionary = {}
 static var _manifest: Dictionary = {}
+static var _sample_bands: Dictionary = {}  ## voice -> bands from recordings ([] if none)
 
 
 static func get_sound(name: String) -> AudioStream:
 	if not _cache.has(name):
-		var baked := _load_baked(name)
+		# (Menu sounds and the intro pass-by take their samples in MenuSounds.)
+		var baked: AudioStream = null if name in MenuSounds.NAMES else _load_sample(SAMPLE_DIR + name, _is_loop(name))
+		if baked == null:
+			baked = _load_baked(name)
 		_cache[name] = baked if baked != null else _make(name)
 	return _cache[name]
 
@@ -32,6 +42,9 @@ static func get_sound(name: String) -> AudioStream:
 ## The rpm bands an engine family was baked at: [[nominal, exact rpm], ...],
 ## low to high. Empty if the family is unknown.
 static func engine_bands(family: String) -> Array:
+	var rec := recorded_bands(family)
+	if not rec.is_empty():
+		return rec
 	if _manifest.is_empty():
 		var f := FileAccess.open(BAKED_DIR + "manifest.json", FileAccess.READ)
 		if f:
@@ -44,7 +57,64 @@ static func engine_bands(family: String) -> Array:
 
 ## One engine loop: family, on throttle (true) or overrun (false), band (nominal rpm).
 static func engine_loop(family: String, on_load: bool, band: int) -> AudioStream:
+	if not recorded_bands(family).is_empty():
+		var key := "rec:%s_%s_%d" % [family, "on" if on_load else "off", band]
+		if not _cache.has(key):
+			_cache[key] = _load_sample("%sengines/%s/%s_%d" % [SAMPLE_DIR, family, "on" if on_load else "off", band], true)
+		return _cache[key]
 	return get_sound("%s_%s_%d" % [family, "on" if on_load else "off", band])
+
+
+## Bands of a recorded engine voice in samples/engines/<voice>/: every rpm
+## that has both an on_<rpm> and an off_<rpm> file, as [[rpm, rpm], ...] low
+## to high. Empty when there are no recordings for it.
+static func recorded_bands(voice: String) -> Array:
+	if _sample_bands.has(voice):
+		return _sample_bands[voice]
+	var dir := SAMPLE_DIR + "engines/" + voice + "/"
+	var on := {}
+	var off := {}
+	if DirAccess.dir_exists_absolute(dir):
+		for f in ResourceLoader.list_directory(dir):
+			var base := f.get_basename()
+			if not f.get_extension() in ["wav", "ogg"]:
+				continue
+			var parts := base.split("_")
+			if parts.size() != 2 or not parts[1].is_valid_int():
+				continue
+			if parts[0] == "on":
+				on[int(parts[1])] = true
+			elif parts[0] == "off":
+				off[int(parts[1])] = true
+	var rpms := []
+	for r in on:
+		if off.has(r):
+			rpms.append(r)
+	rpms.sort()
+	var bands := []
+	for r in rpms:
+		bands.append([r, float(r)])
+	_sample_bands[voice] = bands
+	return bands
+
+
+## A recorded sound at path (without extension, .ogg or .wav), looping if
+## asked; null if there is none.
+static func _load_sample(path: String, loop: bool) -> AudioStream:
+	for ext in ["ogg", "wav"]:
+		if not ResourceLoader.exists(path + "." + ext):
+			continue
+		var s = load(path + "." + ext)
+		if s is AudioStreamOggVorbis:
+			(s as AudioStreamOggVorbis).loop = loop
+		elif s is AudioStreamWAV and loop:
+			var w := s as AudioStreamWAV
+			if w.loop_mode == AudioStreamWAV.LOOP_DISABLED:
+				w.loop_mode = AudioStreamWAV.LOOP_FORWARD
+				w.loop_begin = 0
+				w.loop_end = _frames(w)
+		return s
+	return null
 
 
 ## Loads a baked sound, making sure loops loop (the .import files aren't in
