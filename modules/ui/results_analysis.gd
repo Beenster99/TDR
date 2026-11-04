@@ -119,6 +119,7 @@ func _refresh() -> void:
 				lead_max = maxf(lead_max, p.y)
 	_pos_graph.set_data(pos_series, cols, [1, maxi(rows.size(), 2)])
 	_gap_graph.set_data(gap_series, cols, [0.0, maxf(lead_max * 1.08, 5.0)])
+	_strategy.wear = data.get("wear", false)
 	_strategy.set_data(rows, int(data.get("max_laps", data.get("laps", 1))), data.get("compounds", {}), cols)
 	for c in _legend.get_children():
 		c.queue_free()
