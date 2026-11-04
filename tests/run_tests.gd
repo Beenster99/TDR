@@ -47,6 +47,7 @@ func _init() -> void:
 	test_snapshot_restore(replay)
 	test_telemetry(replay)
 	test_results_and_spectator(replay)
+	test_podium()
 	test_weather_forecast()
 	test_race_control_rules()
 	test_give_back_highlight()
@@ -3522,6 +3523,53 @@ func test_settings_and_units() -> void:
 
 ## The in-race pause menu (Esc / Start): what it offers offline, to the
 ## online host and to a guest, and the settings it lets the player change.
+## The podium ceremony's champagne (graphics PodiumView): bottles stay corked
+## until the champagne comes out, shaking builds pressure, the first spray
+## pops the cork, the stream lands where it was aimed and soaks people, the
+## bottle runs dry, and the AI drivers pop and spray theirs on their own.
+func test_podium() -> void:
+	var v := PodiumView.new()
+	root.add_child(v)
+	v.setup([{"name": "A", "colour": Color.RED}, {"name": "B", "colour": Color.BLUE}, {"name": "C", "colour": Color.GREEN}], 1, "Test", 3)
+	check(v.drivers.size() == 3 and v.figures.size() > 40, "podium: three drivers and a crowd")
+	var b := v.player_bottle()
+	check(b != null and not b.ai and v.bottles[0].ai and v.bottles[2].ai, "podium: the player has P2's bottle, the others are AI")
+	v.set_phase(PodiumView.Phase.TROPHY)
+	v.set_spray(true)
+	v._process(0.1)
+	check(b.corked and not b.spraying, "podium: no champagne while the trophies are up")
+	v.set_phase(PodiumView.Phase.CHAMPAGNE)
+	var p0 := b.pressure
+	for k in 5:
+		v.shake(0.15)
+	check(b.pressure > p0 + 0.5, "podium: shaking builds pressure (%.2f -> %.2f)" % [p0, b.pressure])
+	# Aim at someone in the middle of the front row of the crowd and spray.
+	var target: PodiumView.Figure = null
+	for f in v.figures:
+		if f.kind == "crowd" and (target == null or absf(f.base.x) + absf(f.base.z - 3.4) < absf(target.base.x) + absf(target.base.z - 3.4)):
+			target = f
+	var popped := [0]
+	v.cork_popped.connect(func(_s): popped[0] += 1)
+	v.set_spray(true)
+	check(not b.corked and popped[0] == 1, "podium: the first spray pops the cork")
+	var t := 0.0
+	while t < 20.0 and b.fill > 0.0:
+		v.aim_at(target.base + Vector3(0, 1.4, 0))
+		v.set_spray(true)
+		if fmod(t, 1.0) < 0.017:
+			v.shake(0.2)
+		v._process(1.0 / 60.0)
+		t += 1.0 / 60.0
+	check(target.wet > 0.0, "podium: the stream lands on the person it's aimed at (wet %.2f)" % target.wet)
+	check(v.player_soaked >= 1 and v.player_hits > 20, "podium: the player soaks people (%d soaked, %d hits)" % [v.player_soaked, v.player_hits])
+	check(b.fill <= 0.0 and t > 5.0 and t < 20.0, "podium: the bottle runs dry after a while (%.1f s)" % t)
+	check(not v.bottles[0].corked and not v.bottles[2].corked, "podium: the AI drivers pop their corks")
+	for k in 60 * 40:
+		v._process(1.0 / 60.0)
+	check(v.all_empty(), "podium: every bottle ends up empty")
+	v.queue_free()
+
+
 ## TDR_ONLY=test_end_of_race: a race, then the results and spectator checks.
 func test_end_of_race() -> void:
 	test_results_and_spectator(test_ai_race_completes())
@@ -3673,12 +3721,7 @@ func test_pause_menu() -> void:
 	check(PauseOptions.button_ids(true, true).has("lobby"), "online host can also end the race for everyone")
 	check(not PauseOptions.button_ids(true, false).has("lobby"), "a guest can't end the race")
 	check(PauseOptions.label_for("restart", true, true).contains("everyone"), "the host's restart says it restarts for everyone")
-	for id in ["restart", "lobby", "menu", "desktop"]:
-		check(PauseOptions.confirm_text(id, true, true).size() == 3 and PauseOptions.confirm_text(id, false, false).size() == 3,
-			"%s asks \"are you sure?\" (Yes / No popup)" % id)
-	check(PauseOptions.confirm_text("resume", false, false).is_empty() and PauseOptions.confirm_text("settings", false, false).is_empty(),
-		"resume and settings don't ask")
-	check(PauseOptions.confirm_text("menu", true, true)[1].contains("everyone"), "the host is told quitting closes the race for everyone")
+	check(not (PauseOptions as Script).get_script_method_list().any(func(m): return m.name == "confirm_text"), "no \"are you sure?\" popups in the pause menu")
 	var gd = load("res://modules/core/game_data.gd").new()
 	gd.persist_prefs = false
 	gd._register_defaults()
@@ -3937,9 +3980,16 @@ func test_graphics_effects() -> void:
 			"down": [8.8, 9.6], "release": 10.5, "fumble": -1,
 			"guns": [[{"wheel": 0, "off": 0.8, "on": 3.8}, {"wheel": 2, "off": 3.8, "on": 6.8}],
 				[{"wheel": 1, "off": 0.8, "on": 3.8}, {"wheel": 3, "off": 3.8, "on": 6.8}]]}}
+	crews._process(1.0 / 30.0)
+	var idle_seen := 0
+	for b in crews.crews:
+		idle_seen += crews.crew_in_sight(b)
+	check(idle_seen == 0, "idle pit crews are out of sight in their garages (%d in sight)" % idle_seen)
 	crews.set_stop(0, PitCrews.Stop.COMING, 0.0, work)
 	for f in 120:
 		crews._process(1.0 / 30.0)
+	check(crews.crew_in_sight(4) == PitCrews.CREW_SIZE and crews.crew_in_sight(5) == 0,
+		"called in: the crew come out of the garage (%d out), the next garage's stay in" % crews.crew_in_sight(4))
 	var box: Vector2 = t2.pit_box(4)["pos"]
 	var near := 0
 	for p in crews.crews[4].people:
@@ -3959,6 +4009,13 @@ func test_graphics_effects() -> void:
 	check(not crews.wheels_off(0), "end of the stop: wheels back on")
 	crews.set_stop(0, PitCrews.Stop.LEAVING, 10.0, work)
 	check(crews.car_lift(0) == 0.0, "car off the jacks when it leaves")
+	crews.set_stop(0, PitCrews.Stop.NONE, 0.0, {})
+	for f in 300:
+		crews._process(1.0 / 30.0)
+	check(crews.crew_in_sight(4) == 0 and crews.crews[4].settled, "after the stop the crew walk back into the garage (%d still out)" % crews.crew_in_sight(4))
+	crews.drive_member(0, "gun_l", box, 0.0)
+	crews._process(1.0 / 30.0)
+	check(crews.crew_in_sight(4) == 1, "a co-op player's crew member is always in sight")
 	tv2.free()
 
 
@@ -4441,6 +4498,12 @@ func test_hud_timing() -> void:
 			break
 	check(RaceHud.short_name("Driver 727") == "Driver 727" and RaceHud.short_name("Alessandro Bellini-Rossi") == "A. Bellini-Ross", "driver names fit the tower")
 	check(RaceHud.fmt_sector(32.4567) == "32.457" and RaceHud.fmt_sector(0.0) == "--.---", "sector times format")
+	# GT3-style dash: red beats yellow beats blue beats the chequered white.
+	check(RaceHud.dash_flag_colour(true, true, true, true, true) == RaceHud.DASH_RED, "dash: red flag first")
+	check(RaceHud.dash_flag_colour(false, true, true, true, false) == RaceHud.DASH_YELLOW, "dash: yellow over blue")
+	check(RaceHud.dash_flag_colour(false, false, true, false, true) == RaceHud.DASH_BLUE, "dash: blue over green")
+	check(RaceHud.dash_flag_colour(false, false, false, true, false) == RaceHud.DASH_WHITE, "dash: white at the end of the race")
+	check(RaceHud.dash_flag_colour(false, false, false, false, false).a == 0.0, "dash: no flag, normal screen")
 
 
 ## Online play: hit boxes match the bodywork, remote cars are placed where

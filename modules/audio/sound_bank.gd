@@ -14,17 +14,27 @@ const RATE := 22050
 ## was made at.
 const ENGINE_BASE_HZ := 110.0
 const BAKED_DIR := "res://modules/audio/baked/"
+## Recorded sounds win over the synthesised ones (see docs/AUDIO.md):
+## samples/<name>.wav|.ogg replaces a baked loop or one-shot (tyre_squeal,
+## road_roar ...), and samples/engines/<voice>/on_<rpm>.wav + off_<rpm>.wav
+## replace an engine family's rpm bands (or give one car its own voice with
+## "engine": {"sound": {"samples": "<voice>"}}).
+const SAMPLE_DIR := "res://modules/audio/samples/"
 ## Engine families baked by tools/engine_synth.py (see docs/AUDIO.md).
 const FAMILIES := ["i4_turbo", "i6_turbo", "v6_turbo", "v6_na", "flat6_na", "v8_cross_na",
 	"v8_cross_turbo", "v8_flat_na", "v8_flat_turbo", "v10_na", "v12_na"]
 
 static var _cache: Dictionary = {}
 static var _manifest: Dictionary = {}
+static var _sample_bands: Dictionary = {}  ## voice -> bands from recordings ([] if none)
 
 
 static func get_sound(name: String) -> AudioStream:
 	if not _cache.has(name):
-		var baked := _load_baked(name)
+		# (Menu sounds and the intro pass-by take their samples in MenuSounds.)
+		var baked: AudioStream = null if name in MenuSounds.NAMES else _load_sample(SAMPLE_DIR + name, _is_loop(name))
+		if baked == null:
+			baked = _load_baked(name)
 		_cache[name] = baked if baked != null else _make(name)
 	return _cache[name]
 
@@ -32,6 +42,9 @@ static func get_sound(name: String) -> AudioStream:
 ## The rpm bands an engine family was baked at: [[nominal, exact rpm], ...],
 ## low to high. Empty if the family is unknown.
 static func engine_bands(family: String) -> Array:
+	var rec := recorded_bands(family)
+	if not rec.is_empty():
+		return rec
 	if _manifest.is_empty():
 		var f := FileAccess.open(BAKED_DIR + "manifest.json", FileAccess.READ)
 		if f:
@@ -44,7 +57,64 @@ static func engine_bands(family: String) -> Array:
 
 ## One engine loop: family, on throttle (true) or overrun (false), band (nominal rpm).
 static func engine_loop(family: String, on_load: bool, band: int) -> AudioStream:
+	if not recorded_bands(family).is_empty():
+		var key := "rec:%s_%s_%d" % [family, "on" if on_load else "off", band]
+		if not _cache.has(key):
+			_cache[key] = _load_sample("%sengines/%s/%s_%d" % [SAMPLE_DIR, family, "on" if on_load else "off", band], true)
+		return _cache[key]
 	return get_sound("%s_%s_%d" % [family, "on" if on_load else "off", band])
+
+
+## Bands of a recorded engine voice in samples/engines/<voice>/: every rpm
+## that has both an on_<rpm> and an off_<rpm> file, as [[rpm, rpm], ...] low
+## to high. Empty when there are no recordings for it.
+static func recorded_bands(voice: String) -> Array:
+	if _sample_bands.has(voice):
+		return _sample_bands[voice]
+	var dir := SAMPLE_DIR + "engines/" + voice + "/"
+	var on := {}
+	var off := {}
+	if DirAccess.dir_exists_absolute(dir):
+		for f in ResourceLoader.list_directory(dir):
+			var base := f.get_basename()
+			if not f.get_extension() in ["wav", "ogg"]:
+				continue
+			var parts := base.split("_")
+			if parts.size() != 2 or not parts[1].is_valid_int():
+				continue
+			if parts[0] == "on":
+				on[int(parts[1])] = true
+			elif parts[0] == "off":
+				off[int(parts[1])] = true
+	var rpms := []
+	for r in on:
+		if off.has(r):
+			rpms.append(r)
+	rpms.sort()
+	var bands := []
+	for r in rpms:
+		bands.append([r, float(r)])
+	_sample_bands[voice] = bands
+	return bands
+
+
+## A recorded sound at path (without extension, .ogg or .wav), looping if
+## asked; null if there is none.
+static func _load_sample(path: String, loop: bool) -> AudioStream:
+	for ext in ["ogg", "wav"]:
+		if not ResourceLoader.exists(path + "." + ext):
+			continue
+		var s = load(path + "." + ext)
+		if s is AudioStreamOggVorbis:
+			(s as AudioStreamOggVorbis).loop = loop
+		elif s is AudioStreamWAV and loop:
+			var w := s as AudioStreamWAV
+			if w.loop_mode == AudioStreamWAV.LOOP_DISABLED:
+				w.loop_mode = AudioStreamWAV.LOOP_FORWARD
+				w.loop_begin = 0
+				w.loop_end = _frames(w)
+		return s
+	return null
 
 
 ## Loads a baked sound, making sure loops loop (the .import files aren't in
@@ -94,6 +164,9 @@ static func _make(name: String) -> AudioStreamWAV:
 		"radio_open": return _radio_burst(0.2, true, 11)
 		"radio_close": return _radio_burst(0.26, false, 13)
 		"radio_static": return _radio_static(1.6)
+		"cork_pop": return _cork_pop()
+		"champagne_spray": return _champagne_spray()
+		"crowd_cheer": return _crowd_cheer()
 	push_error("SoundBank: no sound called " + name)
 	return _tone([440.0], 0.1, 0.1)
 
@@ -293,4 +366,102 @@ static func _radio_static(length_s: float) -> AudioStreamWAV:
 		v += pop
 		pop *= 0.82
 		out[i] = v + 0.02 * sin(TAU * 50.0 * t)
+	return _to_wav(out, true)
+
+
+## The podium: a champagne cork popping, a sharp knock with a hollow
+## "thoonk" falling in pitch and a little fizz after it.
+static func _cork_pop() -> AudioStreamWAV:
+	var n := int(RATE * 0.45)
+	var out := PackedFloat32Array()
+	out.resize(n)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 31
+	var hp := 0.0
+	var prev := 0.0
+	var ph := 0.0
+	for i in n:
+		var t := float(i) / RATE
+		var noise := rng.randf_range(-1.0, 1.0)
+		hp = 0.7 * (hp + noise - prev)
+		prev = noise
+		ph += TAU * (820.0 * exp(-t * 9.0) + 260.0) / RATE
+		var knock := noise * exp(-t * 260.0) * 1.1
+		var thoonk := sin(ph) * exp(-t * 32.0) * 0.8
+		var fizz := hp * exp(-t * 6.0) * 0.12 * minf(1.0, t / 0.03)
+		out[i] = tanh(knock + thoonk + fizz) * 0.9
+	return _to_wav(out, false)
+
+
+## The podium: champagne spraying, a loop of bright hiss that gusts, with
+## the crackle of bubbles in it.
+static func _champagne_spray() -> AudioStreamWAV:
+	var n := int(RATE * 2.0)
+	var out := PackedFloat32Array()
+	out.resize(n)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 37
+	var hp := 0.0
+	var prev := 0.0
+	var lp := 0.0
+	for i in n:
+		var t := float(i) / RATE
+		var noise := rng.randf_range(-1.0, 1.0)
+		hp = 0.92 * (hp + noise - prev)
+		prev = noise
+		lp += (hp - lp) * 0.55
+		var gust := 0.7 + 0.2 * sin(TAU * 1.5 * t) + 0.1 * sin(TAU * 4.0 * t + 1.0)
+		var bubble := 0.0
+		if rng.randf() < 0.004:
+			bubble = rng.randf_range(-0.5, 0.5)
+		out[i] = (lp * 0.55 * gust + bubble) * 0.8
+	return _to_wav(out, true)
+
+
+## The podium: a crowd cheering and clapping, a loop. A bed of many voices
+## (noise shaped like voices, swelling and fading), whoops that rise in
+## pitch, and claps.
+static func _crowd_cheer() -> AudioStreamWAV:
+	var n := int(RATE * 4.0)
+	var out := PackedFloat32Array()
+	out.resize(n)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 41
+	# The bed: band-limited noise, swelling.
+	var a := 0.0
+	var b := 0.0
+	for i in n:
+		var t := float(i) / RATE
+		var noise := rng.randf_range(-1.0, 1.0)
+		a += (noise - a) * 0.25
+		b += (a - b) * 0.08
+		var swell := 0.75 + 0.15 * sin(TAU * 0.5 * t) + 0.1 * sin(TAU * 1.25 * t + 2.0)
+		out[i] = (a - b) * 0.9 * swell
+	# Voices: whoops and "hey"s at random pitches, each a buzzy tone through a soft vowel.
+	for v in 26:
+		var start := rng.randi_range(0, n - 1)
+		var length := int(RATE * rng.randf_range(0.25, 0.8))
+		var f0 := rng.randf_range(170.0, 420.0)
+		var rise := rng.randf_range(0.0, 0.6)
+		var vol := rng.randf_range(0.04, 0.1)
+		var ph := 0.0
+		var lpv := 0.0
+		for k in length:
+			var i := (start + k) % n   # wraps so the loop has no seam
+			var x := float(k) / length
+			var env := sin(PI * x) * (1.0 - 0.5 * x)
+			ph += TAU * f0 * (1.0 + rise * x + 0.02 * sin(TAU * 6.0 * x)) / RATE
+			var buzz := sin(ph) + 0.5 * sin(2.0 * ph) + 0.3 * sin(3.0 * ph) + 0.15 * sin(5.0 * ph)
+			lpv += (buzz - lpv) * 0.3
+			out[i] += lpv * env * vol
+	# Claps: short bursts of noise.
+	for c in 90:
+		var start := rng.randi_range(0, n - 1)
+		var vol := rng.randf_range(0.08, 0.22)
+		var clap_n := int(RATE * 0.03)
+		for k in clap_n:
+			var i := (start + k) % n
+			out[i] += rng.randf_range(-1.0, 1.0) * exp(-float(k) / clap_n * 5.0) * vol
+	for i in n:
+		out[i] = tanh(out[i] * 1.1) * 0.8
 	return _to_wav(out, true)
