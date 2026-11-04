@@ -3700,7 +3700,68 @@ func test_results_and_spectator(rep: Dictionary) -> void:
 	screen.chosen.connect(func(id): picked.append(id))
 	screen._buttons[0].pressed.emit()
 	check(picked == ["menu"], "results screen buttons report their id")
+	# Every driver's race lap by lap, and the race analysis.
+	var log_ok := true
+	var grid_ok := true
+	var stint_ok := true
+	var gap_ok := false
+	for r in rows:
+		var lap_log: Array = r["lap_log"]
+		var e := sim.entries[int(r["car"])]
+		if lap_log.size() != e.lap_times.size():
+			log_ok = false
+		for k in lap_log.size():
+			var l: Dictionary = lap_log[k]
+			if int(l["lap"]) != k + 1 or int(l["pos"]) < 1 or int(l["pos"]) > sim.car_count() or str(l["compound"]) == "" \
+					or not is_equal_approx(float(l["time"]), e.lap_times[k]) or float(l["gap"]) < 0.0:
+				log_ok = false
+		if int(r["grid"]) < 1 or int(r["grid"]) > sim.car_count() or int(r["gained"]) != int(r["grid"]) - int(r["pos"]):
+			grid_ok = false
+		var covered := 0
+		for st in r["stints"]:
+			covered += int(st["laps"])
+		if not lap_log.is_empty() and (covered != lap_log.size() or r["stints"].is_empty()):
+			stint_ok = false
+		if int(r["laps"]) == int(rows[0]["laps"]) and not lap_log.is_empty() and float(lap_log[-1]["gap"]) < 0.001:
+			gap_ok = true   # somebody led the last lap over the line
+	check(log_ok, "every driver's lap log: one entry per lap with position, time, tyre and gap")
+	check(grid_ok, "grid positions known and places gained = grid - finish")
+	check(stint_ok, "the stints cover every lap")
+	check(gap_ok, "the first car over the line is 0 s behind the leader on the last lap")
+	var gs := []
+	for r in rows:
+		gs.append(int(r["grid"]))
+	gs.sort()
+	check(gs == range(1, sim.car_count() + 1), "the grid positions are 1..N once each (%s)" % str(gs))
+	check(RaceResults.has_analysis(d), "a race with laps has the race analysis")
+	screen.open_driver(int(rows[1]["car"]))
+	check(screen.is_driver_open() and screen._driver_car == int(rows[1]["car"]), "clicking a row opens that driver's race data")
+	screen._driver_nav("next")
+	check(screen._driver_car == int(rows[2]["car"]), "next driver steps down the order")
+	screen.close_driver()
+	check(not screen.is_driver_open() and screen._table_view.visible, "back goes to the table")
+	screen.toggle_analysis()
+	check(screen.is_analysis_open() and not screen._table_view.visible, "race analysis replaces the table")
+	var an: ResultsAnalysis = screen._analysis
+	check(an.picked.has(me) and an.picked[me] == 0 and an.picked.size() == 2, "you and the winner start on the graphs")
+	an._toggle(int(rows[5]["car"]))
+	check(an.picked.size() == 3 and an.picked[int(rows[5]["car"])] == 2, "clicking a driver adds them in the next colour")
+	an._toggle(int(rows[0]["car"]))
+	an._toggle(int(rows[6]["car"]))
+	check(an.picked[int(rows[6]["car"])] == 1 and an.picked[int(rows[5]["car"])] == 2, "a driver keeps their colour when others change")
+	screen.open_driver(me)
+	screen.close_driver()
+	check(screen.is_analysis_open(), "back from a driver opened on the analysis returns to it")
 	screen.queue_free()
+	# The race sound fades away under the results.
+	var ra := RaceAudio.new()
+	root.add_child(ra)
+	ra.setup(sim.cars, sim.defs, me)
+	ra.fade_out(1.0)
+	for _k in 30:
+		ra.update(0.05, Vector2.ZERO, 0.5, 0.0)
+	check(ra.level == 0.0, "race sound faded to silence (%.2f)" % ra.level)
+	ra.queue_free()
 
 
 func test_pause_menu() -> void:

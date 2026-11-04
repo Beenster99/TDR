@@ -8,8 +8,14 @@ const AVG_LAPS := 5
 var car: int = 0
 ## Lap log, one Dictionary per completed lap:
 ## {lap, time, sectors: [s1, s2, s3], position, gap_leader, tyre_avg_c,
-##  tyre_temps: [fl, fr, rl, rr], fuel_l, weather, wetness, race_time}
+##  tyre_temps: [fl, fr, rl, rr], fuel_l, weather, wetness, race_time,
+##  compound (the tyre id on the car at the line), stops (pit stops so far),
+##  pitted (true = stopped in this lap)}
 var laps: Array = []
+## Where the car started (1 = pole; 0 = not known yet).
+var grid_pos: int = 0
+## Every pit stop: {lap, stationary_s, tyre, fuel_l, driver, in_window}.
+var stops: Array = []
 var best_sectors: PackedFloat64Array = []   ## personal best per sector
 var last5_avg: float = 0.0                   ## mean of the last 5 green-flag laps (lap 1 excluded)
 var gap_leader: float = 0.0                  ## seconds behind the leader (laps_down counts separately)
@@ -101,5 +107,5 @@ func apply_net(a: Array) -> void:
 
 
 func to_dict() -> Dictionary:
-	return {"car": car, "laps": laps, "best_sectors": Array(best_sectors), "last5_avg": last5_avg,
+	return {"car": car, "laps": laps, "grid_pos": grid_pos, "stops": stops, "best_sectors": Array(best_sectors), "last5_avg": last5_avg,
 		"gap_leader": gap_leader, "laps_down": laps_down, "interval": interval}

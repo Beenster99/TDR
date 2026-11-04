@@ -1347,6 +1347,9 @@ func _save_race_data() -> void:
 func _show_results(season_info: Dictionary, season_pts: Dictionary, prize: int) -> void:
 	_results_shown = true
 	_stop_spectating()
+	# The cars fade out with the race picture, so the table is quiet.
+	race_audio.fade_out(RESULTS_SOUND_FADE_S)
+	Sound.radio_stop()
 	hud.visible = false
 	crew.visible = false
 	var sim := session.sim
@@ -1396,6 +1399,7 @@ func _show_results(season_info: Dictionary, season_pts: Dictionary, prize: int) 
 
 
 var _results_season := {}
+const RESULTS_SOUND_FADE_S := 1.6   ## the race sound goes silent this fast under the results
 
 
 func _on_lobby_changed_after_race() -> void:
