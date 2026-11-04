@@ -50,6 +50,7 @@ var weather_stepper: Stepper
 var weather_change_stepper: Stepper
 var grid_stepper: Stepper
 var difficulty_stepper: Stepper
+var mistakes_stepper: Stepper
 var fuel_stepper: Stepper
 var wear_stepper: Stepper
 var stops_stepper: Stepper
@@ -455,6 +456,8 @@ func _build_ui() -> void:
 	ai_stepper = Stepper.numeric("AI drivers", 0, RaceSettings.MAX_CARS_SINGLE_CLASS - 1, 1, 5)
 	difficulty_stepper = Stepper.choice("AI difficulty", [[0.25, "Rookie"], [0.5, "Amateur"], [0.75, "Pro"],
 		[0.9, "Expert"], [1.0, "Alien"]], 0.75)
+	mistakes_stepper = Stepper.choice("AI mistakes", [[0.0, "Never"], [0.5, "Rare"], [1.0, "Normal"],
+		[1.7, "Often"], [3.0, "Chaotic"]], 1.0)
 	tod_stepper = Stepper.numeric("Start time", 0, 23, 1, 14, ":00")
 	clock_stepper = Stepper.choice("Clock speed", [[1, "Real time"], [2, "2x"], [5, "5x"], [10, "10x"],
 		[30, "30x"], [60, "60x (1 min = 1 h)"], [0, "Frozen"]], 1)
@@ -482,7 +485,7 @@ func _build_ui() -> void:
 		RaceSettings.UPGRADES_ON)
 	_circuit_only.append_array([fuel_stepper, wear_stepper, stops_stepper, drivers_stepper, safety_car_stepper])
 	_derby_hidden = [damage_stepper, upgrades_stepper, tuning_stepper]
-	_settings_steppers = [laps_stepper, ai_stepper, difficulty_stepper, tod_stepper, clock_stepper, weather_stepper,
+	_settings_steppers = [laps_stepper, ai_stepper, difficulty_stepper, mistakes_stepper, tod_stepper, clock_stepper, weather_stepper,
 		weather_change_stepper, grid_stepper, damage_stepper, safety_car_stepper, fuel_stepper, wear_stepper, stops_stepper,
 		drivers_stepper, upgrades_stepper, tuning_stepper]
 
@@ -1100,6 +1103,7 @@ func _settings_from_ui() -> RaceSettings:
 	s.laps = int(laps_stepper.value)
 	s.ai_count = int(ai_stepper.value)
 	s.ai_difficulty = float(difficulty_stepper.value)
+	s.ai_mistakes = float(mistakes_stepper.value)
 	s.environment = {"time_of_day_h": float(tod_stepper.value), "time_scale": float(clock_stepper.value),
 		"weather": str(weather_stepper.value), "weather_changes": bool(weather_change_stepper.value)}
 	s.grid_order = str(grid_stepper.value)
@@ -1561,6 +1565,7 @@ func _refresh_lobby() -> void:
 		laps_stepper.set_value(Net.settings.laps)
 		ai_stepper.set_value(Net.settings.ai_count)
 		difficulty_stepper.set_value(Net.settings.ai_difficulty)
+		mistakes_stepper.set_value(Net.settings.ai_mistakes)
 		var env := Net.settings.environment
 		tod_stepper.set_value(int(env.get("time_of_day_h", 14)))
 		clock_stepper.set_value(int(env.get("time_scale", 1)))
@@ -2074,7 +2079,7 @@ var _mem_restoring := false
 ## Pref key -> stepper for everything remembered (besides the race type).
 func _remembered_steppers() -> Dictionary:
 	return {"track": track_stepper, "class": class_stepper, "car_filter": car_filter_stepper, "car": car_stepper,
-		"tyre": tyre_stepper, "laps": laps_stepper, "ai": ai_stepper, "difficulty": difficulty_stepper,
+		"tyre": tyre_stepper, "laps": laps_stepper, "ai": ai_stepper, "difficulty": difficulty_stepper, "mistakes": mistakes_stepper,
 		"time": tod_stepper, "clock": clock_stepper, "weather": weather_stepper,
 		"weather_changes": weather_change_stepper, "grid": grid_stepper, "fuel": fuel_stepper,
 		"tyre_wear": wear_stepper, "pit_stops": stops_stepper, "drivers": drivers_stepper,

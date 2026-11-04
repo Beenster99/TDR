@@ -46,6 +46,9 @@ var environment: Dictionary = {}
 var grid_order: String = "standard"
 ## AI skill level, 0 = rookie .. 1 = alien (0.75 = the drivers as written).
 var ai_difficulty: float = 0.75
+## How often AI drivers make mistakes (late braking, running wide), as a
+## multiple of the normal rate: 0 = never, 1 = normal, 3 = chaotic.
+var ai_mistakes: float = 1.0
 ## Wave 3 switches (already read by the sim where noted)
 var fuel_enabled: bool = false     ## sim burns fuel when true
 var fuel_rate: float = 1.0         ## consumption multiplier
@@ -115,7 +118,7 @@ func allows_coop() -> bool:
 func to_dict() -> Dictionary:
 	return {
 		"track_id": track_id, "car_class": car_class, "laps": laps, "ai_count": ai_count, "seed": seed,
-		"environment": environment, "grid_order": grid_order, "ai_difficulty": ai_difficulty, "fuel_enabled": fuel_enabled, "fuel_rate": fuel_rate,
+		"environment": environment, "grid_order": grid_order, "ai_difficulty": ai_difficulty, "ai_mistakes": ai_mistakes, "fuel_enabled": fuel_enabled, "fuel_rate": fuel_rate,
 		"start_fuel_l": start_fuel_l, "tyre_wear_enabled": tyre_wear_enabled,
 		"damage_enabled": damage_enabled, "damage_level": damage_level, "safety_car_enabled": safety_car_enabled, "flags_enabled": flags_enabled,
 		"mandatory_pit_stops": mandatory_pit_stops, "drivers_per_car": drivers_per_car, "finish_timeout_s": finish_timeout_s,
