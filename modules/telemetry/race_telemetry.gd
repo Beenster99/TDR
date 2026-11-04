@@ -417,6 +417,113 @@ func _derive_feed(sim: RaceSim, out: Array) -> void:
 					int(ch["confidence"] * 100.0)], "", 0.0)
 
 
+# --- Pace and who's racing whom (the strategist's pace table) -----------------
+
+## The pace measures the pit wall ranks cars on.
+const PACE_KEYS := ["last", "avg3", "avg5"]
+const PACE_LABELS := {"last": "LAST LAP", "avg3": "LAST 3", "avg5": "LAST 5"}
+
+
+## Car i's time on a pace measure (0 = no time yet).
+func pace_value(i: int, key: String) -> float:
+	var c := cars[i]
+	match key:
+		"last": return c.last_lap()
+		"avg3": return c.avg_last(3)
+		"avg5": return c.last5_avg
+	return 0.0
+
+
+## Every car still racing with a time, fastest first, on each pace measure:
+## {"last": [car, ...], "avg3": [...], "avg5": [...]}. With a class tag only
+## cars of that class (multi-class races rank each class on its own).
+func pace_ranks(sim: RaceSim, cls := "") -> Dictionary:
+	var out := {}
+	for key in PACE_KEYS:
+		var list: Array = []
+		for i in sim.car_count():
+			if sim.is_retired(i) or (cls != "" and sim.defs[i].class_tag != cls):
+				continue
+			if pace_value(i, key) > 0.0:
+				list.append(i)
+		list.sort_custom(func(a: int, b: int): return pace_value(a, key) < pace_value(b, key))
+		out[key] = list
+	return out
+
+
+## True when the race has more than one class of car.
+static func multi_class(sim: RaceSim) -> bool:
+	for i in sim.car_count():
+		if sim.defs[i].class_tag != sim.defs[0].class_tag:
+			return true
+	return false
+
+
+## Laps `other` is down on `car`, to the nearest lap: 1 for a car we have
+## lapped or are about to lap (more than half a lap behind us in race
+## distance), 0 on our lap, negative when they're ahead.
+func laps_behind(sim: RaceSim, car: int, other: int) -> int:
+	return roundi((sim.entries[car].distance - sim.entries[other].distance) / track.length)
+
+
+## A backmarker for `car`: a car still running more than half a lap behind it
+## in race distance, so one it has lapped or is coming up to lap (blue flags).
+func is_backmarker(sim: RaceSim, car: int, other: int) -> bool:
+	if car < 0 or other < 0 or other == car or sim.entries[other].dnf or sim.entries[other].finished:
+		return false
+	return laps_behind(sim, car, other) >= 1
+
+
+## The car `car` is really racing: of the cars in its class on the same lap,
+## the nearer of the one just ahead and the one just behind (by time).
+## -1 when there's nobody (alone in its class, or finished).
+func rival_of(sim: RaceSim, car: int) -> int:
+	if car < 0 or car >= sim.car_count() or sim.entries[car].finished or sim.entries[car].dnf:
+		return -1
+	var cls := sim.defs[car].class_tag
+	var order := sim.running_order
+	var p := order.find(car)
+	var ahead := -1
+	var behind := -1
+	for k in range(p - 1, -1, -1):
+		var j := order[k]
+		if sim.defs[j].class_tag == cls and not sim.entries[j].dnf and laps_behind(sim, j, car) == 0 and not sim.entries[j].finished:
+			ahead = j
+			break
+	for k in range(p + 1, order.size()):
+		var j := order[k]
+		if sim.defs[j].class_tag == cls and not sim.entries[j].dnf and laps_behind(sim, car, j) == 0:
+			behind = j
+			break
+	if ahead < 0:
+		return behind
+	if behind < 0:
+		return ahead
+	return ahead if _gap(sim, car, ahead) <= _gap(sim, behind, car) else behind
+
+
+## Backmarkers up the road from `car`, nearest first, up to `most`:
+## [{car, laps (down on us), metres, seconds (on the road at our pace)}].
+## Only those within half a lap ahead on the road: the ones we'll come up on
+## soon (not the ones we've just lapped, behind us).
+func backmarkers_ahead(sim: RaceSim, car: int, most := 3) -> Array:
+	var out: Array = []
+	if car < 0:
+		return out
+	var c := cars[car]
+	var v := track.length / c.last5_avg if c.last5_avg > 0.0 else maxf(sim.cars[car].speed(), 30.0)
+	var d := sim.entries[car].distance
+	for j in sim.car_count():
+		if not is_backmarker(sim, car, j) or sim.in_pit_lane(j):
+			continue
+		var m := fposmod(sim.entries[j].distance - d, track.length)
+		if m > track.length * 0.5:
+			continue
+		out.append({"car": j, "laps": laps_behind(sim, car, j), "metres": m, "seconds": m / v})
+	out.sort_custom(func(a: Dictionary, b: Dictionary): return float(a["metres"]) < float(b["metres"]))
+	return out.slice(0, most)
+
+
 static func _avg(a: PackedFloat64Array) -> float:
 	var s := 0.0
 	for x in a:

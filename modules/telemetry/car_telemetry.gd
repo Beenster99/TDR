@@ -41,16 +41,32 @@ func last_sectors() -> Array:
 
 ## Recompute the rolling average from the lap log.
 func update_average() -> void:
+	last5_avg = avg_last(AVG_LAPS)
+
+
+## Mean of the last n laps (lap 1, off the grid, left out); 0 with no laps.
+## Fewer laps than n so far: the mean of those there are.
+func avg_last(n: int) -> float:
 	var sum := 0.0
-	var n := 0
+	var got := 0
 	for k in range(laps.size() - 1, -1, -1):
 		if laps[k]["lap"] <= 1:
 			break
 		sum += laps[k]["time"]
-		n += 1
-		if n >= AVG_LAPS:
+		got += 1
+		if got >= n:
 			break
-	last5_avg = sum / n if n > 0 else 0.0
+	return sum / got if got > 0 else 0.0
+
+
+## How many laps avg_last(n) is over (to show "3 laps" vs "2 so far").
+func laps_in_avg(n: int) -> int:
+	var got := 0
+	for k in range(laps.size() - 1, -1, -1):
+		if laps[k]["lap"] <= 1 or got >= n:
+			break
+		got += 1
+	return got
 
 
 ## Lap times trend: positive = getting slower (s per lap) over the last laps.

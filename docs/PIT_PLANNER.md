@@ -14,12 +14,20 @@ hears nothing.
 
 ## The screen
 
-Left: the car seen from above, nose up, with its four tyres, the front
-splitter and the rear wing. Beside each tyre a card shows the tyre now (its
-compound, how much is left, temperature), what will be fitted (click to
-cycle Keep / the car's slick / Intermediate / Full wet, mixing allowed) and
-its cold pressure with − / +. Above and below the car: front and rear
-downforce with − / +. Anything that will change is drawn in yellow.
+Left, **CAR SETUP AT THE STOP**: the car seen from above in its colours,
+nose up, with its four tyres, the front splitter and the rear wing. Beside
+each tyre a card (with a line to its tyre) shows the tyre now: its compound
+badge, a bar for how much tread is left and its temperature (blue cold,
+green in the window, red hot); then what will be fitted (click to cycle
+Keep / the car's slick / Intermediate / Full wet, mixing allowed; a dot
+by the tyre marks the ones being changed) and its cold pressure with − / +,
+and under it the standard pressure or what it was. Above the car the front
+splitter and below it the rear wing, each on a segmented scale from less to
+more downforce: a white tick where it is now, the bar filled to the planned
+setting (yellow when it changes) and "5 → 7 (+2)". At the bottom the aero
+balance: the front share of the downforce now (white) and after the stop
+(yellow dot), with the change in total downforce and drag. Anything that
+will change is drawn in yellow.
 
 Right: picked tyres (All, Fronts, Rears, Left, Right, then a compound or a
 pressure step for all of them), fuel, repairs, driver change (who takes

@@ -1,9 +1,9 @@
 {
   "id": "telemetry",
   "name": "Race data",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "status": "active",
-  "summary": "Race data for the pit wall: sector and lap times, last-5-lap averages, gaps and intervals, tyre state, pit-window analysis (pit lane loss per track), weather radar and forecast (a rain field moving on a seeded wind that matches the race weather at the track, with ETA ranges from a forecaster whose speed estimate is a little off; WeatherForecast.rain_at, sample_grid, truth_at, rain_in), and a feed of strategy, radio and timing calls. Runs on every machine; the host's gaps and pit analysis are synced to clients. Every race keeps a full lap-by-lap log (to_dict).",
+  "summary": "Race data for the pit wall: sector and lap times, last-5-lap averages (any last n: CarTelemetry.avg_last), the pace table (pace_ranks: last lap, last 3, last 5 per class), each car's rival (rival_of) and backmarkers (is_backmarker, backmarkers_ahead), gaps and intervals, tyre state, pit-window analysis (pit lane loss per track), weather radar and forecast (a rain field moving on a seeded wind that matches the race weather at the track, with ETA ranges from a forecaster whose speed estimate is a little off; WeatherForecast.rain_at, sample_grid, truth_at, rain_in), and a feed of strategy, radio and timing calls. Runs on every machine; the host's gaps and pit analysis are synced to clients. Every race keeps a full lap-by-lap log (to_dict).",
   "depends": {
     "core": "1",
     "tracks": "1",
