@@ -115,7 +115,7 @@ func serialize() -> PackedFloat64Array:
 
 
 ## Compact float32 form streamed by the car's owner ~30 times a second.
-const NET_SIZE := 30
+const NET_SIZE := 34
 
 
 func pack_net(out: PackedFloat32Array) -> void:
@@ -125,7 +125,8 @@ func pack_net(out: PackedFloat32Array) -> void:
 			| (int(puncture[0] > 0.5) << 4) | (int(puncture[1] > 0.5) << 5)
 			| (int(puncture[2] > 0.5) << 6) | (int(puncture[3] > 0.5) << 7) | (int(handbrake) << 8),
 		tyre_temp[0], tyre_temp[1], tyre_temp[2], tyre_temp[3], fy_front, fy_rear,
-		damage_gearbox, alignment, body_damage[0], body_damage[1], body_damage[2], body_damage[3], air_h, vz]))
+		damage_gearbox, alignment, body_damage[0], body_damage[1], body_damage[2], body_damage[3], air_h, vz,
+		tyre_wear[0], tyre_wear[1], tyre_wear[2], tyre_wear[3]]))
 
 
 func unpack_net(a: PackedFloat32Array, o: int) -> void:
@@ -144,6 +145,7 @@ func unpack_net(a: PackedFloat32Array, o: int) -> void:
 	damage_gearbox = a[o + 22]; alignment = a[o + 23]
 	body_damage = PackedFloat64Array([a[o + 24], a[o + 25], a[o + 26], a[o + 27]])
 	air_h = a[o + 28]; vz = a[o + 29]
+	tyre_wear = PackedFloat64Array([a[o + 30], a[o + 31], a[o + 32], a[o + 33]])
 
 
 func deserialize(a: PackedFloat64Array) -> void:

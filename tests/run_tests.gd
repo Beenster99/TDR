@@ -24,6 +24,7 @@ func _init() -> void:
 	test_data_loads()
 	test_input_wire_format()
 	test_tyre_temperature_matters()
+	test_tyre_wear_data()
 	test_ai_drivers()
 	test_ai_racing_room()
 	test_launch_wheelspin()
@@ -511,6 +512,38 @@ func test_derby() -> void:
 	back2.deserialize(cs.serialize())
 	check(packed.size() == CarState.NET_SIZE and is_equal_approx(back.air_h, 1.25) and is_equal_approx(back.vz, -3.5)
 		and is_equal_approx(back2.air_h, 1.25), "cars in the air go over the network and into snapshots")
+
+
+## Each tyre's wear goes over the network, into the lap log, the wear rate
+## and the results' lap table and stints.
+func test_tyre_wear_data() -> void:
+	print("tyre wear per corner")
+	var cs := CarState.new()
+	cs.tyre_wear = PackedFloat64Array([0.1, 0.25, 0.4, 0.55])
+	var buf := PackedFloat32Array()
+	cs.pack_net(buf)
+	var back := CarState.new()
+	back.unpack_net(buf, 0)
+	check(buf.size() == CarState.NET_SIZE and is_equal_approx(back.tyre_wear[1], 0.25) and is_equal_approx(back.tyre_wear[3], 0.55),
+		"each tyre's wear goes over the network")
+	var c := CarTelemetry.new()
+	c.laps = [{"lap": 1, "time": 90.0, "tyre_wear": [0.02, 0.03, 0.01, 0.01]},
+		{"lap": 2, "time": 88.0, "tyre_wear": [0.04, 0.06, 0.02, 0.02]},
+		{"lap": 3, "time": 88.0, "tyre_wear": [0.06, 0.09, 0.03, 0.03]},
+		{"lap": 4, "time": 110.0, "tyre_wear": [0.005, 0.005, 0.04, 0.04]},   # new fronts
+		{"lap": 5, "time": 88.0, "tyre_wear": [0.025, 0.035, 0.05, 0.05]}]
+	var rate := c.wear_per_lap()
+	check(is_equal_approx(rate[0], 0.02) and is_equal_approx(rate[1], 0.03) and is_equal_approx(rate[2], 0.01),
+		"wear per lap from the laps on the tyre that's on now (%s)" % str(rate))
+	check(is_equal_approx(CarTelemetry.laps_to_worn(0.4, 0.02), 30.0) and is_inf(CarTelemetry.laps_to_worn(0.4, 0.0)),
+		"laps left until a tyre is worn out")
+	var log := [{"lap": 1, "wear": [0.1, 0.2, 0.1, 0.1]}, {"lap": 2, "wear": [0.3, 0.4, 0.2, 0.2]},
+		{"lap": 3, "wear": [0.02, 0.02, 0.02, 0.02]}, {"lap": 4, "wear": [0.1, 0.1, 0.1, 0.1]}]
+	var w := ResultsTable.stint_wear(log, 1, 3)
+	check(w.size() == 4 and is_equal_approx(w[1], 0.4) and is_equal_approx(w[0], 0.3),
+		"a stint's wear at its end is right when the new tyres went on before the line")
+	check(ResultsTable.stint_wear([{"lap": 1, "wear": []}], 1, 1).is_empty(), "old logs without wear show none")
+	check(ResultsTable.wear_colour(0.8) != ResultsTable.wear_colour(0.1), "worn tyres stand out")
 
 
 ## One AI lap of a derby arena in a derby car: {time, air (highest m off the ground), offs}.
@@ -3677,6 +3710,15 @@ func test_results_and_spectator(rep: Dictionary) -> void:
 		if r["status"] == "" and str(r["gap"]) == "":
 			gaps_ok = false
 	check(gaps_ok, "every classified car behind the winner has a gap or laps down")
+	# Tyre wear (on in this race): each tyre's wear lap by lap, going up
+	# through a stint, and at the end of each stint.
+	var r0: Dictionary = rows[0]
+	var log0: Array = r0["lap_log"]
+	var lw: Array = log0[1]["wear"] if log0.size() >= 2 else []
+	check(d["wear"] and lw.size() == 4 and float(lw[0]) > 0.0 and (r0["stints"][0]["wear_end"] as Array).size() == 4,
+		"the results have each tyre's wear lap by lap and at the end of each stint (%s)" % str(lw))
+	var rate := tel.cars[int(r0["car"])].wear_per_lap()
+	check(rate.size() == 4 and (rate[0] > 0.0 or rate[1] > 0.0), "the race data has a wear rate per tyre (%s)" % str(rate))
 	var season := ResultsTable.build(sim, tel, {"points": {SeasonResults.key_for(sim.entries[sim.running_order[0]].is_ai,
 		sim.entries[sim.running_order[0]].driver_name): 30}, "points_name": "Test"})
 	check(int(season["rows"][0]["points"]) == 30 and int(season["rows"][1]["points"]) == 0, "a season's points are shown as given")

@@ -221,7 +221,8 @@ func _archive_laps(sim: RaceSim, out: Array) -> bool:
 				"weather": sim.env.weather, "wetness": snappedf(sim.env.wetness, 0.01),
 				"race_time": snappedf(sim.race_time, 0.001),
 				"compound": sim.compounds[i].id if i < sim.compounds.size() and sim.compounds[i] else "",
-				"stops": stops_now, "pitted": stops_now > (int(c.laps[-1].get("stops", 0)) if not c.laps.is_empty() else 0)})
+				"stops": stops_now, "pitted": stops_now > (int(c.laps[-1].get("stops", 0)) if not c.laps.is_empty() else 0),
+				"tyre_wear": Array(car.tyre_wear).map(func(x): return snappedf(x, 0.0001))})
 			c.update_average()
 			for s in sectors.size():
 				if s < c.best_sectors.size() and (c.best_sectors[s] <= 0.0 or sectors[s] < c.best_sectors[s]):

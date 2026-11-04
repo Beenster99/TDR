@@ -44,6 +44,7 @@ const GREEN := Color(0.4, 1.0, 0.5)
 const RED := Color(1.0, 0.4, 0.35)
 const YELLOW := Color(1.0, 0.88, 0.35)
 const DIM := Color(1, 1, 1, 0.55)
+const WHEELS := ["FL", "FR", "RL", "RR"]
 const BG := Color(0.03, 0.05, 0.08, 0.98)
 const PANEL := Color(1, 1, 1, 0.05)
 const ORANGE := Color(1.0, 0.6, 0.25)       ## the car we're racing
@@ -52,8 +53,8 @@ const VIEW_TIMING := 0
 const VIEW_PACE := 1
 ## The PACE table's columns: [key, heading, x (of a 1040 px table), sortable].
 const PACE_COLUMNS := [["rank", "#", 4, false], ["pos", "POS", 34, true], ["driver", "DRIVER", 84, true],
-	["last", "LAST LAP", 300, true], ["avg3", "LAST 3", 480, true], ["avg5", "LAST 5", 660, true],
-	["best", "BEST", 840, true], ["gap", "GAP", 940, true]]
+	["last", "LAST LAP", 290, true], ["avg3", "LAST 3", 460, true], ["avg5", "LAST 5", 630, true],
+	["best", "BEST", 800, true], ["gap", "GAP", 880, true], ["wear", "TYRES LEFT", 960, true]]
 
 signal open_planner
 
@@ -364,6 +365,37 @@ func _temp_colour(t: float, tc: TyreCompound) -> Color:
 	return Color(0.3, 0.9, 0.4).lerp(Color(1.0, 0.3, 0.2), clampf(x, 0.0, 1.0))
 
 
+## A tyre's colour by its wear (ResultsTable.wear_colour).
+static func wear_colour(wear: float) -> Color:
+	return ResultsTable.wear_colour(wear)
+
+
+## The worst-worn tyre: its index (0 FL, 1 FR, 2 RL, 3 RR).
+static func worst_tyre(wear) -> int:
+	var worst := 0
+	for t in range(1, 4):
+		if float(wear[t]) > float(wear[worst]):
+			worst = t
+	return worst
+
+
+## Each tyre's rubber left as four small bars laid out like the car (FL FR
+## over RL RR), filled from the bottom and coloured by wear, then how much
+## the most worn one has left. Light grey while a tyre is fine (so it isn't
+## mistaken for the temperature squares beside it), yellow and red as it wears.
+func _wear_cell(at: Vector2, rh: float, k: float, wear, fs: int) -> void:
+	var bh := (rh - 8) * 0.5
+	for t in 4:
+		var w := clampf(float(wear[t]), 0.0, 1.0)
+		var tr := Rect2(at.x + (t % 2) * 9 * k, at.y + 3 + (t / 2) * (rh - 6) * 0.5, 7 * k, bh)
+		draw_rect(tr, Color(1, 1, 1, 0.12))
+		var fh := tr.size.y * (1.0 - w)
+		draw_rect(Rect2(tr.position.x, tr.end.y - fh, tr.size.x, fh), wear_colour(w) if w > 0.45 else Color(0.86, 0.89, 0.94))
+	var worst := clampf(float(wear[worst_tyre(wear)]), 0.0, 1.0)
+	_text(Vector2(at.x + 22 * k, at.y + rh * 0.5 + fs * 0.35), "%d%%" % roundi((1.0 - worst) * 100.0), fs - 2,
+		wear_colour(worst) if worst > 0.45 else Color(1, 1, 1, 0.8))
+
+
 # --- Screen ----------------------------------------------------------------------
 
 func _draw() -> void:
@@ -385,7 +417,7 @@ func _draw() -> void:
 	var rw := vp.x - rx - 16
 	var radar_h := minf(rw * 0.62, 280.0)
 	d["weather"] = Rect2(rx, 58, rw, radar_h)
-	var car_h := 236.0
+	var car_h := 258.0 if sim.settings.tyre_wear_enabled else 236.0
 	d["car"] = Rect2(rx, 58 + radar_h + 10, rw, car_h)
 	var fy := 58 + radar_h + 10 + car_h + 10
 	# The picture takes the feed's place (the feed is back when it's off).
@@ -526,8 +558,9 @@ func _draw_timing(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 	r = Rect2(r.position + Vector2(0, 24), r.size - Vector2(0, 24))
 	# Column x positions (fractions of a 1060 px table, scaled to fit).
 	var k := r.size.x / 1060.0
-	var cols := {"pos": 8, "drv": 52, "car": 214, "last": 296, "avg3": 370, "avg5": 444, "best": 518, "s1": 590,
-		"gap": 752, "int": 822, "tyre": 886, "pit": 978}
+	var cols := {"pos": 8, "drv": 52, "car": 194, "last": 274, "avg3": 346, "avg5": 418, "best": 490, "s1": 562,
+		"gap": 722, "int": 790, "tyre": 852, "wear": 930, "pit": 990}
+	var wear_on := sim.settings.tyre_wear_enabled
 	for key in cols:
 		cols[key] = r.position.x + cols[key] * k
 	var n := sim.running_order.size()
@@ -535,9 +568,9 @@ func _draw_timing(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 	var fs := 15 if rh >= 22.0 else 13
 	var hy := r.position.y + 22
 	for h in [["pos", "P"], ["drv", "DRIVER"], ["car", "CAR"], ["last", "LAST"], ["avg3", "AVG 3"],
-			["avg5", "AVG 5"], ["best", "BEST"], ["gap", "GAP"], ["int", "INT"], ["tyre", "TYRES"], ["pit", "STOP NOW"]]:
+			["avg5", "AVG 5"], ["best", "BEST"], ["gap", "GAP"], ["int", "INT"], ["tyre", "TYRES"], ["wear", "TYRE LEFT" if wear_on else ""], ["pit", "STOP NOW"]]:
 		_text(Vector2(cols[h[0]], hy), h[1], 12, DIM)
-	var sw := 54.0 * k
+	var sw := 52.0 * k
 	for s in sim.track.sectors.size():
 		_text(Vector2(cols["s1"] + s * sw, hy), "S%d" % (s + 1), 12, DIM)
 	var me := _our_car()
@@ -565,7 +598,7 @@ func _draw_timing(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 		elif i == riv:
 			name_end = _chip(name_end, cy, "RIVAL", ORANGE) - 4
 		_text(Vector2(cols["drv"], ty), e.driver_name, fs, _name_colour(i, riv, bm), HORIZONTAL_ALIGNMENT_LEFT, name_end - cols["drv"])
-		_text(Vector2(cols["car"], ty), sim.defs[i].display_name, fs - 2, Color(DIM, DIM.a * dim_row), HORIZONTAL_ALIGNMENT_LEFT, 78 * k)
+		_text(Vector2(cols["car"], ty), sim.defs[i].display_name, fs - 2, Color(DIM, DIM.a * dim_row), HORIZONTAL_ALIGNMENT_LEFT, 74 * k)
 		for key in RaceTelemetry.PACE_KEYS:
 			var v := tel.pace_value(i, key)
 			var top: Array = ranks.get(key, [])
@@ -607,6 +640,8 @@ func _draw_timing(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 		_text(Vector2(cols["tyre"] + 22 * k, ty), "%d°" % int((car.tyre_temp[0] + car.tyre_temp[1] + car.tyre_temp[2] + car.tyre_temp[3]) / 4.0),
 			fs - 2, {"hot": Color(1, 0.5, 0.4), "cold": Color(0.55, 0.7, 1.0)}.get(c.tyre_state, Color(1, 1, 1, 0.8)))
 		_text(Vector2(cols["tyre"] + 56 * k, ty), sim.compounds[i].display_name.left(1), fs - 3, DIM)
+		if wear_on:
+			_wear_cell(Vector2(cols["wear"], y), rh, k, car.tyre_wear, fs)
 		if not c.pit.is_empty():
 			var pit_col := GREEN if c.pit["ideal"] else (Color(0.8, 1.0, 0.6) if c.pit["clear_air"] else Color(1, 1, 1, 0.55))
 			var mark := "  clear" if c.pit["clear_air"] else ""
@@ -694,6 +729,9 @@ func _sort_value(i: int, key: String) -> float:
 			var b := tel.cars[i].best_lap()
 			return b if b > 0.0 else INF
 		"gap": return float(sim.running_order.find(i))
+		"wear":    # most rubber left first: the most worn tyre on each car
+			var w := sim.cars[i].tyre_wear
+			return float(w[worst_tyre(w)])
 	var v := tel.pace_value(i, key)
 	return v if v > 0.0 else INF
 
@@ -737,8 +775,11 @@ func _pace_table(r: Rect2, ranks: Dictionary, me: int, riv: int) -> void:
 		cx[c[0]] = r.position.x + float(c[2]) * k
 	# Headings: click to sort; the sorted one is yellow with an arrow.
 	var hy := r.position.y + 18
+	var wear_on := sim.settings.tyre_wear_enabled
 	for c in PACE_COLUMNS:
 		var key: String = c[0]
+		if key == "wear" and not wear_on:
+			continue
 		var label: String = c[1]
 		var on: bool = key == pace_sort
 		if on:
@@ -802,6 +843,8 @@ func _pace_table(r: Rect2, ranks: Dictionary, me: int, riv: int) -> void:
 		var c := tel.cars[i]
 		var gap := "Leader" if sim.running_order.find(i) == 0 else (("+%d L" % c.laps_down) if c.laps_down >= 1 else "+" + fmt_gap(c.gap_leader))
 		_text(Vector2(cx["gap"], ty), gap, fs - 1, Color(1, 1, 1, 0.8))
+		if wear_on:
+			_wear_cell(Vector2(cx["wear"], y), rh, 1.0, sim.cars[i].tyre_wear, fs)
 
 
 func _draw_weather(r: Rect2, tel: RaceTelemetry) -> void:
@@ -835,6 +878,10 @@ func _draw_car(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 	_text(Vector2(x, r.position.y + 96), "Tyres %s  %d° %d° / %d° %d°  grip %d%%" % [c.tyre_state.to_upper(),
 		int(temps[0]), int(temps[1]), int(temps[2]), int(temps[3]), int(c.tyre_grip * 100.0)], 14,
 		{"hot": Color(1, 0.5, 0.4), "cold": Color(0.55, 0.7, 1.0)}.get(c.tyre_state, GREEN), HORIZONTAL_ALIGNMENT_LEFT, w)
+	var oy := 0.0       # the lines below move down for the wear line
+	if sim.settings.tyre_wear_enabled:
+		_wear_line(Vector2(x, r.position.y + 118), w, sim.cars[i].tyre_wear, c)
+		oy = 22.0
 	var strat: Dictionary = tel.strategies.get(i, {})
 	if i == session.local_car and sim.pits.enabled:
 		# Our own car: what the next stop will do.
@@ -844,22 +891,22 @@ func _draw_car(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 		var pend := session.pending_swap(i)
 		if not pend.is_empty():
 			line += ", driver change"
-		_text(Vector2(x, r.position.y + 118), line, 14, Color(1.0, 0.75, 0.4), HORIZONTAL_ALIGNMENT_LEFT, w)
+		_text(Vector2(x, r.position.y + 118 + oy), line, 14, Color(1.0, 0.75, 0.4), HORIZONTAL_ALIGNMENT_LEFT, w)
 	else:
-		_text(Vector2(x, r.position.y + 118), "Strategy: " + (strat.get("text", "no calls heard") as String), 14, Color(1.0, 0.75, 0.4), HORIZONTAL_ALIGNMENT_LEFT, w)
+		_text(Vector2(x, r.position.y + 118 + oy), "Strategy: " + (strat.get("text", "no calls heard") as String), 14, Color(1.0, 0.75, 0.4), HORIZONTAL_ALIGNMENT_LEFT, w)
 	# Pit window.
 	var pa := c.pit
 	if pa.is_empty():
-		_text(Vector2(x, r.position.y + 144), "Pit window: waiting for timing", 14, DIM)
+		_text(Vector2(x, r.position.y + 144 + oy), "Pit window: waiting for timing", 14, DIM)
 	else:
 		var status := "IDEAL: no places lost, clear air" if pa["ideal"] else ("clear air" if pa["clear_air"] else "into traffic")
-		_text(Vector2(x, r.position.y + 144), "Stop now: lose %.1f s, rejoin P%d (%s)" % [pa["loss"], pa["rejoin_pos"], status], 14,
+		_text(Vector2(x, r.position.y + 144 + oy), "Stop now: lose %.1f s, rejoin P%d (%s)" % [pa["loss"], pa["rejoin_pos"], status], 14,
 			GREEN if pa["ideal"] else (Color(0.8, 1.0, 0.6) if pa["clear_air"] else Color(1, 0.75, 0.5)), HORIZONTAL_ALIGNMENT_LEFT, w)
 		var gb := "%.1f s" % c.gap_behind if c.gap_behind >= 0.0 else "nobody"
-		_text(Vector2(x, r.position.y + 164), "Gap behind %s, need %.1f s for a free stop" % [gb, pa["need"]], 13, DIM, HORIZONTAL_ALIGNMENT_LEFT, w)
+		_text(Vector2(x, r.position.y + 164 + oy), "Gap behind %s, need %.1f s for a free stop" % [gb, pa["need"]], 13, DIM, HORIZONTAL_ALIGNMENT_LEFT, w)
 	# Lap history: last laps against the 5-lap average.
 	var hx := x
-	var hy := r.position.y + 176
+	var hy := r.position.y + 176 + oy
 	var hw := w
 	var hh := r.end.y - hy - 8
 	var n := mini(c.laps.size(), 12)
@@ -876,6 +923,25 @@ func _draw_car(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 		if l["time"] == tel.fastest_lap:
 			col = PURPLE
 		draw_rect(Rect2(hx + k * bw + 2, hy + hh * 0.5, bw - 4, bh), col)
+
+
+## The selected car's tyre wear: rubber left on each tyre, coloured by wear,
+## then the most worn one's rate and how many laps it has left at that rate.
+func _wear_line(at: Vector2, w: float, wear, c: CarTelemetry) -> void:
+	_text(at, "Wear", 14, DIM)
+	var x := at.x + 44
+	for t in 4:
+		var wt := clampf(float(wear[t]), 0.0, 1.0)
+		var txt := "%s %d%%" % [WHEELS[t], roundi((1.0 - wt) * 100.0)]
+		_text(Vector2(x, at.y), txt, 14, wear_colour(wt) if wt > 0.45 else Color.WHITE)
+		x += font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x + (18 if t == 1 else 10)
+	var worst := worst_tyre(wear)
+	var rate := c.wear_per_lap()[worst]
+	if rate <= 1e-5:
+		return
+	var left := CarTelemetry.laps_to_worn(float(wear[worst]), rate)
+	var note := "%s -%.1f%%/lap, ~%d laps left" % [WHEELS[worst], rate * 100.0, int(left)] if left < 99.0 else "%s -%.1f%%/lap" % [WHEELS[worst], rate * 100.0]
+	_text(Vector2(x + 8, at.y), note, 13, wear_colour(float(wear[worst])) if left < 5.0 else DIM, HORIZONTAL_ALIGNMENT_LEFT, at.x + w - x - 8)
 
 
 func _draw_feed(r: Rect2, tel: RaceTelemetry) -> void:
