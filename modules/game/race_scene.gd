@@ -763,6 +763,7 @@ func _update_pit_guide(delta: float) -> void:
 
 
 var _pit_work := {}   ## car -> the stop's work while it's on its way in
+var _pit_work_key := {}   ## car -> hash of the plan _pit_work was made from
 
 
 var _pit_log := {}   ## what _log_pit_stop last printed
@@ -811,16 +812,20 @@ func _update_pit_crews() -> void:
 		elif ph == PitRules.PHASE_LEAVE:
 			state = PitCrews.Stop.LEAVING
 		elif p["box"] and (ph == PitRules.PHASE_ENTRY or ph == PitRules.PHASE_LIMIT or ph == PitRules.PHASE_APPROACH
-				or (ph == PitRules.PHASE_NONE and int(p.get("crew_play", 0)) & PitRules.job_bit(PitRules.JOB_LANCE))):
-			# On their way in (a co-op crew laying out the tyres: from the call).
+				or ph == PitRules.PHASE_NONE):
+			# Called in: the crew come out of the garage to their marks (and
+			# a co-op crew lays out the tyres) while the car is on its in-lap.
 			state = PitCrews.Stop.COMING
-			if not _pit_work.has(i) or int(p.get("crew_play", 0)) != 0:
+			var key := hash(p["plan"])
+			if not _pit_work.has(i) or int(p.get("crew_play", 0)) != 0 or (ph == PitRules.PHASE_NONE and _pit_work_key.get(i) != key):
 				var coming := pits.service_for(i, p["plan"])
 				coming["crew"] = pits.crew_timeline(i, coming, PitRules.played_jobs(p))
 				_pit_work[i] = coming
+				_pit_work_key[i] = key
 			work = _pit_work[i]
 		if state != PitCrews.Stop.COMING:
 			_pit_work.erase(i)
+			_pit_work_key.erase(i)
 		var elapsed := float(p.get("service_total", 0.0)) - float(p.get("service_left", 0.0))
 		world.set_pit_stop(i, state, elapsed, work)
 
@@ -875,14 +880,11 @@ func _maybe_screenshot() -> void:
 		return
 	if session.sim.race_time + session.sim.phase_time * float(session.sim.phase == RaceSim.Phase.COUNTDOWN) >= float(GameData.arg("screenshot-at", 10)):
 		_shot_taken = true
-		# --screenshot-pause [settings|restart|menu|desktop|lobby]: with the pause menu
-		# (or its Settings, or its "Are you sure?" popup for that button) open.
+		# --screenshot-pause [settings]: with the pause menu (or its Settings) open.
 		if GameData.arg("screenshot-pause"):
 			_open_pause_menu()
 			if str(GameData.arg("screenshot-pause")) == "settings":
 				pause_menu._open_settings()
-			elif str(GameData.arg("screenshot-pause")) in ["restart", "menu", "desktop", "lobby"]:
-				pause_menu.ask_confirm(str(GameData.arg("screenshot-pause")))
 			for _f in 4:
 				await RenderingServer.frame_post_draw
 		await RenderingServer.frame_post_draw
