@@ -27,6 +27,7 @@ func _init() -> void:
 	test_tyre_wear_data()
 	test_ai_drivers()
 	test_ai_racing_room()
+	test_ai_mistakes_setting()
 	test_launch_wheelspin()
 	test_car_classes()
 	test_every_track()
@@ -2015,6 +2016,37 @@ func test_ai_racing_room() -> void:
 	var r: Dictionary = probe.run("spielberg", 7)
 	check(r["trials"] >= 6 and r["contacts"] == 0 and r["bot_off"] == 0,
 		"AI leaves room for a car on the inside at %d corners (contacts %d, pushed off %d, closest %s m)" % [r["trials"], r["contacts"], r["bot_off"], r["min_gap"].min()])
+
+
+## The "AI mistakes" race setting reaches every AI driver: never = no
+## mistakes at all, chaotic = plenty.
+func test_ai_mistakes_setting() -> void:
+	print("ai mistakes setting")
+	var d := _data()
+	var counts := []
+	for level in [0.0, 3.0]:
+		var settings := RaceSettings.new()
+		settings.ai_count = 8
+		settings.laps = 2
+		settings.ai_mistakes = level
+		settings = RaceSettings.from_dict(settings.to_dict())  # as a lobby guest gets it
+		var race := _race(settings, d)
+		var sim: RaceSim = race["sim"]
+		var ai: Dictionary = race["ai"]
+		check(is_equal_approx(ai[0].mistake_scale, level), "AI mistakes %.1f reaches the drivers (%.1f)" % [level, ai[0].mistake_scale])
+		var n := 0
+		var was := {}
+		while sim.phase != RaceSim.Phase.FINISHED and sim.tick < 60 * 60 * 8:
+			var inputs := []
+			for i in sim.car_count():
+				inputs.append(ai[i].get_input(sim, i))
+				var m: bool = ai[i].mood == AIDriver.Mood.MISTAKE
+				if m and not was.get(i, false):
+					n += 1
+				was[i] = m
+			sim.step(inputs)
+		counts.append(n)
+	check(counts[0] == 0 and counts[1] >= 3, "AI mistakes: never = %d mistakes, chaotic = %d in 2 laps of 8 cars" % counts)
 
 
 # --- Wave 3: race control (flags, VSC, safety car, penalties) -------------
