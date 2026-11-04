@@ -92,6 +92,9 @@ var lateral_bias: float = 0.0   ## offset from the line (m, + right)
 var ignore_traffic := false
 ## Test hook: when set (not NAN), hold this offset from the line (m, + right).
 var hold_bias := NAN
+## Test hook: ignore local yellow flags when overtaking (stands in for a
+## human who races on through the yellows). Still follows the SC and VSC.
+var ignore_flags := false
 var speed_noise: float = 0.0
 var _block: int = -1
 var _block_trouble := false
@@ -634,6 +637,7 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 	var rc := sim.race_control
 	var unlapping := rc.unlapping[me] == 1
 	var giving_back := rc.give_back.has(me)
+	var lax := ignore_flags and rc.mode == RaceControl.Mode.GREEN and rc.released[me] == 1
 	var sc_bias := INF
 	if rc.sc_visible and not rc.sc_in_pit and not cool_down:
 		var sc_gap := rc.gap_to_sc(me)
@@ -652,9 +656,9 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 				if sc_gap < RaceControl.SC_GAP_TARGET * 0.5:
 					sc_limit = rc.sc_speed * 0.8  # far too close: drop back
 				follow_limit = minf(follow_limit, sc_limit)
-	if _pass_target >= 0 and not rc.may_pass(me, _pass_target):
+	if _pass_target >= 0 and not lax and not rc.may_pass(me, _pass_target):
 		_pass_timer = 0.0
-	if rc.mode != RaceControl.Mode.GREEN or not rc.released[me] or rc.yellow_at(car.track_s):
+	if not lax and (rc.mode != RaceControl.Mode.GREEN or not rc.released[me] or rc.yellow_at(car.track_s)):
 		# No creeping past a car alongside when overtaking isn't allowed.
 		for j in sim.cars.size():
 			if j == me:
@@ -677,7 +681,7 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 			_pass_target = -1
 			_pass_cooldown = 1.0
 	if _pass_target < 0 and ahead >= 0 and not cool_down and ahead_lx < 30.0 and _pass_cooldown <= 0.0 \
-			and rc.may_pass(me, ahead):
+			and (lax or rc.may_pass(me, ahead)):
 		var o := sim.cars[ahead]
 		var closing := speed - o.vel.dot(fwd)
 		if closing > 0.3 or ahead_lx < 14.0:

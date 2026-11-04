@@ -50,6 +50,7 @@ func _init() -> void:
 	test_weather_forecast()
 	test_race_control_rules()
 	test_give_back_highlight()
+	test_give_back_clear_gains()
 	test_yellow_flags_for_incidents()
 	test_safety_car_race()
 	test_car_recovery()
@@ -2514,6 +2515,89 @@ func test_give_back_highlight() -> void:
 	# Passing the safety car: the safety car is the one to drop behind.
 	rc.give_back[2] = {"victim": -2, "until": sim.race_time + 5.0, "why": "test"}
 	check(rc.give_back_target(2) == RaceControl.GIVE_BACK_SC, "passing the safety car: the safety car is highlighted")
+
+
+## Give-backs only for clear gains: not for side by side, not for passing a
+## car in trouble, not for a move started under green, and the order is
+## dropped if the victim loses the place by itself.
+func test_give_back_clear_gains() -> void:
+	print("give-back only for clear gains")
+	var d := _data()
+	var settings := RaceSettings.new()
+	settings.ai_count = 4
+	settings.laps = 1
+	var sim: RaceSim = _race(settings, d)["sim"]
+	var rc := sim.race_control
+	sim.phase = RaceSim.Phase.RACING
+	for i in 4:
+		sim.cars[i].vel = Vector2.from_angle(sim.cars[i].heading) * 40.0
+		sim.cars[i].surface = TrackData.Surface.TRACK
+	var base := sim.entries[0].distance
+	var setup := func(gap_before: float) -> void:
+		rc.give_back.clear()
+		rc._trouble_until.fill(-1.0)
+		rc.yellows = [{"from": 0.0, "to": sim.track.length - 1.0, "until": sim.race_time + 60.0, "car": 3}]
+		for k in 4:
+			sim.entries[k].distance = base - 30.0 * k
+		sim.entries[1].distance = base - gap_before
+		sim._update_positions()
+		rc._prev_order = [0, 1, 2, 3]
+		# The picture "a moment before": under the yellow already.
+		rc._ago_t = sim.race_time
+		for k in 4:
+			rc._ago_dist[k] = sim.entries[k].distance
+			rc._ago_free[k] = 0
+	setup.call(20.0)
+	sim.entries[1].distance = base + 4.0
+	sim._update_positions()
+	rc._check_overtakes()
+	check(not rc.give_back.has(1), "a nose ahead under yellow (side by side) is not an overtake yet")
+	sim.entries[1].distance = base + RaceControl.PASS_MARGIN_M + 2.0
+	sim._update_positions()
+	rc._check_overtakes()
+	check(rc.give_back.has(1), "clearly past under yellow: give the place back")
+	# The victim goes off by itself: no further action.
+	sim.cars[0].surface = TrackData.Surface.GRAVEL
+	rc._check_overtakes()
+	check(not rc.give_back.has(1) and sim.entries[1].penalty_s == 0.0, "the victim went off: the order is dropped, no penalty")
+	sim.cars[0].surface = TrackData.Surface.TRACK
+	# Passing a car that was off a moment ago is fine.
+	setup.call(20.0)
+	rc._trouble_until[0] = sim.race_time + 3.0
+	sim.entries[1].distance = base + 10.0
+	sim._update_positions()
+	rc._check_overtakes()
+	check(not rc.give_back.has(1), "passing a car that has just been off or spun is allowed")
+	# Passing a car going much slower is fine.
+	setup.call(20.0)
+	sim.cars[0].vel = Vector2.from_angle(sim.cars[0].heading) * 40.0 * (RaceControl.SLOW_CAR_FRAC - 0.05)
+	sim.entries[1].distance = base + 10.0
+	sim._update_positions()
+	rc._check_overtakes()
+	check(not rc.give_back.has(1), "passing a car going much slower (in trouble) is allowed")
+	sim.cars[0].vel = Vector2.from_angle(sim.cars[0].heading) * 40.0
+	# Already alongside under green when the yellow came out: the move stands.
+	setup.call(5.0)
+	for k in 4:
+		rc._ago_free[k] = 1
+	sim.entries[1].distance = base + 10.0
+	sim._update_positions()
+	rc._check_overtakes()
+	check(not rc.give_back.has(1), "a move started alongside under green stands when the yellow comes out")
+	# But from well back, under green a moment ago, it is still an overtake.
+	setup.call(20.0)
+	for k in 4:
+		rc._ago_free[k] = 1
+	sim.entries[1].distance = base + 10.0
+	sim._update_positions()
+	rc._check_overtakes()
+	check(rc.give_back.has(1), "from 20 m back it's a real overtake under yellow")
+	# The bookkeeping survives a full snapshot.
+	rc._trouble_until[2] = 123.0
+	var copy: RaceSim = _race(settings, d)["sim"]
+	copy.race_control.apply_dict(rc.to_dict(true))
+	check(copy.race_control._trouble_until[2] == 123.0 and copy.race_control._ago_t == rc._ago_t,
+		"trouble and look-back state is in the full snapshot")
 
 
 ## Rules without driving: penalties, classification, overtaking rules, sync.

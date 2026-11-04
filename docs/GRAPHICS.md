@@ -202,3 +202,25 @@ At the whole-track zoom the full scene is still drawn. Trees are MultiMeshes
 in 256 m tiles with automatic LODs, car parts that are too small to see
 (mirrors, interior, calipers) hide beyond `GfxSettings.car_detail_distance`,
 and shadows cover just what's on screen.
+
+- **One shadow map from above.** Seen from above everything on screen is
+  about the same distance from the camera, so the sun uses a single
+  orthogonal shadow map that just covers the view (`WorldView.set_camera`)
+  instead of four cascades, which drew the world into the shadow map up to
+  four times. The trackside TV cameras, which look across the ground, still
+  use four cascades.
+- **The ground in tiles.** The terrain is 24 x 24 cell tiles (240 m with
+  elevation), so only the tiles in view and in the sun's shadow view are
+  drawn; the shader takes its normals from the heights texture, so they meet
+  without seams.
+- **No shadows from the little things**: car lights, numbers, calipers,
+  canards, splitters, mirrors and interior, and bushes and hedges.
+- **Far trees.** Beyond 1200 m camera distance (zoomed well out) every tree
+  swaps to a ~20-triangle shape (`Trackside.TREE_FAR_FROM`).
+
+Measured with `tests/render_probe.tscn` (camera over the lap every few hundred
+metres, then each part of the world switched off in turn at the costliest
+spot) and `tests/perf_probe.tscn` (frame times along a lap with a full grid).
+At the usual close zoom triangles drawn per frame fell 3-8x and draw calls
+about 40 % at Brands Hatch, Silverstone and Spa; at Spa's whole-track zoom
+from 42 million to 5.6 million triangles.
