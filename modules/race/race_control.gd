@@ -32,13 +32,26 @@ extends RefCounted
 enum Mode { GREEN, VSC, SC }
 const MODE_NAMES := ["green", "vsc", "sc"]
 
-## Safety car pace profile (m/s, m/s^2): a lap about 35-40 % slower than race pace.
+## Safety car pace profile (m/s, m/s^2), worked out along the racing line
+## (the same line the AI drives, kept a little in from the edges): a road car
+## on semi-slicks driven hard through the corners and held back on the
+## straights, so the lap is still well slower than race pace.
 const SC_MAX_SPEED := 38.0
-const SC_LAT_ACCEL := 6.0
-const SC_DECEL := 6.0
+const SC_LAT_ACCEL := 9.5
+const SC_DECEL := 8.0
 ## The VSC reference is a little quicker than the SC itself.
 const VSC_MAX_SPEED := 42.0
-const VSC_LAT_ACCEL := 7.5
+const VSC_LAT_ACCEL := 11.0
+## The safety car's line, built like the AI's (AIDriver._build_line): points
+## this far apart, pulled in from the edges in proportion so it keeps its
+## shape, to SC_LINE_MARGIN from the edge where the track's line goes to
+## SC_LINE_EDGE (raceline.py KERB_M).
+const SC_LINE_SPACING := 4.0
+const SC_LINE_MARGIN := 2.4
+const SC_LINE_EDGE := 0.3
+## Metres the SC takes to ease from the pit exit onto the racing line, and
+## from the line over to the pit entry.
+const SC_LINE_BLEND := 150.0
 ## Below this a car on the circuit counts as stopped.
 const STOPPED_SPEED := 3.0
 const MOVING_AGAIN := 8.0
@@ -65,6 +78,16 @@ const STRANDED_VSC_S := 6.0
 const STRANDED_SC_S := 16.0
 const RECOVERY_VSC_S := 25.0     ## marshals clear a stranded car in this time
 const RECOVERY_SC_S := 40.0
+## An AI car that has been stuck this long (stopped, or crawling below
+## MOVING_AGAIN) is out of the race: beached in the gravel, wedged against
+## the barrier or stalled. The marshals send a crane or a tractor for it.
+## Shorter off the circuit (a car stuck there won't get going again) than
+## stopped on the racing surface.
+const STUCK_OFF_RETIRE_S := 15.0
+const STUCK_ON_RETIRE_S := 20.0
+## ... unless it gets this far along the track meanwhile (a car creeping
+## along the edge waiting for a gap to rejoin isn't stuck).
+const STUCK_PROGRESS_M := 30.0
 const VSC_MIN_S := 20.0
 const VSC_ENDING_S := 6.0
 const SC_GAP_TARGET := 25.0      ## leader keeps this far behind the safety car
@@ -132,6 +155,8 @@ var debris: Array = []
 var marshal_jobs: Array = []
 var _marshal_ids: int = 0
 var _cleared: PackedByteArray = []        ## a live stopped car the marshals have made safe (yellow only)
+var _stuck_t: PackedFloat64Array = []     ## seconds an AI car has been stopped or crawling (see STUCK_*_RETIRE_S)
+var _stuck_s: PackedFloat64Array = []     ## where it was on the track when that started
 var vsc_delta: PackedFloat64Array = []    ## seconds; below 0 = faster than allowed
 var vsc_warned: PackedByteArray = []
 var vsc_penalised: PackedByteArray = []
@@ -151,8 +176,18 @@ var _now_dist: PackedFloat64Array = []
 var _now_free: PackedByteArray = []
 var _ago_t: float = -1.0
 
+## The racing line the SC drives: points SC_LINE_SPACING apart, the track
+## distance at each (always growing round the lap, from _line_s[0]), and
+## the SC and VSC speed at each.
+var _line_pts: PackedVector2Array = []
+var _line_s: PackedFloat64Array = []
+var _line_step: float = SC_LINE_SPACING
 var _sc_profile: PackedFloat64Array = []
 var _vsc_profile: PackedFloat64Array = []
+var _pit_entry_off := 0.0                  ## track offset where the pit lane starts / ends
+var _pit_exit_off := 0.0
+var sc_d: float = 0.0                      ## SC distance along its racing line (on the circuit)
+var sc_join_d: float = -1.0                ## line distance where it came out of the pit lane (-1 = on the line)
 var _danger: float = 0.0                  ## how bad things are right now (0 none, 1 VSC, 2 SC)
 var _big_incident_until: float = -1.0
 
@@ -166,6 +201,8 @@ func _init(p_sim: RaceSim) -> void:
 	recovered.resize(n)
 	carried.resize(n)
 	_cleared.resize(n)
+	_stuck_t.resize(n)
+	_stuck_s.resize(n)
 	vsc_delta.resize(n)
 	vsc_warned.resize(n)
 	vsc_penalised.resize(n)
@@ -341,11 +378,11 @@ func _causes_yellow(j: int) -> bool:
 
 ## Speed the VSC reference allows at track distance s (m/s).
 func vsc_speed_at(s: float) -> float:
-	return _vsc_profile[sim.track.index_at(s)] if not _vsc_profile.is_empty() else VSC_MAX_SPEED
+	return _line_value(_vsc_profile, line_d_at(s)) if not _vsc_profile.is_empty() else VSC_MAX_SPEED
 
 
 func sc_speed_at(s: float) -> float:
-	return _sc_profile[sim.track.index_at(s)] if not _sc_profile.is_empty() else SC_MAX_SPEED
+	return _line_value(_sc_profile, line_d_at(s)) if not _sc_profile.is_empty() else SC_MAX_SPEED
 
 
 ## Gap from car i forward to the safety car along the track (m); INF when
@@ -582,6 +619,8 @@ func _track_stranded(dt: float) -> void:
 			_cleared[i] = 0
 		if stranded_t[i] >= STRANDED_YELLOW_S:
 			_add_yellow(c.track_s, i, "Car stopped")
+		if not e.dnf:
+			_track_stuck(i, dt)
 		if e.dnf:
 			# A retired car: send a crane or a tractor once it has come to rest.
 			if stranded_t[i] >= STRANDED_VSC_S and c.speed() < STOPPED_SPEED and recovery_for(i).is_empty():
@@ -591,6 +630,55 @@ func _track_stranded(dt: float) -> void:
 		if stranded_t[i] > limit + STRANDED_VSC_S:
 			_cleared[i] = 1  # a live car the marshals have pushed clear: yellow flag only
 			stranded_t[i] = STRANDED_YELLOW_S
+
+
+## An AI car that is stuck for good retires, so a recovery vehicle comes for
+## it (before, it sat parked at the side of the track for the rest of the
+## race). Cars driven by people are left to get themselves out.
+func _track_stuck(i: int, dt: float) -> void:
+	var c := sim.cars[i]
+	var e := sim.entries[i]
+	if not e.is_ai or sim.external[i] or not (e.started_lap or sim.race_time > 15.0):
+		_stuck_t[i] = 0.0
+		return
+	if c.speed() >= MOVING_AGAIN or c.air_h > 0.0:
+		_stuck_t[i] = 0.0
+		return
+	if _stuck_t[i] > 0.0 and absf(wrapf(c.track_s - _stuck_s[i], -sim.track.length * 0.5, sim.track.length * 0.5)) > STUCK_PROGRESS_M:
+		_stuck_t[i] = 0.0
+	var off := not _on_racing_surface(i)
+	# Crawling counts off the circuit (stuck in the gravel); on the track
+	# only a car that has properly stopped does.
+	if off or c.speed() < STOPPED_SPEED:
+		if _stuck_t[i] == 0.0:
+			_stuck_s[i] = c.track_s
+		_stuck_t[i] += dt
+	if _stuck_t[i] >= (STUCK_OFF_RETIRE_S if off else STUCK_ON_RETIRE_S):
+		e.dnf = true
+		_stuck_t[i] = 0.0
+		stranded_t[i] = maxf(stranded_t[i], STRANDED_YELLOW_S)
+		_cleared[i] = 0
+		sim.events.append({"type": "retired", "car": i, "reason": "stuck"})
+
+
+## Parked: a retired AI car (not a wreck in the derby) brakes to a stop and
+## stays there for the recovery vehicle. Before, the AI kept driving it, and
+## a car that can't race on (stuck, or the engine gone on a slope) crept
+## about and never came to rest. `driven` is what the AI wanted: its
+## steering is kept while the car is still rolling.
+func parked_input(i: int, driven: CarInput) -> CarInput:
+	var c := sim.cars[i]
+	var held := CarInput.neutral()
+	var v := c.speed()
+	if v > STOPPED_SPEED and driven != null:
+		held.steer = driven.steer
+	# Full brakes while rolling; at a standstill a held brake pedal would
+	# select reverse (below 0.5 it doesn't), so the handbrake holds it.
+	held.brake = 1.0 if v > 1.0 else 0.45
+	held.handbrake = v < STOPPED_SPEED
+	if c.gear == -1:
+		held.brake = 0.0  # in reverse the brake pedal drives it backwards
+	return held
 
 
 # --- Recovery vehicles ---------------------------------------------------------
@@ -710,10 +798,12 @@ func _escalate() -> void:
 		var on_track := _on_racing_surface(i)
 		if sim.entries[i].dnf:
 			# A retired car out on the circuit needs a recovery vehicle on
-			# track: safety car until the car is clear.
+			# track until the car is clear: the safety car when it's on the
+			# racing surface, a VSC when it's off it (in the gravel, on the
+			# grass or against the barrier).
 			var job := recovery_for(i)
 			if t >= STRANDED_VSC_S and (job.is_empty() or not CarRecovery.car_clear(job)):
-				danger = maxf(danger, 2.0)
+				danger = maxf(danger, 2.0 if on_track else 1.0)
 				recovering += 1
 		elif on_track and t >= STRANDED_SC_S:
 			danger = maxf(danger, 2.0)
@@ -736,7 +826,7 @@ func _escalate() -> void:
 	if danger >= 2.0 and mode != Mode.SC and not final_lap:
 		_deploy_sc("Recovery vehicle on track" if recovering > 0 else ("Car stopped on track" if stranded < 2 else "Multiple cars stopped"))
 	elif danger >= 1.0 and mode == Mode.GREEN:
-		_deploy_vsc("Car stopped" if stranded == 1 else "Incident")
+		_deploy_vsc("Recovery vehicle on track" if recovering > 0 else ("Car stopped" if stranded == 1 else "Incident"))
 
 
 ## A retired car that a recovery vehicle has already got off the circuit.
@@ -771,6 +861,8 @@ func _deploy_sc(why: String) -> void:
 		var ahead := fposmod(t.pit_exit_s - lead_s, t.length)
 		if ahead > 60.0 and ahead < 700.0:
 			sc_s = t.pit_exit_s
+	sc_d = line_d_at(sc_s)
+	sc_join_d = sc_d if t.has_pit_lane() and sc_s == t.pit_exit_s else -1.0
 	sc_in_pit = false
 	sc_visible = true
 	sc_speed = sc_speed_at(sc_s) * 0.6
@@ -878,7 +970,7 @@ func _update_safety_car(dt: float) -> void:
 	var acc := 4.0 if target > sc_speed else SC_DECEL
 	sc_speed = move_toward(sc_speed, target, acc * dt)
 	var prev := sc_s
-	sc_s = fposmod(sc_s + sc_speed * dt, t.length)
+	_advance_sc_on_line(dt)
 	if stage == "in_this_lap" and _crossed(prev, sc_s, _peel_off_s()):
 		_send_sc_to_pits()
 		stage = "restart"
@@ -915,8 +1007,88 @@ func _place_sc() -> void:
 		sc_pos = t.pit_position_at(sc_s)
 		sc_heading = t.pit_heading_at(sc_s)
 	else:
-		sc_pos = t.position_at(sc_s)
-		sc_heading = t.heading_at(sc_s + 4.0)
+		sc_pos = _sc_pos_at(sc_d)
+		sc_heading = (_sc_pos_at(sc_d + 4.0) - sc_pos).angle()
+
+
+## Along the racing line: sc_d moves at the SC's speed, sc_s (track
+## distance, what the rules and the AI use) follows from it.
+func _advance_sc_on_line(dt: float) -> void:
+	if _line_pts.is_empty():
+		sc_s = fposmod(sc_s + sc_speed * dt, sim.track.length)
+		return
+	var L := _line_pts.size() * _line_step
+	sc_d = fposmod(sc_d + sc_speed * dt, L)
+	sc_s = line_s_at(sc_d)
+	if sc_join_d >= 0.0 and fposmod(sc_d - sc_join_d, L) > SC_LINE_BLEND:
+		sc_join_d = -1.0
+
+
+## Where the SC is at line distance d: on the racing line, easing in from
+## the pit exit after it comes out and over to the pit entry on its way in.
+func _sc_pos_at(d: float) -> Vector2:
+	var t := sim.track
+	if _line_pts.is_empty():
+		return t.position_at(sc_s + d - sc_d)
+	var L := _line_pts.size() * _line_step
+	var p := _line_point(d)
+	if sc_join_d >= 0.0:
+		var gone := fposmod(d - sc_join_d, L)
+		if gone < SC_LINE_BLEND:
+			var s := line_s_at(d)
+			p = t.position_at(s, _pit_exit_off).lerp(p, smoothstep(0.0, 1.0, gone / SC_LINE_BLEND))
+	if stage == "in_this_lap" and t.has_pit_lane() and _peel_off_s() == t.pit_entry_s:
+		var s := line_s_at(d)
+		var to_go := fposmod(t.pit_entry_s - s, t.length)
+		if to_go < SC_LINE_BLEND:
+			p = t.position_at(s, _pit_entry_off).lerp(p, smoothstep(0.0, 1.0, to_go / SC_LINE_BLEND))
+	return p
+
+
+func _line_point(d: float) -> Vector2:
+	var n := _line_pts.size()
+	var x := fposmod(d, n * _line_step) / _line_step
+	var k := int(x) % n
+	return _line_pts[k].lerp(_line_pts[(k + 1) % n], x - floorf(x))
+
+
+func _line_value(v: PackedFloat64Array, d: float) -> float:
+	var n := v.size()
+	var x := fposmod(d, n * _line_step) / _line_step
+	var k := int(x) % n
+	return lerpf(v[k], v[(k + 1) % n], x - floorf(x))
+
+
+## Track distance at line distance d.
+func line_s_at(d: float) -> float:
+	var n := _line_s.size()
+	var L := sim.track.length
+	var x := fposmod(d, n * _line_step) / _line_step
+	var k := int(x) % n
+	var s1 := _line_s[k + 1] if k + 1 < n else _line_s[0] + L
+	return fposmod(lerpf(_line_s[k], s1, x - floorf(x)), L)
+
+
+## Line distance at track distance s.
+func line_d_at(s: float) -> float:
+	var n := _line_s.size()
+	if n == 0:
+		return s
+	var L := sim.track.length
+	var base := _line_s[0]
+	s = fposmod(s - base, L) + base
+	var lo := 0
+	var hi := n - 1
+	while lo < hi:
+		var mid := (lo + hi + 1) / 2
+		if _line_s[mid] <= s:
+			lo = mid
+		else:
+			hi = mid - 1
+	var s0 := _line_s[lo]
+	var s1 := _line_s[lo + 1] if lo + 1 < n else base + L
+	var f := clampf((s - s0) / maxf(s1 - s0, 0.001), 0.0, 1.0)
+	return (lo + f) * _line_step
 
 
 ## Client: carry the SC along between race-state updates.
@@ -930,7 +1102,7 @@ func follower_step(dt: float) -> void:
 	if sc_in_pit:
 		sc_s = minf(sc_s + sc_speed * dt, sim.track.pit_length)
 	else:
-		sc_s = fposmod(sc_s + sc_speed * dt, sim.track.length)
+		_advance_sc_on_line(dt)
 	_place_sc()
 	mode_time += dt
 	stage_time += dt
@@ -1232,32 +1404,71 @@ func _event(e: Dictionary) -> void:
 
 func _build_profiles() -> void:
 	var t := sim.track
-	var n := t.point_count()
-	if n < 3:
+	if t.point_count() < 3:
 		return
+	_build_line()
+	var n := _line_pts.size()
+	# Curvature like the AI's: over a +-3 point window (24 m chord).
 	var curv := PackedFloat64Array()
 	curv.resize(n)
-	for i in n:
-		var a := t.seg_dir[(i - 1 + n) % n]
-		var b := t.seg_dir[i]
-		var ds := maxf((t.seg_len[(i - 1 + n) % n] + t.seg_len[i]) * 0.5, 0.5)
-		curv[i] = absf(a.angle_to(b)) / ds
-	# Smooth over about 30 m so kinks in the data don't make phantom corners.
-	var smooth := PackedFloat64Array()
-	smooth.resize(n)
-	for i in n:
-		var sum := 0.0
-		var w := 0.0
-		for o in range(-3, 4):
-			sum += curv[(i + o + n) % n]
-			w += 1.0
-		smooth[i] = sum / w
-	_sc_profile = _profile(smooth, SC_MAX_SPEED, SC_LAT_ACCEL, SC_DECEL)
-	_vsc_profile = _profile(smooth, VSC_MAX_SPEED, VSC_LAT_ACCEL, SC_DECEL + 1.5)
+	for k in n:
+		var a := _line_pts[(k - 3 + n) % n]
+		var b := _line_pts[k]
+		var c := _line_pts[(k + 3) % n]
+		var denom := a.distance_to(b) * b.distance_to(c) * c.distance_to(a)
+		curv[k] = absf(2.0 * (b - a).cross(c - b) / maxf(denom, 0.001))
+	_sc_profile = _profile(curv, SC_MAX_SPEED, SC_LAT_ACCEL, SC_DECEL)
+	_vsc_profile = _profile(curv, VSC_MAX_SPEED, VSC_LAT_ACCEL, SC_DECEL + 1.5)
+	if t.has_pit_lane():
+		_pit_entry_off = t.project(t.pit_position_at(0.0))["offset"]
+		_pit_exit_off = t.project(t.pit_position_at(t.pit_length))["offset"]
+
+
+## The track's racing line (the centre line where there is none), resampled
+## and pulled in from the edges the way the AI does it.
+func _build_line() -> void:
+	var t := sim.track
+	var src := t.raceline if t.raceline.size() > 10 else t.points
+	var m := src.size()
+	var total := 0.0
+	for i in m:
+		total += src[i].distance_to(src[(i + 1) % m])
+	var count := maxi(int(total / SC_LINE_SPACING), 3)
+	_line_step = total / count
+	_line_pts = PackedVector2Array()
+	_line_s = PackedFloat64Array()
+	var seg := 0
+	var seg_start := 0.0
+	var seg_len := src[0].distance_to(src[1 % m])
+	var hint := -1
+	for k in count:
+		var d := k * _line_step
+		while d > seg_start + seg_len:
+			seg_start += seg_len
+			seg = (seg + 1) % m
+			seg_len = src[seg].distance_to(src[(seg + 1) % m])
+		var p := src[seg].lerp(src[(seg + 1) % m], (d - seg_start) / maxf(seg_len, 0.001))
+		var q := t.project(p, hint)
+		hint = q["idx"]
+		var off: float = q["offset"]
+		var w: float = q["w_right"] if off > 0.0 else q["w_left"]
+		var lim := maxf(w - SC_LINE_MARGIN, 0.0)
+		var squeezed := clampf(off * lim / maxf(w - SC_LINE_EDGE, 0.1), -lim, lim)
+		_line_pts.append(p + Vector2(-q["dir"].y, q["dir"].x) * (squeezed - off))
+		_line_s.append(q["s"])
+	# Track distance keeps growing round the lap (it can stall at a hairpin
+	# apex, where the inside of the line covers little centre line).
+	var L := t.length
+	for k in range(1, count):
+		while _line_s[k] < _line_s[k - 1] - L * 0.5:
+			_line_s[k] += L
+		_line_s[k] = maxf(_line_s[k], _line_s[k - 1])
+	if _line_s[count - 1] >= _line_s[0] + L:
+		for k in count:
+			_line_s[k] = minf(_line_s[k], _line_s[0] + L - 0.01 * (count - k))
 
 
 func _profile(curv: PackedFloat64Array, vmax: float, lat: float, decel: float) -> PackedFloat64Array:
-	var t := sim.track
 	var n := curv.size()
 	var v := PackedFloat64Array()
 	v.resize(n)
@@ -1268,7 +1479,7 @@ func _profile(curv: PackedFloat64Array, vmax: float, lat: float, decel: float) -
 		for j in n:
 			var i := n - 1 - j
 			var nxt := v[(i + 1) % n]
-			v[i] = minf(v[i], sqrt(nxt * nxt + 2.0 * decel * t.seg_len[i]))
+			v[i] = minf(v[i], sqrt(nxt * nxt + 2.0 * decel * _line_step))
 	return v
 
 
@@ -1281,6 +1492,7 @@ func to_dict(full := false) -> Dictionary:
 		"mode": mode, "mode_time": mode_time, "reason": reason, "stage": stage, "stage_time": stage_time,
 		"wave_by": wave_by, "sc_laps": sc_laps, "deployments": deployments,
 		"sc_visible": sc_visible, "sc_s": sc_s, "sc_in_pit": sc_in_pit, "sc_speed": sc_speed, "sc_lights": sc_lights,
+		"sc_d": sc_d, "sc_join_d": sc_join_d,
 		"yellows": yellows.duplicate(true), "vsc_delta": vsc_delta.duplicate(),
 		"unlapping": unlapping.duplicate(), "released": released.duplicate(), "recovered": recovered.duplicate(),
 		"give_back": give_back.duplicate(true), "restart_lap": _restart_lap,
@@ -1289,6 +1501,7 @@ func to_dict(full := false) -> Dictionary:
 	}
 	if full:
 		d["full"] = {"stranded_t": stranded_t.duplicate(), "hazard_t": _hazard_t.duplicate(), "cleared": _cleared.duplicate(),
+			"stuck_t": _stuck_t.duplicate(), "stuck_s": _stuck_s.duplicate(),
 			"vsc_warned": vsc_warned.duplicate(), "vsc_penalised": vsc_penalised.duplicate(),
 			"unlap_from": unlap_from.duplicate(), "prev_order": _prev_order.duplicate(),
 			"sc_behind": _sc_behind.duplicate(), "big_until": _big_incident_until,
@@ -1314,6 +1527,8 @@ func apply_dict(d: Dictionary) -> void:
 	sc_in_pit = d.get("sc_in_pit", false)
 	sc_speed = d.get("sc_speed", 0.0)
 	sc_lights = d.get("sc_lights", "off")
+	sc_d = d.get("sc_d", line_d_at(sc_s))
+	sc_join_d = d.get("sc_join_d", -1.0)
 	yellows = d.get("yellows", []).duplicate(true)
 	_restart_lap = d.get("restart_lap", 0)
 	give_back = d.get("give_back", {}).duplicate(true)
@@ -1328,6 +1543,10 @@ func apply_dict(d: Dictionary) -> void:
 		if f.has("hazard_t") and f["hazard_t"].size() == stranded_t.size():
 			_hazard_t = f["hazard_t"].duplicate()
 		_cleared = f["cleared"].duplicate()
+		if f.has("stuck_t") and f["stuck_t"].size() == stranded_t.size():
+			_stuck_t = f["stuck_t"].duplicate()
+		if f.has("stuck_s") and f["stuck_s"].size() == stranded_t.size():
+			_stuck_s = f["stuck_s"].duplicate()
 		vsc_warned = f["vsc_warned"].duplicate()
 		vsc_penalised = f["vsc_penalised"].duplicate()
 		unlap_from = f["unlap_from"].duplicate()
