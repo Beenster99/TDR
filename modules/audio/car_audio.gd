@@ -65,7 +65,10 @@ func setup(p_def: CarDefinition, p_state: CarState, p_local: bool) -> void:
 	_rpm = def.idle_rpm
 	_gear = state.gear if state else 1
 	_prev_pos = state.pos if state else Vector2.ZERO
-	var all: Array = SoundBank.engine_bands(profile["family"])
+	var all: Array = SoundBank.engine_bands(profile["voice"])
+	if all.is_empty() and profile["voice"] != profile["family"]:
+		profile["voice"] = profile["family"]
+		all = SoundBank.engine_bands(profile["family"])
 	# Only the bands this engine can reach (plus one above for the limiter).
 	for b in all:
 		_bands.append(b)
@@ -151,6 +154,10 @@ static func engine_profile(d: CarDefinition) -> Dictionary:
 	turbo = bool(given.get("turbo", turbo or family.ends_with("_turbo")))
 	var p := {
 		"family": family,
+		# Which loops to play: recordings in samples/engines/<voice>/ when
+		# there are any (the car's own "samples" set, else its family's),
+		# otherwise the family's baked loops.
+		"voice": String(given.get("samples", family)),
 		"turbo": turbo,
 		"supercharged": bool(given.get("supercharged", sc)),
 		"hybrid": bool(given.get("hybrid", hybrid)),
@@ -329,7 +336,7 @@ func _assign_bands(load: String, lo: int, hi: int) -> void:
 			break
 		var p: AudioStreamPlayer2D = free.pop_front()
 		_eng_band[p] = b
-		p.stream = SoundBank.engine_loop(profile["family"], load == "on", int(_bands[b][0]))
+		p.stream = SoundBank.engine_loop(profile["voice"], load == "on", int(_bands[b][0]))
 		p.volume_db = -80.0
 		if p.is_inside_tree():
 			p.play(_rng.randf() * 0.3)

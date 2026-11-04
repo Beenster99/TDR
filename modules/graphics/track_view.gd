@@ -17,6 +17,9 @@ const K_KERB := 0.75
 const K_TARMAC := 0.5
 const K_GRAVEL := 0.25
 const K_PIT := 0.0
+## How far the grass verge beside the lap reaches past the kerb (m): it meets
+## the terrain, which is sunk a little lower out there.
+const VERGE_W := 6.0
 
 var track: TrackData
 var env: SimEnvironment
@@ -574,8 +577,23 @@ func _build_road() -> void:
 			return [sd * e, sd * (e + w)] if sd > 0 else [sd * (e + w), sd * e],
 			func(_i): return K_KERB, 0.06, 2)
 		_mesh_node(ks, road_material, "Kerbs")
-		# run-off beyond the kerb: gravel on the outside of fast corners,
-		# a strip of old tarmac elsewhere
+		# grass right up to the kerb (or the road's edge where there's no
+		# kerb): drawn with the terrain's own grass, at the height a car on it
+		# is drawn, so the lap has no odd strip beside it that looks like
+		# tarmac but drives like grass
+		if not derby:
+			var vs := SurfaceTool.new()
+			vs.begin(Mesh.PRIMITIVE_TRIANGLES)
+			_ribbon(vs, func(i):
+				var e := (track.width_right[i] if sd > 0 else track.width_left[i]) + _kerb_w(i, sd)
+				# (not under a gravel trap or paved run-off: two meshes that
+				# close together would flicker through each other on a hill)
+				var w := _fit_runoff(i, sd, VERGE_W) if _runoff_width(i, sd) < 0.1 else 0.0
+				return [sd * e, sd * (e + w)] if sd > 0 else [sd * (e + w), sd * e],
+				func(_i): return 0.0, 0.01, 2)
+			_mesh_node(vs, terrain_material, "Verge")
+		# run-off beyond the kerb where the track has one: gravel traps and
+		# paved run-off (none on grass, which the verge above draws)
 		var rs := SurfaceTool.new()
 		rs.begin(Mesh.PRIMITIVE_TRIANGLES)
 		_ribbon(rs, func(i):
@@ -620,11 +638,18 @@ func _runoff_width(i: int, side: float) -> float:
 	if track.discipline == "derby":
 		return track.runoff + 0.3   # tuck under the wall
 	var ro := track.runoff_right if side > 0 else track.runoff_left
-	var w := minf(4.0, track.runoff * 0.3)
-	if ro.size() == track.point_count() and ro[i] != TrackData.Surface.GRASS:
-		w = track.runoff - track.kerb_width - 0.5   # gravel trap or paved run-off, as wide as it drives
+	var w := 0.0   # grass: the verge
+	if ro.size() == track.point_count():
+		if ro[i] != TrackData.Surface.GRASS:
+			w = track.runoff - track.kerb_width - 0.5   # gravel trap or paved run-off, as wide as it drives
 	elif _is_gravel(i, side):
 		w = track.runoff * 0.6
+	return _fit_runoff(i, side, w)
+
+
+## Run-off width w at point i on side `side`, cut back so it never folds over
+## on the inside of a tight corner or lies across the pit lane.
+func _fit_runoff(i: int, side: float, w: float) -> float:
 	# On the inside of a tight corner the run-off can't reach past the
 	# corner's centre, or the strip folds over itself in a big fan.
 	var n := track.point_count()
@@ -643,6 +668,13 @@ func _runoff_width(i: int, side: float) -> float:
 		var q := track.points[i] + track.vertex_normal(i) * side * e
 		if _pit_rect.has_point(q):
 			var room: float = track.project_pit(q)["dist"] - track.pit_width * 0.5 - PIT_SHOULDER
+			w = clampf(room, 0.0, w)
+	# Likewise beside a rallycross joker lane and its verge.
+	if track.has_joker():
+		var e := (track.width_right[i] if side > 0 else track.width_left[i]) + track.kerb_width
+		var q := track.points[i] + track.vertex_normal(i) * side * e
+		if _joker_rect.has_point(q):
+			var room: float = track.project_joker(q)["dist"] - track.joker_width * 0.5 - 1.2
 			w = clampf(room, 0.0, w)
 	return w
 
