@@ -1,8 +1,9 @@
 class_name PitCrews
 extends Node3D
 ## The people of the pit lane. Every team in the race has a crew at its
-## garage in team colours: they hang about in front of the garage, step out
-## to their marks when their car is called in, and do the stop for real, the
+## garage in team colours. Between stops they are out of sight inside the
+## garage; when their car is called in they come out to their marks, do
+## the stop for real, then walk back in and are gone again. The stop is the
 ## Le Mans way, following the stop's crew timeline (PitRules.crew_timeline,
 ## in work["crew"]): the car controller waves the car onto its marks with
 ## the lollipop, the refueller carries the hose over from the rig and plugs
@@ -14,8 +15,7 @@ extends Node3D
 ## new one laid out beside the car and offers it up, the gun man does it up.
 ## The cockpit helper opens the door for a driver change, mechanics work on
 ## the nose and tail for repairs, the lance comes out, the car drops and the
-## lollipop turns green to send it away. Between stops mechanics wander
-## between the garage and the apron, and a strategist sits on the pit wall.
+## lollipop turns green to send it away. A strategist sits on the pit wall.
 ## Tyre stacks (dry, intermediate, wet) under blankets, a trolley with the
 ## spare wheel guns and a fuel rig stand at each garage.
 ##
@@ -50,7 +50,7 @@ const FUEL := 6          ## the refueller
 const EXTINGUISHER := 7  ## fire extinguisher attendant, beside the refueller
 const VALVE := 8         ## cut-off valve attendant, at the rig
 const COCKPIT := 9       ## cockpit helper (driver changes)
-const WANDER_A := 10     ## mechanics: repairs, or wandering between stops
+const WANDER_A := 10     ## mechanics: repairs
 const WANDER_B := 11
 const SCREEN := 12       ## cleans the windscreen while the fuel goes in
 const CREW_SIZE := 13
@@ -101,6 +101,7 @@ class Person:
 	var marker: Node3D           ## a player's crew member: a hoop on the ground
 	var marker_mat: StandardMaterial3D
 	var marker_ring: Node3D
+	var shown := true            ## drawn (false: inside the garage, out of sight)
 
 
 class Crew:
@@ -130,6 +131,9 @@ class Crew:
 	var driven := {}
 	## Where players have put things (set_props), overriding the timeline.
 	var props := {}
+	## Everyone is inside the garage and nothing is happening: no need to plan
+	## or move them each frame.
+	var settled := false
 
 
 func setup(p_tv: TrackView) -> void:
@@ -270,6 +274,8 @@ func set_stop(car: int, state: int, elapsed: float, work: Dictionary) -> void:
 		return
 	if state == Stop.NONE and c.state != Stop.NONE:
 		c.props = {}
+	if state != Stop.NONE:
+		c.settled = false
 	c.state = state
 	c.elapsed = elapsed
 	if state == Stop.SERVICE or state == Stop.COMING:
@@ -330,6 +336,7 @@ func drive_member(car: int, job: String, pos, face := 0.0, pose := Pose.STAND, c
 		c.driven.erase(k)
 	else:
 		c.driven[k] = [pos, face, pose, carry, ring]
+		c.settled = false
 
 
 ## Where players have put things in car's box, overriding where the crew
@@ -483,10 +490,40 @@ func _process(delta: float) -> void:
 		var c: Crew = crews[k]
 		if c.box_pos.distance_to(_cam_centre) > _cam_reach and c.state == Stop.NONE:
 			continue
+		if c.settled:
+			# all in the garage: only the strategist on the pit wall moves
+			for k2 in range(CREW_SIZE, c.people.size()):
+				_move(c.people[k2], delta)
+			continue
 		_plan(c)
-		for p in c.people:
-			_move(p, delta)
+		var inside := 0
+		for i in c.people.size():
+			var p: Person = c.people[i]
+			if p.shown:
+				_move(p, delta)
+			if i < CREW_SIZE:
+				_show_person(c, p, i)
+				if not p.shown:
+					inside += 1
 		_props(c)
+		if inside == CREW_SIZE and c.state == Stop.NONE and c.driven.is_empty():
+			c.settled = true
+
+
+## Crew are out of sight inside the garage between stops: a crew member
+## who has walked back in (and isn't a player's) is hidden, and comes out
+## again when their car is called in.
+func _show_person(c: Crew, p: Person, i: int) -> void:
+	var home: Vector2 = c.home[i][0]
+	var idle := c.state == Stop.NONE and not c.driven.has(i)
+	var show := not idle or p.pos.distance_to(home) > 0.1
+	if show == p.shown:
+		return
+	p.shown = show
+	p.root.visible = show
+	if not show:
+		p.pos = home
+		p.target = home
 
 
 ## Where everyone in a crew should be and what they're doing.
@@ -512,11 +549,8 @@ func _plan(c: Crew) -> void:
 		p.carry = _default_carry(i)
 		if not active:
 			p.speed = WALK_SPEED if c.state == Stop.NONE else RUN_SPEED * 0.6
-			if i >= WANDER_A and i <= WANDER_B or (c.filler and i % 3 == 1):
-				_wander(c, p, home)
-			else:
-				p.target = home[0]
-				p.target_face = home[1]
+			p.target = home[0]
+			p.target_face = home[1]
 			p.pose = Pose.STAND
 			if i == LOLLIPOP and c.state == Stop.LEAVING:
 				p.pose = Pose.SIGNAL
@@ -665,19 +699,6 @@ func _station(c: Crew, i: int, tl: Dictionary) -> Array:
 ## metres towards the garage.
 func _at(c: Crew, along: float, across: float) -> Vector2:
 	return c.pos + c.dir * along + c.out * across
-
-
-func _wander(c: Crew, p: Person, home: Array) -> void:
-	if _t < p.next_wander and p.target != Vector2.ZERO:
-		return
-	p.next_wander = _t + _rng.randf_range(3.0, 9.0)
-	if _rng.randf() < 0.4:
-		p.target = home[0]
-	else:
-		var gw := track.pit_width * 0.5 + 2.4
-		var across := _rng.randf_range(gw - 3.4, gw) - track.pit_width * 0.25
-		p.target = _at(c, _rng.randf_range(-3.5, 3.5), across)
-	p.target_face = c.out.angle() + PI + _rng.randf_range(-1.2, 1.2)
 
 
 ## Joint angles for a pose (radians; + swings a limb forward / bends a joint):
@@ -1116,9 +1137,10 @@ func _build_crew(c: Crew) -> void:
 		EXTINGUISHER: [Carry.EXTINGUISHER]}
 	for i in CREW_SIZE:
 		var p := _person(c, suit, helmet, holds.get(i, []) if not c.filler else [])
-		# home: two loose rows in front of the garage
+		# home: inside the garage, just behind the front (out of sight
+		# between stops: they come out through the door when called)
 		var along := -3.6 + (i % 7) * 1.25 + _rng.randf_range(-0.2, 0.2)
-		var across := gw - 0.8 - (i / 7) * 1.1 + _rng.randf_range(-0.15, 0.15)
+		var across := gw + 1.2 + (i / 7) * 1.1 + _rng.randf_range(-0.15, 0.15)
 		var spot := _at(c, along, across)
 		var face := (-c.out).angle() + _rng.randf_range(-0.5, 0.5)
 		c.home.append([spot, face])
@@ -1207,6 +1229,21 @@ func _build_crew(c: Crew) -> void:
 		if p.carry in [Carry.GUN, Carry.CLOTH]:
 			p.carry = Carry.NONE
 		_move(p, 0.5)
+	for i in CREW_SIZE:
+		_show_person(c, c.people[i], i)
+	c.settled = true
+
+
+## Number of a box's crew who are out of the garage, in sight (for tests).
+func crew_in_sight(box: int) -> int:
+	var c: Crew = crews.get(box)
+	if c == null:
+		return 0
+	var n := 0
+	for i in mini(CREW_SIZE, c.people.size()):
+		if (c.people[i] as Person).shown:
+			n += 1
+	return n
 
 
 ## Number of people in the pit lane (for tests).
