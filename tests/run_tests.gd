@@ -2785,7 +2785,13 @@ func _check_pace_table(sim2: RaceSim, tel2: RaceTelemetry, tel: RaceTelemetry) -
 	var me := order[order.size() / 2]
 	var riv := tel2.rival_of(sim2, me)
 	var p := order.find(me)
-	check(riv == order[p - 1] or riv == order[p + 1], "the rival is the car just ahead or just behind (P%d: car %d)" % [p + 1, riv])
+	var pr := order.find(riv)
+	var near := riv >= 0 and sim2.defs[riv].class_tag == sim2.defs[me].class_tag and tel2.laps_behind(sim2, me, riv) == 0
+	for k in range(mini(p, pr) + 1, maxi(p, pr)):
+		var j := order[k]
+		if sim2.defs[j].class_tag == sim2.defs[me].class_tag and tel2.laps_behind(sim2, me, j) == 0:
+			near = false    # a closer car of our class on our lap was skipped
+	check(near, "the rival is the next car of our class on our lap, ahead or behind (P%d: car %d at P%d)" % [p + 1, riv, pr + 1])
 	# Backmarkers: a car a lap down on us, just up the road.
 	var last := order[order.size() - 1]
 	var keep := sim2.entries[last].distance
