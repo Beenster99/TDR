@@ -38,6 +38,7 @@ func _init() -> void:
 	test_elevation()
 	test_barriers()
 	test_pit_rules()
+	test_pit_lookups_match()
 	test_pit_setup_changes()
 	test_pit_crew_game()
 	test_pit_self_drive()
@@ -3956,6 +3957,102 @@ func test_land_cover() -> void:
 ## The pit wall stands between the track and the pit lane (never on the track,
 ## which it used to cross on many circuits, or in the lane), all along the
 ## garages, and cars can't drive through it from either side.
+## The bucketed pit lane and pit wall look-ups (a car only tests the few
+## segments near it) give the same answers as testing every segment, at
+## points all round each circuit's pits, and the cheap race-start checks
+## never skip a car that touches the wall.
+func test_pit_lookups_match() -> void:
+	print("pit look-ups match the full search")
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 11
+	var d := _data()
+	for info in TrackCatalog.list_all():
+		var t := TrackCatalog.load_track(info["id"])
+		if not t.has_pit_lane():
+			continue
+		var lane_bad := 0
+		var wall_bad := 0
+		var car_bad := 0
+		var n := 0
+		var box := Rect2(t.pit_path[0], Vector2.ZERO)
+		for p in t.pit_path:
+			box = box.expand(p)
+		box = box.grow(25.0)
+		var car: CarDefinition = d["cars"]["bmw_m4_gt3"]
+		for k in 3000:
+			var p := Vector2(rng.randf_range(box.position.x, box.end.x), rng.randf_range(box.position.y, box.end.y))
+			if k % 2 == 0:
+				# Half the points near the lane and the wall, where it matters.
+				var src: PackedVector2Array = t.pit_wall if t.has_pit_wall() and k % 4 == 0 else t.pit_path
+				p = src[rng.randi() % src.size()] + Vector2(rng.randf_range(-6, 6), rng.randf_range(-6, 6))
+			n += 1
+			var full_lane: bool = t.has_pit_lane() and t.project_pit(p)["dist"] <= t.pit_width * 0.5
+			if t.in_pit_lane(p) != full_lane:
+				lane_bad += 1
+			var r := rng.randf_range(0.0, 0.5)
+			var want := _pit_wall_contact_full(t, p, r, p)
+			var got := t.pit_wall_contact(p, r, p)
+			if got.is_empty() != want.is_empty() or (not got.is_empty() and absf(float(got["depth"]) - float(want["depth"])) > 1e-6):
+				wall_bad += 1
+			var hd := rng.randf_range(-PI, PI)
+			var hit := RaceSim.pit_wall_contact(p, hd, car, t)
+			# Every probe of the car body, tested against the whole wall.
+			var any := false
+			var rr := minf(RaceSim.BODY_CORNER_R, car.width * 0.5)
+			var f := Vector2(cos(hd), sin(hd))
+			var sd := Vector2(-f.y, f.x)
+			var c := p + f * car.body_offset
+			var hl := maxf(car.length * 0.5 - rr, 0.01)
+			var hw := maxf(car.width * 0.5 - rr, 0.01)
+			var qs := [c + f * hl + sd * hw, c - f * hl + sd * hw, c - f * hl - sd * hw, c + f * hl - sd * hw]
+			for m in 8:
+				var pp: Vector2 = qs[m / 2] if m % 2 == 0 else (qs[m / 2] + qs[(m / 2 + 1) % 4]) * 0.5
+				if not _pit_wall_contact_full(t, pp, rr, p).is_empty():
+					any = true
+			if any == hit.is_empty():
+				car_bad += 1
+		check(lane_bad == 0 and wall_bad == 0 and car_bad == 0,
+			"%s: pit lane (%d), pit wall (%d) and car-on-wall (%d) look-ups match the full search at %d points" % [info["id"], lane_bad, wall_bad, car_bad, n])
+
+
+## TrackData.pit_wall_contact as it was: every wall segment tested.
+func _pit_wall_contact_full(t: TrackData, c: Vector2, r: float, keep_side: Vector2) -> Dictionary:
+	if not t.has_pit_wall():
+		return {}
+	var bounds := Rect2(t.pit_wall[0], Vector2.ZERO)
+	for w in t.pit_wall:
+		bounds = bounds.expand(w)
+	if not bounds.grow(r + TrackData.PIT_WALL_HALF + 0.5).has_point(c):
+		return {}
+	var reach := r + TrackData.PIT_WALL_HALF
+	var best := {}
+	for i in t.pit_wall.size() - 1:
+		var a := t.pit_wall[i]
+		var seg := t.pit_wall[i + 1] - a
+		var l2 := seg.length_squared()
+		if l2 < 1e-6:
+			continue
+		var tt := clampf((c - a).dot(seg) / l2, 0.0, 1.0)
+		var foot := a + seg * tt
+		var v := c - foot
+		var dist := v.length()
+		if dist >= reach + 1.0:
+			continue
+		var depth: float
+		if tt > 0.0 and tt < 1.0:
+			var side_n := Vector2(-seg.y, seg.x) / sqrt(l2)
+			if side_n.dot(keep_side - a) < 0.0:
+				side_n = -side_n
+			depth = reach - side_n.dot(c - foot)
+		else:
+			if dist < 0.0001:
+				continue
+			depth = reach - dist
+		if depth > 0.0 and (best.is_empty() or depth > float(best["depth"])):
+			best = {"depth": depth}
+	return best
+
+
 func test_pit_wall() -> void:
 	print("pit wall")
 	for info in TrackCatalog.list_all():
