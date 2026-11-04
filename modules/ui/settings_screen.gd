@@ -204,18 +204,6 @@ func _note(text: String, colour := Color(1, 1, 1, 0.8)) -> Label:
 	return l
 
 
-## A button that asks once more before doing something you can't undo.
-func _confirm_action(text: String, cb: Callable, help := "") -> Button:
-	var b := _action(text, func(): pass, help)
-	b.pressed.connect(func():
-		if b.text == text:
-			b.text = text + "  ·  sure? press again"
-		else:
-			b.text = text
-			cb.call())
-	return b
-
-
 func _build_garage() -> void:
 	var owned := profile.owned_ids() if profile else []
 	_note("Team budget  %s   ·   %d car%s in your garage" % [UpgradeCatalog.format_money(profile.money if profile else 0),
@@ -239,7 +227,7 @@ func _build_garage() -> void:
 		var err := _copy(profile.path, profile.path.get_basename() + "_backup.json")
 		_help.text = "Backup saved." if err == OK else "Could not save the backup (error %d)." % err,
 		"Copies your garage, money and liveries to a backup file you can restore later.")
-	_confirm_action("Restore my garage from the backup", func():
+	_action("Restore my garage from the backup", func():
 		var backup := profile.path.get_basename() + "_backup.json"
 		if not FileAccess.file_exists(backup):
 			_help.text = "There is no backup yet."
@@ -299,7 +287,7 @@ func _build_controls() -> void:
 				b.pressed.connect(_start_listen.bind(r[0], kind, slot, b))
 				row.add_child(b)
 		_list.add_child(row)
-	_confirm_action("Reset controls to default", func():
+	_action("Reset controls to default", func():
 		GameData.set_pref("controls", {})
 		_show_section("controller", true)
 		_help.text = "Controls reset to default.",
@@ -376,7 +364,7 @@ func _build_debug() -> void:
 	_action("Open the save folder", func(): OS.shell_open(ProjectSettings.globalize_path("user://")),
 		"Settings, garage, seasons, setups and race logs are kept here.")
 	if not in_race:   # it would reset the locked ones too
-		_confirm_action("Reset all settings to default", func():
+		_action("Reset all settings to default", func():
 			GameData.reset_settings()
 			_show_section("debug", true)
 			_help.text = "Settings reset.")
