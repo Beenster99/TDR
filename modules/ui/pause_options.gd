@@ -33,24 +33,3 @@ static func label_for(id: String, online: bool, host: bool) -> String:
 			return "Leave race, quit to menu" if online else "Quit to menu"
 		"desktop": return "Quit to desktop"
 	return id
-
-
-## The "Are you sure?" popup for the buttons that can't be undone:
-## [question, what happens, yes label]. Empty for the other buttons.
-static func confirm_text(id: String, online: bool, host: bool) -> Array:
-	match id:
-		"restart":
-			return ["Restart the race?", "Everyone starts again from the grid. This race's results are lost." if online
-				else "You start again from the grid. This race's progress is lost.", "Yes, restart"]
-		"lobby":
-			return ["End the race for everyone?", "The race stops and everyone goes back to the lobby.", "Yes, end the race"]
-		"menu":
-			if online and host:
-				return ["Quit to the menu?", "This closes the online race for everyone.", "Yes, quit to menu"]
-			if online:
-				return ["Leave the race?", "You leave the online race and go back to the main menu.", "Yes, leave"]
-			return ["Quit to the menu?", "This race's progress is lost.", "Yes, quit to menu"]
-		"desktop":
-			return ["Quit to the desktop?", "The game closes and this race is lost." + (" The online race closes for everyone." if online and host else ""),
-				"Yes, quit the game"]
-	return []
