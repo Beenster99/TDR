@@ -763,6 +763,8 @@ var _hl: MeshInstance3D
 var _hl_mat: ShaderMaterial
 var _hl_zoom := -1.0
 var _hl_strength := 0.6
+var _hl_line_px := 2.0   ## outline width in pixels (at 1080p) close up
+var _hl_k := 1.0         ## last zoom factor asked for (set_highlight_zoom)
 ## Settings > Gameplay "highlight_fade": seconds the outline stays before it
 ## fades away (0 = always on). wake_highlight() brings it back.
 var highlight_fade_s := 0.0
@@ -771,11 +773,12 @@ const HIGHLIGHT_FADE_TIME := 2.0   ## seconds the fade itself takes
 var _let_past: Label3D   ## "LET PAST" tag over the car (GIVE_BACK)
 
 
-## A soft glowing outline on the ground round the car: warm gold for your own
-## car (gently breathing), a quieter cyan for other people online. AI cars get
-## none. The car you must give a place back to gets a strong pulsing
-## orange-red outline and a "LET PAST" tag that stays the same size on screen
-## at every zoom. Stays readable when zoomed out (set_highlight_zoom).
+## A subtle, thin outline traced round the car (car_highlight.gdshader): gold
+## for your own car, a quieter cyan for other people online. AI cars get none.
+## The car you must give a place back to gets a bolder pulsing orange-red
+## outline and a "LET PAST" tag that stays the same size on screen at every
+## zoom. The line is the same few pixels wide at every zoom and is drawn
+## pulled towards the camera, so the ground never cuts through it.
 func set_highlight(kind: int) -> void:
 	highlight = kind
 	_show_let_past(kind == Highlight.GIVE_BACK)
@@ -795,18 +798,22 @@ func set_highlight(kind: int) -> void:
 		_hl.layers = HIGHLIGHT_LAYER
 		_hl.position = Vector3(def.body_offset, 0.05, 0)
 		add_child(_hl)
-		set_highlight_zoom(1.0)
+		set_highlight_zoom(_hl_k)
 	_hl.visible = true
 	var mine := kind == Highlight.SELF
 	var give := kind == Highlight.GIVE_BACK
 	_hl_mat.set_shader_parameter("tint", HIGHLIGHT_GIVE_BACK if give else (HIGHLIGHT_SELF if mine else HIGHLIGHT_PLAYER))
-	_hl_strength = 1.0 if give else (0.6 if mine else 0.38)
-	_hl_mat.set_shader_parameter("pulse", 1.0 if mine or give else 0.0)
-	_hl_mat.set_shader_parameter("pulse_rate", 7.0 if give else 3.0)
-	if kind == Highlight.SAFETY:   # the safety car: a strong, fast-flashing amber ring
+	_hl_strength = 1.0 if give else (0.9 if mine else 0.7)
+	_hl_mat.set_shader_parameter("pulse", 1.0 if give else 0.0)
+	_hl_mat.set_shader_parameter("pulse_rate", 7.0)
+	_hl_line_px = 3.0 if give else 2.0
+	if kind == Highlight.SAFETY:   # the safety car: a bolder, fast-flashing amber outline
 		_hl_mat.set_shader_parameter("tint", BEACON_AMBER)
-		_hl_strength = 0.95
+		_hl_strength = 1.0
 		_hl_mat.set_shader_parameter("pulse", 2.0)
+		_hl_line_px = 3.0
+	_hl_zoom = -1.0   # re-apply the zoom so the new line width takes
+	set_highlight_zoom(_hl_k)
 	_apply_highlight_fade()
 
 
@@ -867,9 +874,11 @@ func _show_let_past(show: bool) -> void:
 	_let_past.visible = show
 
 
-## Zoomed out (camera far away), the outline gets thicker so a player's car
-## can still be picked out of the field. k = 1 close up, grows with distance.
+## Zoomed out (camera far away), the outline stands a little further off the
+## car so a player's car can still be picked out of the field (the line keeps
+## the same width on screen). k = 1 close up, grows with distance.
 func set_highlight_zoom(k: float) -> void:
+	_hl_k = k
 	if _hl == null:
 		return
 	k = clampf(k, 1.0, 40.0 if highlight == Highlight.SAFETY else 12.0)
@@ -877,12 +886,18 @@ func set_highlight_zoom(k: float) -> void:
 		return
 	_hl_zoom = k
 	var half := Vector2(def.length * 0.5, def.width * 0.5)
-	var margin := 0.9 * k + 0.4
+	var gap := 0.1 * k
+	# Room for the gap, a line a few pixels wide and its dark edge at any zoom.
+	var margin := gap + 0.5 * k + 0.4
 	var quad := half + Vector2(margin, margin)
 	(_hl.mesh as PlaneMesh).size = quad * 2.0
 	_hl_mat.set_shader_parameter("half_size", half)
 	_hl_mat.set_shader_parameter("quad_half", quad)
-	_hl_mat.set_shader_parameter("width", 0.35 * k)
+	_hl_mat.set_shader_parameter("gap", gap)
+	# A touch bolder once the cars are small on screen, so yours still stands out.
+	_hl_mat.set_shader_parameter("line_px", _hl_line_px * (1.0 + 0.5 * clampf((k - 3.0) / 6.0, 0.0, 1.0)))
+	# Pulled towards the camera, clear of kerbs, cambers and bumps.
+	_hl_mat.set_shader_parameter("lift", 0.8 + 0.4 * k)
 
 
 ## Soft dark patch on the ground under the car, so it sits on the road even
