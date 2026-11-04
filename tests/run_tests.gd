@@ -47,6 +47,7 @@ func _init() -> void:
 	test_snapshot_restore(replay)
 	test_telemetry(replay)
 	test_results_and_spectator(replay)
+	test_podium()
 	test_weather_forecast()
 	test_race_control_rules()
 	test_give_back_highlight()
@@ -3522,6 +3523,53 @@ func test_settings_and_units() -> void:
 
 ## The in-race pause menu (Esc / Start): what it offers offline, to the
 ## online host and to a guest, and the settings it lets the player change.
+## The podium ceremony's champagne (graphics PodiumView): bottles stay corked
+## until the champagne comes out, shaking builds pressure, the first spray
+## pops the cork, the stream lands where it was aimed and soaks people, the
+## bottle runs dry, and the AI drivers pop and spray theirs on their own.
+func test_podium() -> void:
+	var v := PodiumView.new()
+	root.add_child(v)
+	v.setup([{"name": "A", "colour": Color.RED}, {"name": "B", "colour": Color.BLUE}, {"name": "C", "colour": Color.GREEN}], 1, "Test", 3)
+	check(v.drivers.size() == 3 and v.figures.size() > 40, "podium: three drivers and a crowd")
+	var b := v.player_bottle()
+	check(b != null and not b.ai and v.bottles[0].ai and v.bottles[2].ai, "podium: the player has P2's bottle, the others are AI")
+	v.set_phase(PodiumView.Phase.TROPHY)
+	v.set_spray(true)
+	v._process(0.1)
+	check(b.corked and not b.spraying, "podium: no champagne while the trophies are up")
+	v.set_phase(PodiumView.Phase.CHAMPAGNE)
+	var p0 := b.pressure
+	for k in 5:
+		v.shake(0.15)
+	check(b.pressure > p0 + 0.5, "podium: shaking builds pressure (%.2f -> %.2f)" % [p0, b.pressure])
+	# Aim at someone in the middle of the front row of the crowd and spray.
+	var target: PodiumView.Figure = null
+	for f in v.figures:
+		if f.kind == "crowd" and (target == null or absf(f.base.x) + absf(f.base.z - 3.4) < absf(target.base.x) + absf(target.base.z - 3.4)):
+			target = f
+	var popped := [0]
+	v.cork_popped.connect(func(_s): popped[0] += 1)
+	v.set_spray(true)
+	check(not b.corked and popped[0] == 1, "podium: the first spray pops the cork")
+	var t := 0.0
+	while t < 20.0 and b.fill > 0.0:
+		v.aim_at(target.base + Vector3(0, 1.4, 0))
+		v.set_spray(true)
+		if fmod(t, 1.0) < 0.017:
+			v.shake(0.2)
+		v._process(1.0 / 60.0)
+		t += 1.0 / 60.0
+	check(target.wet > 0.0, "podium: the stream lands on the person it's aimed at (wet %.2f)" % target.wet)
+	check(v.player_soaked >= 1 and v.player_hits > 20, "podium: the player soaks people (%d soaked, %d hits)" % [v.player_soaked, v.player_hits])
+	check(b.fill <= 0.0 and t > 5.0 and t < 20.0, "podium: the bottle runs dry after a while (%.1f s)" % t)
+	check(not v.bottles[0].corked and not v.bottles[2].corked, "podium: the AI drivers pop their corks")
+	for k in 60 * 40:
+		v._process(1.0 / 60.0)
+	check(v.all_empty(), "podium: every bottle ends up empty")
+	v.queue_free()
+
+
 ## TDR_ONLY=test_end_of_race: a race, then the results and spectator checks.
 func test_end_of_race() -> void:
 	test_results_and_spectator(test_ai_race_completes())
