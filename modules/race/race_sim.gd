@@ -497,8 +497,22 @@ const BODY_CORNER_R := 0.35
 
 func _resolve_collisions() -> void:
 	var n := cars.size()
+	# Cheap first look: two cars further apart than their reaches (half the
+	# length plus the body offset each, as in _collide_pair) can't touch.
+	var pos := PackedVector2Array()
+	var reach := PackedFloat64Array()
+	pos.resize(n)
+	reach.resize(n)
 	for i in n:
+		pos[i] = cars[i].pos
+		reach[i] = defs[i].length * 0.5 + absf(defs[i].body_offset)
+	for i in n:
+		var pi := pos[i]
+		var ri := reach[i]
 		for j in range(i + 1, n):
+			var r := ri + reach[j]
+			if pi.distance_squared_to(pos[j]) > r * r:
+				continue
 			_collide_pair(i, j)
 
 
@@ -627,6 +641,11 @@ func _resolve_pit_wall() -> void:
 ## used for car contact, tested at its corners and the middle of each side.
 static func pit_wall_contact(pos: Vector2, heading: float, d: CarDefinition, track: TrackData) -> Dictionary:
 	var r := minf(BODY_CORNER_R, d.width * 0.5)
+	# Every probe point is within half the car's diagonal (plus the body
+	# offset) of its centre: a car that far from the wall can't touch it.
+	var reach := Vector2(d.length, d.width).length() * 0.5 + absf(d.body_offset) + r + TrackData.PIT_WALL_HALF + 1.0
+	if not track.pit_wall_near(pos, reach):
+		return {}
 	var q := _core_box(pos, heading, d, r)
 	var best := {}
 	for k in 8:
