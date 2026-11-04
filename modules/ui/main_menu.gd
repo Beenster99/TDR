@@ -832,26 +832,13 @@ func _page(parent: Node, id: String) -> VBoxContainer:
 	return v
 
 
-## Main menu Quit asks once more: the first press says "Sure? Press again",
-## a second press within QUIT_CONFIRM_TIME closes the game.
-const QUIT_CONFIRM_TIME := 3.0
 var _quit_button: Button
-var _quit_armed_until := -1.0
 
 
+## Main menu Quit closes the game straight away (no "are you sure?").
 func _on_quit_pressed() -> void:
-	var now := Time.get_ticks_msec() / 1000.0
-	if now <= _quit_armed_until:
-		GameData.save_prefs()
-		get_tree().quit()
-		return
-	_quit_armed_until = now + QUIT_CONFIRM_TIME
-	_quit_button.text = "Quit  ·  sure? press again"
-	var armed_at := _quit_armed_until
-	get_tree().create_timer(QUIT_CONFIRM_TIME).timeout.connect(func():
-		if is_instance_valid(_quit_button) and _quit_armed_until == armed_at:
-			_quit_armed_until = -1.0
-			_quit_button.text = "Quit")
+	GameData.save_prefs()
+	get_tree().quit()
 
 
 func _button(parent: Node, text: String, cb: Callable) -> Button:

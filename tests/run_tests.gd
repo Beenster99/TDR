@@ -50,6 +50,7 @@ func _init() -> void:
 	test_weather_forecast()
 	test_race_control_rules()
 	test_give_back_highlight()
+	test_give_back_clear_gains()
 	test_yellow_flags_for_incidents()
 	test_safety_car_race()
 	test_car_recovery()
@@ -2515,6 +2516,89 @@ func test_give_back_highlight() -> void:
 	check(rc.give_back_target(2) == RaceControl.GIVE_BACK_SC, "passing the safety car: the safety car is highlighted")
 
 
+## Give-backs only for clear gains: not for side by side, not for passing a
+## car in trouble, not for a move started under green, and the order is
+## dropped if the victim loses the place by itself.
+func test_give_back_clear_gains() -> void:
+	print("give-back only for clear gains")
+	var d := _data()
+	var settings := RaceSettings.new()
+	settings.ai_count = 4
+	settings.laps = 1
+	var sim: RaceSim = _race(settings, d)["sim"]
+	var rc := sim.race_control
+	sim.phase = RaceSim.Phase.RACING
+	for i in 4:
+		sim.cars[i].vel = Vector2.from_angle(sim.cars[i].heading) * 40.0
+		sim.cars[i].surface = TrackData.Surface.TRACK
+	var base := sim.entries[0].distance
+	var setup := func(gap_before: float) -> void:
+		rc.give_back.clear()
+		rc._trouble_until.fill(-1.0)
+		rc.yellows = [{"from": 0.0, "to": sim.track.length - 1.0, "until": sim.race_time + 60.0, "car": 3}]
+		for k in 4:
+			sim.entries[k].distance = base - 30.0 * k
+		sim.entries[1].distance = base - gap_before
+		sim._update_positions()
+		rc._prev_order = [0, 1, 2, 3]
+		# The picture "a moment before": under the yellow already.
+		rc._ago_t = sim.race_time
+		for k in 4:
+			rc._ago_dist[k] = sim.entries[k].distance
+			rc._ago_free[k] = 0
+	setup.call(20.0)
+	sim.entries[1].distance = base + 4.0
+	sim._update_positions()
+	rc._check_overtakes()
+	check(not rc.give_back.has(1), "a nose ahead under yellow (side by side) is not an overtake yet")
+	sim.entries[1].distance = base + RaceControl.PASS_MARGIN_M + 2.0
+	sim._update_positions()
+	rc._check_overtakes()
+	check(rc.give_back.has(1), "clearly past under yellow: give the place back")
+	# The victim goes off by itself: no further action.
+	sim.cars[0].surface = TrackData.Surface.GRAVEL
+	rc._check_overtakes()
+	check(not rc.give_back.has(1) and sim.entries[1].penalty_s == 0.0, "the victim went off: the order is dropped, no penalty")
+	sim.cars[0].surface = TrackData.Surface.TRACK
+	# Passing a car that was off a moment ago is fine.
+	setup.call(20.0)
+	rc._trouble_until[0] = sim.race_time + 3.0
+	sim.entries[1].distance = base + 10.0
+	sim._update_positions()
+	rc._check_overtakes()
+	check(not rc.give_back.has(1), "passing a car that has just been off or spun is allowed")
+	# Passing a car going much slower is fine.
+	setup.call(20.0)
+	sim.cars[0].vel = Vector2.from_angle(sim.cars[0].heading) * 40.0 * (RaceControl.SLOW_CAR_FRAC - 0.05)
+	sim.entries[1].distance = base + 10.0
+	sim._update_positions()
+	rc._check_overtakes()
+	check(not rc.give_back.has(1), "passing a car going much slower (in trouble) is allowed")
+	sim.cars[0].vel = Vector2.from_angle(sim.cars[0].heading) * 40.0
+	# Already alongside under green when the yellow came out: the move stands.
+	setup.call(5.0)
+	for k in 4:
+		rc._ago_free[k] = 1
+	sim.entries[1].distance = base + 10.0
+	sim._update_positions()
+	rc._check_overtakes()
+	check(not rc.give_back.has(1), "a move started alongside under green stands when the yellow comes out")
+	# But from well back, under green a moment ago, it is still an overtake.
+	setup.call(20.0)
+	for k in 4:
+		rc._ago_free[k] = 1
+	sim.entries[1].distance = base + 10.0
+	sim._update_positions()
+	rc._check_overtakes()
+	check(rc.give_back.has(1), "from 20 m back it's a real overtake under yellow")
+	# The bookkeeping survives a full snapshot.
+	rc._trouble_until[2] = 123.0
+	var copy: RaceSim = _race(settings, d)["sim"]
+	copy.race_control.apply_dict(rc.to_dict(true))
+	check(copy.race_control._trouble_until[2] == 123.0 and copy.race_control._ago_t == rc._ago_t,
+		"trouble and look-back state is in the full snapshot")
+
+
 ## Rules without driving: penalties, classification, overtaking rules, sync.
 func test_race_control_rules() -> void:
 	print("race control rules")
@@ -3528,12 +3612,7 @@ func test_pause_menu() -> void:
 	check(PauseOptions.button_ids(true, true).has("lobby"), "online host can also end the race for everyone")
 	check(not PauseOptions.button_ids(true, false).has("lobby"), "a guest can't end the race")
 	check(PauseOptions.label_for("restart", true, true).contains("everyone"), "the host's restart says it restarts for everyone")
-	for id in ["restart", "lobby", "menu", "desktop"]:
-		check(PauseOptions.confirm_text(id, true, true).size() == 3 and PauseOptions.confirm_text(id, false, false).size() == 3,
-			"%s asks \"are you sure?\" (Yes / No popup)" % id)
-	check(PauseOptions.confirm_text("resume", false, false).is_empty() and PauseOptions.confirm_text("settings", false, false).is_empty(),
-		"resume and settings don't ask")
-	check(PauseOptions.confirm_text("menu", true, true)[1].contains("everyone"), "the host is told quitting closes the race for everyone")
+	check(not (PauseOptions as Script).get_script_method_list().any(func(m): return m.name == "confirm_text"), "no \"are you sure?\" popups in the pause menu")
 	var gd = load("res://modules/core/game_data.gd").new()
 	gd.persist_prefs = false
 	gd._register_defaults()
@@ -3792,9 +3871,16 @@ func test_graphics_effects() -> void:
 			"down": [8.8, 9.6], "release": 10.5, "fumble": -1,
 			"guns": [[{"wheel": 0, "off": 0.8, "on": 3.8}, {"wheel": 2, "off": 3.8, "on": 6.8}],
 				[{"wheel": 1, "off": 0.8, "on": 3.8}, {"wheel": 3, "off": 3.8, "on": 6.8}]]}}
+	crews._process(1.0 / 30.0)
+	var idle_seen := 0
+	for b in crews.crews:
+		idle_seen += crews.crew_in_sight(b)
+	check(idle_seen == 0, "idle pit crews are out of sight in their garages (%d in sight)" % idle_seen)
 	crews.set_stop(0, PitCrews.Stop.COMING, 0.0, work)
 	for f in 120:
 		crews._process(1.0 / 30.0)
+	check(crews.crew_in_sight(4) == PitCrews.CREW_SIZE and crews.crew_in_sight(5) == 0,
+		"called in: the crew come out of the garage (%d out), the next garage's stay in" % crews.crew_in_sight(4))
 	var box: Vector2 = t2.pit_box(4)["pos"]
 	var near := 0
 	for p in crews.crews[4].people:
@@ -3814,6 +3900,13 @@ func test_graphics_effects() -> void:
 	check(not crews.wheels_off(0), "end of the stop: wheels back on")
 	crews.set_stop(0, PitCrews.Stop.LEAVING, 10.0, work)
 	check(crews.car_lift(0) == 0.0, "car off the jacks when it leaves")
+	crews.set_stop(0, PitCrews.Stop.NONE, 0.0, {})
+	for f in 300:
+		crews._process(1.0 / 30.0)
+	check(crews.crew_in_sight(4) == 0 and crews.crews[4].settled, "after the stop the crew walk back into the garage (%d still out)" % crews.crew_in_sight(4))
+	crews.drive_member(0, "gun_l", box, 0.0)
+	crews._process(1.0 / 30.0)
+	check(crews.crew_in_sight(4) == 1, "a co-op player's crew member is always in sight")
 	tv2.free()
 
 
@@ -4296,6 +4389,12 @@ func test_hud_timing() -> void:
 			break
 	check(RaceHud.short_name("Driver 727") == "Driver 727" and RaceHud.short_name("Alessandro Bellini-Rossi") == "A. Bellini-Ross", "driver names fit the tower")
 	check(RaceHud.fmt_sector(32.4567) == "32.457" and RaceHud.fmt_sector(0.0) == "--.---", "sector times format")
+	# GT3-style dash: red beats yellow beats blue beats the chequered white.
+	check(RaceHud.dash_flag_colour(true, true, true, true, true) == RaceHud.DASH_RED, "dash: red flag first")
+	check(RaceHud.dash_flag_colour(false, true, true, true, false) == RaceHud.DASH_YELLOW, "dash: yellow over blue")
+	check(RaceHud.dash_flag_colour(false, false, true, false, true) == RaceHud.DASH_BLUE, "dash: blue over green")
+	check(RaceHud.dash_flag_colour(false, false, false, true, false) == RaceHud.DASH_WHITE, "dash: white at the end of the race")
+	check(RaceHud.dash_flag_colour(false, false, false, false, false).a == 0.0, "dash: no flag, normal screen")
 
 
 ## Online play: hit boxes match the bodywork, remote cars are placed where
