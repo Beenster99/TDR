@@ -33,6 +33,12 @@ const DEFAULT_DIFFICULTY := 0.75
 const AERO_TRUST := 0.9      ## share of the downforce the profile counts on
 const OFF_LINE_TROUBLE := 4.0
 const BRAKE_TURNING := 0.35  ## share of braking grip left at the cornering limit
+## Rejoining after an off: how far beyond the kerb the car waits, how far
+## inside the white line it comes back on, and how far it holds that edge.
+const REJOIN_WAIT_OUT := 1.5
+const REJOIN_EDGE_IN := 0.5
+const REJOIN_HOLD_M := 400.0
+const REJOIN_WAIT_SPEED := 8.0
 
 ## What the driver is doing right now (for HUD / debugging).
 enum Mood { RACING, ATTACKING, DEFENDING, YIELDING, MISTAKE, RECOVERING }
@@ -85,6 +91,16 @@ var _block_clean := true
 var stuck_time: float = 0.0
 var stuck_idx: int = -1   ## line point at the last stuck check (-1 = not checked yet)
 var recover_time: float = 0.0
+## Coming back from an off: the side of the track the car went off (+1 right,
+## -1 left, 0 = not rejoining). It waits beyond the kerb until the traffic
+## coming up behind has gone by, comes back on along that edge and holds it
+## until it is up to speed, so it never crosses the racing line in front of
+## another car.
+var rejoin_side := 0
+var _rejoin_wait := 0.0
+var _rejoin_from := -1.0     ## track_s where it got back on the road (-1 = still off)
+var _rejoin_settle := 0.0    ## after rejoining: drift back to the line gently
+var _last_v_target := 0.0    ## speed aimed for on the previous tick
 
 var _pass_side := 0
 var _pass_target := -1
@@ -472,6 +488,9 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 	# --- Stuck recovery: reverse out, then carry on. ---
 	if recover_time > 0.0:
 		mood = Mood.RECOVERING
+		if car.surface >= TrackData.Surface.GRASS and _traffic_margin(sim, me) < 1.0:
+			inp.brake = 0.0  # off the road with a car coming: wait, don't back out into it
+			return inp
 		recover_time -= RaceSim.TICK_DT
 		inp.brake = 1.0
 		var to_line := line[(idx + 3) % n] - car.pos
@@ -480,6 +499,8 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 	if stuck_idx < 0:
 		stuck_idx = idx
 	stuck_time += RaceSim.TICK_DT
+	if rejoin_side != 0 and _rejoin_from < 0.0 and _rejoin_wait > 0.0 and speed < REJOIN_WAIT_SPEED + 1.0:
+		stuck_time = 0.0  # waiting for a gap on purpose
 	if stuck_time >= 3.0:
 		# Stuck = hardly moved along the line in 3 s while crawling. (The
 		# check used to start from line point 0, so every car on the grid
@@ -719,16 +740,36 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 	var bias_rate := lerpf(2.5, 4.5, p.aggression)
 	if not alongside.is_empty():
 		bias_rate = 6.0
+	elif _rejoin_settle > 0.0:
+		# Just back on after an off: drift over to the line, no darting across.
+		_rejoin_settle -= RaceSim.TICK_DT
+		bias_rate = 1.2
 	lateral_bias = move_toward(lateral_bias, want_bias, bias_rate * RaceSim.TICK_DT)
 	if absf(lateral_bias) > 0.6:
 		_block_clean = false
 	if follow_limit < INF:
 		_block_clean = false
 
+	# --- Rejoining after an off. ---
+	var rejoin_off := NAN    ## wanted offset from the track centre line while rejoining
+	var rejoin_cap := INF
+	if not derby:
+		var plan := _rejoin_plan(sim, me, half_w)
+		rejoin_off = plan[0]
+		rejoin_cap = plan[1]
+	if not is_nan(rejoin_off):
+		mood = Mood.RECOVERING
+		lateral_bias = my_off  # pick the line up from where the car is once it lets go
+
 	# --- Steering: pure pursuit on the racing line (+ offset). ---
 	var look := 5.0 + 0.42 * speed
 	var aim := (idx + int(look / SPACING)) % n
 	var target := line[aim] + line_right[aim] * clampf(lateral_bias, -room_left[aim], room_right[aim])
+	if not is_nan(rejoin_off):
+		# The plan is relative to the edge on rejoin_side: measured where we aim.
+		var ti := sim.track.index_at(car.track_s + look)
+		var aim_edge: float = sim.track.width_right[ti] if rejoin_side > 0 else sim.track.width_left[ti]
+		target = sim.track.position_at(car.track_s + look, rejoin_side * maxf(aim_edge + rejoin_off, half_w))
 	var local := target - car.pos
 	var lx := local.dot(fwd)
 	var ly := local.dot(rgt)
@@ -778,12 +819,14 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 		# Rejoin carefully: wait for a gap when a car is coming.
 		if behind >= 0 and behind_lx > -25.0:
 			v_target = minf(v_target, 18.0)
+	v_target = minf(v_target, rejoin_cap)
 	v_target = minf(v_target, follow_limit)
 	v_target = minf(v_target, _race_control_limit(sim, me, rc, unlapping))
 	if giving_back:
 		v_target *= 0.8  # let the car we passed back through
 	if cool_down:
 		v_target = minf(v_target, 35.0)
+	_last_v_target = v_target
 	var err := v_target - speed
 	if err > 0.0:
 		inp.throttle = clampf(0.35 + err * 0.4, 0.0, 1.0)
@@ -806,6 +849,81 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 	_last_pressure = pressure
 	_radio_tick(sim, me, follow_limit < INF and ahead >= 0, over, ahead)
 	return inp.quantized()
+
+
+## Rejoining after an off (see rejoin_side). Returns [where to steer, as metres
+## outward from the white line on rejoin_side (negative = on the road; NAN =
+## not rejoining), speed cap (INF = none)].
+func _rejoin_plan(sim: RaceSim, me: int, half_w: float) -> Array:
+	var car := sim.cars[me]
+	var track := sim.track
+	if sim.in_pit_lane(me) or car.in_joker:
+		rejoin_side = 0
+		return [NAN, INF]
+	var q := track.project(car.pos, car.track_idx)
+	var off: float = q["offset"]
+	var off_road := car.surface >= TrackData.Surface.GRASS
+	if rejoin_side == 0:
+		var w: float = q["w_right"] if off > 0.0 else q["w_left"]
+		if not off_road or absf(off) < w + 0.5:
+			return [NAN, INF]
+		rejoin_side = 1 if off > 0.0 else -1
+		_rejoin_wait = 0.0
+		_rejoin_from = -1.0
+	var side := rejoin_side
+	var lane := -(half_w + REJOIN_EDGE_IN)
+	var margin := _traffic_margin(sim, me)
+	if off_road and off * side > 0.0:
+		_rejoin_from = -1.0
+		if margin < 1.0:
+			# A car is coming: roll along beyond the kerb until it has gone by.
+			_rejoin_wait += RaceSim.TICK_DT
+			var wait_at := track.kerb_width + REJOIN_WAIT_OUT
+			return [wait_at, REJOIN_WAIT_SPEED if margin > 0.5 else 3.0]
+		return [lane, INF]
+	if off_road:
+		# Gone off on the other side (spun across): start again from there.
+		rejoin_side = 0
+		return [NAN, INF]
+	# Back on the road: keep to the edge it came on from until up to speed.
+	if _rejoin_from < 0.0:
+		_rejoin_from = car.track_s
+	var travelled := fposmod(car.track_s - _rejoin_from, track.length)
+	var up_to_speed := car.speed() >= _last_v_target * 0.85
+	if (up_to_speed and margin >= 1.0) or travelled > REJOIN_HOLD_M:
+		rejoin_side = 0
+		_rejoin_settle = 3.0
+		return [NAN, INF]
+	return [lane, INF]
+
+
+## How much room the traffic coming up behind on the road leaves this car to
+## come back on: the nearest car's gap over the gap this driver wants (>= 1 =
+## safe to go). A car alongside or just ahead counts as no room. The wait
+## gets less fussy the longer it lasts, so a long train can't hold it forever.
+func _traffic_margin(sim: RaceSim, me: int) -> float:
+	var car := sim.cars[me]
+	var L := sim.track.length
+	var my_v := car.vel.dot(Vector2.from_angle(sim.track.heading_at(car.track_s)))
+	var fussy := lerpf(1.2, 0.85, profile.aggression) * lerpf(1.0, 0.6, clampf((_rejoin_wait - 3.0) / 7.0, 0.0, 1.0))
+	var worst := INF
+	for j in sim.cars.size():
+		if j == me or sim.race_control.out_of_play(j) or sim.in_pit_lane(j) or sim.entries[j].dnf:
+			continue
+		var o := sim.cars[j]
+		if o.surface > TrackData.Surface.KERB:
+			continue
+		var gap := fposmod(car.track_s - o.track_s, L)
+		if gap > L * 0.5:
+			gap -= L   # negative: ahead of us
+		if gap < -8.0 or gap > 350.0:
+			continue
+		if gap <= 4.0:
+			return 0.0  # alongside
+		var closing := o.speed() - my_v
+		var need := (15.0 + maxf(closing, 0.0) * 2.0) * fussy
+		worst = minf(worst, gap / need)
+	return worst
 
 
 ## Speed race control allows: the VSC reference, closing up to the safety
