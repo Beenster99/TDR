@@ -427,7 +427,7 @@ func _make_autodrive() -> void:
 ## True when this player is in a car's crew but not driving it (co-op).
 ## At the wheel with nothing on screen that wants the mouse (PointerHider).
 func _driving_view() -> bool:
-	return session.local_car >= 0 and not _results_shown and not _spectating and not pause_menu.visible and not hud.editing \
+	return session.local_car >= 0 and not _results_shown and not _spectating and not results.visible and not pause_menu.visible and not hud.editing \
 		and not pit_wall.visible and not planner.visible and not pit_menu.visible and not driver_radio.visible \
 		and not crew_game.is_active()
 
@@ -528,8 +528,12 @@ func _tick_once(delta: float) -> void:
 	var inp: CarInput = null
 	if session.local_car >= 0:
 		var mine := session.sim.entries[session.local_car]
-		if mine.finished and autodrive == null:
-			# Over the line: the AI drives the cool-down lap while you watch.
+		_note_finish()
+		if mine.finished and autodrive == null and _free_drive() and not (hud.editing or pause_menu.visible):
+			# Over the line: the car is still yours for FINISH_DRIVE_S.
+			inp = local_input.read(delta, session.sim.cars[session.local_car].speed())
+		elif mine.finished and autodrive == null:
+			# Then the AI drives the cool-down lap under the results.
 			if _cooldown_ai == null:
 				_cooldown_ai = AIDriver.for_car(session.sim, session.local_car)
 			inp = _cooldown_ai.get_input(session.sim, session.local_car)
@@ -900,6 +904,8 @@ func _maybe_screenshot() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if hud.editing or pit_menu.visible or pause_menu.visible:
 		return
+	if _live_results and results.visible and not event is InputEventMouseButton:
+		return   # the live results have the keys
 	if event.is_action_pressed("hud_edit") and session.local_car >= 0 and not _results_shown and not pit_wall.visible:
 		hud.open_editor()
 	elif event.is_action_pressed("strategy_screen") and not _results_shown and session.sim.settings.has_pit_wall():
@@ -1113,18 +1119,24 @@ func _on_race_finished() -> void:
 		get_tree().create_timer(2.0).timeout.connect(get_tree().quit)
 		return
 	if session.mode == RaceSession.Mode.SERVER and Net.dedicated:
-		get_tree().create_timer(3.0 if GameData.arg("quit-after-season") else 10.0).timeout.connect(func(): Net.end_race())
+		# Long enough for a guest who just crossed the line to drive on and see the results.
+		get_tree().create_timer(3.0 if GameData.arg("quit-after-season") else FINISH_DRIVE_S + 10.0).timeout.connect(func(): Net.end_race())
 		return
 	if GameData.arg("quit-after-season") and session.mode == RaceSession.Mode.OFFLINE:
 		_back_to_menu.call_deferred()  # the menu starts the next session
 		return
 	if GameData.arg("quit-after-season") and session.mode == RaceSession.Mode.CLIENT:
 		return  # wait for the host to bring everyone back to the lobby
-	var pod := _podium_drivers()
-	if not pod.is_empty():
-		_start_podium(pod, func(): _show_results(season_info, season_pts, prize))
+	var finish := func():
+		var pod := _podium_drivers()
+		if not pod.is_empty():
+			_start_podium(pod, func(): _show_results(season_info, season_pts, prize))
+		else:
+			_show_results(season_info, season_pts, prize)
+	if _own_drive_left() > 0.0:
+		_end_waiting = finish   # still driving after the line: the podium / results come after it
 		return
-	_show_results(season_info, season_pts, prize)
+	finish.call()
 
 
 # --- The podium --------------------------------------------------------------
@@ -1158,6 +1170,7 @@ func _podium_drivers() -> Array:
 func _start_podium(drivers: Array, then_show: Callable) -> void:
 	_results_shown = true   # no pause menu, HUD keys or driving from here on
 	_stop_spectating()
+	results.visible = false   # the live table: the full one comes after the podium
 	hud.visible = false
 	crew.visible = false
 	var slot := -1
@@ -1383,8 +1396,14 @@ func _show_results(season_info: Dictionary, season_pts: Dictionary, prize: int) 
 	var opts := {"title": "QUALIFYING" if sim.settings.is_qualifying() else "RESULTS",
 		"subtitle": sub, "buttons": buttons, "notes": notes, "standings": _standings(season_info),
 		"instant": bool(GameData.arg("results-instant", false))}
-	results.show_results(d, opts)
-	Sound.wire_buttons(results)
+	if results.visible and _live_results:
+		results.update_results(d, opts)   # the live table becomes the final one, no fade
+	else:
+		results.show_results(d, opts)
+		Sound.wire_buttons(results)
+	if _live_results:
+		_live_shot(true)
+	_live_results = false
 	if GameData.arg("spectate-shots") and DisplayServer.get_name() != "headless":
 		_results_shot()
 	if session.mode == RaceSession.Mode.CLIENT and not season_info.is_empty():
@@ -1409,6 +1428,7 @@ func _on_lobby_changed_after_race() -> void:
 
 func _on_results_chosen(id: String) -> void:
 	match id:
+		"watch": _watch_race()
 		"again": _restart()
 		"menu", "leave": _back_to_menu()
 		"lobby": Net.end_race()
@@ -1455,8 +1475,10 @@ func _standings(info: Dictionary) -> Dictionary:
 
 enum SpecView { FOLLOW, CHASE, ONBOARD, REAR, TV, TRACK }
 const SPEC_VIEW_NAMES := ["Follow", "Chase (turns with the car)", "Onboard", "Onboard, looking back", "Trackside TV", "Whole track"]
-## Seconds after crossing the line before spectating starts (the "Finished"
-## message, and your own car taking the flag, first).
+## Seconds this player keeps driving their car after crossing the line,
+## before the results fade in (and fill up as the others finish).
+const FINISH_DRIVE_S := 10.0
+## Seconds after retiring before the results come up.
 const SPECTATE_DELAY_S := 3.0
 ## A watched car that finishes: seconds before the view moves on to the
 ## next car still racing.
@@ -1466,7 +1488,11 @@ var _spectating := false
 var _spec_car := -1
 var _spec_view := SpecView.FOLLOW
 var _spec_done_for := 0.0       ## how long the watched car has been home
-var _finished_at := -1.0        ## race time this player's car finished (or retired)
+var _finish_tick := -1         ## sim tick this player's car finished (or retired)
+var _live_results := false      ## the results are up (or one key away) while cars are still racing
+var _live_count := -1           ## cars home (finished or out) when the live table was last built
+var _live_since := 0.0
+var _end_waiting := Callable()  ## the race ended while this player was driving after the line
 var _cooldown_ai: AIDriver = null
 var _penalties: Array = []      ## every penalty in the race {car, seconds, reason} (race events)
 var _onboard: OnboardCamera = null
@@ -1483,18 +1509,30 @@ func _update_spectator(delta: float) -> void:
 	var sim := session.sim
 	if _results_shown:
 		return
-	if not _spectating:
+	if _end_waiting.is_valid():
+		# The race ended while this player was still driving after the line.
+		if _own_drive_left() <= 0.0:
+			var f := _end_waiting
+			_end_waiting = Callable()
+			f.call()
+		return
+	if _live_results and results.visible:
+		_update_live_results(delta)
+		return
+	if not _spectating and not _live_results:
 		var me := _own_car()
 		if me < 0 or sim.phase == RaceSim.Phase.FINISHED:
 			return
 		var e := sim.entries[me]
 		if not (e.finished or e.dnf):
 			return
-		if _finished_at < 0.0:
-			_finished_at = sim.race_time
-		if sim.race_time - _finished_at < SPECTATE_DELAY_S and not GameData.arg("spectate-now"):
-			return
-		_start_spectating()
+		_note_finish()
+		if GameData.arg("spectate-now"):
+			_start_spectating()
+		elif _own_drive_left() <= 0.0:
+			_show_live_results()
+		return
+	if not _spectating:
 		return
 	# Spectating: the controls, and moving on from a car that's home.
 	if not (pause_menu.visible or pit_wall.visible or planner.visible or hud.editing):
@@ -1506,6 +1544,9 @@ func _update_spectator(delta: float) -> void:
 			_spec_next_view()
 		if Input.is_action_just_pressed("handbrake"):
 			_spec_watch(_own_car())
+		if Input.is_action_just_pressed("hud_tower") and not GameData.arg("spectate-shots"):
+			_show_live_results()
+			return
 	var w := sim.entries[_spec_car]
 	if (w.finished or w.dnf) and _spec_car != _own_car() and not _shots_busy:
 		_spec_done_for += delta
@@ -1514,6 +1555,136 @@ func _update_spectator(delta: float) -> void:
 			_spec_watch(racing[0])
 	else:
 		_spec_done_for = 0.0
+
+
+## Remembers when this player's car (or crew car) finished or retired.
+func _note_finish() -> void:
+	var me := _own_car()
+	if _finish_tick >= 0 or me < 0:
+		return
+	var e := session.sim.entries[me]
+	if e.finished or e.dnf:
+		_finish_tick = session.sim.tick
+
+
+## Seconds left before the results come up after this player's car is home:
+## FINISH_DRIVE_S after the flag (driving it, or watching it if crewing),
+## SPECTATE_DELAY_S after retiring. 0 = none left (or not home yet).
+func _own_drive_left() -> float:
+	var me := _own_car()
+	if me < 0 or _finish_tick < 0 or GameData.arg("spectate-now"):
+		return 0.0
+	var e := session.sim.entries[me]
+	var wait := FINISH_DRIVE_S if e.finished else SPECTATE_DELAY_S
+	return maxf(wait - (session.sim.tick - _finish_tick) * RaceSim.TICK_DT, 0.0)
+
+
+## True while this player still drives their own car after the flag.
+func _free_drive() -> bool:
+	var me := session.local_car
+	return me >= 0 and session.sim.entries[me].finished and _own_drive_left() > 0.0
+
+
+## The results come up while the race runs on: the cars home so far, the
+## ones still out dimmed below, filling up as each crosses the line.
+func _show_live_results() -> void:
+	_live_results = true
+	_stop_spectating()
+	hud.visible = false
+	crew.visible = false
+	driver_radio.close()
+	crew.radio.close()
+	race_audio.fade_out(RESULTS_SOUND_FADE_S)
+	var d := _live_data()
+	_live_count = _home_count()
+	_live_since = 0.0
+	results.show_results(d, _live_opts())
+	Sound.wire_buttons(results)
+	_live_shot()
+	var racing := ResultsTable.still_racing(session.sim)
+	print("[results] live table up for %s, %d home, %d still racing" % [Net.local_name, _live_count, racing.size()])
+
+
+func _home_count() -> int:
+	var n := 0
+	for e in session.sim.entries:
+		if e.finished or e.dnf:
+			n += 1
+	return n
+
+
+func _live_data() -> Dictionary:
+	var season_info: Dictionary = session.start_data.get("season", {})
+	return ResultsTable.build(session.sim, session.telemetry, {"me": _own_car(), "penalties": _penalties,
+		"single_race_points": season_info.is_empty()})
+
+
+func _live_opts() -> Dictionary:
+	var racing := ResultsTable.still_racing(session.sim).size()
+	var notes := ["%d car%s still racing  ·  the table fills up as they cross the line" % [racing, "" if racing == 1 else "s"]
+		if racing > 0 else "Every car is home"]
+	var buttons := [["watch", "Watch the race"]]
+	if session.mode == RaceSession.Mode.OFFLINE and not session.start_data.has("season"):
+		buttons.append(["menu", "Main menu"])
+	elif session.mode == RaceSession.Mode.CLIENT:
+		buttons.append(["leave", "Leave"])
+	var me := _own_car()
+	if me >= 0 and not session.sim.settings.is_qualifying():
+		var e := session.sim.entries[me]
+		var pos := session.sim.running_order.find(me)
+		notes.push_front("You finished P%d" % (pos + 1) if e.finished else "You didn't finish")
+	return {"title": "QUALIFYING" if session.sim.settings.is_qualifying() else "RESULTS", "subtitle": "",
+		"buttons": buttons, "notes": notes, "instant": bool(GameData.arg("results-instant", false))}
+
+
+## Live table: rebuilt each time another car is home.
+func _update_live_results(delta: float) -> void:
+	_live_since += delta
+	if _results_shown:
+		return
+	var n := _home_count()
+	if n != _live_count and _live_since >= 0.2:
+		_live_count = n
+		_live_since = 0.0
+		results.update_results(_live_data(), _live_opts())
+		_live_shot()
+		if DisplayServer.get_name() == "headless":
+			print("[results] live table: %d home" % n)
+	if Input.is_action_just_pressed("hud_tower") and results.is_shown() and not results.is_driver_open():
+		_watch_race()
+
+
+var _live_shots := 0
+
+
+## Testing: --live-shots DIR saves the live results each time they change
+## (live_0.png, live_1.png, ...), then the final table (live_final.png).
+func _live_shot(final := false) -> void:
+	if not GameData.arg("live-shots") or DisplayServer.get_name() == "headless":
+		return
+	var dir := str(GameData.arg("live-shots"))
+	DirAccess.make_dir_recursive_absolute(dir)
+	var n := _live_shots
+	_live_shots += 1
+	while not results.is_shown():
+		await get_tree().process_frame
+	for _k in 30:
+		await get_tree().process_frame   # the new row's light fades a little
+	await RenderingServer.frame_post_draw
+	var path := "%s/live_%s.png" % [dir, "final" if final else str(n)]
+	get_viewport().get_texture().get_image().save_png(path)
+	print("[screenshot] %s" % path)
+	if final and GameData.arg("quit-after-shots"):
+		get_tree().quit()
+
+
+## From the live table back to the race: spectating, with the sound back up.
+func _watch_race() -> void:
+	if _results_shown:
+		return
+	results.visible = false
+	race_audio.fade_in(0.8)
+	_start_spectating()
 
 
 func _start_spectating() -> void:

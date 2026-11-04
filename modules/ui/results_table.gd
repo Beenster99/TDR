@@ -13,7 +13,8 @@ extends RefCounted
 ##   {pos, car, name, car_name, is_ai, is_me, status ("" | "DNF" | "OUT"),
 ##    laps, time (incl. penalties, 0 = not classified), gap ("+12.345" / "+1 lap"),
 ##    best_lap, best_lap_no, avg_lap, best_sectors: [..], potential, stops,
-##    penalty_s, points, fastest (bool),
+##    penalty_s, points, fastest (bool), racing (still out on track: the
+##    results are filling up while the race runs on),
 ##    grid (start position, 0 = unknown), gained (grid - pos, + = places won),
 ##    lap_log: [{lap, time, sectors, pos, gap (s to the leader's crossing of
 ##      that lap), compound, pitted, fuel_l, tyre_c, weather, wear: [fl, fr,
@@ -139,6 +140,7 @@ static func build(sim: RaceSim, telemetry: RaceTelemetry, opts := {}) -> Diction
 			"best_lap": e.best_lap, "best_lap_no": best_no, "avg_lap": avg, "best_sectors": bs,
 			"potential": potential, "stops": int(e.pit.get("stops", 0)), "penalty_s": e.penalty_s,
 			"points": int(pts.get(key, 0)) if has_points else 0, "fastest": false, "jokers": e.jokers,
+			"racing": not e.finished and not e.dnf,
 			"grid": grid, "gained": grid - (p + 1) if grid > 0 else 0, "lap_log": lap_log, "stints": stints,
 			"stop_log": (ct.stops.duplicate(true) if ct else [])}
 		rows.append(row)

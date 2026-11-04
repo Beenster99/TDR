@@ -142,8 +142,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	if editing:
 		return
 	if event.is_action_pressed("hud_tower"):
-		if get_node_or_null("/root/GameData") == null:
-			return
+		if get_node_or_null("/root/GameData") == null or not is_visible_in_tree():
+			return   # hidden (spectating, results): the key is theirs
 		set_item_on("tower", not item_on("tower"))
 		if coop:
 			save_layout()
