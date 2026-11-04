@@ -63,12 +63,20 @@ var pit_limit_start: float = 0.0   ## pit metres where the speed limit starts
 var pit_limit_end: float = 0.0     ## and ends
 var pit_box_count: int = 30
 var _pit_bounds := Rect2()
+var _pit_lane_cells := {}   ## pit_path segments near each cell (see _bucket_segments)
 ## The pit wall: a concrete wall between the track and the pit lane, all
 ## along the stretch where the lane runs beside the track with room for it
 ## (never on the track or in the lane). Its centre line, in metres; cars
 ## can't drive through it (RaceSim.resolve_pit_wall). Empty if no room.
 var pit_wall: PackedVector2Array = []
 var _pit_wall_bounds := Rect2()
+## The wall's segments bucketed into PIT_WALL_CELL m squares (cell key ->
+## segment indices, in order), so a car only tests the few segments near it.
+var _pit_wall_cells := {}
+const PIT_WALL_CELL := 8.0
+const PIT_WALL_CELL_MARGIN := 3.0  ## segments are listed in every cell within this of them
+const PIT_WALL_NEAR_MARGIN := 9.0  ## the same for pit_wall_near (a whole car's reach)
+var _pit_wall_near_cells := {}
 const PIT_WALL_HALF := 0.5        ## half the wall's thickness (m, as TrackView draws it)
 const PIT_WALL_MIN_GAP := 3.4     ## track edge to lane edge needed for the wall (clear of the kerb band)
 const PIT_WALL_MAX_GAP := 25.0    ## the lane's this far off: an access road, no wall
@@ -169,6 +177,7 @@ func _build_pit(p: Dictionary) -> void:
 		lo = lo.min(q)
 		hi = hi.max(q)
 	_pit_bounds = Rect2(lo, hi - lo).grow(pit_width)
+	_pit_lane_cells = _bucket_segments(pit_path, PIT_WALL_CELL, pit_width * 0.5 + 0.5)
 	_build_pit_wall()
 
 
@@ -224,6 +233,48 @@ func _build_pit_wall() -> void:
 			lo = lo.min(p)
 			hi = hi.max(p)
 		_pit_wall_bounds = Rect2(lo, hi - lo)
+	_bucket_pit_wall()
+
+
+func _bucket_pit_wall() -> void:
+	_pit_wall_cells = _bucket_segments(pit_wall, PIT_WALL_CELL, PIT_WALL_CELL_MARGIN)
+	_pit_wall_near_cells = _bucket_segments(pit_wall, PIT_WALL_CELL, PIT_WALL_NEAR_MARGIN)
+
+
+## False when nothing of the pit wall is within radius of c (cheap: one
+## look-up), so a car far from it can skip pit_wall_contact. True means
+## it might be.
+func pit_wall_near(c: Vector2, radius: float) -> bool:
+	if not has_pit_wall():
+		return false
+	if radius > PIT_WALL_NEAR_MARGIN:
+		return true
+	var near: PackedInt32Array = _pit_wall_near_cells.get(Vector2i(floori(c.x / PIT_WALL_CELL), floori(c.y / PIT_WALL_CELL)), PackedInt32Array())
+	var r2 := radius * radius
+	for i in near:
+		var a := pit_wall[i]
+		var seg := pit_wall[i + 1] - a
+		var l2 := seg.length_squared()
+		var foot := a if l2 < 1e-8 else a + seg * clampf((c - a).dot(seg) / l2, 0.0, 1.0)
+		if c.distance_squared_to(foot) <= r2:
+			return true
+	return false
+
+
+## Segments of a polyline bucketed into cell x cell squares: Vector2i cell ->
+## PackedInt32Array of the segments (in order) that come within margin of it.
+static func _bucket_segments(pts: PackedVector2Array, cell: float, margin: float) -> Dictionary:
+	var cells := {}
+	for i in pts.size() - 1:
+		var lo := pts[i].min(pts[i + 1]) - Vector2.ONE * margin
+		var hi := pts[i].max(pts[i + 1]) + Vector2.ONE * margin
+		for cx in range(floori(lo.x / cell), floori(hi.x / cell) + 1):
+			for cy in range(floori(lo.y / cell), floori(hi.y / cell) + 1):
+				var key := Vector2i(cx, cy)
+				var list: PackedInt32Array = cells.get(key, PackedInt32Array())
+				list.append(i)
+				cells[key] = list
+	return cells
 
 
 func has_pit_wall() -> bool:
@@ -239,7 +290,13 @@ func pit_wall_contact(c: Vector2, r: float, keep_side: Vector2) -> Dictionary:
 		return {}
 	var reach := r + PIT_WALL_HALF
 	var best := {}
-	for i in pit_wall.size() - 1:
+	# Only segments that can be within reach + 1 m: those listed in c's cell.
+	var near: PackedInt32Array
+	if reach + 1.0 <= PIT_WALL_CELL_MARGIN and not _pit_wall_cells.is_empty():
+		near = _pit_wall_cells.get(Vector2i(floori(c.x / PIT_WALL_CELL), floori(c.y / PIT_WALL_CELL)), PackedInt32Array())
+	else:
+		near = PackedInt32Array(range(pit_wall.size() - 1))
+	for i in near:
 		var a := pit_wall[i]
 		var b := pit_wall[i + 1]
 		var seg := b - a
@@ -754,7 +811,20 @@ func project_pit(pos: Vector2) -> Dictionary:
 func in_pit_lane(pos: Vector2) -> bool:
 	if not has_pit_lane() or not _pit_bounds.has_point(pos):
 		return false
-	return project_pit(pos)["dist"] <= pit_width * 0.5
+	# Same answer as project_pit(pos)["dist"] <= half the width, but only
+	# testing the few lane segments listed near pos.
+	var half := pit_width * 0.5
+	var near: PackedInt32Array = _pit_lane_cells.get(Vector2i(floori(pos.x / PIT_WALL_CELL), floori(pos.y / PIT_WALL_CELL)), PackedInt32Array())
+	for i in near:
+		var a := pit_path[i]
+		var seg := pit_path[i + 1] - a
+		var l2 := seg.length_squared()
+		if l2 < 1e-8:
+			continue
+		var foot := a + seg * clampf((pos - a).dot(seg) / l2, 0.0, 1.0)
+		if pos.distance_squared_to(foot) <= half * half:
+			return true
+	return false
 
 
 ## Position d metres along the pit lane, offset metres to the right of it.
