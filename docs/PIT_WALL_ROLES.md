@@ -56,10 +56,26 @@ Reads the race (built on the pit wall race data, `RaceTelemetry`):
   traffic, the gap behind needed for a free stop, mandatory stops left and
   the window, fuel against laps to go;
 - the next weather change with its ETA and confidence;
-- rivals (the watched car, the cars around, the leaders): tyres and their
-  age, stops, pace, and their latest strategy call;
+- **pace**: who is fastest on the last lap, over the last 3 laps and over
+  the last 5 laps (in our class in a multi-class race), with where we rank
+  and how far off we are; the next backmarkers up the road and how far;
+- **our rival**, the car we're really racing (`RaceTelemetry.rival_of`: in
+  our class and on our lap, the nearer of the cars just ahead and behind):
+  orange in the timing, ringed in orange on the 3D view, first in the
+  rivals list. Backmarkers (a lap or more down on us) carry a blue "+1L"
+  tag in the timing, and the next ones up the road get blue rings;
+- rivals (our rival, the watched car, the cars around, the leaders): tyres
+  and their age, stops, pace, and their latest strategy call;
 - **Full pit wall** (or P) opens the full-screen strategist screen with the
-  weather radar and every car's sector times.
+  weather radar and every car's sector times. Its timing panel has a PACE
+  view (click the tab or press Tab): every car ranked side by side on its
+  last lap, last 3 and last 5 laps, with the gap to us, our rival and the
+  backmarkers marked. Any car can be made the rival there with **MARK AS
+  RIVAL** on the selected car panel (and back to the worked-out one with
+  **AUTO RIVAL**).
+- **The rejoin band** (green / amber / red on the track where a stop now
+  would come out) is drawn only for the strategist (and the combined pit
+  wall role), never on the driver's screen.
 - **Onboard camera**: a live picture-in-picture window, top right of the 3D
   view, from any car's front camera (on the roof, looking ahead) or rear
   camera (looking back over the wing). Pick the car on the *Onboard camera*

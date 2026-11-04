@@ -834,21 +834,20 @@ func _update_pit_crews() -> void:
 		world.set_pit_stop(i, state, elapsed, work)
 
 
-## The band on the circuit where our car would rejoin after a clean stop:
-## while it's boxing or in the pit lane, and always on the crew console
-## (the pit wall plans the stop from it).
+## The band on the circuit where our car would rejoin after a clean stop.
+## It's the strategist's tool, so only the strategist sees it: on the co-op
+## pit wall console (a strategist, or the combined pit wall role), and a
+## solo driver planning their own stop in the pit call menu. Never on the
+## driver's view while driving, in or out of the pit lane.
 func _update_rejoin() -> void:
 	var car := session.local_car if session.local_car >= 0 else session.team_car
 	var pits := session.sim.pits
-	var show := pits.enabled and car >= 0 and session.sim.phase == RaceSim.Phase.RACING and not _spectating
+	var show := pits.enabled and car >= 0 and session.sim.phase == RaceSim.Phase.RACING and not _spectating \
+		and strategist_view()
 	var est := {}
 	if show:
-		var p: Dictionary = session.sim.entries[car].pit
-		var ph: String = p["phase"]
-		show = (p["box"] or (ph != PitRules.PHASE_NONE and ph != PitRules.PHASE_EXIT) or crew.visible)
-		if show:
-			est = pits.rejoin_estimate(car)
-			show = not est.is_empty()
+		est = pits.rejoin_estimate(car)
+		show = not est.is_empty()
 	if not show:
 		world.set_rejoin(false)
 		return
@@ -857,6 +856,14 @@ func _update_rejoin() -> void:
 	var ppm := maxf(camera.zoom.x, 0.01)
 	world.set_rejoin(true, est["s"], maxf(v * 0.8, 40.0 / ppm), maxf(v * 0.2, 10.0 / ppm), RaceHud.rejoin_colour(est),
 		maxf(6.0 / ppm - 4.0, 0.0))
+
+
+## True while this player looks at the race as the strategist: the co-op
+## console with the strategist's duties, or a solo driver's pit call menu.
+func strategist_view() -> bool:
+	if crew.visible and _is_crew() and RaceEntry.role_covers(str(session.local_role), RaceEntry.ROLE_STRATEGIST):
+		return true
+	return pit_menu.visible and session.local_car >= 0
 
 
 ## Z / R3: jump to the whole track, and back to where you were.

@@ -1260,17 +1260,7 @@ func _draw_minimap(origin: Vector2) -> void:
 		for k in 9:
 			zone.append(origin + (t.position_at(from + span_m * k / 8.0) - _mm_rect.position) * scale_f)
 		draw_polyline(zone, Color(1, 0.85, 0.1), 5.0)
-	# Where a pit stop now would rejoin (while boxing / in the lane).
-	if session.local_car >= 0:
-		var pe: Dictionary = sim.entries[session.local_car].pit
-		if pe["box"] or (pe["phase"] != PitRules.PHASE_NONE and pe["phase"] != PitRules.PHASE_EXIT):
-			var rj := sim.pits.rejoin_estimate(session.local_car)
-			if not rj.is_empty():
-				var band := PackedVector2Array()
-				var v: float = rj["speed"]
-				for k in 7:
-					band.append(origin + (t.position_at(float(rj["s"]) - v * 0.8 + v * k / 6.0) - _mm_rect.position) * scale_f)
-				draw_polyline(band, rejoin_colour(rj), 6.0)
+	# (The rejoin band is the strategist's: not on the driver's map.)
 	# Double yellows where marshals are out: a thicker band (circuits only).
 	for job in (rc.marshal_jobs if rc.flags_used() else []):
 		var zone := PackedVector2Array()

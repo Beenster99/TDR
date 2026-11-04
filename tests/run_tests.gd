@@ -2839,6 +2839,57 @@ func _accel_test(d: Dictionary, def: CarDefinition, s: CarState) -> Dictionary:
 
 
 ## Race data for the pit wall: lap logs, averages, gaps, pit windows, feed, sync.
+## The strategist's pace table, rival and backmarkers (RaceTelemetry).
+## sim2 / tel2: a race part-way through; tel: the finished race's telemetry.
+func _check_pace_table(sim2: RaceSim, tel2: RaceTelemetry, tel: RaceTelemetry) -> void:
+	# Averages over the last n laps, lap 1 left out (the finished race's logs).
+	var avg_ok := true
+	for c in tel.cars:
+		var want := 0.0
+		var n := 0
+		for k in range(c.laps.size() - 1, -1, -1):
+			if c.laps[k]["lap"] <= 1 or n >= 3:
+				break
+			want += c.laps[k]["time"]
+			n += 1
+		if n > 0 and absf(c.avg_last(3) - want / n) > 1e-6:
+			avg_ok = false
+		if absf(c.avg_last(5) - c.last5_avg) > 1e-9:
+			avg_ok = false
+	check(avg_ok, "last-3 and last-5 lap averages leave out lap 1 and match the lap log")
+	var ranks := tel.pace_ranks(sim2)
+	var sorted := true
+	for key in RaceTelemetry.PACE_KEYS:
+		var list: Array = ranks[key]
+		for k in range(1, list.size()):
+			if tel.pace_value(list[k], key) < tel.pace_value(list[k - 1], key):
+				sorted = false
+	check(sorted and (ranks["last"] as Array).size() > 0, "pace table ranks cars fastest first on last lap, last 3 and last 5 (%d cars)" % (ranks["last"] as Array).size())
+	# Rival: on our lap, the nearer of the cars just ahead and behind.
+	var order := sim2.running_order
+	var me := order[order.size() / 2]
+	var riv := tel2.rival_of(sim2, me)
+	var p := order.find(me)
+	var pr := order.find(riv)
+	var near := riv >= 0 and sim2.defs[riv].class_tag == sim2.defs[me].class_tag and tel2.laps_behind(sim2, me, riv) == 0
+	for k in range(mini(p, pr) + 1, maxi(p, pr)):
+		var j := order[k]
+		if sim2.defs[j].class_tag == sim2.defs[me].class_tag and tel2.laps_behind(sim2, me, j) == 0:
+			near = false    # a closer car of our class on our lap was skipped
+	check(near, "the rival is the next car of our class on our lap, ahead or behind (P%d: car %d at P%d)" % [p + 1, riv, pr + 1])
+	# Backmarkers: a car a lap down on us, just up the road.
+	var last := order[order.size() - 1]
+	var keep := sim2.entries[last].distance
+	sim2.entries[last].distance = sim2.entries[order[0]].distance - sim2.track.length + 120.0
+	var bms := tel2.backmarkers_ahead(sim2, order[0])
+	check(tel2.is_backmarker(sim2, order[0], last) and not tel2.is_backmarker(sim2, last, order[0]),
+		"a car a lap down on the leader is the leader's backmarker, not the other way round")
+	check(not bms.is_empty() and int(bms[0]["car"]) == last and int(bms[0]["laps"]) == 1 and absf(float(bms[0]["metres"]) - 120.0) < 1.0,
+		"the backmarker 120 m up the road is listed first (%s)" % str(bms.slice(0, 1)))
+	check(tel2.rival_of(sim2, order[0]) != last, "a backmarker is never the leader's rival")
+	sim2.entries[last].distance = keep
+
+
 func test_telemetry(rep: Dictionary) -> void:
 	print("telemetry")
 	var tel: RaceTelemetry = rep["telemetry"]
@@ -2875,6 +2926,7 @@ func test_telemetry(rep: Dictionary) -> void:
 		tel2.observe(sim2)
 	tel2._compute_gaps(sim2)
 	tel2.pit.analyse(tel2.cars, sim2)
+	_check_pace_table(sim2, tel2, tel)
 	var order := sim2.running_order
 	var mono := true
 	var int_ok := true
