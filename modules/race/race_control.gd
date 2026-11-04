@@ -32,13 +32,26 @@ extends RefCounted
 enum Mode { GREEN, VSC, SC }
 const MODE_NAMES := ["green", "vsc", "sc"]
 
-## Safety car pace profile (m/s, m/s^2): a lap about 35-40 % slower than race pace.
+## Safety car pace profile (m/s, m/s^2), worked out along the racing line
+## (the same line the AI drives, kept a little in from the edges): a road car
+## on semi-slicks driven hard through the corners and held back on the
+## straights, so the lap is still well slower than race pace.
 const SC_MAX_SPEED := 38.0
-const SC_LAT_ACCEL := 6.0
-const SC_DECEL := 6.0
+const SC_LAT_ACCEL := 9.5
+const SC_DECEL := 8.0
 ## The VSC reference is a little quicker than the SC itself.
 const VSC_MAX_SPEED := 42.0
-const VSC_LAT_ACCEL := 7.5
+const VSC_LAT_ACCEL := 11.0
+## The safety car's line, built like the AI's (AIDriver._build_line): points
+## this far apart, pulled in from the edges in proportion so it keeps its
+## shape, to SC_LINE_MARGIN from the edge where the track's line goes to
+## SC_LINE_EDGE (raceline.py KERB_M).
+const SC_LINE_SPACING := 4.0
+const SC_LINE_MARGIN := 2.4
+const SC_LINE_EDGE := 0.3
+## Metres the SC takes to ease from the pit exit onto the racing line, and
+## from the line over to the pit entry.
+const SC_LINE_BLEND := 150.0
 ## Below this a car on the circuit counts as stopped.
 const STOPPED_SPEED := 3.0
 const MOVING_AGAIN := 8.0
@@ -151,8 +164,18 @@ var _now_dist: PackedFloat64Array = []
 var _now_free: PackedByteArray = []
 var _ago_t: float = -1.0
 
+## The racing line the SC drives: points SC_LINE_SPACING apart, the track
+## distance at each (always growing round the lap, from _line_s[0]), and
+## the SC and VSC speed at each.
+var _line_pts: PackedVector2Array = []
+var _line_s: PackedFloat64Array = []
+var _line_step: float = SC_LINE_SPACING
 var _sc_profile: PackedFloat64Array = []
 var _vsc_profile: PackedFloat64Array = []
+var _pit_entry_off := 0.0                  ## track offset where the pit lane starts / ends
+var _pit_exit_off := 0.0
+var sc_d: float = 0.0                      ## SC distance along its racing line (on the circuit)
+var sc_join_d: float = -1.0                ## line distance where it came out of the pit lane (-1 = on the line)
 var _danger: float = 0.0                  ## how bad things are right now (0 none, 1 VSC, 2 SC)
 var _big_incident_until: float = -1.0
 
@@ -341,11 +364,11 @@ func _causes_yellow(j: int) -> bool:
 
 ## Speed the VSC reference allows at track distance s (m/s).
 func vsc_speed_at(s: float) -> float:
-	return _vsc_profile[sim.track.index_at(s)] if not _vsc_profile.is_empty() else VSC_MAX_SPEED
+	return _line_value(_vsc_profile, line_d_at(s)) if not _vsc_profile.is_empty() else VSC_MAX_SPEED
 
 
 func sc_speed_at(s: float) -> float:
-	return _sc_profile[sim.track.index_at(s)] if not _sc_profile.is_empty() else SC_MAX_SPEED
+	return _line_value(_sc_profile, line_d_at(s)) if not _sc_profile.is_empty() else SC_MAX_SPEED
 
 
 ## Gap from car i forward to the safety car along the track (m); INF when
@@ -771,6 +794,8 @@ func _deploy_sc(why: String) -> void:
 		var ahead := fposmod(t.pit_exit_s - lead_s, t.length)
 		if ahead > 60.0 and ahead < 700.0:
 			sc_s = t.pit_exit_s
+	sc_d = line_d_at(sc_s)
+	sc_join_d = sc_d if t.has_pit_lane() and sc_s == t.pit_exit_s else -1.0
 	sc_in_pit = false
 	sc_visible = true
 	sc_speed = sc_speed_at(sc_s) * 0.6
@@ -878,7 +903,7 @@ func _update_safety_car(dt: float) -> void:
 	var acc := 4.0 if target > sc_speed else SC_DECEL
 	sc_speed = move_toward(sc_speed, target, acc * dt)
 	var prev := sc_s
-	sc_s = fposmod(sc_s + sc_speed * dt, t.length)
+	_advance_sc_on_line(dt)
 	if stage == "in_this_lap" and _crossed(prev, sc_s, _peel_off_s()):
 		_send_sc_to_pits()
 		stage = "restart"
@@ -915,8 +940,88 @@ func _place_sc() -> void:
 		sc_pos = t.pit_position_at(sc_s)
 		sc_heading = t.pit_heading_at(sc_s)
 	else:
-		sc_pos = t.position_at(sc_s)
-		sc_heading = t.heading_at(sc_s + 4.0)
+		sc_pos = _sc_pos_at(sc_d)
+		sc_heading = (_sc_pos_at(sc_d + 4.0) - sc_pos).angle()
+
+
+## Along the racing line: sc_d moves at the SC's speed, sc_s (track
+## distance, what the rules and the AI use) follows from it.
+func _advance_sc_on_line(dt: float) -> void:
+	if _line_pts.is_empty():
+		sc_s = fposmod(sc_s + sc_speed * dt, sim.track.length)
+		return
+	var L := _line_pts.size() * _line_step
+	sc_d = fposmod(sc_d + sc_speed * dt, L)
+	sc_s = line_s_at(sc_d)
+	if sc_join_d >= 0.0 and fposmod(sc_d - sc_join_d, L) > SC_LINE_BLEND:
+		sc_join_d = -1.0
+
+
+## Where the SC is at line distance d: on the racing line, easing in from
+## the pit exit after it comes out and over to the pit entry on its way in.
+func _sc_pos_at(d: float) -> Vector2:
+	var t := sim.track
+	if _line_pts.is_empty():
+		return t.position_at(sc_s + d - sc_d)
+	var L := _line_pts.size() * _line_step
+	var p := _line_point(d)
+	if sc_join_d >= 0.0:
+		var gone := fposmod(d - sc_join_d, L)
+		if gone < SC_LINE_BLEND:
+			var s := line_s_at(d)
+			p = t.position_at(s, _pit_exit_off).lerp(p, smoothstep(0.0, 1.0, gone / SC_LINE_BLEND))
+	if stage == "in_this_lap" and t.has_pit_lane() and _peel_off_s() == t.pit_entry_s:
+		var s := line_s_at(d)
+		var to_go := fposmod(t.pit_entry_s - s, t.length)
+		if to_go < SC_LINE_BLEND:
+			p = t.position_at(s, _pit_entry_off).lerp(p, smoothstep(0.0, 1.0, to_go / SC_LINE_BLEND))
+	return p
+
+
+func _line_point(d: float) -> Vector2:
+	var n := _line_pts.size()
+	var x := fposmod(d, n * _line_step) / _line_step
+	var k := int(x) % n
+	return _line_pts[k].lerp(_line_pts[(k + 1) % n], x - floorf(x))
+
+
+func _line_value(v: PackedFloat64Array, d: float) -> float:
+	var n := v.size()
+	var x := fposmod(d, n * _line_step) / _line_step
+	var k := int(x) % n
+	return lerpf(v[k], v[(k + 1) % n], x - floorf(x))
+
+
+## Track distance at line distance d.
+func line_s_at(d: float) -> float:
+	var n := _line_s.size()
+	var L := sim.track.length
+	var x := fposmod(d, n * _line_step) / _line_step
+	var k := int(x) % n
+	var s1 := _line_s[k + 1] if k + 1 < n else _line_s[0] + L
+	return fposmod(lerpf(_line_s[k], s1, x - floorf(x)), L)
+
+
+## Line distance at track distance s.
+func line_d_at(s: float) -> float:
+	var n := _line_s.size()
+	if n == 0:
+		return s
+	var L := sim.track.length
+	var base := _line_s[0]
+	s = fposmod(s - base, L) + base
+	var lo := 0
+	var hi := n - 1
+	while lo < hi:
+		var mid := (lo + hi + 1) / 2
+		if _line_s[mid] <= s:
+			lo = mid
+		else:
+			hi = mid - 1
+	var s0 := _line_s[lo]
+	var s1 := _line_s[lo + 1] if lo + 1 < n else base + L
+	var f := clampf((s - s0) / maxf(s1 - s0, 0.001), 0.0, 1.0)
+	return (lo + f) * _line_step
 
 
 ## Client: carry the SC along between race-state updates.
@@ -930,7 +1035,7 @@ func follower_step(dt: float) -> void:
 	if sc_in_pit:
 		sc_s = minf(sc_s + sc_speed * dt, sim.track.pit_length)
 	else:
-		sc_s = fposmod(sc_s + sc_speed * dt, sim.track.length)
+		_advance_sc_on_line(dt)
 	_place_sc()
 	mode_time += dt
 	stage_time += dt
@@ -1232,32 +1337,71 @@ func _event(e: Dictionary) -> void:
 
 func _build_profiles() -> void:
 	var t := sim.track
-	var n := t.point_count()
-	if n < 3:
+	if t.point_count() < 3:
 		return
+	_build_line()
+	var n := _line_pts.size()
+	# Curvature like the AI's: over a +-3 point window (24 m chord).
 	var curv := PackedFloat64Array()
 	curv.resize(n)
-	for i in n:
-		var a := t.seg_dir[(i - 1 + n) % n]
-		var b := t.seg_dir[i]
-		var ds := maxf((t.seg_len[(i - 1 + n) % n] + t.seg_len[i]) * 0.5, 0.5)
-		curv[i] = absf(a.angle_to(b)) / ds
-	# Smooth over about 30 m so kinks in the data don't make phantom corners.
-	var smooth := PackedFloat64Array()
-	smooth.resize(n)
-	for i in n:
-		var sum := 0.0
-		var w := 0.0
-		for o in range(-3, 4):
-			sum += curv[(i + o + n) % n]
-			w += 1.0
-		smooth[i] = sum / w
-	_sc_profile = _profile(smooth, SC_MAX_SPEED, SC_LAT_ACCEL, SC_DECEL)
-	_vsc_profile = _profile(smooth, VSC_MAX_SPEED, VSC_LAT_ACCEL, SC_DECEL + 1.5)
+	for k in n:
+		var a := _line_pts[(k - 3 + n) % n]
+		var b := _line_pts[k]
+		var c := _line_pts[(k + 3) % n]
+		var denom := a.distance_to(b) * b.distance_to(c) * c.distance_to(a)
+		curv[k] = absf(2.0 * (b - a).cross(c - b) / maxf(denom, 0.001))
+	_sc_profile = _profile(curv, SC_MAX_SPEED, SC_LAT_ACCEL, SC_DECEL)
+	_vsc_profile = _profile(curv, VSC_MAX_SPEED, VSC_LAT_ACCEL, SC_DECEL + 1.5)
+	if t.has_pit_lane():
+		_pit_entry_off = t.project(t.pit_position_at(0.0))["offset"]
+		_pit_exit_off = t.project(t.pit_position_at(t.pit_length))["offset"]
+
+
+## The track's racing line (the centre line where there is none), resampled
+## and pulled in from the edges the way the AI does it.
+func _build_line() -> void:
+	var t := sim.track
+	var src := t.raceline if t.raceline.size() > 10 else t.points
+	var m := src.size()
+	var total := 0.0
+	for i in m:
+		total += src[i].distance_to(src[(i + 1) % m])
+	var count := maxi(int(total / SC_LINE_SPACING), 3)
+	_line_step = total / count
+	_line_pts = PackedVector2Array()
+	_line_s = PackedFloat64Array()
+	var seg := 0
+	var seg_start := 0.0
+	var seg_len := src[0].distance_to(src[1 % m])
+	var hint := -1
+	for k in count:
+		var d := k * _line_step
+		while d > seg_start + seg_len:
+			seg_start += seg_len
+			seg = (seg + 1) % m
+			seg_len = src[seg].distance_to(src[(seg + 1) % m])
+		var p := src[seg].lerp(src[(seg + 1) % m], (d - seg_start) / maxf(seg_len, 0.001))
+		var q := t.project(p, hint)
+		hint = q["idx"]
+		var off: float = q["offset"]
+		var w: float = q["w_right"] if off > 0.0 else q["w_left"]
+		var lim := maxf(w - SC_LINE_MARGIN, 0.0)
+		var squeezed := clampf(off * lim / maxf(w - SC_LINE_EDGE, 0.1), -lim, lim)
+		_line_pts.append(p + Vector2(-q["dir"].y, q["dir"].x) * (squeezed - off))
+		_line_s.append(q["s"])
+	# Track distance keeps growing round the lap (it can stall at a hairpin
+	# apex, where the inside of the line covers little centre line).
+	var L := t.length
+	for k in range(1, count):
+		while _line_s[k] < _line_s[k - 1] - L * 0.5:
+			_line_s[k] += L
+		_line_s[k] = maxf(_line_s[k], _line_s[k - 1])
+	if _line_s[count - 1] >= _line_s[0] + L:
+		for k in count:
+			_line_s[k] = minf(_line_s[k], _line_s[0] + L - 0.01 * (count - k))
 
 
 func _profile(curv: PackedFloat64Array, vmax: float, lat: float, decel: float) -> PackedFloat64Array:
-	var t := sim.track
 	var n := curv.size()
 	var v := PackedFloat64Array()
 	v.resize(n)
@@ -1268,7 +1412,7 @@ func _profile(curv: PackedFloat64Array, vmax: float, lat: float, decel: float) -
 		for j in n:
 			var i := n - 1 - j
 			var nxt := v[(i + 1) % n]
-			v[i] = minf(v[i], sqrt(nxt * nxt + 2.0 * decel * t.seg_len[i]))
+			v[i] = minf(v[i], sqrt(nxt * nxt + 2.0 * decel * _line_step))
 	return v
 
 
@@ -1281,6 +1425,7 @@ func to_dict(full := false) -> Dictionary:
 		"mode": mode, "mode_time": mode_time, "reason": reason, "stage": stage, "stage_time": stage_time,
 		"wave_by": wave_by, "sc_laps": sc_laps, "deployments": deployments,
 		"sc_visible": sc_visible, "sc_s": sc_s, "sc_in_pit": sc_in_pit, "sc_speed": sc_speed, "sc_lights": sc_lights,
+		"sc_d": sc_d, "sc_join_d": sc_join_d,
 		"yellows": yellows.duplicate(true), "vsc_delta": vsc_delta.duplicate(),
 		"unlapping": unlapping.duplicate(), "released": released.duplicate(), "recovered": recovered.duplicate(),
 		"give_back": give_back.duplicate(true), "restart_lap": _restart_lap,
@@ -1314,6 +1459,8 @@ func apply_dict(d: Dictionary) -> void:
 	sc_in_pit = d.get("sc_in_pit", false)
 	sc_speed = d.get("sc_speed", 0.0)
 	sc_lights = d.get("sc_lights", "off")
+	sc_d = d.get("sc_d", line_d_at(sc_s))
+	sc_join_d = d.get("sc_join_d", -1.0)
 	yellows = d.get("yellows", []).duplicate(true)
 	_restart_lap = d.get("restart_lap", 0)
 	give_back = d.get("give_back", {}).duplicate(true)
