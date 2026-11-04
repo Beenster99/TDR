@@ -10,7 +10,8 @@ var car: int = 0
 ## {lap, time, sectors: [s1, s2, s3], position, gap_leader, tyre_avg_c,
 ##  tyre_temps: [fl, fr, rl, rr], fuel_l, weather, wetness, race_time,
 ##  compound (the tyre id on the car at the line), stops (pit stops so far),
-##  pitted (true = stopped in this lap)}
+##  pitted (true = stopped in this lap), tyre_wear: [fl, fr, rl, rr] (0 = new,
+##  1 = worn out, at the line)}
 var laps: Array = []
 ## Where the car started (1 = pole; 0 = not known yet).
 var grid_pos: int = 0
@@ -92,6 +93,42 @@ func trend() -> float:
 		xx += k * k
 	var d := n * xx - xs * xs
 	return (n * xy - xs * ys) / d if d != 0.0 else 0.0
+
+
+## How fast each tyre is wearing: worn fraction per lap for FL, FR, RL, RR,
+## the mean of up to the last n laps on the tyre that's on now (a lap where
+## the wear went down had a new tyre fitted, and starts again). 0 = no lap
+## on this tyre yet, or no wear.
+func wear_per_lap(n := 3) -> PackedFloat64Array:
+	var out := PackedFloat64Array([0.0, 0.0, 0.0, 0.0])
+	for w in 4:
+		var sum := 0.0
+		var got := 0
+		for k in range(laps.size() - 1, -1, -1):
+			var now: Array = laps[k].get("tyre_wear", [])
+			if now.size() < 4:
+				break
+			var before := 0.0
+			if k > 0:
+				var prev: Array = laps[k - 1].get("tyre_wear", [])
+				if prev.size() < 4:
+					break
+				before = float(prev[w])
+			var d := float(now[w]) - before
+			if d < 0.0:
+				break        # a new tyre went on in this lap
+			sum += d
+			got += 1
+			if got >= n:
+				break
+		out[w] = sum / got if got > 0 else 0.0
+	return out
+
+
+## Laps until a tyre with this much wear is worn out at this rate per lap
+## (INF when it isn't wearing).
+static func laps_to_worn(wear: float, rate: float) -> float:
+	return (1.0 - clampf(wear, 0.0, 1.0)) / rate if rate > 1e-5 else INF
 
 
 func to_net() -> Array:
