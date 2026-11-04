@@ -10,7 +10,9 @@ extends Control
 ##
 ## Controller also lists every control with two keyboard and two controller
 ## bindings: pick one, then press the new key or button (InputSetup turns it
-## into a binding; saved in GameData.prefs["controls"]).
+## into a binding; saved in GameData.prefs["controls"]). A binding is cleared
+## at once, no questions: right-click it, or with it picked press Delete /
+## Backspace on the keyboard or X (Square) on the controller (CLEAR_BUTTON).
 
 signal closed
 
@@ -28,6 +30,8 @@ var open_garage: Callable
 ## Waiting for a new key or button: {action, kind, slot, index, from, until}.
 var _listen := {}
 const LISTEN_TIME := 6.0
+## The controller button that clears the picked binding (A picks, B leaves).
+const CLEAR_BUTTON := InputSetup.CLEAR_BUTTON
 ## The HUD layout editor's preview, while it's open.
 var _hud_preview: Control = null
 ## In a race (the pause menu, PauseMenu): only the player's own game settings.
@@ -252,8 +256,8 @@ func _controls() -> Dictionary:
 
 
 func _build_controls() -> void:
-	_note("Pick a binding, then press the new key or controller button.  Backspace clears it, Esc cancels.",
-		Color(1, 1, 1, 0.6))
+	var hint := _note("", Color(1, 1, 1, 0.6))
+	InputPrompt.live(hint, func(): hint.text = clear_hint())
 	var head := HBoxContainer.new()
 	head.add_theme_constant_override("separation", 6)
 	for h in [["", 250], ["Keyboard", 306], ["Controller", 306]]:
@@ -282,9 +286,11 @@ func _build_controls() -> void:
 				b.custom_minimum_size = Vector2(150, 40)
 				b.clip_text = true
 				b.set_meta("help", "%s: %s %d is %s. Press it, then the new %s." % [r[1],
-					"key" if kind == "keys" else "controller button", slot + 1, b.text,
-					"key" if kind == "keys" else "button, trigger or stick direction"])
+					"key" if kind == "keys" else "controller button", slot + 1,
+					b.text if v != null else "not set", "key" if kind == "keys" else "button, trigger or stick direction"])
+				b.set_meta("help_extra", true)   # + how to clear it, for the device in use
 				b.pressed.connect(_start_listen.bind(r[0], kind, slot, b))
+				b.gui_input.connect(_on_binding_input.bind(r[0], kind, slot, b))
 				row.add_child(b)
 		_list.add_child(row)
 	_action("Reset controls to default", func():
@@ -294,6 +300,33 @@ func _build_controls() -> void:
 		"Puts every key and controller button back as it came.")
 
 
+## How to pick and clear a binding, for the device in use.
+static func clear_hint() -> String:
+	return InputPrompt.pick("Click a binding, then press the new key or controller button.  Right-click a binding (or pick it and press Delete) to clear it.",
+		"Pick a binding with %s, then press the new button or key.  %s clears the picked binding." % [
+			InputPrompt.button(JOY_BUTTON_A), InputPrompt.button(CLEAR_BUTTON)])
+
+
+## The ways to clear a binding without listening: right-click it, or press
+## Delete / Backspace or the controller's clear button while it is picked.
+func _on_binding_input(event: InputEvent, action: String, kind: String, slot: int, b: Button) -> void:
+	if not _listen.is_empty():
+		return
+	if InputSetup.is_clear_event(event):
+		b.accept_event()
+		_clear(action, kind, slot, b)
+
+
+func _clear(action: String, kind: String, slot: int, b: Button) -> void:
+	var list: Array = InputSetup.keys_of(_controls(), action) if kind == "keys" else InputSetup.pads_of(_controls(), action)
+	var buttons := _list.find_children("*", "BaseButton", true, false)
+	_listen = {"action": action, "kind": kind, "slot": slot, "index": buttons.find(b)}
+	if slot >= mini(list.size(), InputSetup.SLOTS):
+		_end_listen("Nothing to clear.")
+		return
+	_bind(null)
+
+
 func _start_listen(action: String, kind: String, slot: int, b: Button) -> void:
 	var now := Time.get_ticks_msec() / 1000.0
 	var buttons := _list.find_children("*", "BaseButton", true, false)
@@ -301,7 +334,7 @@ func _start_listen(action: String, kind: String, slot: int, b: Button) -> void:
 	_listen = {"action": action, "kind": kind, "slot": slot, "index": buttons.find(b), "from": now + 0.2,
 		"until": now + LISTEN_TIME, "button": b}
 	b.text = "press a key..." if kind == "keys" else "press a button..."
-	_help.text = "Press the new %s now (%d s).  Backspace clears it, Esc cancels." % [
+	_help.text = "Press the new %s now (%d s).  Delete clears it, Esc cancels." % [
 		"key" if kind == "keys" else "controller button, trigger or stick direction", int(LISTEN_TIME)]
 
 
@@ -326,7 +359,7 @@ func _input(event: InputEvent) -> void:
 		if code == KEY_ESCAPE:
 			_end_listen("No change.")
 			return
-		if code == KEY_BACKSPACE:
+		if code == KEY_BACKSPACE or code == KEY_DELETE:
 			_bind(null)
 			return
 	var got := InputSetup.binding_from_event(event)
@@ -340,7 +373,8 @@ func _bind(value) -> void:
 	var overrides := InputSetup.with_binding(_controls(), l["action"], l["kind"], l["slot"], value)
 	var also := InputSetup.used_by(overrides, l["action"], l["kind"], value) if value != null else []
 	GameData.set_pref("controls", overrides)
-	_end_listen(("Cleared." if value == null else "Set to %s." % InputSetup.describe(l["kind"], value))
+	_end_listen((InputSetup.cleared_message(overrides, l["action"], l["kind"]) if value == null
+		else "Set to %s." % InputSetup.describe(l["kind"], value))
 		+ ("  Also used for: %s." % ", ".join(also) if not also.is_empty() else ""))
 
 
@@ -385,6 +419,8 @@ static func _copy(from: String, to: String) -> Error:
 
 func _on_row_focus(b: Control) -> void:
 	var h := str(b.get_meta("help", ""))
+	if b.get_meta("help_extra", false):
+		h += "  " + InputPrompt.pick("Right-click or Delete clears it.", "%s clears it." % InputPrompt.button(CLEAR_BUTTON))
 	_help.text = InputPrompt.fill(h)   # a setting's help can name controls: {crew_grab}
 
 
