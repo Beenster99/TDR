@@ -57,7 +57,7 @@ func _draw() -> void:
 	draw_string(font, Vector2(W_SWATCH, 14), "POS", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, DIM)
 	draw_string(font, Vector2(W_SWATCH + W_POS, 14), "DRIVER", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, DIM)
 	draw_string(font, Vector2(W_SWATCH + W_POS + W_NAME, 14), "FROM GRID", HORIZONTAL_ALIGNMENT_CENTER, W_GAIN, 11, DIM)
-	draw_string(font, Vector2(bar_x, 14), "TYRES AND STOPS" + ("   ·   % = most worn tyre left at the stint's end" if wear else ""),
+	draw_string(font, Vector2(bar_x, 14), "TYRES AND STOPS" + ("  ·  % = worst tyre left" if wear else ""),
 		HORIZONTAL_ALIGNMENT_LEFT, bar_w - 50, 11, DIM)
 	draw_string(font, Vector2(bar_x, 14), "lap %d" % max_laps, HORIZONTAL_ALIGNMENT_RIGHT, bar_w, 11, DIM)
 	for k in rows.size():
