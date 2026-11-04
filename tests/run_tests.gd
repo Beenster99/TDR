@@ -57,6 +57,7 @@ func _init() -> void:
 	test_yellow_flags_for_incidents()
 	test_safety_car_race()
 	test_car_recovery()
+	test_stuck_car_recovered()
 	test_marshals_clear_debris()
 	test_gravel_escape()
 	test_safety_car_off()
@@ -2173,6 +2174,7 @@ func test_car_recovery() -> void:
 	var victim := -1
 	var ev := {}
 	var sc_reason := ""
+	var vsc_reason := ""
 	var hoisted := 0.0
 	var moved := 0.0
 	var recovered_at := INF
@@ -2203,6 +2205,8 @@ func test_car_recovery() -> void:
 			ev[key] = ev.get(key, 0) + 1
 			if key == "safety_car:sc" and sc_reason == "":
 				sc_reason = e["reason"]
+			if key == "safety_car:vsc" and vsc_reason == "":
+				vsc_reason = e["reason"]
 			if key == "flag:recovery":
 				ev["kind"] = e["kind"]
 			if key == "flag:recovered" and int(e["car"]) == victim:
@@ -2216,7 +2220,8 @@ func test_car_recovery() -> void:
 				check_views(sim)
 			moved = maxf(moved, sim.cars[victim].pos.distance_to(start_pos))
 	check(ev.get("kind", "") == "crane", "a crane is sent for the car in the wall")
-	check(sc_reason == "Recovery vehicle on track", "the safety car comes out for it (%s)" % sc_reason)
+	# Against the wall, off the racing surface: a VSC covers the crane.
+	check(vsc_reason == "Recovery vehicle on track" and sc_reason == "", "a VSC comes out for it, not the safety car (VSC: %s, SC: %s)" % [vsc_reason, sc_reason])
 	check(hoisted > 4.0 and moved > 20.0, "the crane lifts the car %.1f m and takes it away (%.0f m)" % [hoisted, moved])
 	check(recovered_at < INF and sim.race_control.recovered[victim] == 1, "car recovered at %.0f s" % recovered_at)
 	check(in_lap_at > recovered_at - 30.0, "safety car only comes in once the car is clear (in this lap at %.0f s)" % in_lap_at)
@@ -2224,6 +2229,80 @@ func test_car_recovery() -> void:
 	# Clients get the recovery vehicles with the race state.
 	var st := sim.race_control.to_dict()
 	check(st.has("recoveries") and st.has("carried"), "recovery vehicles go out with the race state")
+
+
+## An AI car beached in the gravel (or stopped for good) used to sit there
+## for the rest of the race. Now it retires and a recovery vehicle takes it
+## away; a person's car is left for them to drive out.
+func test_stuck_car_recovered() -> void:
+	print("stuck car recovered")
+	var settings := RaceSettings.new()
+	settings.laps = 4
+	settings.ai_count = 7
+	settings.seed = 778
+	var race := _race(settings, _data())
+	var sim: RaceSim = race["sim"]
+	var ai: Dictionary = race["ai"]
+	var track := sim.track
+	var victim := -1
+	var human := -1
+	var beached_at := INF
+	var retired_at := INF
+	var reason := ""
+	var kind := ""
+	var recovered_at := INF
+	var neutral := ""
+	var start_pos := Vector2.ZERO
+	var moved_while_parked := 0.0
+	while sim.phase != RaceSim.Phase.FINISHED and sim.tick < 60 * 60 * 15:
+		var inputs := []
+		for i in sim.car_count():
+			inputs.append(ai[i].get_input(sim, i))
+		if victim < 0 and sim.phase == RaceSim.Phase.RACING and sim.race_time >= 40.0:
+			victim = sim.running_order[sim.car_count() / 2]
+			human = sim.running_order[sim.car_count() - 1]
+			for car in [victim, human]:
+				var c := sim.cars[car]
+				var at := 1200.0 if car == victim else 1700.0  # level ground
+				var k := track.index_at(at)
+				# Into the run-off, halfway to the barrier, and stopped.
+				c.pos = track.position_at(at, -(track.width_left[k] + track.runoff * 0.5))
+				c.heading = track.heading_at(at)
+				c.vel = Vector2.ZERO
+				c.yaw_rate = 0.0
+				c.track_idx = -1
+			sim.entries[human].is_ai = false  # driven by a person
+			start_pos = sim.cars[victim].pos
+			beached_at = sim.race_time
+		var held := CarInput.neutral()
+		held.handbrake = true  # beached: it won't drive out
+		if victim >= 0 and not sim.entries[victim].dnf:
+			inputs[victim] = held
+		if human >= 0:
+			inputs[human] = held
+		sim.step(inputs)
+		for e in sim.events:
+			if e["type"] == "retired" and int(e["car"]) == victim and retired_at == INF:
+				retired_at = sim.race_time
+				reason = e["reason"]
+				start_pos = sim.cars[victim].pos
+			if e["type"] == "flag" and e.get("flag", "") == "recovery" and int(e["car"]) == victim:
+				kind = e["kind"]
+			if e["type"] == "flag" and e.get("flag", "") == "recovered" and int(e["car"]) == victim:
+				recovered_at = sim.race_time
+			if e["type"] == "safety_car" and e["state"] in ["vsc", "sc"] and neutral == "":
+				neutral = "%s (%s)" % [e["state"], e["reason"]]
+		if retired_at < INF and kind == "":
+			moved_while_parked = maxf(moved_while_parked, sim.cars[victim].pos.distance_to(start_pos))
+		if recovered_at < INF and sim.race_time > recovered_at + 5.0:
+			break
+	var waited := retired_at - beached_at
+	check(reason == "stuck" and waited >= RaceControl.STUCK_OFF_RETIRE_S - 0.5 and waited < RaceControl.STUCK_OFF_RETIRE_S + 3.0,
+		"the beached AI car retires after %.0f s (%s)" % [waited, reason])
+	check(moved_while_parked < 3.0, "a retired car stays parked for the recovery vehicle (moved %.1f m)" % moved_while_parked)
+	check(kind != "" and recovered_at < retired_at + 90.0, "a %s takes it away (%.0f s after it retired)" % [kind, recovered_at - retired_at])
+	check(neutral.begins_with("vsc"), "a VSC covers a recovery off the track: %s" % neutral)
+	check(not sim.entries[human].dnf and sim.race_control.recovered[human] == 0, "a person's car in the gravel is left to them")
 
 
 var _views_ok := true

@@ -65,6 +65,16 @@ const STRANDED_VSC_S := 6.0
 const STRANDED_SC_S := 16.0
 const RECOVERY_VSC_S := 25.0     ## marshals clear a stranded car in this time
 const RECOVERY_SC_S := 40.0
+## An AI car that has been stuck this long (stopped, or crawling below
+## MOVING_AGAIN) is out of the race: beached in the gravel, wedged against
+## the barrier or stalled. The marshals send a crane or a tractor for it.
+## Shorter off the circuit (a car stuck there won't get going again) than
+## stopped on the racing surface.
+const STUCK_OFF_RETIRE_S := 15.0
+const STUCK_ON_RETIRE_S := 20.0
+## ... unless it gets this far along the track meanwhile (a car creeping
+## along the edge waiting for a gap to rejoin isn't stuck).
+const STUCK_PROGRESS_M := 30.0
 const VSC_MIN_S := 20.0
 const VSC_ENDING_S := 6.0
 const SC_GAP_TARGET := 25.0      ## leader keeps this far behind the safety car
@@ -132,6 +142,8 @@ var debris: Array = []
 var marshal_jobs: Array = []
 var _marshal_ids: int = 0
 var _cleared: PackedByteArray = []        ## a live stopped car the marshals have made safe (yellow only)
+var _stuck_t: PackedFloat64Array = []     ## seconds an AI car has been stopped or crawling (see STUCK_*_RETIRE_S)
+var _stuck_s: PackedFloat64Array = []     ## where it was on the track when that started
 var vsc_delta: PackedFloat64Array = []    ## seconds; below 0 = faster than allowed
 var vsc_warned: PackedByteArray = []
 var vsc_penalised: PackedByteArray = []
@@ -166,6 +178,8 @@ func _init(p_sim: RaceSim) -> void:
 	recovered.resize(n)
 	carried.resize(n)
 	_cleared.resize(n)
+	_stuck_t.resize(n)
+	_stuck_s.resize(n)
 	vsc_delta.resize(n)
 	vsc_warned.resize(n)
 	vsc_penalised.resize(n)
@@ -582,6 +596,8 @@ func _track_stranded(dt: float) -> void:
 			_cleared[i] = 0
 		if stranded_t[i] >= STRANDED_YELLOW_S:
 			_add_yellow(c.track_s, i, "Car stopped")
+		if not e.dnf:
+			_track_stuck(i, dt)
 		if e.dnf:
 			# A retired car: send a crane or a tractor once it has come to rest.
 			if stranded_t[i] >= STRANDED_VSC_S and c.speed() < STOPPED_SPEED and recovery_for(i).is_empty():
@@ -591,6 +607,55 @@ func _track_stranded(dt: float) -> void:
 		if stranded_t[i] > limit + STRANDED_VSC_S:
 			_cleared[i] = 1  # a live car the marshals have pushed clear: yellow flag only
 			stranded_t[i] = STRANDED_YELLOW_S
+
+
+## An AI car that is stuck for good retires, so a recovery vehicle comes for
+## it (before, it sat parked at the side of the track for the rest of the
+## race). Cars driven by people are left to get themselves out.
+func _track_stuck(i: int, dt: float) -> void:
+	var c := sim.cars[i]
+	var e := sim.entries[i]
+	if not e.is_ai or sim.external[i] or not (e.started_lap or sim.race_time > 15.0):
+		_stuck_t[i] = 0.0
+		return
+	if c.speed() >= MOVING_AGAIN or c.air_h > 0.0:
+		_stuck_t[i] = 0.0
+		return
+	if _stuck_t[i] > 0.0 and absf(wrapf(c.track_s - _stuck_s[i], -sim.track.length * 0.5, sim.track.length * 0.5)) > STUCK_PROGRESS_M:
+		_stuck_t[i] = 0.0
+	var off := not _on_racing_surface(i)
+	# Crawling counts off the circuit (stuck in the gravel); on the track
+	# only a car that has properly stopped does.
+	if off or c.speed() < STOPPED_SPEED:
+		if _stuck_t[i] == 0.0:
+			_stuck_s[i] = c.track_s
+		_stuck_t[i] += dt
+	if _stuck_t[i] >= (STUCK_OFF_RETIRE_S if off else STUCK_ON_RETIRE_S):
+		e.dnf = true
+		_stuck_t[i] = 0.0
+		stranded_t[i] = maxf(stranded_t[i], STRANDED_YELLOW_S)
+		_cleared[i] = 0
+		sim.events.append({"type": "retired", "car": i, "reason": "stuck"})
+
+
+## Parked: a retired AI car (not a wreck in the derby) brakes to a stop and
+## stays there for the recovery vehicle. Before, the AI kept driving it, and
+## a car that can't race on (stuck, or the engine gone on a slope) crept
+## about and never came to rest. `driven` is what the AI wanted: its
+## steering is kept while the car is still rolling.
+func parked_input(i: int, driven: CarInput) -> CarInput:
+	var c := sim.cars[i]
+	var held := CarInput.neutral()
+	var v := c.speed()
+	if v > STOPPED_SPEED and driven != null:
+		held.steer = driven.steer
+	# Full brakes while rolling; at a standstill a held brake pedal would
+	# select reverse (below 0.5 it doesn't), so the handbrake holds it.
+	held.brake = 1.0 if v > 1.0 else 0.45
+	held.handbrake = v < STOPPED_SPEED
+	if c.gear == -1:
+		held.brake = 0.0  # in reverse the brake pedal drives it backwards
+	return held
 
 
 # --- Recovery vehicles ---------------------------------------------------------
@@ -710,10 +775,12 @@ func _escalate() -> void:
 		var on_track := _on_racing_surface(i)
 		if sim.entries[i].dnf:
 			# A retired car out on the circuit needs a recovery vehicle on
-			# track: safety car until the car is clear.
+			# track until the car is clear: the safety car when it's on the
+			# racing surface, a VSC when it's off it (in the gravel, on the
+			# grass or against the barrier).
 			var job := recovery_for(i)
 			if t >= STRANDED_VSC_S and (job.is_empty() or not CarRecovery.car_clear(job)):
-				danger = maxf(danger, 2.0)
+				danger = maxf(danger, 2.0 if on_track else 1.0)
 				recovering += 1
 		elif on_track and t >= STRANDED_SC_S:
 			danger = maxf(danger, 2.0)
@@ -736,7 +803,7 @@ func _escalate() -> void:
 	if danger >= 2.0 and mode != Mode.SC and not final_lap:
 		_deploy_sc("Recovery vehicle on track" if recovering > 0 else ("Car stopped on track" if stranded < 2 else "Multiple cars stopped"))
 	elif danger >= 1.0 and mode == Mode.GREEN:
-		_deploy_vsc("Car stopped" if stranded == 1 else "Incident")
+		_deploy_vsc("Recovery vehicle on track" if recovering > 0 else ("Car stopped" if stranded == 1 else "Incident"))
 
 
 ## A retired car that a recovery vehicle has already got off the circuit.
@@ -1289,6 +1356,7 @@ func to_dict(full := false) -> Dictionary:
 	}
 	if full:
 		d["full"] = {"stranded_t": stranded_t.duplicate(), "hazard_t": _hazard_t.duplicate(), "cleared": _cleared.duplicate(),
+			"stuck_t": _stuck_t.duplicate(), "stuck_s": _stuck_s.duplicate(),
 			"vsc_warned": vsc_warned.duplicate(), "vsc_penalised": vsc_penalised.duplicate(),
 			"unlap_from": unlap_from.duplicate(), "prev_order": _prev_order.duplicate(),
 			"sc_behind": _sc_behind.duplicate(), "big_until": _big_incident_until,
@@ -1328,6 +1396,10 @@ func apply_dict(d: Dictionary) -> void:
 		if f.has("hazard_t") and f["hazard_t"].size() == stranded_t.size():
 			_hazard_t = f["hazard_t"].duplicate()
 		_cleared = f["cleared"].duplicate()
+		if f.has("stuck_t") and f["stuck_t"].size() == stranded_t.size():
+			_stuck_t = f["stuck_t"].duplicate()
+		if f.has("stuck_s") and f["stuck_s"].size() == stranded_t.size():
+			_stuck_s = f["stuck_s"].duplicate()
 		vsc_warned = f["vsc_warned"].duplicate()
 		vsc_penalised = f["vsc_penalised"].duplicate()
 		unlap_from = f["unlap_from"].duplicate()

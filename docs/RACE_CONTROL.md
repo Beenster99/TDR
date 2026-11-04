@@ -15,8 +15,9 @@ race state and just move the safety car along between updates.
 | Car stopped (< 3 m/s) for 2 s | Local yellow at the car |
 | Car stopped on the racing surface for 6 s, a retired car stopped for 6 s, or two cars stopped | Virtual safety car (VSC) |
 | Car stopped on the racing surface for 16 s, three or more stopped cars, or a crash with severity >= 0.85 and a stopped car | Safety car (SC) |
-| Retired car stopped on the circuit for 6 s | Safety car ("Recovery vehicle on track") and a recovery vehicle: a crane if the car is in the wall, a tractor anywhere else (see below) |
-| A live car stopped for the recovery time (VSC 25 s, SC 40 s, plus 6 s) | Marshals push it clear: yellow flag only from then on |
+| An AI car stuck off the racing surface for 15 s (stopped, or crawling under 8 m/s in the gravel, on the grass or against the barrier), or stopped on it for 20 s, without getting 30 m further along the track | It retires (`retired` event, reason `stuck`) and is fetched like any retired car (next row). Cars driven by people are left to get themselves out |
+| Retired car stopped on the circuit for 6 s | A recovery vehicle: a crane if the car is in the wall, a tractor anywhere else (see below), under the safety car ("Recovery vehicle on track") when the car is on the racing surface, or a VSC with the same reason when it is off it |
+| A live car (a person's) stopped for the recovery time (VSC 25 s, SC 40 s, plus 6 s) | Marshals push it clear: yellow flag only from then on |
 
 No new SC is sent out on the leader's final lap. The host's "Safety car" setting
 (`RaceSettings.race_control_mode()`): "On" (yellows, VSC and SC), "Yellow flags
@@ -63,7 +64,10 @@ state, so clients see the same thing.
   a strap on and tows it out through the next gate. About 35 s.
 - The car is out of the physics from the moment it is lifted or hooked
   (`RaceControl.out_of_play`), and hidden once the vehicle has gone (`recovered`).
-- The safety car stays out until the car is clear of the circuit (over the wall, or out
+- A retired AI car is parked (`RaceControl.parked_input`: brakes, then the handbrake
+  once stopped) so it comes to rest where the vehicle will find it. Before, the AI kept
+  driving it and a stuck car crept about and was never fetched.
+- The safety car (or the VSC, for a car off the racing surface) stays out until the car is clear of the circuit (over the wall, or out
   of the gate), then goes through its normal procedure. With the safety car off, the
   vehicles still come, under yellow flags. No new safety car on the final lap.
 - Events: `flag` `recovery` (vehicle sent, with `kind`) and `recovered`.
