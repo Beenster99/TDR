@@ -1042,7 +1042,11 @@ static func fuel_choice_text(sim: RaceSim, car: int, plan_fuel: float) -> String
 	if plan_fuel == 0.0:
 		return "none"
 	var laps := fuel_laps_text(sim, car, plan_fuel)
-	return "+%d L" % int(plan_fuel) + ("  (%s)" % laps if laps != "" else "")
+	var added := fuel_added_l(sim, car, plan_fuel)
+	var txt := "+%d L" % int(plan_fuel)
+	if added < plan_fuel - 0.5:
+		txt += ", fills at %d L" % roundi(added)   # the tank has less room than that now
+	return txt + ("  (%s)" % laps if laps != "" else "")
 
 
 ## Damage panel: a top view of the car with each zone coloured by how bent

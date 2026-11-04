@@ -935,12 +935,12 @@ func _draw_controls(r: Rect2) -> void:
 	if sim.settings.fuel_enabled:
 		var fv := float(draft["fuel"])
 		_text(Vector2(x, y + 21), "Fuel" + _shortcut(" (F G)"), 15)
-		var fx := x + 70
+		var fx := x + 92
 		_button(Rect2(fx, y, 40, 30), "−10", "fuel", -10, false, true, 13)
-		_stepper(Vector2(fx + 44, y), 190, RaceHud.fuel_plan_text(fv) if fv >= 0.0 else "to the end", "fuel", -1, 1, true, Color.WHITE, 0)
-		_button(Rect2(fx + 238, y, 40, 30), "+10", "fuel", 10, false, true, 13)
-		_button(Rect2(fx + 284, y, 70, 30), "To end", "fuel_auto", null, fv < 0.0, true, 13)
-		_button(Rect2(fx + 358, y, x + w - fx - 358, 30), "None", "fuel_none", null, fv == 0.0, true, 13)
+		_stepper(Vector2(fx + 44, y), 168, RaceHud.fuel_plan_text(fv) if fv >= 0.0 else "to the end", "fuel", -1, 1, true, Color.WHITE, 0)
+		_button(Rect2(fx + 216, y, 40, 30), "+10", "fuel", 10, false, true, 13)
+		_button(Rect2(fx + 262, y, 66, 30), "To end", "fuel_auto", null, fv < 0.0, true, 13)
+		_button(Rect2(fx + 332, y, x + w - fx - 332, 30), "None", "fuel_none", null, fv == 0.0, true, 13)
 		# What it does: litres in, laps they add, laps on board against laps to go.
 		var fpl := sim.pits.fuel_per_lap(car)
 		if fpl > 0.0:
@@ -949,10 +949,10 @@ func _draw_controls(r: Rect2) -> void:
 			var to_go := sim.pits.laps_after_this(car) + 1
 			var short := after < to_go - 0.05
 			var room := maxf(sim.defs[car].fuel_capacity_l - sim.cars[car].fuel_l, 0.0)
-			var line := "%d L in = +%.1f laps   ·   %.1f laps in the tank after, %d to go" % [roundi(add), add / fpl, after, to_go]
+			var line := "+%.1f laps  ·  %.1f laps in the tank after, %d to go" % [add / fpl, after, to_go]
 			if fv > room + 0.5:
-				line += "   (tank full at %d L)" % roundi(room)
-			_text(Vector2(fx, y + 50), line, 13, RED if short else Color(0.75, 1.0, 0.8), HORIZONTAL_ALIGNMENT_LEFT, x + w - fx)
+				line = "Fills the tank now (%d L): " % roundi(room) + line
+			_text(Vector2(x, y + 50), line, 13, RED if short else Color(0.75, 1.0, 0.8), HORIZONTAL_ALIGNMENT_LEFT, w)
 			y += 22
 		y += 40
 	if sim.damage_level != CarDamage.Level.OFF:
