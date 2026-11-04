@@ -36,6 +36,12 @@ const BRAKE_TURNING := 0.35  ## share of braking grip left at the cornering limi
 const ALONGSIDE_GAP := 1.1   ## clear metres kept between our side and a car alongside
 const DEFEND_RATE := 2.5     ## m/s: fastest sideways move when covering a line
 const START_HOLD_MAX_M := 1200.0  ## opening lap: furthest the grid lanes are held
+const MISTAKE_RATE := 0.6     ## share of the old mistake rate (they were too frequent for short races)
+const RACE_EDGE_KEEP := 0.8  ## m: racecraft (passing, defending, alongside) stays this far inside the room
+const PASS_FULL_GAP := 10.0  ## m (track distance): an attack moves fully off the line from this close
+const PASS_FADE_M := 10.0    ## ... and not at all from this much further back
+const YAW_DAMP := 0.08        ## s: steering (rad) per rad/s of unwanted rotation
+const YAW_BRAKE_EASE := 0.15  ## rad/s of unwanted rotation under braking: ease the brake
 ## Rejoining after an off: how far beyond the kerb the car waits, how far
 ## inside the white line it comes back on, and how far it holds that edge.
 const REJOIN_WAIT_OUT := 1.5
@@ -707,9 +713,23 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 		var o := sim.cars[_pass_target]
 		var oly := _line_offset(o.pos, (idx + int(maxf((o.pos - car.pos).dot(fwd), 0.0) / SPACING)) % n)
 		var need := half_w + sim.defs[_pass_target].width * 0.5 + lerpf(1.7, 1.1, p.aggression)
-		want_bias = oly + _pass_side * need
-		# Not enough room any more on that side: give up and tuck back in.
-		if _room(_pass_side, idx) - _pass_side * oly < need - 0.6:
+		# Stay on the line until the gap is small enough to get alongside: sitting
+		# out wide 20 m behind through a corner only runs the car out of road
+		# on the exit (Spa, Zandvoort's last turns).
+		var gap_m := sim.entries[_pass_target].distance - my_dist
+		var commit := clampf((PASS_FULL_GAP + PASS_FADE_M - gap_m) / PASS_FADE_M, 0.0, 1.0)
+		# On a straight (nothing to run out of road on) pull out as early as wanted.
+		var bend := 0.0
+		for k in range(0, int(maxf(speed * 1.5, 30.0) / SPACING)):
+			bend = maxf(bend, absf(curv[(idx + k) % n]))
+		if bend < 0.004:
+			commit = 1.0
+		want_bias = (oly + _pass_side * need) * commit
+		# Not enough room on that side, here or just ahead: give up and tuck back in.
+		var room_ahead := _room(_pass_side, idx)
+		for k in range(1, int(20.0 / SPACING) + 1):
+			room_ahead = minf(room_ahead, _room(_pass_side, (idx + k * 2) % n))
+		if room_ahead - RACE_EDGE_KEEP - _pass_side * oly < need - 0.6 and commit > 0.0:
 			_pass_timer = 0.0
 	elif ahead >= 0 and ahead_lx < 20.0 and target_speed[idx] > sim.cars[ahead].vel.length() + 2.0:
 		pressure = maxf(pressure, 0.5)
@@ -807,12 +827,19 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 			want_bias = maxf(want_bias, keep)
 		else:
 			want_bias = minf(want_bias, keep)
-		if (a[1] > 0.0 and keep > room_right[idx]) or (a[1] < 0.0 and -keep > room_left[idx]):
+		if (a[1] > 0.0 and keep > room_right[idx] - RACE_EDGE_KEEP) or (a[1] < 0.0 and -keep > room_left[idx] - RACE_EDGE_KEEP):
 			if a[3] > 0.0:
 				squeezed = true
 	# Room here and where we steer to: an attack out wide on a corner exit
 	# must not run us off where the line itself goes out to the edge.
-	want_bias = clampf(want_bias, -minf(room_left[idx], room_left[aim]), minf(room_right[idx], room_right[aim]))
+	# Off the line the car runs up to a metre wider than aimed on a corner
+	# exit, so racecraft keeps RACE_EDGE_KEEP more room to the edge than the
+	# room itself (the old clamp left 20 cm and attacks out wide ran off).
+	# A mistake (running wide) still uses all of it.
+	var edge_keep := 0.0 if _mistake_kind == "wide" and _mistake_until >= 0 else RACE_EDGE_KEEP
+	var keep_l := maxf(minf(room_left[idx], room_left[aim]) - edge_keep, 0.0)
+	var keep_r := maxf(minf(room_right[idx], room_right[aim]) - edge_keep, 0.0)
+	want_bias = clampf(want_bias, -keep_l, keep_r)
 	var bias_rate := lerpf(2.5, 4.5, p.aggression)
 	if mood == Mood.DEFENDING:
 		bias_rate = minf(bias_rate, DEFEND_RATE)  # a steady move, not a chop
@@ -855,6 +882,15 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 	# Catch slides: steer into the slide when the rear steps out.
 	var excess_slip := car.slip_angle_rear - clampf(car.slip_angle_rear, -0.06, 0.06)
 	steer_angle += lerpf(0.7, 1.0, p.consistency) * excess_slip
+	# Catch the car rotating more (or less) than the path asks for, before
+	# it becomes a slide: under hard braking the rear goes light and the car
+	# starts to turn on its own (it used to wander off at Parabolica with the
+	# wheel straight).
+	var yaw_err := car.yaw_rate - speed * 2.0 * sin(alpha) / ld
+	# (Not on loose rallycross surfaces, where the car is meant to slide.)
+	var loose_here := loose[idx] if loose.size() == n else 0.0
+	if speed > 15.0:
+		steer_angle -= YAW_DAMP * (1.0 - loose_here) * lerpf(0.7, 1.0, p.consistency) * clampf(yaw_err, -0.6, 0.6)
 	inp.steer = clampf(steer_angle / def.max_steer, -1.0, 1.0)
 
 	# --- Speed. ---
@@ -877,10 +913,18 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 	scale *= (1.0 + speed_noise) * yield_scale
 	if squeezed:
 		scale *= 0.95
+	# A damaged car has less grip than the speeds were learned with: drive
+	# to what is left (the old way, it kept pushing and went off lap after lap).
+	scale *= _damage_scale(car, sim.damage_level == CarDamage.Level.FULL)
 	var v_target := target_speed[idx]
 	var look_pts := 2 + int(speed * 0.45 / SPACING)
 	for k in range(1, look_pts):
 		v_target = minf(v_target, target_speed[(idx + k) % n])
+	# Off the line (attacking, defending, alongside) the corner is tighter on
+	# the inside: the profile's speeds are for the line's radius, so brake for
+	# the radius actually being driven.
+	if absf(lateral_bias) > 0.5:
+		v_target = minf(v_target, _off_line_limit(idx, speed))
 	v_target *= scale
 	if _mistake_kind == "late" and _mistake_until >= 0:
 		v_target *= 1.10
@@ -921,8 +965,8 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 			inp.throttle *= 0.4
 		# Running wide on the exit: wait with the power.
 		var outward := -signf(curv[idx]) * signed_off
-		if outward > 1.0 and speed > 12.0 and car.surface <= TrackData.Surface.KERB:
-			inp.throttle *= clampf(1.0 - (outward - 1.0) * 0.45, 0.15, 1.0)
+		if outward > 0.6 and speed > 12.0 and car.surface <= TrackData.Surface.KERB:
+			inp.throttle *= clampf(1.0 - (outward - 0.6) * 0.6, 0.1, 1.0)
 	elif err < -0.8:
 		inp.brake = clampf(-err * 0.5, 0.0, 1.0)
 		# Trail braking: ease off the brake as the steering winds on, and when
@@ -930,9 +974,44 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 		inp.brake = minf(inp.brake, lerpf(1.0, lerpf(0.35, 0.55, p.aggression), minf(absf(inp.steer) / 0.45, 1.0)))
 		if absf(car.slip_angle_rear) > 0.12:
 			inp.brake *= 0.5
+		elif absf(yaw_err) > YAW_BRAKE_EASE and speed > 15.0:
+			inp.brake *= 0.7  # the car is starting to turn on its own: ease off to get the rear back
 	_last_pressure = pressure
 	_radio_tick(sim, me, follow_limit < INF and ahead >= 0, over, ahead)
 	return inp.quantized()
+
+
+## Share of the clean car's corner speed a damaged car can carry (1 = no
+## damage): suspension and punctures take grip (CarPhysics), lost bodywork
+## takes downforce, a bent car pulls to one side.
+static func _damage_scale(car: CarState, full: bool) -> float:
+	if not full:
+		return 1.0
+	var grip := 1.0 - 0.3 * car.damage_suspension
+	for i in 4:
+		if car.puncture[i] > 0.5:
+			grip *= CarPhysics.PUNCTURE_GRIP
+			break
+	return sqrt(maxf(grip, 0.2)) * (1.0 - 0.15 * car.damage_aero) * (1.0 - 0.1 * absf(car.alignment))
+
+
+## Highest speed now that still lets the car make every corner ahead at the
+## current offset from the line: a corner of radius R taken d metres to the
+## inside has radius R - d, so its speed scales by sqrt(1 - curv * d).
+func _off_line_limit(k0: int, speed: float) -> float:
+	var n := line.size()
+	var decel := _mu * _brake_frac * CarPhysics.G * 0.85
+	var reach := int(clampf(speed * speed / (2.0 * decel) + 20.0, 20.0, 240.0) / SPACING)
+	var best := INF
+	for k in range(1, reach):
+		var j := (k0 + k) % n
+		var off := clampf(lateral_bias, -room_left[j], room_right[j])
+		var f := 1.0 - curv[j] * off
+		if f >= 1.0:
+			continue  # the outside of this bend: no slower than the line
+		var v := target_speed[j] * sqrt(maxf(f, 0.25))
+		best = minf(best, sqrt(v * v + 2.0 * decel * k * SPACING))
+	return best
 
 
 ## Rejoining after an off (see rejoin_side). Returns [where to steer, as metres
@@ -1087,7 +1166,7 @@ func _end_block(new_block: int, sim: RaceSim, me: int, dark: float, wetness: flo
 			break
 	if not corner_ahead:
 		return
-	var rate := (1.0 - p.consistency) * 0.02 + 0.0015
+	var rate := ((1.0 - p.consistency) * 0.02 + 0.0015) * MISTAKE_RATE
 	rate *= 1.0 + _last_pressure * 2.5 * (1.0 - p.composure)
 	rate *= 1.0 + 0.5 * dark + 2.0 * wetness * (1.0 - p.wet_skill)
 	rate *= 1.0 + 0.5 * p.aggression
