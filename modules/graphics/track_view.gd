@@ -402,14 +402,18 @@ func _mesh_node(st: SurfaceTool, mat: Material, node_name: String, shadows := fa
 
 # --- Terrain -------------------------------------------------------------------
 
+const TERRAIN_TILE := 24   ## cells along a side of one terrain tile (240 m with elevation)
+
+
 func _build_terrain() -> void:
 	var cell := 16.0 if not has_elevation() else 10.0
 	var has_elev := has_elevation()
 	var nx := int(ceil(bounds.size.x / cell))
 	var ny := int(ceil(bounds.size.y / cell))
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	_terrain_h = PackedFloat32Array()
+	var verts := PackedVector3Array()
+	var cols := PackedColorArray()
+	var uvs := PackedVector2Array()
 	for y in ny + 1:
 		for x in nx + 1:
 			var p := bounds.position + Vector2(x, y) * cell
@@ -419,21 +423,62 @@ func _build_terrain() -> void:
 			# sink the grass a little under the run-off so tarmac never clips
 			var hy := terrain_height(p) - (0.3 if cl < track.runoff + 8.0 else 0.05)
 			_terrain_h.append(hy)
-			st.set_color(Color(mown, 0, 0))
-			st.set_uv(p)
-			st.add_vertex(Vector3(p.x, hy, p.y))
-	for y in ny:
-		for x in nx:
-			var a := y * (nx + 1) + x
-			var b := a + 1
-			var c := a + nx + 1
-			var d := c + 1
-			st.add_index(a)
-			st.add_index(b)
-			st.add_index(c)
-			st.add_index(b)
-			st.add_index(d)
-			st.add_index(c)
+			cols.append(Color(mown, 0, 0))
+			uvs.append(p)
+			verts.append(Vector3(p.x, hy, p.y))
+	# Tiles of TERRAIN_TILE x TERRAIN_TILE cells, each its own mesh, so only
+	# the ones in view (and in the sun's shadow view) are drawn. The shader
+	# takes its normals from the heights texture, so the tiles meet seamlessly.
+	var lo := INF
+	var hi := -INF
+	for h in _terrain_h:
+		lo = minf(lo, h)
+		hi = maxf(hi, h)
+	var n_tiles := 0
+	for ty in range(0, ny, TERRAIN_TILE):
+		for tx in range(0, nx, TERRAIN_TILE):
+			var x1 := mini(tx + TERRAIN_TILE, nx)
+			var y1 := mini(ty + TERRAIN_TILE, ny)
+			var tv := PackedVector3Array()
+			var tc := PackedColorArray()
+			var tu := PackedVector2Array()
+			var tn := PackedVector3Array()
+			var idx := PackedInt32Array()
+			var w := x1 - tx + 1
+			for y in range(ty, y1 + 1):
+				for x in range(tx, x1 + 1):
+					var k := y * (nx + 1) + x
+					tv.append(verts[k])
+					tc.append(cols[k])
+					tu.append(uvs[k])
+					tn.append(Vector3.UP)
+			for y in y1 - ty:
+				for x in x1 - tx:
+					var a := y * w + x
+					var b := a + 1
+					var c := a + w
+					var d := c + 1
+					idx.append_array([a, b, c, b, d, c])
+			var arr := []
+			arr.resize(Mesh.ARRAY_MAX)
+			arr[Mesh.ARRAY_VERTEX] = tv
+			arr[Mesh.ARRAY_NORMAL] = tn
+			arr[Mesh.ARRAY_COLOR] = tc
+			arr[Mesh.ARRAY_TEX_UV] = tu
+			arr[Mesh.ARRAY_INDEX] = idx
+			var mesh := ArrayMesh.new()
+			mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+			var mi := MeshInstance3D.new()
+			mi.name = "Terrain%d" % n_tiles
+			mi.mesh = mesh
+			mi.material_override = terrain_material
+			# the shader moves nothing up or down, but give the box the whole
+			# height range so culling never drops a tile at the edge of a hill
+			var o := bounds.position + Vector2(tx, ty) * cell
+			mi.custom_aabb = AABB(Vector3(o.x, lo - 1.0, o.y), Vector3((x1 - tx) * cell, hi - lo + 2.0, (y1 - ty) * cell))
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if has_elev else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			add_child(mi)
+			n_tiles += 1
 	_terrain_grid = Rect2(bounds.position, Vector2(nx, ny) * cell)
 	_terrain_cell = cell
 	_terrain_n = Vector2i(nx + 1, ny + 1)
@@ -444,8 +489,6 @@ func _build_terrain() -> void:
 	terrain_material.set_shader_parameter("grid_origin", bounds.position)
 	terrain_material.set_shader_parameter("grid_cell", cell)
 	terrain_material.set_shader_parameter("grid_n", _terrain_n)
-	var mi := _mesh_node(st, terrain_material, "Terrain")
-	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if has_elevation() else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 
 # --- Road ------------------------------------------------------------------------
