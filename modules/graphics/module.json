@@ -11,6 +11,7 @@
     "physics": "1"
   },
   "api": [
+    "PodiumView",
     "WorldView",
     "TrackView",
     "CarView",
