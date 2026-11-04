@@ -94,6 +94,35 @@ func _checks() -> void:
 	for key in ["last", "avg3", "avg5"]:
 		var best: int = pace[key][0] if not (pace[key] as Array).is_empty() else -1
 		check(best >= 0, "someone is fastest on %s (car %d)" % [key, best])
+	# The PACE table sorts on any column, both ways; cars with no time last.
+	wall.sort_pace("avg3")
+	var rows := wall.pace_rows()
+	var ok := rows.size() > 3
+	for k in range(1, rows.size()):
+		var a0 := tel.pace_value(rows[k - 1], "avg3")
+		var a1 := tel.pace_value(rows[k], "avg3")
+		if a1 > 0.0 and (a0 <= 0.0 or a1 < a0):
+			ok = false
+	check(ok, "pace table sorted on last 3, fastest first (%d cars)" % rows.size())
+	wall.sort_pace("avg3")
+	check(wall.pace_desc and tel.pace_value(wall.pace_rows()[0], "avg3") >= tel.pace_value(rows[0], "avg3"), "clicking it again turns it round")
+	wall.sort_pace("pos")
+	check(sim.entries[wall.pace_rows()[0]].position == 1, "sorted on position: the leader first")
+	wall.sort_pace("last")
+	# Fuel by the litre, with the laps it adds.
+	planner.open_for(session.local_car)
+	planner.draft["fuel"] = 0.0
+	planner.change_fuel(1)
+	planner.change_fuel(1)
+	planner.change_fuel(10)
+	check(is_equal_approx(float(planner.draft["fuel"]), 12.0), "fuel goes in by the litre (+1 +1 +10 = %s L)" % str(planner.draft["fuel"]))
+	var txt := RaceHud.fuel_choice_text(sim, session.local_car, 12.0)
+	var added := RaceHud.fuel_added_l(sim, session.local_car, 12.0)
+	var room := sim.defs[session.local_car].fuel_capacity_l - sim.cars[session.local_car].fuel_l
+	check(is_equal_approx(added, minf(12.0, room)), "12 L goes in unless the tank is fuller than that (%.1f L, room %.1f L)" % [added, room])
+	var laps := added / sim.pits.fuel_per_lap(session.local_car)
+	check(txt.contains("+%.1f laps" % laps), "it says how many laps that adds (%s)" % txt)
+	planner.close()
 	var rival := tel.rival_of(sim, session.local_car)
 	check(rival >= 0 and rival != session.local_car, "our car has a rival (car %d)" % rival)
 
@@ -117,6 +146,7 @@ func _process(_d: float) -> void:
 		planner.fit_picked(PitRules.TYRE_INTER)
 		planner.change_psi(0, -2)
 		planner.change_wing("wing_rear", 2)
+		planner.draft["fuel"] = 23.0
 	if _frames == 60 and out != "":
 		await RenderingServer.frame_post_draw
 		get_viewport().get_texture().get_image().save_png(out + "_planner.png")

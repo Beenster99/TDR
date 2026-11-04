@@ -1014,6 +1014,37 @@ static func fuel_plan_text(fuel: float) -> String:
 	return "+%d L" % int(fuel)
 
 
+## Litres a stop with this fuel plan would really put in car i (as
+## PitRules.service_for works it out: "to the end" is enough to finish with a
+## little spare, and never more than the tank has room for).
+static func fuel_added_l(sim: RaceSim, car: int, plan_fuel: float) -> float:
+	if not sim.settings.fuel_enabled:
+		return 0.0
+	var room := maxf(sim.defs[car].fuel_capacity_l - sim.cars[car].fuel_l, 0.0)
+	var want := plan_fuel
+	if want < 0.0:
+		want = maxf((sim.pits.laps_after_this(car) + 1.15) * sim.pits.fuel_per_lap(car) - sim.cars[car].fuel_l, 0.0)
+	return minf(want, room)
+
+
+## Laps that fuel adds to car i, in a few words ("+4.2 laps"); "" with fuel off.
+static func fuel_laps_text(sim: RaceSim, car: int, plan_fuel: float) -> String:
+	var fpl := sim.pits.fuel_per_lap(car)
+	if fpl <= 0.0:
+		return ""
+	return "+%.1f laps" % (fuel_added_l(sim, car, plan_fuel) / fpl)
+
+
+## A fuel choice with what it does: "+23 L (+4.2 laps)", "to the end (31 L)".
+static func fuel_choice_text(sim: RaceSim, car: int, plan_fuel: float) -> String:
+	if plan_fuel < 0.0:
+		return "to the end (%d L)" % roundi(fuel_added_l(sim, car, plan_fuel))
+	if plan_fuel == 0.0:
+		return "none"
+	var laps := fuel_laps_text(sim, car, plan_fuel)
+	return "+%d L" % int(plan_fuel) + ("  (%s)" % laps if laps != "" else "")
+
+
 ## Damage panel: a top view of the car with each zone coloured by how bent
 ## it is, flat tyres in red, and (full damage) each system's state.
 func _draw_damage(c: CarState, full: bool) -> void:
