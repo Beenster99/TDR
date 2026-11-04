@@ -68,9 +68,10 @@ Reads the race (built on the pit wall race data, `RaceTelemetry`):
   and their age, stops, pace, and their latest strategy call;
 - **Full pit wall** (or P) opens the full-screen strategist screen with the
   weather radar and every car's sector times. Its timing panel has a PACE
-  view (click the tab or press Tab): every car ranked side by side on its
-  last lap, last 3 and last 5 laps, with the gap to us, our rival and the
-  backmarkers marked. Any car can be made the rival there with **MARK AS
+  view (click the tab or press Tab): one table of every car with its last
+  lap, last 3 and last 5 laps (each with its rank and the gap to us), best
+  lap and race gap. Click a heading to sort on it, again to turn it round.
+  Our rival and the backmarkers are marked. Any car can be made the rival there with **MARK AS
   RIVAL** on the selected car panel (and back to the worked-out one with
   **AUTO RIVAL**).
 - **The rejoin band** (green / amber / red on the track where a stop now

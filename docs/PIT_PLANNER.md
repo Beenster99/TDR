@@ -47,7 +47,7 @@ Pressures and downforce can only change when the host allows car setups
 | Pressure for picked tyres | − / + buttons | ↑ ↓ |
 | One tyre's pressure or compound | its card; wheel over the value | |
 | Front / rear downforce | − / + or wheel | Z X / C V |
-| Fuel | − / +, To end, None | F G |
+| Fuel, by the litre | − / + (1 L), −10 / +10, wheel over the value, To end, None; the line under it says how many litres go in, the laps they add and the laps in the tank after against laps to go | F G (Shift: 10 L) |
 | Repairs, driver change, box | click | H, D, B |
 | Send | SEND TO DRIVER | Enter |
 | Start again from the car's plan | Start again | Backspace |

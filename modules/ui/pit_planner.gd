@@ -35,7 +35,7 @@ const H := 760.0
 const WHEEL_NAMES := ["front left", "front right", "rear left", "rear right"]
 const WHEEL_SHORT := ["FL", "FR", "RL", "RR"]
 const PSI_STEP := 0.5
-const FUEL_STEP := 5.0
+const FUEL_STEP := 1.0              ## litres per click (Shift / the ±10 buttons: 10)
 
 var session: RaceSession
 var car := -1
@@ -182,18 +182,12 @@ func change_fuel(steps: int) -> void:
 	var sim := session.sim
 	if not sim.settings.fuel_enabled:
 		return
-	var cap := sim.defs[car].fuel_capacity_l
+	var cap := floorf(sim.defs[car].fuel_capacity_l)
 	var f := float(draft["fuel"])
 	if f < 0.0:
-		f = 0.0 if steps < 0 else FUEL_STEP
-		if steps < 0:
-			draft["fuel"] = PitRules.FUEL_NONE
-			return
-	else:
-		f = snappedf(f + steps * FUEL_STEP, FUEL_STEP)
-	if f > cap:
-		f = PitRules.FUEL_AUTO
-	draft["fuel"] = maxf(f, 0.0) if f >= 0.0 else f
+		# From "to the end": step from the litres that would go in.
+		f = roundf(RaceHud.fuel_added_l(sim, car, f))
+	draft["fuel"] = clampf(snappedf(f + steps * FUEL_STEP, FUEL_STEP), 0.0, cap)
 
 
 ## Players (and the AI co-driver) who could take over the car: everyone in
@@ -445,8 +439,8 @@ func _key(event: InputEventKey) -> void:
 		KEY_X: change_wing("wing_front", 1)
 		KEY_C: change_wing("wing_rear", -1)
 		KEY_V: change_wing("wing_rear", 1)
-		KEY_F: change_fuel(-1)
-		KEY_G: change_fuel(1)
+		KEY_F: change_fuel(-10 if shift else -1)
+		KEY_G: change_fuel(10 if shift else 1)
 		KEY_B: draft["box"] = not draft["box"]
 		KEY_D: _do("driver", null, 1, false)
 		KEY_H: draft["repair"] = not draft["repair"]
@@ -939,10 +933,27 @@ func _draw_controls(r: Rect2) -> void:
 	y += 10
 	# Fuel, repairs, driver change, the call.
 	if sim.settings.fuel_enabled:
+		var fv := float(draft["fuel"])
 		_text(Vector2(x, y + 21), "Fuel" + _shortcut(" (F G)"), 15)
-		_stepper(Vector2(x + 110, y), 170, RaceHud.fuel_plan_text(float(draft["fuel"])), "fuel", -1, 1, true, Color.WHITE, 0)
-		_button(Rect2(x + 290, y, 80, 30), "To end", "fuel_auto", null, float(draft["fuel"]) < 0.0, true, 14)
-		_button(Rect2(x + 376, y, w - 376, 30), "None", "fuel_none", null, float(draft["fuel"]) == 0.0, true, 14)
+		var fx := x + 92
+		_button(Rect2(fx, y, 40, 30), "−10", "fuel", -10, false, true, 13)
+		_stepper(Vector2(fx + 44, y), 168, RaceHud.fuel_plan_text(fv) if fv >= 0.0 else "to the end", "fuel", -1, 1, true, Color.WHITE, 0)
+		_button(Rect2(fx + 216, y, 40, 30), "+10", "fuel", 10, false, true, 13)
+		_button(Rect2(fx + 262, y, 66, 30), "To end", "fuel_auto", null, fv < 0.0, true, 13)
+		_button(Rect2(fx + 332, y, x + w - fx - 332, 30), "None", "fuel_none", null, fv == 0.0, true, 13)
+		# What it does: litres in, laps they add, laps on board against laps to go.
+		var fpl := sim.pits.fuel_per_lap(car)
+		if fpl > 0.0:
+			var add := RaceHud.fuel_added_l(sim, car, fv)
+			var after := (sim.cars[car].fuel_l + add) / fpl
+			var to_go := sim.pits.laps_after_this(car) + 1
+			var short := after < to_go - 0.05
+			var room := maxf(sim.defs[car].fuel_capacity_l - sim.cars[car].fuel_l, 0.0)
+			var line := "+%.1f laps  ·  %.1f laps in the tank after, %d to go" % [add / fpl, after, to_go]
+			if fv > room + 0.5:
+				line = "Fills the tank now (%d L): " % roundi(room) + line
+			_text(Vector2(x, y + 50), line, 13, RED if short else Color(0.75, 1.0, 0.8), HORIZONTAL_ALIGNMENT_LEFT, w)
+			y += 22
 		y += 40
 	if sim.damage_level != CarDamage.Level.OFF:
 		var parts := CarDamage.repair_plan(sim.cars[car])

@@ -329,7 +329,7 @@ func _item_id() -> String:
 	return _items[selected][0] if selected < _items.size() else ""
 
 
-const FUEL_STEP := 5.0
+const FUEL_STEP := 1.0   ## litres a step (fuel by the litre)
 
 
 func _change(dir: int) -> void:
@@ -352,16 +352,16 @@ func _change(dir: int) -> void:
 		"fuel":
 			var cap := sim.defs[car].fuel_capacity_l
 			var f := float(plan["fuel"])
-			var steps := [PitRules.FUEL_AUTO, PitRules.FUEL_NONE]
-			var v := FUEL_STEP
-			while v <= cap + 0.01:
-				steps.append(v)
-				v += FUEL_STEP
-			var k := 0
-			for n in steps.size():
-				if absf(float(steps[n]) - f) < 0.01:
-					k = n
-			session.request_pit(car, {"fuel": steps[clampi(k + dir, 0, steps.size() - 1)]})
+			# To the end, none, then litre by litre up to a full tank (the wheel
+			# and right-click step back).
+			var nf: float
+			if f < 0.0:
+				nf = PitRules.FUEL_AUTO if dir < 0 else PitRules.FUEL_NONE
+			elif f == 0.0 and dir < 0:
+				nf = PitRules.FUEL_AUTO
+			else:
+				nf = clampf(f + dir * FUEL_STEP, 0.0, floorf(cap))
+			session.request_pit(car, {"fuel": nf})
 		"watch":
 			watch_car = _cycle_car(watch_car, dir)
 			watch_changed.emit(watch_car)
@@ -498,7 +498,7 @@ func _build_items() -> void:
 					which += " (new compound: all four)"
 				_items.append(["wheels", "Change", which, true])
 			if sim.settings.fuel_enabled:
-				_items.append(["fuel", "Fuel", RaceHud.fuel_plan_text(float(plan["fuel"])), true])
+				_items.append(["fuel", "Fuel", RaceHud.fuel_choice_text(sim, car, float(plan["fuel"])), true])
 			if sim.damage_level != CarDamage.Level.OFF:
 				_items.append(["repair", "Repairs", "Fix everything" if plan["repair"] else "No repairs", true])
 			if sim.settings.tuning_enabled:

@@ -18,8 +18,9 @@ extends Control
 ## the window's stretch, so it stays sharp at 4K.
 ##
 ## The timing panel has two views, TIMING and PACE (click the tab or press
-## Tab). PACE ranks every car in our class on its last lap, its last 3 laps
-## and its last 5 laps, fastest first, with the gap to our car. Our car is
+## Tab). PACE is one table of every car in our class with its last lap, its
+## last 3 laps and its last 5 laps (each with its rank and the gap to our car),
+## best lap and race gap; click a heading to sort on it (again to turn it round). Our car is
 ## yellow everywhere, the car we're really racing (RaceTelemetry.rival_of:
 ## the nearer of the cars just ahead and behind on our lap, or the one the
 ## player marked in SELECTED CAR) is orange, and backmarkers (a lap or more
@@ -49,6 +50,10 @@ const ORANGE := Color(1.0, 0.6, 0.25)       ## the car we're racing
 const BACKMARKER := Color(0.35, 0.6, 1.0)   ## a lap or more down on us
 const VIEW_TIMING := 0
 const VIEW_PACE := 1
+## The PACE table's columns: [key, heading, x (of a 1040 px table), sortable].
+const PACE_COLUMNS := [["rank", "#", 4, false], ["pos", "POS", 34, true], ["driver", "DRIVER", 84, true],
+	["last", "LAST LAP", 300, true], ["avg3", "LAST 3", 480, true], ["avg5", "LAST 5", 660, true],
+	["best", "BEST", 840, true], ["gap", "GAP", 940, true]]
 
 signal open_planner
 
@@ -75,6 +80,9 @@ var radar := WeatherRadar.new()
 var view := VIEW_TIMING
 ## The rival the player marked (-1: worked out, RaceTelemetry.rival_of).
 var rival_pick := -1
+## The PACE table's sort: a column key (PACE_COLUMNS) and its direction.
+var pace_sort := "last"
+var pace_desc := false
 
 
 func setup(p_session: RaceSession) -> void:
@@ -209,6 +217,9 @@ func _click(pos: Vector2, button: int) -> void:
 			"view":
 				if absi(dir) == 1:
 					view = int(h[2])
+			"sort":
+				if absi(dir) == 1:
+					sort_pace(str(h[2]))
 			"rival":
 				if dir == 1:
 					rival_pick = -1 if rival_pick == selected else selected
@@ -602,9 +613,9 @@ func _draw_timing(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 			_text(Vector2(cols["pit"], ty), "P%d%s" % [c.pit["rejoin_pos"], mark], fs - 1, pit_col)
 
 
-## PACE: every car in our class ranked on its last lap, last 3 and last 5
-## laps, side by side, with the gap to us; then the rival and the backmarkers
-## coming up.
+## PACE: one table of every car in our class with its last lap, last 3 and
+## last 5 laps (each ranked, with the gap to us), sorted on any column by
+## clicking its heading; then the rival and the backmarkers coming up.
 func _draw_pace(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 	var me := _our_car()
 	var riv := rival()
@@ -624,13 +635,11 @@ func _draw_pace(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 		if not list.is_empty():
 			txt = "%s  %s  %s" % [RaceTelemetry.PACE_LABELS[key].to_lower().capitalize(), sim.entries[list[0]].driver_name, fmt_lap(tel.pace_value(list[0], key))]
 		_text(Vector2(sx + k * sw, r.position.y + 14), txt, 14, PURPLE, HORIZONTAL_ALIGNMENT_LEFT, sw - 12)
-	# Bottom: the rival and the backmarkers ahead.
+	# One table, sorted on the column the player clicked; then the rival and
+	# the backmarkers ahead.
 	var foot_h := 92.0
-	var lists := Rect2(r.position.x, r.position.y + 26, r.size.x, r.size.y - 26 - foot_h)
-	var cw := (lists.size.x - 20) / 3.0
-	for k in RaceTelemetry.PACE_KEYS.size():
-		var key: String = RaceTelemetry.PACE_KEYS[k]
-		_pace_column(Rect2(lists.position.x + 10 + k * cw, lists.position.y, cw - 10, lists.size.y), key, ranks.get(key, []), me, riv)
+	var lists := Rect2(r.position.x + 10, r.position.y + 26, r.size.x - 20, r.size.y - 26 - foot_h)
+	_pace_table(lists, ranks, me, riv)
 	var fy := lists.end.y + 6
 	draw_line(Vector2(x0, fy), Vector2(x0 + w, fy), Color(1, 1, 1, 0.12))
 	_text(Vector2(x0, fy + 22), "OUR RIVAL", 12, DIM)
@@ -665,22 +674,94 @@ func _draw_pace(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 	_text(Vector2(x0, fy + 74), "Laps since the start only (lap 1 left out).  Gaps are to %s." % ("our car" if me >= 0 else "the leader"), 12, Color(1, 1, 1, 0.4), HORIZONTAL_ALIGNMENT_LEFT, w)
 
 
-## One ranked column of the pace table.
-func _pace_column(r: Rect2, key: String, list: Array, me: int, riv: int) -> void:
+## Sorts the PACE table on a column; the same column again turns it round.
+## Times sort fastest first, POS from the leader, drivers A to Z.
+func sort_pace(key: String) -> void:
+	if key == pace_sort:
+		pace_desc = not pace_desc
+	else:
+		pace_sort = key
+		pace_desc = false
+
+
+## The value car i sorts on in a PACE column (no time yet: INF, always last).
+func _sort_value(i: int, key: String) -> float:
 	var sim := session.sim
 	var tel := session.telemetry
-	_text(Vector2(r.position.x, r.position.y + 18), RaceTelemetry.PACE_LABELS[key], 13, YELLOW)
+	match key:
+		"pos": return float(sim.entries[i].position)
+		"best":
+			var b := tel.cars[i].best_lap()
+			return b if b > 0.0 else INF
+		"gap": return float(sim.running_order.find(i))
+	var v := tel.pace_value(i, key)
+	return v if v > 0.0 else INF
+
+
+## The cars in the PACE table (our class in a multi-class race), sorted.
+func pace_rows() -> Array:
+	var sim := session.sim
+	var me := _our_car()
+	var cls := sim.defs[me].class_tag if me >= 0 and RaceTelemetry.multi_class(sim) else ""
+	var list: Array = []
+	for i in sim.car_count():
+		if not sim.is_retired(i) and (cls == "" or sim.defs[i].class_tag == cls):
+			list.append(i)
+	var key := pace_sort
+	var desc := pace_desc
+	if key == "driver":
+		list.sort_custom(func(a: int, b: int):
+			var x := sim.entries[a].driver_name.naturalnocasecmp_to(sim.entries[b].driver_name)
+			return x > 0 if desc else x < 0)
+	else:
+		list.sort_custom(func(a: int, b: int):
+			var va := _sort_value(a, key)
+			var vb := _sort_value(b, key)
+			if is_inf(va) != is_inf(vb):
+				return is_inf(vb)          # cars with no time at the bottom either way
+			if va == vb:
+				return sim.entries[a].position < sim.entries[b].position
+			return va > vb if desc else va < vb)
+	return list
+
+
+## The PACE table: every car with its last lap, last 3 and last 5 laps (each
+## with its rank on that measure and the gap to us), best lap and race gap.
+## Click a heading to sort on it.
+func _pace_table(r: Rect2, ranks: Dictionary, me: int, riv: int) -> void:
+	var sim := session.sim
+	var tel := session.telemetry
+	var k := r.size.x / 1040.0
+	var cx := {}
+	for c in PACE_COLUMNS:
+		cx[c[0]] = r.position.x + float(c[2]) * k
+	# Headings: click to sort; the sorted one is yellow with an arrow.
+	var hy := r.position.y + 18
+	for c in PACE_COLUMNS:
+		var key: String = c[0]
+		var label: String = c[1]
+		var on: bool = key == pace_sort
+		if on:
+			label += "  ▼" if pace_desc else "  ▲"
+		var col := YELLOW if on else DIM
+		var hw := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x + 12
+		var hr := Rect2(cx[key] - 4, r.position.y, hw, 26)
+		if c[3]:
+			if hr.has_point(_hover):
+				draw_rect(hr, Color(1, 1, 1, 0.08))
+				col = Color.WHITE if not on else YELLOW
+			_hits.append([hr, "sort", key])
+		_text(Vector2(cx[key], hy), label, 12, col)
 	draw_line(Vector2(r.position.x, r.position.y + 26), Vector2(r.end.x, r.position.y + 26), Color(1, 1, 1, 0.15))
+	var list := pace_rows()
 	if list.is_empty():
 		_text(Vector2(r.position.x, r.position.y + 50), "no laps yet", 14, DIM)
 		return
-	var ref := tel.pace_value(me, key) if me >= 0 else 0.0
-	var best := tel.pace_value(list[0], key)
-	var rh := clampf((r.size.y - 34) / maxf(list.size(), 1), 17.0, 26.0)
-	var fs := 14 if rh >= 21.0 else 12
+	var rh := clampf((r.size.y - 34) / maxf(list.size(), 1), 17.0, 28.0)
+	var fs := 15 if rh >= 23.0 else 13
 	for p in list.size():
 		var i: int = list[p]
-		var y := r.position.y + 32 + p * rh
+		var y := r.position.y + 30 + p * rh
 		if y + rh > r.end.y + 2:
 			_text(Vector2(r.position.x + 4, y + fs), "+ %d more" % (list.size() - p), 12, DIM)
 			break
@@ -689,26 +770,38 @@ func _pace_column(r: Rect2, key: String, list: Array, me: int, riv: int) -> void
 		_row_bg(row, i, p % 2 == 1, riv)
 		_hits.append([row, "car", i])
 		var ty := y + rh * 0.5 + fs * 0.35
-		var v := tel.pace_value(i, key)
-		_text(Vector2(r.position.x + 2, ty), str(p + 1), fs - 1, DIM, HORIZONTAL_ALIGNMENT_RIGHT, 20)
-		draw_rect(Rect2(r.position.x + 26, y + 4, 4, rh - 10), sim.defs[i].colour)
-		var tx := r.end.x - 136
-		var name_end := tx - 6
+		var cy := y + rh * 0.5 - 1
+		_text(Vector2(cx["rank"], ty), str(p + 1), fs - 2, DIM, HORIZONTAL_ALIGNMENT_RIGHT, 22 * k)
+		_text(Vector2(cx["pos"], ty), "P%d" % sim.entries[i].position, fs - 1, Color(1, 1, 1, 0.8))
+		draw_rect(Rect2(cx["driver"] - 10, y + 4, 4, rh - 10), sim.defs[i].colour)
+		var name_end: float = cx["last"] - 14
 		if bm:
-			name_end = _chip(name_end, y + rh * 0.5 - 1, "+%dL" % tel.laps_behind(sim, me, i), BACKMARKER) - 4
+			name_end = _chip(name_end, cy, "+%dL" % tel.laps_behind(sim, me, i), BACKMARKER) - 4
 		elif i == riv:
-			name_end = _chip(name_end, y + rh * 0.5 - 1, "RIVAL", ORANGE) - 4
-		_text(Vector2(r.position.x + 36, ty), sim.entries[i].driver_name, fs, _name_colour(i, riv, bm), HORIZONTAL_ALIGNMENT_LEFT, name_end - r.position.x - 36)
-		_text(Vector2(tx, ty), fmt_lap(v), fs, PURPLE if p == 0 else Color.WHITE)
-		var d := ""
-		var dcol := DIM
-		if me >= 0 and i != me and ref > 0.0:
-			var dd := v - ref
-			d = "%+.3f" % dd
-			dcol = GREEN if dd > 0.0 else RED      # green: we're quicker than them
-		elif p > 0:
-			d = "+%.3f" % (v - best)
-		_text(Vector2(r.end.x - 60, ty), d, fs - 2, dcol, HORIZONTAL_ALIGNMENT_RIGHT, 58)
+			name_end = _chip(name_end, cy, "RIVAL", ORANGE) - 4
+		_text(Vector2(cx["driver"], ty), sim.entries[i].driver_name, fs, _name_colour(i, riv, bm), HORIZONTAL_ALIGNMENT_LEFT, name_end - cx["driver"])
+		for key in RaceTelemetry.PACE_KEYS:
+			var v := tel.pace_value(i, key)
+			var x: float = cx[key]
+			if v <= 0.0:
+				_text(Vector2(x, ty), "-", fs, DIM)
+				continue
+			var order: Array = ranks.get(key, [])
+			var rank := order.find(i) + 1
+			# Rank on this measure, the time, the gap to us.
+			_text(Vector2(x, ty), str(rank) if rank > 0 else "", fs - 4, PURPLE if rank == 1 else Color(1, 1, 1, 0.4),
+				HORIZONTAL_ALIGNMENT_RIGHT, 16 * k)
+			var tcol := PURPLE if rank == 1 else (YELLOW if i == me else Color.WHITE)
+			_text(Vector2(x + 22 * k, ty), fmt_lap(v), fs, tcol)
+			var ref := tel.pace_value(me, key) if me >= 0 else 0.0
+			if i != me and ref > 0.0:
+				var dd := v - ref
+				_text(Vector2(x + 96 * k, ty), "%+.3f" % dd, fs - 3, GREEN if dd > 0.0 else RED)
+		var best := tel.cars[i].best_lap()
+		_text(Vector2(cx["best"], ty), fmt_lap(best), fs - 1, PURPLE if best > 0.0 and best == tel.fastest_lap else Color(1, 1, 1, 0.75))
+		var c := tel.cars[i]
+		var gap := "Leader" if sim.running_order.find(i) == 0 else (("+%d L" % c.laps_down) if c.laps_down >= 1 else "+" + fmt_gap(c.gap_leader))
+		_text(Vector2(cx["gap"], ty), gap, fs - 1, Color(1, 1, 1, 0.8))
 
 
 func _draw_weather(r: Rect2, tel: RaceTelemetry) -> void:
