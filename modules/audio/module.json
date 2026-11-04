@@ -1,7 +1,7 @@
 {
   "id": "audio",
   "name": "Audio",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "status": "active",
   "summary": "Every sound in the game, synthesised (licensed recordings in samples/ replace any of them): each engine family (cross- and flat-plane V8, V10, V12, flat-six, straight-six, V6, four) baked at many rpm bands by tools/engine_synth.py (firing pulses, wandering combustion, induction roar, tailpipe resonance), with rev limiter, gearshift cuts and blips (no exhaust pops or crackles), turbo, supercharger, hybrid and gearbox whines; tyre squeal, scrub, lock-up, road roar, kerbs, gravel, grass, wind and rain spray; Doppler for passing cars; crashes and contacts, start lights, menu clicks (short switch clicks, not beeps) and the intro screen's GT3 pass-by (Sound.passby()).",
   "depends": {
