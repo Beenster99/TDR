@@ -310,7 +310,10 @@ func _style(n: Node) -> void:
 			gi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 		# Bits too small (or too far inside the body) to throw a shadow you'd
 		# see from above: each would cost a draw in the shadow pass per car.
-		if base in SMALL_PARTS or base in NO_SHADOW_PARTS or base.ends_with("_caliper") or base.begins_with("number_"):
+		# The wheels too: from above they sit under the body, whose shadow
+		# covers theirs (3 draws each, 12 a car, 300 on a full grid).
+		if base in SMALL_PARTS or base in NO_SHADOW_PARTS or base.ends_with("_caliper") or base.begins_with("number_") \
+				or (base.begins_with("wheel_") and base.ends_with("_spin")):
 			gi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	if not n is MeshInstance3D:
 		return
