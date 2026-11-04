@@ -251,6 +251,8 @@ func step(inputs: Array) -> void:
 			if external[i] or race_control.out_of_play(i):
 				continue
 			var inp: CarInput = inputs[i] if i < inputs.size() and inputs[i] != null else CarInput.neutral()
+			if entries[i].dnf and entries[i].is_ai and not entries[i].finished and not settings.is_derby() and not settings.is_rallycross():
+				inp = race_control.parked_input(i, inp)  # retired: parked for the recovery vehicle
 			CarPhysics.step(cars[i], inp, defs[i], compounds[i], env, track, sub_dt, fuel_rate, events, i, wear_rate, wheel_compounds[i])
 		_resolve_collisions()
 		_resolve_pit_wall()
