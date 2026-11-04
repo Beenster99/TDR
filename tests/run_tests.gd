@@ -4634,6 +4634,21 @@ func test_online_contacts() -> void:
 	cv.wake_highlight()
 	check(cv.highlight_alpha() == 1.0, "zooming brings a faded highlight back")
 	cv.free()
+	# The highlight is a thin outline a few pixels wide, drawn pulled towards
+	# the camera so the ground can't cut through it; the car to let past gets
+	# a bolder line than your own.
+	cv = CarView.new()
+	cv.def = CarCatalog.load_all()["bmw_m4_gt3"]
+	cv.set_highlight(CarView.Highlight.SELF)
+	var self_px: float = cv._hl_mat.get_shader_parameter("line_px")
+	check(self_px > 0.0 and self_px <= 3.0, "own car: a thin outline (%.1f px)" % self_px)
+	check(float(cv._hl_mat.get_shader_parameter("lift")) >= 0.5, "the outline is lifted clear of the ground")
+	cv.set_highlight_zoom(10.0)
+	check(float(cv._hl_mat.get_shader_parameter("lift")) > 2.0, "lifted further when zoomed out")
+	cv.set_highlight(CarView.Highlight.GIVE_BACK)
+	cv.set_highlight_zoom(1.0)
+	check(float(cv._hl_mat.get_shader_parameter("line_px")) > self_px, "the car to let past has a bolder outline")
+	cv.free()
 
 
 ## Rallycross: RX tracks and cars only appear in rallycross, dirt is looser
