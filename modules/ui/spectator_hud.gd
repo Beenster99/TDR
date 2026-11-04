@@ -2,7 +2,8 @@ class_name SpectatorHud
 extends Control
 ## What a player sees once their own car has finished (or retired) while the
 ## rest of the field is still racing: they watch the race, pick any car and
-## any camera view, until the last car is home and the results come up.
+## any camera view, until the last car is home and the results come up
+## (or go back to the results filling up so far, the timing tower key).
 ##
 ## On screen: a SPECTATING banner with how many cars are still racing, the
 ## running order down the left (click a driver to watch them), a card for
@@ -109,7 +110,7 @@ func _build() -> void:
 	_view_btn.custom_minimum_size = Vector2(260, 32)
 	vrow.add_child(_view_btn)
 	_hint = _label("", 12, DIM)
-	InputPrompt.live(_hint, func(): _hint.text = InputPrompt.fill("◀ ▶  %s: change car   ·   {camera_toggle}: camera   ·   {handbrake}: your car   ·   {zoom_full}: whole track"
+	InputPrompt.live(_hint, func(): _hint.text = InputPrompt.fill("◀ ▶  %s: change car   ·   {camera_toggle}: camera   ·   {handbrake}: your car   ·   {zoom_full}: whole track   ·   {hud_tower}: results"
 		% InputPrompt.pair("steer_left", "steer_right")))
 	_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	cv.add_child(_hint)
@@ -138,7 +139,8 @@ func _refresh() -> void:
 		return
 	var sim := session.sim
 	var racing := ResultsTable.still_racing(sim)
-	_sub.text = ("%d car%s still racing  ·  results when the last car finishes" % [racing.size(), "" if racing.size() == 1 else "s"]) \
+	_sub.text = ("%d car%s still racing  ·  %s" % [racing.size(), "" if racing.size() == 1 else "s",
+		InputPrompt.fill("{hud_tower}: results so far")]) \
 		if not racing.is_empty() else "Every car is home"
 	_view_btn.text = "Camera: " + view_name
 	# The running order (this player gold, the car being watched lit up).

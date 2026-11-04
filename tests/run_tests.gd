@@ -3701,6 +3701,23 @@ func test_results_and_spectator(rep: Dictionary) -> void:
 	screen.chosen.connect(func(id): picked.append(id))
 	screen._buttons[0].pressed.emit()
 	check(picked == ["menu"], "results screen buttons report their id")
+	# Live: the table fills up as cars cross the line (the rest dimmed, no points yet).
+	check(rows.all(func(r): return r.has("racing") and not r["racing"]), "nobody's row is still racing once the race is over")
+	var live := d.duplicate(true)
+	for k in range(2, live["rows"].size()):
+		live["rows"][k]["racing"] = true
+	var live_screen := RaceResults.new()
+	root.add_child(live_screen)
+	live_screen.show_results(live, {"buttons": [["watch", "Watch the race"]], "instant": true})
+	check(live_screen.is_live(), "live results: cars still out are marked")
+	live["rows"][2]["racing"] = false
+	live_screen.update_results(live, {"buttons": [["watch", "Watch the race"]], "instant": true})
+	check(live_screen.is_shown() and live_screen._row_nodes.has(int(live["rows"][2]["car"])) and live_screen.is_live() == (live["rows"].size() > 3),
+		"live results update in place as another car finishes")
+	live_screen.update_results(d, {"buttons": [["menu", "Main menu"]], "instant": true})
+	check(not live_screen.is_live() and live_screen._buttons.size() == 1 and live_screen._buttons[0].text == "Main menu",
+		"the live table becomes the final one with its buttons")
+	live_screen.queue_free()
 	# Every driver's race lap by lap, and the race analysis.
 	var log_ok := true
 	var grid_ok := true

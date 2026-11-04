@@ -4,6 +4,8 @@ extends Node
 ##   godot --path . res://tests/results_shot.tscn -- <out.png> [laps] [ai] [track] [--view=analysis|driver|both]
 ## --view=analysis also saves the race analysis, driver the own driver's race
 ## data, both every view (<out>_analysis.png, <out>_driver.png).
+## --live: the live table instead, stopped while cars are still racing
+## (<out>), then again once two more cars are home (<out>_live2.png).
 ## Runs the race in the pure sim, scores it as round 1 of a 6-round season
 ## with a pit stop and a penalty, and shows RaceResults with the standings.
 
@@ -29,6 +31,29 @@ func _ready() -> void:
 	var drive := AIDriver.for_car(sim, me)
 	var tel := RaceTelemetry.create(sim)
 	var pens := []
+	var live := OS.get_cmdline_user_args().has("--live")
+	var step := func():
+		var inputs := []
+		for i in sim.car_count():
+			inputs.append(ai[i].get_input(sim, i) if ai.has(i) else drive.get_input(sim, i))
+		sim.step(inputs)
+		tel.observe(sim)
+		tel.on_events(sim.events)
+	if live:
+		while sim.phase != RaceSim.Phase.FINISHED and sim.tick < 60 * 60 * 30 \
+				and (sim.finish_order.size() < 3 or ResultsTable.still_racing(sim).size() < 4):
+			step.call()
+		var lr: RaceResults = await _live_layer(sim, tel, me)
+		await _shot(out)
+		var home := sim.finish_order.size()
+		while sim.phase != RaceSim.Phase.FINISHED and sim.finish_order.size() < home + 2:
+			step.call()
+		lr.update_results(ResultsTable.build(sim, tel, {"me": me, "single_race_points": true}), _live_opts(sim))
+		for _f in 20:
+			await get_tree().process_frame   # partway through the new rows' light
+		await _shot(out.get_basename() + "_live2.png")
+		get_tree().quit()
+		return
 	while sim.phase != RaceSim.Phase.FINISHED and sim.tick < 60 * 60 * 30:
 		var inputs := []
 		for i in sim.car_count():
@@ -91,3 +116,24 @@ func _shot(path: String) -> void:
 	await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png(path)
 	print("[screenshot] ", path)
+
+
+func _live_opts(sim: RaceSim) -> Dictionary:
+	var n := ResultsTable.still_racing(sim).size()
+	return {"title": "RESULTS", "buttons": [["watch", "Watch the race"], ["menu", "Main menu"]],
+		"notes": ["%d cars still racing  ·  the table fills up as they cross the line" % n]}
+
+
+func _live_layer(sim: RaceSim, tel: RaceTelemetry, me: int) -> RaceResults:
+	var bg := ColorRect.new()
+	bg.color = Color(0.2, 0.3, 0.2)
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var layer := CanvasLayer.new()
+	add_child(layer)
+	layer.add_child(bg)
+	var r := RaceResults.new()
+	layer.add_child(r)
+	r.show_results(ResultsTable.build(sim, tel, {"me": me, "single_race_points": true}), _live_opts(sim))
+	while not r.is_shown():
+		await get_tree().process_frame
+	return r

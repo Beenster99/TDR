@@ -21,7 +21,7 @@ var _time := 0.0
 var _env: SimEnvironment
 var _listen_prev := Vector2.ZERO
 var _listen_vel := Vector2.ZERO
-## Overall level of every race sound, 0..1 (fade_out() takes it down).
+## Overall level of every race sound, 0..1 (fade_out() takes it down, fade_in() back up).
 var level := 1.0
 var _fade_rate := 0.0
 
@@ -65,6 +65,8 @@ func update(delta: float, listen_at: Vector2, local_throttle: float, zoom_out: f
 	_time += delta
 	if _fade_rate > 0.0:
 		level = move_toward(level, 0.0, _fade_rate * delta)
+	elif _fade_rate < 0.0:
+		level = move_toward(level, 1.0, -_fade_rate * delta)
 	_listener.global_position = listen_at if _local < 0 else _cars[_local].pos
 	if delta > 0.0:
 		_listen_vel = _listen_vel.lerp((_listener.global_position - _listen_prev) / delta, 0.3)
@@ -110,6 +112,14 @@ func fade_out(seconds: float) -> void:
 	_fade_rate = 1.0 / seconds if seconds > 0.0 else 0.0
 	if seconds <= 0.0:
 		level = 0.0
+
+
+## Brings the race sound back up to full over `seconds` after fade_out()
+## (e.g. leaving the results to watch the rest of the race). 0 = at once.
+func fade_in(seconds: float) -> void:
+	_fade_rate = -1.0 / seconds if seconds > 0.0 else 0.0
+	if seconds <= 0.0:
+		level = 1.0
 
 
 ## Rivals: we don't get their pedals, so guess from how they accelerate.
