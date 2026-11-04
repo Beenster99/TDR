@@ -5,7 +5,8 @@ extends SceneTree
 ## and counts what brings out the flags: yellow flags by reason, VSC and
 ## safety car deployments, car-to-car contacts (heavy ones too), offs (by
 ## cause), spins, retirements. Ends with a TOTAL line per track and overall.
-## INCIDENT_VERBOSE=1 prints every flag as it happens.
+## INCIDENT_VERBOSE=1 prints every flag as it happens; INCIDENT_MISTAKES=3 sets
+## the "AI mistakes" race setting (RaceSettings.ai_mistakes).
 
 const HEAVY := 0.35   ## RaceControl.CONTACT_DEBRIS_SEV: contact that leaves debris
 
@@ -33,6 +34,8 @@ func _init() -> void:
 			settings.seed = 1000 + sd * 7919
 			settings.car_class = klass
 			settings.set_damage_level("full")
+			if OS.get_environment("INCIDENT_MISTAKES") != "":
+				settings.ai_mistakes = float(OS.get_environment("INCIDENT_MISTAKES"))
 			var start := RaceFactory.plan(settings, [], cars, drivers)
 			var sim := RaceFactory.build_sim(start, cars, tyres, TrackCatalog.load_track(track_id))
 			var ai := AIDriver.for_all_ai(sim)

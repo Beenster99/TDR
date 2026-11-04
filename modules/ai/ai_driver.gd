@@ -36,7 +36,8 @@ const BRAKE_TURNING := 0.35  ## share of braking grip left at the cornering limi
 const ALONGSIDE_GAP := 1.1   ## clear metres kept between our side and a car alongside
 const DEFEND_RATE := 2.5     ## m/s: fastest sideways move when covering a line
 const START_HOLD_MAX_M := 1200.0  ## opening lap: furthest the grid lanes are held
-const MISTAKE_RATE := 0.6     ## share of the old mistake rate (they were too frequent for short races)
+const MISTAKE_RATE := 0.6     ## normal mistake rate, as a share of the rate before ai 1.9.0 (too frequent for short races)
+const MISTAKE_WIDE_M := 1.2  ## m: running wide takes the car this far past its room (wheels on the grass)
 const RACE_EDGE_KEEP := 0.8  ## m: racecraft (passing, defending, alongside) stays this far inside the room
 const PASS_FULL_GAP := 10.0  ## m (track distance): an attack moves fully off the line from this close
 const PASS_FADE_M := 10.0    ## ... and not at all from this much further back
@@ -55,6 +56,8 @@ enum Mood { RACING, ATTACKING, DEFENDING, YIELDING, MISTAKE, RECOVERING }
 var traits: Dictionary         ## as given (RaceEntry.traits)
 var profile: DriverTraits      ## after difficulty
 var _difficulty := DEFAULT_DIFFICULTY
+## How often this driver makes mistakes, x the normal rate (RaceSettings.ai_mistakes).
+var mistake_scale := 1.0
 ## Line-up driver at the wheel (RaceEntry.pit "driver_idx"): when it changes at
 ## a stop, the new driver's traits take over.
 var stint_driver := 0
@@ -163,6 +166,8 @@ static func for_car(sim: RaceSim, i: int) -> AIDriver:
 		difficulty = float(sim.settings.get("ai_difficulty"))
 	var d := AIDriver.new(sim.track, sim.defs[i], sim.compounds[i], t, sim.settings.seed * 31 + i, difficulty)
 	d.stint_driver = int(sim.entries[i].pit.get("driver_idx", 0))
+	if "ai_mistakes" in sim.settings:
+		d.mistake_scale = maxf(float(sim.settings.get("ai_mistakes")), 0.0)
 	return d
 
 
@@ -800,7 +805,7 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 
 	# Mistakes: running wide.
 	if _mistake_kind == "wide" and _mistake_until >= 0:
-		want_bias = _mistake_side * minf(_room(_mistake_side, idx) + 1.5, 3.5)
+		want_bias = _mistake_side * (_room(_mistake_side, idx) + MISTAKE_WIDE_M)
 
 	if not is_nan(hold_bias):
 		want_bias = hold_bias
@@ -835,8 +840,10 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 	# Off the line the car runs up to a metre wider than aimed on a corner
 	# exit, so racecraft keeps RACE_EDGE_KEEP more room to the edge than the
 	# room itself (the old clamp left 20 cm and attacks out wide ran off).
-	# A mistake (running wide) still uses all of it.
-	var edge_keep := 0.0 if _mistake_kind == "wide" and _mistake_until >= 0 else RACE_EDGE_KEEP
+	# A mistake (running wide) goes past the room: over the kerb with two
+	# wheels on the grass, which may end in a trip across it or a spin.
+	var wide := _mistake_kind == "wide" and _mistake_until >= 0
+	var edge_keep := -MISTAKE_WIDE_M if wide else RACE_EDGE_KEEP
 	var keep_l := maxf(minf(room_left[idx], room_left[aim]) - edge_keep, 0.0)
 	var keep_r := maxf(minf(room_right[idx], room_right[aim]) - edge_keep, 0.0)
 	want_bias = clampf(want_bias, -keep_l, keep_r)
@@ -867,7 +874,8 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 		lateral_bias = my_off  # pick the line up from where the car is once it lets go
 
 	# --- Steering: pure pursuit on the racing line (+ offset). ---
-	var target := line[aim] + line_right[aim] * clampf(lateral_bias, -room_left[aim], room_right[aim])
+	var slack := MISTAKE_WIDE_M if wide else 0.0
+	var target := line[aim] + line_right[aim] * clampf(lateral_bias, -room_left[aim] - slack, room_right[aim] + slack)
 	if not is_nan(rejoin_off):
 		# The plan is relative to the edge on rejoin_side: measured where we aim.
 		var ti := sim.track.index_at(car.track_s + look)
@@ -1166,7 +1174,7 @@ func _end_block(new_block: int, sim: RaceSim, me: int, dark: float, wetness: flo
 			break
 	if not corner_ahead:
 		return
-	var rate := ((1.0 - p.consistency) * 0.02 + 0.0015) * MISTAKE_RATE
+	var rate := ((1.0 - p.consistency) * 0.02 + 0.0015) * MISTAKE_RATE * mistake_scale
 	rate *= 1.0 + _last_pressure * 2.5 * (1.0 - p.composure)
 	rate *= 1.0 + 0.5 * dark + 2.0 * wetness * (1.0 - p.wet_skill)
 	rate *= 1.0 + 0.5 * p.aggression
