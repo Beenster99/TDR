@@ -4,7 +4,9 @@ extends VBoxContainer
 ## row (or A on it): the summary (grid to finish, best and average lap,
 ## potential lap, stops, penalties, points), every lap with its position,
 ## lap time, sector times, gap to the leader, tyre, tyre temperature and
-## fuel, their lap times on a graph against the winner's, and each pit stop.
+## fuel, the rubber left on each tyre (FL FR RL RR) lap by lap and on a
+## graph when tyre wear is on, their lap times on a graph against the
+## winner's, and each stint (with the tyres' wear at its end) and pit stop.
 ## Purple = the best in the field, green = the driver's own best.
 
 const PURPLE := Color(0.78, 0.45, 1.0)
@@ -13,6 +15,8 @@ const DIM := Color(1, 1, 1, 0.55)
 const INK := Color(1, 1, 1, 0.92)
 const ME := Color("#3987e5")
 const REF := Color("#d95926")
+const WHEELS := ["FL", "FR", "RL", "RR"]
+const WEAR_W := 30        ## one tyre's column in the lap table
 
 var data: Dictionary = {}
 var row: Dictionary = {}
@@ -55,7 +59,24 @@ func setup(d: Dictionary, r: Dictionary) -> void:
 	side.add_theme_constant_override("separation", 10)
 	mid.add_child(side)
 	side.add_child(_lap_graph())
+	if _has_wear():
+		side.add_child(_wear_graph())
 	side.add_child(_stops())
+
+
+## Tyre wear was on and this driver's laps have it.
+func _has_wear() -> bool:
+	if not data.get("wear", false):
+		return false
+	for l in row.get("lap_log", []):
+		if (l.get("wear", []) as Array).size() >= 4:
+			return true
+	return false
+
+
+## Percent of rubber left from a wear (0 new .. 1 worn out).
+static func left_pct(wear: float) -> int:
+	return roundi((1.0 - clampf(wear, 0.0, 1.0)) * 100.0)
 
 
 ## The car this driver is compared with on the graph: the winner (or P2
@@ -129,7 +150,10 @@ func _lap_columns() -> Array:
 	var out := [["LAP", 38, 0], ["POS", 40, 0], ["LAP TIME", 86, 2]]
 	for s in int(data.get("sector_count", 0)):
 		out.append(["S%d" % (s + 1), 64, 2])
-	out.append_array([["GAP", 74, 2], ["", 8, 0], ["TYRE", 92, 0], ["TYRE TEMP", 74, 2], ["FUEL", 70, 2], ["WEATHER", 70, 0]])
+	out.append_array([["GAP", 74, 2], ["", 8, 0], ["TYRE", 92, 0], ["TYRE TEMP", 74, 2]])
+	if _has_wear():
+		out.append(["WEAR", WEAR_W * 4 + 18, 2])
+	out.append_array([["FUEL", 70, 2], ["WEATHER", 70, 0]])
 	return out
 
 
@@ -137,6 +161,9 @@ func _lap_header() -> Control:
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 6)
 	for c in _lap_columns():
+		if c[0] == "WEAR":
+			h.add_child(_wear_cells(["FL", "FR", "RL", "RR"].map(func(x): return [x, DIM]), 12))
+			continue
 		var l := _label(c[0], 12, DIM)
 		l.custom_minimum_size = Vector2(c[1], 0)
 		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT if c[2] == 2 else HORIZONTAL_ALIGNMENT_LEFT
@@ -181,11 +208,26 @@ func _lap_row(l: Dictionary) -> Control:
 	var cid := str(l.get("compound", ""))
 	cells.append([str(data.get("compounds", {}).get(cid, cid)) + ("   PIT" if pitted else ""), INK])
 	cells.append([Units.temp(float(l.get("tyre_c", 0.0))) if float(l.get("tyre_c", 0.0)) > 0.0 else "", DIM])
+	var has_wear := _has_wear()
+	if has_wear:
+		cells.append(["wear", INK])
 	cells.append([Units.fuel(float(l.get("fuel_l", 0.0))) if float(l.get("fuel_l", 0.0)) > 0.0 else "", DIM])
 	cells.append([str(l.get("weather", "")).capitalize(), DIM])
 	var cols := _lap_columns()
+	var tyre_col := cols.size() - (5 if has_wear else 4)
 	for k in cells.size():
-		if k == cols.size() - 4:   # the tyre: a colour dot then the name
+		if has_wear and k == tyre_col + 2:   # rubber left on each tyre
+			var wl: Array = l.get("wear", [])
+			var parts := []
+			for w in 4:
+				if w < wl.size():
+					var wt := float(wl[w])
+					parts.append(["%d" % left_pct(wt), ResultsTable.wear_colour(wt) if wt > 0.45 else INK])
+				else:
+					parts.append(["", INK])
+			h.add_child(_wear_cells(parts, 14))
+			continue
+		if k == tyre_col:   # the tyre: a colour dot then the name
 			var box := HBoxContainer.new()
 			box.add_theme_constant_override("separation", 5)
 			box.custom_minimum_size = Vector2(cols[k][1], 0)
@@ -254,6 +296,58 @@ func _lap_graph() -> Control:
 	return p
 
 
+## Four right-aligned cells, one per tyre: [[text, colour], ...].
+func _wear_cells(parts: Array, sz: int) -> Control:
+	var box := HBoxContainer.new()
+	box.add_theme_constant_override("separation", 6)
+	box.custom_minimum_size = Vector2(WEAR_W * 4 + 18, 0)
+	for p in parts:
+		var lab := _label(p[0], sz, p[1])
+		lab.custom_minimum_size = Vector2(WEAR_W, 0)
+		lab.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		box.add_child(lab)
+	return box
+
+
+## Rubber left on each tyre lap by lap, one line per corner, from 100 % on
+## the grid; a ring on the laps they pitted (new tyres put a line back up).
+func _wear_graph() -> Control:
+	var p := _panel()
+	p.size_flags_vertical = SIZE_EXPAND_FILL
+	var v := VBoxContainer.new()
+	p.add_child(v)
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 14)
+	v.add_child(h)
+	h.add_child(_label("TYRE WEAR", 15, RaceResults.ACCENT))
+	h.add_child(_label("rubber left on each tyre as each lap ended", 12, DIM))
+	var g := ResultsGraph.new()
+	g.y_format = "%.0f%%"
+	g.value_text = func(x: float) -> String: return "%d%% left" % roundi(x)
+	g.size_flags_vertical = SIZE_EXPAND_FILL
+	g.custom_minimum_size = Vector2(0, 130)
+	v.add_child(g)
+	var series := []
+	var cols := {}
+	var lo := 100.0
+	for t in 4:
+		var pts := [Vector2(0, 100.0)]
+		var marks := []
+		for l in row.get("lap_log", []):
+			var wl: Array = l.get("wear", [])
+			if wl.size() < 4:
+				continue
+			var left := (1.0 - clampf(float(wl[t]), 0.0, 1.0)) * 100.0
+			pts.append(Vector2(int(l["lap"]), left))
+			lo = minf(lo, left)
+			if l.get("pitted", false):
+				marks.append(int(l["lap"]))
+		series.append({"car": t, "name": WHEELS[t], "points": pts, "marks": marks})
+		cols[t] = ResultsAnalysis.SLOTS[t]
+	g.set_data(series, cols, [maxf(floorf((lo - 5.0) / 10.0) * 10.0, 0.0), 100.0])
+	return p
+
+
 func _stops() -> Control:
 	var p := _panel()
 	var v := VBoxContainer.new()
@@ -278,8 +372,15 @@ func _stops() -> Control:
 	for k in stints.size():
 		var st: Dictionary = stints[k]
 		var nm := str(comps.get(st["compound"], st["compound"]))
-		v.add_child(_label("Stint %d   %s   laps %d-%d  (%d lap%s)" % [k + 1, nm, int(st["from"]), int(st["to"]),
-			int(st["laps"]), "" if int(st["laps"]) == 1 else "s"], 14, INK))
+		var line := "Stint %d   %s   laps %d-%d  (%d lap%s)" % [k + 1, nm, int(st["from"]), int(st["to"]),
+			int(st["laps"]), "" if int(st["laps"]) == 1 else "s"]
+		var we: Array = st.get("wear_end", [])
+		if data.get("wear", false) and we.size() >= 4:
+			var w_txt := []
+			for t in 4:
+				w_txt.append("%s %d%%" % [WHEELS[t], left_pct(float(we[t]))])
+			line += "   ·   left at the end: " + "  ".join(w_txt)
+		v.add_child(_label(line, 14, INK))
 	var stops: Array = row.get("stop_log", [])
 	if not stops.is_empty():
 		v.add_child(_gap(4))

@@ -24,6 +24,7 @@ func _init() -> void:
 	test_data_loads()
 	test_input_wire_format()
 	test_tyre_temperature_matters()
+	test_tyre_wear_data()
 	test_ai_drivers()
 	test_ai_racing_room()
 	test_launch_wheelspin()
@@ -37,6 +38,7 @@ func _init() -> void:
 	test_elevation()
 	test_barriers()
 	test_pit_rules()
+	test_pit_lookups_match()
 	test_pit_setup_changes()
 	test_pit_crew_game()
 	test_pit_self_drive()
@@ -511,6 +513,38 @@ func test_derby() -> void:
 	back2.deserialize(cs.serialize())
 	check(packed.size() == CarState.NET_SIZE and is_equal_approx(back.air_h, 1.25) and is_equal_approx(back.vz, -3.5)
 		and is_equal_approx(back2.air_h, 1.25), "cars in the air go over the network and into snapshots")
+
+
+## Each tyre's wear goes over the network, into the lap log, the wear rate
+## and the results' lap table and stints.
+func test_tyre_wear_data() -> void:
+	print("tyre wear per corner")
+	var cs := CarState.new()
+	cs.tyre_wear = PackedFloat64Array([0.1, 0.25, 0.4, 0.55])
+	var buf := PackedFloat32Array()
+	cs.pack_net(buf)
+	var back := CarState.new()
+	back.unpack_net(buf, 0)
+	check(buf.size() == CarState.NET_SIZE and is_equal_approx(back.tyre_wear[1], 0.25) and is_equal_approx(back.tyre_wear[3], 0.55),
+		"each tyre's wear goes over the network")
+	var c := CarTelemetry.new()
+	c.laps = [{"lap": 1, "time": 90.0, "tyre_wear": [0.02, 0.03, 0.01, 0.01]},
+		{"lap": 2, "time": 88.0, "tyre_wear": [0.04, 0.06, 0.02, 0.02]},
+		{"lap": 3, "time": 88.0, "tyre_wear": [0.06, 0.09, 0.03, 0.03]},
+		{"lap": 4, "time": 110.0, "tyre_wear": [0.005, 0.005, 0.04, 0.04]},   # new fronts
+		{"lap": 5, "time": 88.0, "tyre_wear": [0.025, 0.035, 0.05, 0.05]}]
+	var rate := c.wear_per_lap()
+	check(is_equal_approx(rate[0], 0.02) and is_equal_approx(rate[1], 0.03) and is_equal_approx(rate[2], 0.01),
+		"wear per lap from the laps on the tyre that's on now (%s)" % str(rate))
+	check(is_equal_approx(CarTelemetry.laps_to_worn(0.4, 0.02), 30.0) and is_inf(CarTelemetry.laps_to_worn(0.4, 0.0)),
+		"laps left until a tyre is worn out")
+	var log := [{"lap": 1, "wear": [0.1, 0.2, 0.1, 0.1]}, {"lap": 2, "wear": [0.3, 0.4, 0.2, 0.2]},
+		{"lap": 3, "wear": [0.02, 0.02, 0.02, 0.02]}, {"lap": 4, "wear": [0.1, 0.1, 0.1, 0.1]}]
+	var w := ResultsTable.stint_wear(log, 1, 3)
+	check(w.size() == 4 and is_equal_approx(w[1], 0.4) and is_equal_approx(w[0], 0.3),
+		"a stint's wear at its end is right when the new tyres went on before the line")
+	check(ResultsTable.stint_wear([{"lap": 1, "wear": []}], 1, 1).is_empty(), "old logs without wear show none")
+	check(ResultsTable.wear_colour(0.8) != ResultsTable.wear_colour(0.1), "worn tyres stand out")
 
 
 ## One AI lap of a derby arena in a derby car: {time, air (highest m off the ground), offs}.
@@ -3677,6 +3711,15 @@ func test_results_and_spectator(rep: Dictionary) -> void:
 		if r["status"] == "" and str(r["gap"]) == "":
 			gaps_ok = false
 	check(gaps_ok, "every classified car behind the winner has a gap or laps down")
+	# Tyre wear (on in this race): each tyre's wear lap by lap, going up
+	# through a stint, and at the end of each stint.
+	var r0: Dictionary = rows[0]
+	var log0: Array = r0["lap_log"]
+	var lw: Array = log0[1]["wear"] if log0.size() >= 2 else []
+	check(d["wear"] and lw.size() == 4 and float(lw[0]) > 0.0 and (r0["stints"][0]["wear_end"] as Array).size() == 4,
+		"the results have each tyre's wear lap by lap and at the end of each stint (%s)" % str(lw))
+	var rate := tel.cars[int(r0["car"])].wear_per_lap()
+	check(rate.size() == 4 and (rate[0] > 0.0 or rate[1] > 0.0), "the race data has a wear rate per tyre (%s)" % str(rate))
 	var season := ResultsTable.build(sim, tel, {"points": {SeasonResults.key_for(sim.entries[sim.running_order[0]].is_ai,
 		sim.entries[sim.running_order[0]].driver_name): 30}, "points_name": "Test"})
 	check(int(season["rows"][0]["points"]) == 30 and int(season["rows"][1]["points"]) == 0, "a season's points are shown as given")
@@ -3701,6 +3744,23 @@ func test_results_and_spectator(rep: Dictionary) -> void:
 	screen.chosen.connect(func(id): picked.append(id))
 	screen._buttons[0].pressed.emit()
 	check(picked == ["menu"], "results screen buttons report their id")
+	# Live: the table fills up as cars cross the line (the rest dimmed, no points yet).
+	check(rows.all(func(r): return r.has("racing") and not r["racing"]), "nobody's row is still racing once the race is over")
+	var live := d.duplicate(true)
+	for k in range(2, live["rows"].size()):
+		live["rows"][k]["racing"] = true
+	var live_screen := RaceResults.new()
+	root.add_child(live_screen)
+	live_screen.show_results(live, {"buttons": [["watch", "Watch the race"]], "instant": true})
+	check(live_screen.is_live(), "live results: cars still out are marked")
+	live["rows"][2]["racing"] = false
+	live_screen.update_results(live, {"buttons": [["watch", "Watch the race"]], "instant": true})
+	check(live_screen.is_shown() and live_screen._row_nodes.has(int(live["rows"][2]["car"])) and live_screen.is_live() == (live["rows"].size() > 3),
+		"live results update in place as another car finishes")
+	live_screen.update_results(d, {"buttons": [["menu", "Main menu"]], "instant": true})
+	check(not live_screen.is_live() and live_screen._buttons.size() == 1 and live_screen._buttons[0].text == "Main menu",
+		"the live table becomes the final one with its buttons")
+	live_screen.queue_free()
 	# Every driver's race lap by lap, and the race analysis.
 	var log_ok := true
 	var grid_ok := true
@@ -3914,6 +3974,102 @@ func test_land_cover() -> void:
 ## The pit wall stands between the track and the pit lane (never on the track,
 ## which it used to cross on many circuits, or in the lane), all along the
 ## garages, and cars can't drive through it from either side.
+## The bucketed pit lane and pit wall look-ups (a car only tests the few
+## segments near it) give the same answers as testing every segment, at
+## points all round each circuit's pits, and the cheap race-start checks
+## never skip a car that touches the wall.
+func test_pit_lookups_match() -> void:
+	print("pit look-ups match the full search")
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 11
+	var d := _data()
+	for info in TrackCatalog.list_all():
+		var t := TrackCatalog.load_track(info["id"])
+		if not t.has_pit_lane():
+			continue
+		var lane_bad := 0
+		var wall_bad := 0
+		var car_bad := 0
+		var n := 0
+		var box := Rect2(t.pit_path[0], Vector2.ZERO)
+		for p in t.pit_path:
+			box = box.expand(p)
+		box = box.grow(25.0)
+		var car: CarDefinition = d["cars"]["bmw_m4_gt3"]
+		for k in 3000:
+			var p := Vector2(rng.randf_range(box.position.x, box.end.x), rng.randf_range(box.position.y, box.end.y))
+			if k % 2 == 0:
+				# Half the points near the lane and the wall, where it matters.
+				var src: PackedVector2Array = t.pit_wall if t.has_pit_wall() and k % 4 == 0 else t.pit_path
+				p = src[rng.randi() % src.size()] + Vector2(rng.randf_range(-6, 6), rng.randf_range(-6, 6))
+			n += 1
+			var full_lane: bool = t.has_pit_lane() and t.project_pit(p)["dist"] <= t.pit_width * 0.5
+			if t.in_pit_lane(p) != full_lane:
+				lane_bad += 1
+			var r := rng.randf_range(0.0, 0.5)
+			var want := _pit_wall_contact_full(t, p, r, p)
+			var got := t.pit_wall_contact(p, r, p)
+			if got.is_empty() != want.is_empty() or (not got.is_empty() and absf(float(got["depth"]) - float(want["depth"])) > 1e-6):
+				wall_bad += 1
+			var hd := rng.randf_range(-PI, PI)
+			var hit := RaceSim.pit_wall_contact(p, hd, car, t)
+			# Every probe of the car body, tested against the whole wall.
+			var any := false
+			var rr := minf(RaceSim.BODY_CORNER_R, car.width * 0.5)
+			var f := Vector2(cos(hd), sin(hd))
+			var sd := Vector2(-f.y, f.x)
+			var c := p + f * car.body_offset
+			var hl := maxf(car.length * 0.5 - rr, 0.01)
+			var hw := maxf(car.width * 0.5 - rr, 0.01)
+			var qs := [c + f * hl + sd * hw, c - f * hl + sd * hw, c - f * hl - sd * hw, c + f * hl - sd * hw]
+			for m in 8:
+				var pp: Vector2 = qs[m / 2] if m % 2 == 0 else (qs[m / 2] + qs[(m / 2 + 1) % 4]) * 0.5
+				if not _pit_wall_contact_full(t, pp, rr, p).is_empty():
+					any = true
+			if any == hit.is_empty():
+				car_bad += 1
+		check(lane_bad == 0 and wall_bad == 0 and car_bad == 0,
+			"%s: pit lane (%d), pit wall (%d) and car-on-wall (%d) look-ups match the full search at %d points" % [info["id"], lane_bad, wall_bad, car_bad, n])
+
+
+## TrackData.pit_wall_contact as it was: every wall segment tested.
+func _pit_wall_contact_full(t: TrackData, c: Vector2, r: float, keep_side: Vector2) -> Dictionary:
+	if not t.has_pit_wall():
+		return {}
+	var bounds := Rect2(t.pit_wall[0], Vector2.ZERO)
+	for w in t.pit_wall:
+		bounds = bounds.expand(w)
+	if not bounds.grow(r + TrackData.PIT_WALL_HALF + 0.5).has_point(c):
+		return {}
+	var reach := r + TrackData.PIT_WALL_HALF
+	var best := {}
+	for i in t.pit_wall.size() - 1:
+		var a := t.pit_wall[i]
+		var seg := t.pit_wall[i + 1] - a
+		var l2 := seg.length_squared()
+		if l2 < 1e-6:
+			continue
+		var tt := clampf((c - a).dot(seg) / l2, 0.0, 1.0)
+		var foot := a + seg * tt
+		var v := c - foot
+		var dist := v.length()
+		if dist >= reach + 1.0:
+			continue
+		var depth: float
+		if tt > 0.0 and tt < 1.0:
+			var side_n := Vector2(-seg.y, seg.x) / sqrt(l2)
+			if side_n.dot(keep_side - a) < 0.0:
+				side_n = -side_n
+			depth = reach - side_n.dot(c - foot)
+		else:
+			if dist < 0.0001:
+				continue
+			depth = reach - dist
+		if depth > 0.0 and (best.is_empty() or depth > float(best["depth"])):
+			best = {"depth": depth}
+	return best
+
+
 func test_pit_wall() -> void:
 	print("pit wall")
 	for info in TrackCatalog.list_all():

@@ -13,12 +13,15 @@ extends RefCounted
 ##   {pos, car, name, car_name, is_ai, is_me, status ("" | "DNF" | "OUT"),
 ##    laps, time (incl. penalties, 0 = not classified), gap ("+12.345" / "+1 lap"),
 ##    best_lap, best_lap_no, avg_lap, best_sectors: [..], potential, stops,
-##    penalty_s, points, fastest (bool),
+##    penalty_s, points, fastest (bool), racing (still out on track: the
+##    results are filling up while the race runs on),
 ##    grid (start position, 0 = unknown), gained (grid - pos, + = places won),
 ##    lap_log: [{lap, time, sectors, pos, gap (s to the leader's crossing of
-##      that lap), compound, pitted, fuel_l, tyre_c, weather}],
-##    stints: [{compound, from, to, laps}], stop_log: [{lap, stationary_s, tyre, fuel_l, driver}]}
-## and for the analysis charts: max_laps, compounds: {id -> short name}.
+##      that lap), compound, pitted, fuel_l, tyre_c, weather, wear: [fl, fr,
+##      rl, rr] (0 new .. 1 worn out, at the line; empty in old data)}],
+##    stints: [{compound, from, to, laps, wear_end: [fl, fr, rl, rr]}], stop_log: [{lap, stationary_s, tyre, fuel_l, driver}]}
+## and for the analysis charts: max_laps, compounds: {id -> short name},
+## wear (true when tyre wear was on in this race).
 
 const SINGLE_RACE_POINTS := "f1"
 
@@ -117,7 +120,8 @@ static func build(sim: RaceSim, telemetry: RaceTelemetry, opts := {}) -> Diction
 			lap_log.append({"lap": k, "time": float(l.get("time", 0.0)), "sectors": l.get("sectors", []),
 				"pos": int(l.get("position", 0)), "gap": maxf(gap_s, 0.0), "compound": cid,
 				"pitted": stop_laps.has(k), "fuel_l": float(l.get("fuel_l", 0.0)),
-				"tyre_c": float(l.get("tyre_avg_c", 0.0)), "weather": str(l.get("weather", ""))})
+				"tyre_c": float(l.get("tyre_avg_c", 0.0)), "weather": str(l.get("weather", "")),
+				"wear": (l.get("tyre_wear", []) as Array).duplicate()})
 			# A new stint after a stop or when the tyre on the car changes.
 			if stints.is_empty() or stop_laps.has(k - 1) or (cid != "" and cid != str(stints[-1]["compound"])):
 				if not stints.is_empty() and int(stints[-1]["to"]) >= k:
@@ -128,6 +132,7 @@ static func build(sim: RaceSim, telemetry: RaceTelemetry, opts := {}) -> Diction
 			max_laps = maxi(max_laps, k)
 		for st in stints:
 			st["laps"] = int(st["to"]) - int(st["from"]) + 1
+			st["wear_end"] = stint_wear(lap_log, int(st["from"]), int(st["to"]))
 		var grid := ct.grid_pos if ct else 0
 		var key := SeasonResults.key_for(e.is_ai, e.driver_name)
 		var row := {"pos": p + 1, "car": i, "name": e.driver_name, "car_name": sim.defs[i].display_name,
@@ -135,6 +140,7 @@ static func build(sim: RaceSim, telemetry: RaceTelemetry, opts := {}) -> Diction
 			"best_lap": e.best_lap, "best_lap_no": best_no, "avg_lap": avg, "best_sectors": bs,
 			"potential": potential, "stops": int(e.pit.get("stops", 0)), "penalty_s": e.penalty_s,
 			"points": int(pts.get(key, 0)) if has_points else 0, "fastest": false, "jokers": e.jokers,
+			"racing": not e.finished and not e.dnf,
 			"grid": grid, "gained": grid - (p + 1) if grid > 0 else 0, "lap_log": lap_log, "stints": stints,
 			"stop_log": (ct.stops.duplicate(true) if ct else [])}
 		rows.append(row)
@@ -153,7 +159,31 @@ static func build(sim: RaceSim, telemetry: RaceTelemetry, opts := {}) -> Diction
 		"best_sectors": field_best, "sector_count": sector_count, "penalties": pens, "has_points": has_points,
 		"points_name": points_name, "quali": quali, "derby": derby,
 		"rallycross": sim.settings.is_rallycross() and sim.track.has_joker(), "joker_laps": sim.settings.joker_laps,
-		"pits": sim.pits.enabled, "max_laps": max_laps, "compounds": compounds}
+		"pits": sim.pits.enabled, "max_laps": max_laps, "compounds": compounds,
+		"wear": sim.settings.tyre_wear_enabled}
+
+
+## Each tyre's wear by the end of a stint (laps from..to): the most it got
+## to in those laps, so it's right whether the stop came before or after the
+## line on the in-lap. Empty when the log has no wear (old data).
+static func stint_wear(lap_log: Array, from: int, to: int) -> Array:
+	var out := []
+	for l in lap_log:
+		var k := int(l.get("lap", 0))
+		var w: Array = l.get("wear", [])
+		if k < from or k > to or w.size() < 4:
+			continue
+		if out.is_empty():
+			out = [0.0, 0.0, 0.0, 0.0]
+		for t in 4:
+			out[t] = maxf(out[t], float(w[t]))
+	return out
+
+
+## A tyre's colour by its wear (0 new .. 1 worn out), as the pit planner
+## shows it: green, then yellow past 45 % worn, red past 70 %.
+static func wear_colour(wear: float) -> Color:
+	return Color(1.0, 0.4, 0.35) if wear > 0.7 else (Color(1.0, 0.88, 0.35) if wear > 0.45 else Color(0.4, 1.0, 0.5))
 
 
 ## A tyre's colour on the results graphs (the pit planner's: wets blue,

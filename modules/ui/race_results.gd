@@ -1,7 +1,10 @@
 class_name RaceResults
 extends Control
-## The results screen at the end of a race: once every car has finished (or
-## the race ends), the race fades to black and this fades in over it.
+## The results screen at the end of a race. It fades in over the race once
+## this player's car has been home for a while (or once the race ends) and,
+## while the rest of the field is still racing, fills up as each car crosses
+## the line (live: update_results()); the cars still out are dimmed rows
+## at the bottom.
 ##
 ## A table of the whole field (position, driver, car, laps, race time and
 ## gap, best lap and the lap it came on, average lap, best sector times,
@@ -60,6 +63,8 @@ var _analysis_btn: Button
 var _views_parent: VBoxContainer
 var _from_analysis := false
 var _row_nodes := {}            ## car -> row panel (to focus it again)
+var _pending: Array = []        ## [d, opts] waiting until the table is back on screen
+const NEW_ROW_FLASH_S := 1.2    ## a car that has just finished lights up this long
 
 
 func _ready() -> void:
@@ -85,9 +90,11 @@ func _ensure_built() -> void:
 ##   notes: [text, ...] under the table (prize money, waiting for the host)
 ##   standings: {title, note, drivers: [{name, team, points, is_me}], teams: [{team, points}]}
 ##   instant: true = no fade (screenshots, tests)
+## Rows with racing = true (cars still out) show dimmed with just their lap.
 func show_results(d: Dictionary, opts := {}) -> void:
 	_ensure_built()
 	data = d
+	_pending = []
 	if _content:
 		_content.queue_free()
 	_buttons.clear()
@@ -100,6 +107,70 @@ func show_results(d: Dictionary, opts := {}) -> void:
 	if opts.get("instant", false):
 		_t = FADE_OUT_S + FADE_IN_S
 	_step_fade(0.0)
+
+
+## New numbers for the table already on screen, without fading it again:
+## cars that have just finished take their place and light up, the scroll
+## and the row with focus stay where they were. While a driver's page or the
+## race analysis is open it waits until the table is back. Not shown yet:
+## show_results().
+func update_results(d: Dictionary, opts := {}) -> void:
+	if not visible or _content == null:
+		show_results(d, opts)
+		return
+	if is_driver_open() or is_analysis_open():
+		_pending = [d, opts]
+		return
+	_pending = []
+	var was_home := {}
+	for r in data.get("rows", []):
+		if not r.get("racing", false):
+			was_home[int(r["car"])] = true
+	var keep := _scroll.scroll_vertical if _scroll else 0
+	var focus_car := -1
+	var focus_btn := -1
+	var fo := get_viewport().gui_get_focus_owner() if is_inside_tree() else null
+	for car in _row_nodes:
+		if _row_nodes[car] == fo:
+			focus_car = car
+	focus_btn = _buttons.find(fo)
+	data = d
+	var a := _content.modulate.a
+	_content.queue_free()
+	_buttons.clear()
+	_content = _build(d, opts)
+	add_child(_content)
+	_content.modulate.a = a
+	var snd := get_node_or_null("/root/Sound") if is_inside_tree() else null
+	if snd:
+		snd.wire_buttons(_content)
+	for r in d.get("rows", []):
+		var car := int(r["car"])
+		if not r.get("racing", false) and not was_home.has(car) and _row_nodes.has(car):
+			var row: Control = _row_nodes[car]
+			row.modulate = Color(1.9, 1.7, 1.2)
+			row.create_tween().tween_property(row, "modulate", Color.WHITE, NEW_ROW_FLASH_S)
+	if _shown:
+		if focus_car >= 0 and _row_nodes.has(focus_car):
+			_focus(_row_nodes[focus_car])
+		elif focus_btn >= 0 and focus_btn < _buttons.size():
+			_focus(_buttons[focus_btn])
+		elif not _buttons.is_empty():
+			_focus(_buttons[0])
+	if _scroll:
+		_scroll.set_deferred("scroll_vertical", keep)
+
+
+## True while some rows are cars still racing.
+func is_live() -> bool:
+	return data.get("rows", []).any(func(r): return r.get("racing", false))
+
+
+func _apply_pending() -> void:
+	if not _pending.is_empty():
+		var p := _pending
+		_pending = []
+		update_results.call_deferred(p[0], p[1])
 
 
 ## The championship part only (online guests get the standings a moment
@@ -334,6 +405,7 @@ func _row(d: Dictionary, r: Dictionary) -> Control:
 	var p := PanelContainer.new()
 	var sb := StyleBoxFlat.new()
 	var me: bool = r.get("is_me", false)
+	var racing: bool = r.get("racing", false)
 	sb.bg_color = Color(0.32, 0.24, 0.06, 0.75) if me else Color(1, 1, 1, 0.045 if int(r["pos"]) % 2 == 0 else 0.0)
 	if me:
 		sb.border_color = GOLD
@@ -408,7 +480,7 @@ func _row(d: Dictionary, r: Dictionary) -> Control:
 				text = "+%d s" % int(r["penalty_s"]) if float(r["penalty_s"]) > 0.0 else ""
 				col = Color(1, 0.6, 0.35)
 			"points":
-				text = str(int(r["points"])) if int(r["points"]) > 0 else ""
+				text = str(int(r["points"])) if int(r["points"]) > 0 and not racing else ""
 				col = GOLD
 			_:
 				if id.begins_with("s"):
@@ -418,6 +490,15 @@ func _row(d: Dictionary, r: Dictionary) -> Control:
 					text = fmt_sector(v)
 					if v > 0.0 and s < field_best.size() and is_equal_approx(v, float(field_best[s])):
 						col = PURPLE
+		if racing:
+			# Still out on track: a dimmed place holder until it crosses the line.
+			match id:
+				"pos": text = "·"
+				"name", "car_name": pass
+				"laps": text = str(int(r["laps"]))
+				"time": text = "racing" if not d.get("derby", false) else "still going"
+				_: text = ""
+			col = Color(1, 1, 1, 0.38) if not me else Color(1, 0.85, 0.5, 0.6)
 		var l := _label(text, ROW_FONT, col)
 		l.custom_minimum_size = Vector2(c[2], 0)
 		l.mouse_filter = MOUSE_FILTER_IGNORE
@@ -472,6 +553,7 @@ func toggle_analysis() -> void:
 		_focus(_analysis.focus_target())
 	else:
 		_focus(_analysis_btn)
+		_apply_pending()
 
 
 func is_analysis_open() -> bool:
@@ -557,6 +639,7 @@ func close_driver() -> void:
 		var row: Control = _row_nodes.get(_driver_car)
 		if row:
 			_focus(row)
+		_apply_pending()
 
 
 func _quali_gap(d: Dictionary, r: Dictionary) -> String:

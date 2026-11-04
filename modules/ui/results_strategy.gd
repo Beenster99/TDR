@@ -3,7 +3,8 @@ extends Control
 ## The results analysis's driver list: one row per driver in finishing
 ## order with places won or lost from the grid and their tyre strategy
 ## (each stint as a bar along the race, coloured by tyre, a ring at every
-## stop). It is also the graphs' legend: clicking a driver (or A on the
+## stop, and with tyre wear on the most worn tyre's rubber left at the end
+## of the stint). It is also the graphs' legend: clicking a driver (or A on the
 ## picked row) shows them on the graphs, in the colour of their swatch.
 
 signal car_toggled(car: int)
@@ -23,6 +24,7 @@ var rows: Array = []           ## ResultsTable rows
 var max_laps := 1
 var compounds: Dictionary = {}
 var colors: Dictionary = {}    ## car -> Color (the cars on the graphs)
+var wear := false              ## tyre wear was on: each stint shows its worst tyre's rubber left
 var cursor := -1               ## keyboard / pad row
 var _hover := -1
 
@@ -55,7 +57,8 @@ func _draw() -> void:
 	draw_string(font, Vector2(W_SWATCH, 14), "POS", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, DIM)
 	draw_string(font, Vector2(W_SWATCH + W_POS, 14), "DRIVER", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, DIM)
 	draw_string(font, Vector2(W_SWATCH + W_POS + W_NAME, 14), "FROM GRID", HORIZONTAL_ALIGNMENT_CENTER, W_GAIN, 11, DIM)
-	draw_string(font, Vector2(bar_x, 14), "TYRES AND STOPS", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, DIM)
+	draw_string(font, Vector2(bar_x, 14), "TYRES AND STOPS" + ("  ·  % = worst tyre left" if wear else ""),
+		HORIZONTAL_ALIGNMENT_LEFT, bar_w - 50, 11, DIM)
 	draw_string(font, Vector2(bar_x, 14), "lap %d" % max_laps, HORIZONTAL_ALIGNMENT_RIGHT, bar_w, 11, DIM)
 	for k in rows.size():
 		var r: Dictionary = rows[k]
@@ -115,9 +118,25 @@ func _stints(font: Font, r: Dictionary, box: Rect2, fs: int) -> void:
 		var col := ResultsTable.compound_colour(str(st["compound"]))
 		draw_rect(seg, Color(col, 0.85))
 		var cname := str(compounds.get(st["compound"], ""))
-		if cname != "" and seg.size.x > font.get_string_size(cname, HORIZONTAL_ALIGNMENT_LEFT, -1, fs - 2).x + 8:
-			draw_string(font, Vector2(seg.position.x + 4, seg.position.y + seg.size.y * 0.5 + (fs - 2) * 0.36), cname,
+		var ty := seg.position.y + seg.size.y * 0.5 + (fs - 2) * 0.36
+		var name_w := font.get_string_size(cname, HORIZONTAL_ALIGNMENT_LEFT, -1, fs - 2).x
+		if cname != "" and seg.size.x > name_w + 8:
+			draw_string(font, Vector2(seg.position.x + 4, ty), cname,
 				HORIZONTAL_ALIGNMENT_LEFT, seg.size.x - 6, fs - 2, Color(0.05, 0.06, 0.08))
+		# The most worn tyre's rubber left at the end of the stint, at its
+		# right-hand end (when tyre wear was on and there's room).
+		var we: Array = st.get("wear_end", [])
+		if wear and we.size() >= 4:
+			var worst := 0.0
+			for w in we:
+				worst = maxf(worst, float(w))
+			var wt := "%d%%" % roundi((1.0 - clampf(worst, 0.0, 1.0)) * 100.0)
+			var ww := font.get_string_size(wt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs - 2).x
+			if seg.size.x > name_w + ww + 18:
+				var chip := Rect2(seg.end.x - ww - 8, seg.position.y + 1, ww + 6, seg.size.y - 2)
+				draw_rect(chip, Color(0.05, 0.06, 0.08, 0.75))
+				draw_string(font, Vector2(chip.position.x + 3, ty), wt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs - 2,
+					ResultsTable.wear_colour(worst))
 	var laps := int(r.get("laps", 0))
 	if str(r["status"]) != "" and laps < max_laps:
 		draw_string(font, Vector2(box.position.x + laps * per + 6, box.position.y + box.size.y * 0.5 + (fs - 2) * 0.36),
