@@ -121,29 +121,65 @@ func _plant_real_trees() -> void:
 	print_verbose("[trackside] %d real trees" % _commit_trees(tiles, meshes))
 
 
+## Camera distance (m) where trees switch to their far, few-triangle shapes.
+## Close up (and at every racing zoom) you see the full trees; zoomed out to
+## the whole circuit each tree is a few pixels and the far shapes look the
+## same at a twentieth of the triangles.
+const TREE_FAR_FROM := 1200.0
+
+
 func _commit_trees(tiles: Dictionary, meshes: Array) -> int:
 	var mat := ShaderMaterial.new()
 	mat.shader = _tree_shader()
+	var far := [_far_tree_mesh(false), _far_tree_mesh(true), _far_bush_mesh()]
 	var count := 0
 	for key in tiles:
 		for kind in 3:
 			var xs: Array = tiles[key][kind][0]
 			if xs.is_empty():
 				continue
-			var mm := MultiMesh.new()
-			mm.transform_format = MultiMesh.TRANSFORM_3D
-			mm.use_custom_data = true
-			mm.mesh = meshes[kind]
-			mm.instance_count = xs.size()
-			for i in xs.size():
-				mm.set_instance_transform(i, xs[i])
-				mm.set_instance_custom_data(i, tiles[key][kind][1][i])
-			var mmi := MultiMeshInstance3D.new()
-			mmi.multimesh = mm
-			mmi.material_override = mat
-			add_child(mmi)
+			for lod in 2:
+				var mm := MultiMesh.new()
+				mm.transform_format = MultiMesh.TRANSFORM_3D
+				mm.use_custom_data = true
+				mm.mesh = meshes[kind] if lod == 0 else far[kind]
+				mm.instance_count = xs.size()
+				for i in xs.size():
+					mm.set_instance_transform(i, xs[i])
+					mm.set_instance_custom_data(i, tiles[key][kind][1][i])
+				var mmi := MultiMeshInstance3D.new()
+				mmi.multimesh = mm
+				mmi.material_override = mat
+				if lod == 0:
+					mmi.visibility_range_end = TREE_FAR_FROM
+				else:
+					mmi.visibility_range_begin = TREE_FAR_FROM
+				if kind == 2:   # bushes and hedges: too low for a shadow worth drawing
+					mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+				add_child(mmi)
 			count += xs.size()
 	return count
+
+
+## A tree seen from far off: one rough blob of a crown (or a cone for a
+## conifer) on no trunk, about 20 triangles.
+func _far_tree_mesh(conifer: bool) -> Mesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	if conifer:
+		_cone(st, Vector3(0, 1.5, 0), 3.2, 0.15, 10.5, 6, Color(0.85, 0.88, 0.88))
+	else:
+		_blob(st, Vector3(0, 6.2, 0), 4.0, false)
+	st.generate_normals()
+	return st.commit()
+
+
+func _far_bush_mesh() -> Mesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	_blob(st, Vector3(0, 1.0, 0), 1.9, false)
+	st.generate_normals()
+	return st.commit()
 
 
 ## Middle of the band the pit garages and paddock trucks take (every 5 m).
@@ -227,7 +263,7 @@ func _with_lods(m: ArrayMesh) -> Mesh:
 
 
 ## Low-poly lumpy sphere: an icosahedron split once, pushed in and out.
-func _blob(st: SurfaceTool, c: Vector3, r: float) -> void:
+func _blob(st: SurfaceTool, c: Vector3, r: float, split := true) -> void:
 	var t := (1.0 + sqrt(5.0)) / 2.0
 	var v := [Vector3(-1, t, 0), Vector3(1, t, 0), Vector3(-1, -t, 0), Vector3(1, -t, 0),
 		Vector3(0, -1, t), Vector3(0, 1, t), Vector3(0, -1, -t), Vector3(0, 1, -t),
@@ -242,7 +278,8 @@ func _blob(st: SurfaceTool, c: Vector3, r: float) -> void:
 		var ab := (a + b).normalized()
 		var bc := (b + cc).normalized()
 		var ca := (cc + a).normalized()
-		for sub in [[a, ab, ca], [ab, b, bc], [ca, bc, cc], [ab, bc, ca]]:
+		var subs := [[a, ab, ca], [ab, b, bc], [ca, bc, cc], [ab, bc, ca]] if split else [[a, b, cc]]
+		for sub in subs:
 			for p in sub:
 				var q: Vector3 = p
 				var bump := 1.0 + 0.12 * sin(q.x * 7.0 + q.z * 5.0) * cos(q.y * 6.0)

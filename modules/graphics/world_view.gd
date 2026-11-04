@@ -349,7 +349,13 @@ func set_camera(centre: Vector2, zoom: float, rotation_rad := 0.0) -> void:
 	camera.near = clampf(_cam_dist * 0.02, 0.5, 200.0)
 	camera.far = _cam_dist * 3.0 + 4000.0
 	if sun:
-		sun.directional_shadow_max_distance = clampf(_cam_dist * 2.2, 150.0, 12000.0)
+		# Seen from above, everything on screen is about the same distance
+		# from the camera, so cascades only drew the world into the shadow
+		# map several times over. One shadow map that just covers the view
+		# (the far edge of the screen is ~1.1x the camera distance away)
+		# draws it once, at full resolution.
+		sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
+		sun.directional_shadow_max_distance = clampf(_cam_dist * 1.35 + 40.0, 150.0, 12000.0)
 	if pit_crews:
 		pit_crews.set_camera(centre, _cam_dist)
 	var hk := _cam_dist / 60.0
@@ -374,6 +380,8 @@ func set_camera_view(from: Vector3, target: Vector3, fov_deg: float) -> void:
 	camera.far = 6000.0
 	_cam_dist = dist
 	if sun:
+		# looking across the ground: near things need sharper shadows than far ones
+		sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
 		sun.directional_shadow_max_distance = clampf(dist * 3.0, 150.0, 1500.0)
 	if pit_crews:
 		pit_crews.set_camera(Vector2(target.x, target.z), dist)
