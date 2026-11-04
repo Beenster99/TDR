@@ -136,6 +136,9 @@ marks the stretch whose traffic will be passing the pit exit as the car
 leaves the lane; it slides up to the exit as the stop goes on. Green: clear
 air; amber: a car within 1.5 s; red: within 0.6 s.
 
-Shown to the driver while boxing and in the lane (3D band, minimap, and
-"Rejoin P7, 1.2 s behind ..." in the pit panel), and always on the co-op
-crew console, where the pit wall plans the stop from it.
+The band is the strategist's: it shows on the co-op crew console for a
+strategist (or the combined pit wall role), where the stop is planned from
+it, and for a solo driver in the pit call menu while they plan their own
+stop. It is never drawn on the driver's view while driving (not in the 3D
+world, not on the minimap); the driver's pit panel still says "Rejoin P7,
+1.2 s behind ..." in words while boxing and in the lane.

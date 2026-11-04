@@ -30,6 +30,9 @@ var _driving_line: DrivingLine
 var _joker_line: DrivingLine   ## rallycross: the line through the joker lane
 ## The results screen, faded in once every car has finished.
 var results: RaceResults
+## The podium ceremony (top three finish), played before the results.
+var podium: PodiumCeremony
+var _layer: CanvasLayer
 ## Spectator mode: once this player's car has finished (or retired) and
 ## others are still racing, they watch the race: any car, any camera view.
 var spectator: SpectatorHud
@@ -90,6 +93,7 @@ func _ready() -> void:
 	camera.make_current()
 	var layer := CanvasLayer.new()
 	add_child(layer)
+	_layer = layer
 	# Spectator mode's onboard views: the onboard camera, full screen, under the HUD.
 	_onboard_rect = TextureRect.new()
 	_onboard_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -763,6 +767,7 @@ func _update_pit_guide(delta: float) -> void:
 
 
 var _pit_work := {}   ## car -> the stop's work while it's on its way in
+var _pit_work_key := {}   ## car -> hash of the plan _pit_work was made from
 
 
 var _pit_log := {}   ## what _log_pit_stop last printed
@@ -811,35 +816,38 @@ func _update_pit_crews() -> void:
 		elif ph == PitRules.PHASE_LEAVE:
 			state = PitCrews.Stop.LEAVING
 		elif p["box"] and (ph == PitRules.PHASE_ENTRY or ph == PitRules.PHASE_LIMIT or ph == PitRules.PHASE_APPROACH
-				or (ph == PitRules.PHASE_NONE and int(p.get("crew_play", 0)) & PitRules.job_bit(PitRules.JOB_LANCE))):
-			# On their way in (a co-op crew laying out the tyres: from the call).
+				or ph == PitRules.PHASE_NONE):
+			# Called in: the crew come out of the garage to their marks (and
+			# a co-op crew lays out the tyres) while the car is on its in-lap.
 			state = PitCrews.Stop.COMING
-			if not _pit_work.has(i) or int(p.get("crew_play", 0)) != 0:
+			var key := hash(p["plan"])
+			if not _pit_work.has(i) or int(p.get("crew_play", 0)) != 0 or (ph == PitRules.PHASE_NONE and _pit_work_key.get(i) != key):
 				var coming := pits.service_for(i, p["plan"])
 				coming["crew"] = pits.crew_timeline(i, coming, PitRules.played_jobs(p))
 				_pit_work[i] = coming
+				_pit_work_key[i] = key
 			work = _pit_work[i]
 		if state != PitCrews.Stop.COMING:
 			_pit_work.erase(i)
+			_pit_work_key.erase(i)
 		var elapsed := float(p.get("service_total", 0.0)) - float(p.get("service_left", 0.0))
 		world.set_pit_stop(i, state, elapsed, work)
 
 
-## The band on the circuit where our car would rejoin after a clean stop:
-## while it's boxing or in the pit lane, and always on the crew console
-## (the pit wall plans the stop from it).
+## The band on the circuit where our car would rejoin after a clean stop.
+## It's the strategist's tool, so only the strategist sees it: on the co-op
+## pit wall console (a strategist, or the combined pit wall role), and a
+## solo driver planning their own stop in the pit call menu. Never on the
+## driver's view while driving, in or out of the pit lane.
 func _update_rejoin() -> void:
 	var car := session.local_car if session.local_car >= 0 else session.team_car
 	var pits := session.sim.pits
-	var show := pits.enabled and car >= 0 and session.sim.phase == RaceSim.Phase.RACING and not _spectating
+	var show := pits.enabled and car >= 0 and session.sim.phase == RaceSim.Phase.RACING and not _spectating \
+		and strategist_view()
 	var est := {}
 	if show:
-		var p: Dictionary = session.sim.entries[car].pit
-		var ph: String = p["phase"]
-		show = (p["box"] or (ph != PitRules.PHASE_NONE and ph != PitRules.PHASE_EXIT) or crew.visible)
-		if show:
-			est = pits.rejoin_estimate(car)
-			show = not est.is_empty()
+		est = pits.rejoin_estimate(car)
+		show = not est.is_empty()
 	if not show:
 		world.set_rejoin(false)
 		return
@@ -848,6 +856,14 @@ func _update_rejoin() -> void:
 	var ppm := maxf(camera.zoom.x, 0.01)
 	world.set_rejoin(true, est["s"], maxf(v * 0.8, 40.0 / ppm), maxf(v * 0.2, 10.0 / ppm), RaceHud.rejoin_colour(est),
 		maxf(6.0 / ppm - 4.0, 0.0))
+
+
+## True while this player looks at the race as the strategist: the co-op
+## console with the strategist's duties, or a solo driver's pit call menu.
+func strategist_view() -> bool:
+	if crew.visible and _is_crew() and RaceEntry.role_covers(str(session.local_role), RaceEntry.ROLE_STRATEGIST):
+		return true
+	return pit_menu.visible and session.local_car >= 0
 
 
 ## Z / R3: jump to the whole track, and back to where you were.
@@ -868,14 +884,11 @@ func _maybe_screenshot() -> void:
 		return
 	if session.sim.race_time + session.sim.phase_time * float(session.sim.phase == RaceSim.Phase.COUNTDOWN) >= float(GameData.arg("screenshot-at", 10)):
 		_shot_taken = true
-		# --screenshot-pause [settings|restart|menu|desktop|lobby]: with the pause menu
-		# (or its Settings, or its "Are you sure?" popup for that button) open.
+		# --screenshot-pause [settings]: with the pause menu (or its Settings) open.
 		if GameData.arg("screenshot-pause"):
 			_open_pause_menu()
 			if str(GameData.arg("screenshot-pause")) == "settings":
 				pause_menu._open_settings()
-			elif str(GameData.arg("screenshot-pause")) in ["restart", "menu", "desktop", "lobby"]:
-				pause_menu.ask_confirm(str(GameData.arg("screenshot-pause")))
 			for _f in 4:
 				await RenderingServer.frame_post_draw
 		await RenderingServer.frame_post_draw
@@ -1107,7 +1120,121 @@ func _on_race_finished() -> void:
 		return
 	if GameData.arg("quit-after-season") and session.mode == RaceSession.Mode.CLIENT:
 		return  # wait for the host to bring everyone back to the lobby
+	var pod := _podium_drivers()
+	if not pod.is_empty():
+		_start_podium(pod, func(): _show_results(season_info, season_pts, prize))
+		return
 	_show_results(season_info, season_pts, prize)
+
+
+# --- The podium --------------------------------------------------------------
+
+## The top three for the podium ceremony, [{name, car, colour, is_me}], or []
+## when there's no ceremony: this player's car wasn't in the top three (or
+## didn't finish), it was qualifying, or it's off in Settings > Gameplay.
+## --podium forces one (screenshots, tests), even headless.
+func _podium_drivers() -> Array:
+	var sim := session.sim
+	var forced := bool(GameData.arg("podium", false))
+	if GameData.arg("no-podium") or sim.settings.is_qualifying() or sim.running_order.is_empty():
+		return []
+	if not forced and (DisplayServer.get_name() == "headless" or not bool(GameData.prefs.get("podium", true))):
+		return []
+	var me := _own_car()
+	var pos := sim.running_order.find(me)
+	var derby := sim.settings.discipline == RaceSettings.DISCIPLINE_DERBY
+	var ok := me >= 0 and pos >= 0 and pos < 3 and (derby or (sim.entries[me].finished and not sim.entries[me].dnf))
+	if not ok and not forced:
+		return []
+	var out := []
+	for p in mini(3, sim.running_order.size()):
+		var i := sim.running_order[p]
+		out.append({"name": sim.entries[i].driver_name, "car": sim.defs[i].display_name,
+			"colour": car_views[i].paint_colour() if i < car_views.size() else Color(0.8, 0.1, 0.1), "is_me": i == me})
+	return out
+
+
+## Fades the race out and the podium in; then_show (the results) runs once it has faded out again.
+func _start_podium(drivers: Array, then_show: Callable) -> void:
+	_results_shown = true   # no pause menu, HUD keys or driving from here on
+	_stop_spectating()
+	hud.visible = false
+	crew.visible = false
+	var slot := -1
+	for p in drivers.size():
+		if drivers[p]["is_me"]:
+			slot = p
+	podium = PodiumCeremony.new()
+	podium.autoplay = bool(GameData.arg("podium-autoplay", false))
+	_layer.add_child(podium)
+	var title := "PODIUM"
+	var season_info: Dictionary = session.start_data.get("season", {})
+	if not season_info.is_empty():
+		title = "PODIUM  ·  ROUND %d" % (int(season_info.get("round", 0)) + 1)
+	podium.start(drivers, slot, {"track": session.sim.track.display_name, "title": title, "seed": session.sim.settings.seed})
+	podium.covered.connect(func():
+		world.visible = false   # nothing of the race left to draw behind it
+		_duck_race_audio())
+	podium.finished.connect(func():
+		then_show.call()
+		# The results fade their backdrop in under the black, then the black goes.
+		get_tree().create_timer(RaceResults.FADE_OUT_S + 0.05).timeout.connect(func():
+			if is_instance_valid(podium):
+				podium.queue_free()
+				podium = null))
+	if GameData.arg("podium-shots"):
+		_podium_shots()
+	print("[podium] %s, you %s" % [", ".join(drivers.map(func(d): return str(d["name"]))), "P%d" % (slot + 1) if slot >= 0 else "watching"])
+
+
+var _audio_db := {}
+
+
+## The cars go quiet under the podium (and the results after it).
+func _duck_race_audio() -> void:
+	for bus in ["Engine", "Effects"]:
+		var idx := AudioServer.get_bus_index(bus)
+		if idx < 0:
+			continue
+		if not _audio_db.has(bus):
+			_audio_db[bus] = AudioServer.get_bus_volume_db(idx)
+		var from: float = _audio_db[bus]
+		create_tween().tween_method(func(v: float): AudioServer.set_bus_volume_db(idx, v), from, -80.0, 0.8)
+
+
+func _exit_tree() -> void:
+	for bus in _audio_db:
+		var idx := AudioServer.get_bus_index(bus)
+		if idx >= 0:
+			AudioServer.set_bus_volume_db(idx, _audio_db[bus])
+	_audio_db.clear()
+
+
+## Testing: --podium-shots DIR saves pictures of the podium: the trophies,
+## the champagne going, and the results after.
+func _podium_shots() -> void:
+	var dir := str(GameData.arg("podium-shots"))
+	DirAccess.make_dir_recursive_absolute(dir)
+	if DisplayServer.get_name() == "headless":
+		return
+	for shot in [["podium_trophy", PodiumCeremony.INTRO_S + 1.8], ["podium_pop", PodiumCeremony.INTRO_S + PodiumCeremony.TROPHY_S + 1.5],
+			["podium_spray", PodiumCeremony.INTRO_S + PodiumCeremony.TROPHY_S + 4.0], ["podium_spray2", PodiumCeremony.INTRO_S + PodiumCeremony.TROPHY_S + 7.5]]:
+		while is_instance_valid(podium) and podium.elapsed() < float(shot[1]):
+			await get_tree().process_frame
+		if not is_instance_valid(podium):
+			return
+		await RenderingServer.frame_post_draw
+		get_viewport().get_texture().get_image().save_png("%s/%s.png" % [dir, shot[0]])
+		print("[screenshot] %s, soaked %d" % [shot[0], podium.view.player_soaked])
+	if is_instance_valid(podium):
+		podium.finish()
+	while not results.is_shown():
+		await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png("%s/results_after_podium.png" % dir)
+	print("[screenshot] results after the podium")
+	if GameData.arg("quit-after-shots"):
+		get_tree().quit()
 
 
 ## A season session (qualifying or race) just ended. The host / offline
@@ -1220,6 +1347,9 @@ func _save_race_data() -> void:
 func _show_results(season_info: Dictionary, season_pts: Dictionary, prize: int) -> void:
 	_results_shown = true
 	_stop_spectating()
+	# The cars fade out with the race picture, so the table is quiet.
+	race_audio.fade_out(RESULTS_SOUND_FADE_S)
+	Sound.radio_stop()
 	hud.visible = false
 	crew.visible = false
 	var sim := session.sim
@@ -1269,6 +1399,7 @@ func _show_results(season_info: Dictionary, season_pts: Dictionary, prize: int) 
 
 
 var _results_season := {}
+const RESULTS_SOUND_FADE_S := 1.6   ## the race sound goes silent this fast under the results
 
 
 func _on_lobby_changed_after_race() -> void:

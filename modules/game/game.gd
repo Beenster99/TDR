@@ -12,6 +12,8 @@ func _ready() -> void:
 	var controls = GameData.prefs.get("controls", {})
 	InputSetup.register_actions(controls if controls is Dictionary else {}, float(GameData.prefs.get("pad_deadzone", 12)) / 100.0)
 	reload_content()
+	GameData.register_setting("gameplay", "podium", "Podium celebration", [[true, "On"], [false, "Off"]], true,
+		"Finish in the top three and you go up on the podium before the results: lift the trophy, then shake the champagne, pop the cork and spray everyone. Off: straight to the results.")
 
 
 ## Follows which game controller the player is using, and whether they last

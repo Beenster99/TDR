@@ -11,6 +11,11 @@ extends Control
 ##     and pace against the cars around, the pit window and where a stop now
 ##     rejoins, rival strategies, weather;
 ##   * bottom: team radio with the driver, and race control;
+##     The strategy tab's PACE lines say who is fastest on the last lap, the
+##     last 3 and the last 5 laps (in our class), against us; the car we're
+##     really racing (RaceTelemetry.rival_of) is orange in the timing and
+##     ringed on the 3D view, backmarkers (a lap or more down on us) carry a
+##     blue lap-down tag and the next ones up the road get blue rings;
 ##   * top right of the 3D view (strategist): a picture-in-picture onboard
 ##     camera on any car, front or rear (OnboardCamera), picked on the
 ##     strategy tab.
@@ -49,6 +54,8 @@ const GREEN := Color(0.4, 1.0, 0.5)
 const PURPLE := Color(0.78, 0.45, 1.0)
 const RED := Color(1.0, 0.4, 0.35)
 const BLUE := Color(0.55, 0.75, 1.0)
+const ORANGE := Color(1.0, 0.6, 0.25)       ## the car we're really racing
+const BACKMARKER := Color(0.35, 0.6, 1.0)   ## a lap or more down on us
 const DIM := Color(1, 1, 1, 0.55)
 const PANEL := Color(0.02, 0.04, 0.07, 0.86)
 const RADIO_LOG := 40
@@ -322,7 +329,7 @@ func _item_id() -> String:
 	return _items[selected][0] if selected < _items.size() else ""
 
 
-const FUEL_STEP := 5.0
+const FUEL_STEP := 1.0   ## litres a step (fuel by the litre)
 
 
 func _change(dir: int) -> void:
@@ -345,16 +352,16 @@ func _change(dir: int) -> void:
 		"fuel":
 			var cap := sim.defs[car].fuel_capacity_l
 			var f := float(plan["fuel"])
-			var steps := [PitRules.FUEL_AUTO, PitRules.FUEL_NONE]
-			var v := FUEL_STEP
-			while v <= cap + 0.01:
-				steps.append(v)
-				v += FUEL_STEP
-			var k := 0
-			for n in steps.size():
-				if absf(float(steps[n]) - f) < 0.01:
-					k = n
-			session.request_pit(car, {"fuel": steps[clampi(k + dir, 0, steps.size() - 1)]})
+			# To the end, none, then litre by litre up to a full tank (the wheel
+			# and right-click step back).
+			var nf: float
+			if f < 0.0:
+				nf = PitRules.FUEL_AUTO if dir < 0 else PitRules.FUEL_NONE
+			elif f == 0.0 and dir < 0:
+				nf = PitRules.FUEL_AUTO
+			else:
+				nf = clampf(f + dir * FUEL_STEP, 0.0, floorf(cap))
+			session.request_pit(car, {"fuel": nf})
 		"watch":
 			watch_car = _cycle_car(watch_car, dir)
 			watch_changed.emit(watch_car)
@@ -491,7 +498,7 @@ func _build_items() -> void:
 					which += " (new compound: all four)"
 				_items.append(["wheels", "Change", which, true])
 			if sim.settings.fuel_enabled:
-				_items.append(["fuel", "Fuel", RaceHud.fuel_plan_text(float(plan["fuel"])), true])
+				_items.append(["fuel", "Fuel", RaceHud.fuel_choice_text(sim, car, float(plan["fuel"])), true])
 			if sim.damage_level != CarDamage.Level.OFF:
 				_items.append(["repair", "Repairs", "Fix everything" if plan["repair"] else "No repairs", true])
 			if sim.settings.tuning_enabled:
@@ -689,6 +696,7 @@ func _draw_timing(r: Rect2, car: int) -> void:
 	var fs := 15 if rh >= 24.0 else 13
 	var x := r.position.x
 	var hy := r.position.y + 40
+	var riv := tel.rival_of(sim, car)
 	for h in [[8, "P"], [40, "DRIVER"], [196, "GAP"], [268, "LAST"], [350, "TYRE"], [404, "ST"]]:
 		_text(Vector2(x + h[0], hy), h[1], 11, DIM)
 	for p in n:
@@ -699,19 +707,28 @@ func _draw_timing(r: Rect2, car: int) -> void:
 		if y + rh > r.end.y + 2:
 			break      # a panel made too short for the whole field
 		var row := Rect2(x + 2, y, r.size.x - 4, rh - 2)
+		var bm := tel.is_backmarker(sim, car, i)
 		if i == car:
 			draw_rect(row, Color(1, 0.88, 0.35, 0.2))
 			draw_rect(row, Color(1, 0.88, 0.35, 0.7), false, 1.5)
 		elif i == watch_car:
 			draw_rect(row, Color(0.55, 0.75, 1.0, 0.16))
+		elif i == riv:
+			draw_rect(row, Color(ORANGE, 0.14))
+			draw_rect(row, Color(ORANGE, 0.55), false, 1.0)
 		elif row.has_point(_hover):
 			draw_rect(row, Color(1, 1, 1, 0.06))
 		_hits.append([row, "watch", i])
 		var ty := y + rh * 0.5 + fs * 0.35
 		_text(Vector2(x + 8, ty), str(e.position), fs, Color.WHITE, HORIZONTAL_ALIGNMENT_RIGHT, 22)
 		draw_rect(Rect2(x + 34, y + 4, 4, rh - 10), sim.defs[i].colour)
-		_text(Vector2(x + 42, ty), e.at_wheel(), fs, YELLOW if i == car else (BLUE if not e.is_ai else Color.WHITE),
-			HORIZONTAL_ALIGNMENT_LEFT, 150)
+		var name_w := 150.0
+		if bm:
+			name_w = _chip(x + 192, y + rh * 0.5 - 1, "+%dL" % tel.laps_behind(sim, car, i), BACKMARKER) - x - 46
+		elif i == riv:
+			name_w = _chip(x + 192, y + rh * 0.5 - 1, "RIVAL", ORANGE) - x - 46
+		var ncol := YELLOW if i == car else (ORANGE if i == riv else (BACKMARKER.lightened(0.25) if bm else (BLUE if not e.is_ai else Color.WHITE)))
+		_text(Vector2(x + 42, ty), e.at_wheel(), fs, ncol, HORIZONTAL_ALIGNMENT_LEFT, name_w)
 		var gap := ""
 		if e.finished:
 			gap = "FIN"
@@ -730,6 +747,16 @@ func _draw_timing(r: Rect2, car: int) -> void:
 		var age := e.laps_done - int(e.pit.get("stint_lap", 0))
 		_text(Vector2(x + 350, ty), "%s %d" % [sim.compounds[i].display_name.left(1), age], fs - 1, _compound_colour(sim.compounds[i].id))
 		_text(Vector2(x + 404, ty), str(int(e.pit.get("stops", 0))), fs - 1, DIM)
+
+
+## A small coloured tag (RIVAL, +1L) ending at right_x; returns its left edge.
+func _chip(right_x: float, cy: float, label: String, col: Color, fs := 10) -> float:
+	var w := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x + 8
+	var r := Rect2(right_x - w, cy - fs * 0.5 - 3, w, fs + 6)
+	draw_rect(r, Color(col, 0.28))
+	draw_rect(r, col, false, 1.0)
+	_text(Vector2(r.position.x, r.position.y + fs + 1), label, fs, col.lightened(0.35), HORIZONTAL_ALIGNMENT_CENTER, w)
+	return r.position.x
 
 
 static func _compound_colour(id: String) -> Color:
@@ -947,12 +974,46 @@ func _draw_strategy(r: Rect2, car: int) -> void:
 		_text(Vector2(x, y), "Weather: %s %s (%d%% sure)" % [WeatherForecast.weather_label(ch["weather"]), WeatherForecast.eta_text(ch),
 			int(ch["confidence"] * 100.0)], 14, BLUE if ch["rain"] > 0.05 else Color.WHITE, HORIZONTAL_ALIGNMENT_LEFT, w)
 	y += 8
+	# Pace: who's quickest, against us.
+	draw_line(Vector2(x, y + 6), Vector2(x + w, y + 6), Color(1, 1, 1, 0.12))
+	var multi := RaceTelemetry.multi_class(sim)
+	_text(Vector2(x, y + 26), "PACE" + ("  ·  " + sim.defs[car].class_tag if multi else ""), 12, DIM)
+	_text(Vector2(x + 110, y + 26), "fastest", 11, DIM)
+	_text(Vector2(x + w - 150, y + 26), "us", 11, DIM)
+	y += 30
+	var ranks := tel.pace_ranks(sim, sim.defs[car].class_tag if multi else "")
+	for key in RaceTelemetry.PACE_KEYS:
+		var list: Array = ranks.get(key, [])
+		_text(Vector2(x, y + 14), RaceTelemetry.PACE_LABELS[key], 12, Color(1, 1, 1, 0.75))
+		if list.is_empty():
+			_text(Vector2(x + 110, y + 14), "no laps yet", 13, DIM)
+		else:
+			var top: int = list[0]
+			var tv := tel.pace_value(top, key)
+			var ncol := YELLOW if top == car else (ORANGE if top == tel.rival_of(sim, car) else PURPLE)
+			_text(Vector2(x + 110, y + 14), "%s %s" % [StrategistScreen.fmt_lap(tv), sim.entries[top].driver_name], 13, ncol,
+				HORIZONTAL_ALIGNMENT_LEFT, w - 270)
+			var mine := tel.pace_value(car, key)
+			if mine > 0.0:
+				var rank := list.find(car) + 1
+				var txt := "P%d  %s" % [rank, "fastest" if top == car else "+%.3f" % (mine - tv)]
+				_text(Vector2(x + w - 150, y + 14), txt, 13, GREEN if top == car else Color.WHITE, HORIZONTAL_ALIGNMENT_LEFT, 150)
+		y += 18
+	var bms := tel.backmarkers_ahead(sim, car, 2)
+	if not bms.is_empty():
+		var parts := PackedStringArray()
+		for b in bms:
+			parts.append("%s %.1f s" % [sim.entries[b["car"]].driver_name, b["seconds"]])
+		_text(Vector2(x, y + 14), "BACKMARKERS", 12, BACKMARKER)
+		_text(Vector2(x + 110, y + 14), "  ·  ".join(parts) + " up the road", 13, BACKMARKER.lightened(0.3), HORIZONTAL_ALIGNMENT_LEFT, w - 110)
+		y += 18
 	# Rival strategies.
 	draw_line(Vector2(x, y + 6), Vector2(x + w, y + 6), Color(1, 1, 1, 0.12))
 	_text(Vector2(x, y + 26), "RIVALS", 12, DIM)
 	y += 32
 	var rivals: Array[int] = []
-	for i in [watch_car, ahead, behind]:
+	var riv := tel.rival_of(sim, car)
+	for i in [riv, watch_car, ahead, behind]:
 		if i >= 0 and i != car and not rivals.has(i):
 			rivals.append(i)
 	for k in mini(order.size(), 3):
@@ -964,7 +1025,8 @@ func _draw_strategy(r: Rect2, car: int) -> void:
 		var re := sim.entries[i]
 		var rc := tel.cars[i]
 		var age := re.laps_done - int(re.pit.get("stint_lap", 0))
-		_text(Vector2(x, y + 16), "P%d %s" % [re.position, re.driver_name], 14, BLUE if i == watch_car else Color.WHITE, HORIZONTAL_ALIGNMENT_LEFT, w * 0.5)
+		var label := "P%d %s%s" % [re.position, re.driver_name, "  (our rival)" if i == riv else ""]
+		_text(Vector2(x, y + 16), label, 14, BLUE if i == watch_car else (ORANGE if i == riv else Color.WHITE), HORIZONTAL_ALIGNMENT_LEFT, w * 0.5)
 		_text(Vector2(x + w * 0.5, y + 16), "%s %d laps · %d stops · avg %s" % [sim.compounds[i].display_name.left(5), age,
 			int(re.pit.get("stops", 0)), StrategistScreen.fmt_lap(rc.last5_avg)], 13, DIM, HORIZONTAL_ALIGNMENT_LEFT, w * 0.5)
 		var strat: Dictionary = tel.strategies.get(i, {})
@@ -1026,12 +1088,20 @@ func _draw_markers(car: int) -> void:
 	if not car_screen_pos.is_valid():
 		return
 	var view := view_rect()
-	for pair in [[car, YELLOW], [watch_car, BLUE]]:
-		var i: int = pair[0]
+	var tel := session.telemetry
+	var marks := [[car, YELLOW, 16.0, ""], [watch_car, BLUE, 16.0, ""]]
+	var riv := tel.rival_of(session.sim, car)
+	if riv != watch_car:
+		marks.append([riv, ORANGE, 16.0, "  rival"])
+	for b in tel.backmarkers_ahead(session.sim, car, 3):
+		if int(b["car"]) != watch_car:
+			marks.append([int(b["car"]), BACKMARKER, 12.0, "  +%dL" % int(b["laps"])])
+	for m in marks:
+		var i: int = m[0]
 		if i < 0:
 			continue
 		var sp = car_screen_pos.call(i)
 		if not (sp is Vector2) or not view.grow(20).has_point(sp):
 			continue
-		draw_arc(sp, 16.0, 0.0, TAU, 32, pair[1], 2.5)
-		_text(sp + Vector2(20, -10), session.sim.entries[i].driver_name, 14, pair[1])
+		draw_arc(sp, m[2], 0.0, TAU, 32, m[1], 2.5)
+		_text(sp + Vector2(m[2] + 4, -10), session.sim.entries[i].driver_name + m[3], 14 if m[2] > 14.0 else 12, m[1])

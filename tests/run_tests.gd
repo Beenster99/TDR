@@ -47,6 +47,7 @@ func _init() -> void:
 	test_snapshot_restore(replay)
 	test_telemetry(replay)
 	test_results_and_spectator(replay)
+	test_podium()
 	test_weather_forecast()
 	test_race_control_rules()
 	test_give_back_highlight()
@@ -2839,6 +2840,57 @@ func _accel_test(d: Dictionary, def: CarDefinition, s: CarState) -> Dictionary:
 
 
 ## Race data for the pit wall: lap logs, averages, gaps, pit windows, feed, sync.
+## The strategist's pace table, rival and backmarkers (RaceTelemetry).
+## sim2 / tel2: a race part-way through; tel: the finished race's telemetry.
+func _check_pace_table(sim2: RaceSim, tel2: RaceTelemetry, tel: RaceTelemetry) -> void:
+	# Averages over the last n laps, lap 1 left out (the finished race's logs).
+	var avg_ok := true
+	for c in tel.cars:
+		var want := 0.0
+		var n := 0
+		for k in range(c.laps.size() - 1, -1, -1):
+			if c.laps[k]["lap"] <= 1 or n >= 3:
+				break
+			want += c.laps[k]["time"]
+			n += 1
+		if n > 0 and absf(c.avg_last(3) - want / n) > 1e-6:
+			avg_ok = false
+		if absf(c.avg_last(5) - c.last5_avg) > 1e-9:
+			avg_ok = false
+	check(avg_ok, "last-3 and last-5 lap averages leave out lap 1 and match the lap log")
+	var ranks := tel.pace_ranks(sim2)
+	var sorted := true
+	for key in RaceTelemetry.PACE_KEYS:
+		var list: Array = ranks[key]
+		for k in range(1, list.size()):
+			if tel.pace_value(list[k], key) < tel.pace_value(list[k - 1], key):
+				sorted = false
+	check(sorted and (ranks["last"] as Array).size() > 0, "pace table ranks cars fastest first on last lap, last 3 and last 5 (%d cars)" % (ranks["last"] as Array).size())
+	# Rival: on our lap, the nearer of the cars just ahead and behind.
+	var order := sim2.running_order
+	var me := order[order.size() / 2]
+	var riv := tel2.rival_of(sim2, me)
+	var p := order.find(me)
+	var pr := order.find(riv)
+	var near := riv >= 0 and sim2.defs[riv].class_tag == sim2.defs[me].class_tag and tel2.laps_behind(sim2, me, riv) == 0
+	for k in range(mini(p, pr) + 1, maxi(p, pr)):
+		var j := order[k]
+		if sim2.defs[j].class_tag == sim2.defs[me].class_tag and tel2.laps_behind(sim2, me, j) == 0:
+			near = false    # a closer car of our class on our lap was skipped
+	check(near, "the rival is the next car of our class on our lap, ahead or behind (P%d: car %d at P%d)" % [p + 1, riv, pr + 1])
+	# Backmarkers: a car a lap down on us, just up the road.
+	var last := order[order.size() - 1]
+	var keep := sim2.entries[last].distance
+	sim2.entries[last].distance = sim2.entries[order[0]].distance - sim2.track.length + 120.0
+	var bms := tel2.backmarkers_ahead(sim2, order[0])
+	check(tel2.is_backmarker(sim2, order[0], last) and not tel2.is_backmarker(sim2, last, order[0]),
+		"a car a lap down on the leader is the leader's backmarker, not the other way round")
+	check(not bms.is_empty() and int(bms[0]["car"]) == last and int(bms[0]["laps"]) == 1 and absf(float(bms[0]["metres"]) - 120.0) < 1.0,
+		"the backmarker 120 m up the road is listed first (%s)" % str(bms.slice(0, 1)))
+	check(tel2.rival_of(sim2, order[0]) != last, "a backmarker is never the leader's rival")
+	sim2.entries[last].distance = keep
+
+
 func test_telemetry(rep: Dictionary) -> void:
 	print("telemetry")
 	var tel: RaceTelemetry = rep["telemetry"]
@@ -2875,6 +2927,7 @@ func test_telemetry(rep: Dictionary) -> void:
 		tel2.observe(sim2)
 	tel2._compute_gaps(sim2)
 	tel2.pit.analyse(tel2.cars, sim2)
+	_check_pace_table(sim2, tel2, tel)
 	var order := sim2.running_order
 	var mono := true
 	var int_ok := true
@@ -3523,6 +3576,53 @@ func test_settings_and_units() -> void:
 
 ## The in-race pause menu (Esc / Start): what it offers offline, to the
 ## online host and to a guest, and the settings it lets the player change.
+## The podium ceremony's champagne (graphics PodiumView): bottles stay corked
+## until the champagne comes out, shaking builds pressure, the first spray
+## pops the cork, the stream lands where it was aimed and soaks people, the
+## bottle runs dry, and the AI drivers pop and spray theirs on their own.
+func test_podium() -> void:
+	var v := PodiumView.new()
+	root.add_child(v)
+	v.setup([{"name": "A", "colour": Color.RED}, {"name": "B", "colour": Color.BLUE}, {"name": "C", "colour": Color.GREEN}], 1, "Test", 3)
+	check(v.drivers.size() == 3 and v.figures.size() > 40, "podium: three drivers and a crowd")
+	var b := v.player_bottle()
+	check(b != null and not b.ai and v.bottles[0].ai and v.bottles[2].ai, "podium: the player has P2's bottle, the others are AI")
+	v.set_phase(PodiumView.Phase.TROPHY)
+	v.set_spray(true)
+	v._process(0.1)
+	check(b.corked and not b.spraying, "podium: no champagne while the trophies are up")
+	v.set_phase(PodiumView.Phase.CHAMPAGNE)
+	var p0 := b.pressure
+	for k in 5:
+		v.shake(0.15)
+	check(b.pressure > p0 + 0.5, "podium: shaking builds pressure (%.2f -> %.2f)" % [p0, b.pressure])
+	# Aim at someone in the middle of the front row of the crowd and spray.
+	var target: PodiumView.Figure = null
+	for f in v.figures:
+		if f.kind == "crowd" and (target == null or absf(f.base.x) + absf(f.base.z - 3.4) < absf(target.base.x) + absf(target.base.z - 3.4)):
+			target = f
+	var popped := [0]
+	v.cork_popped.connect(func(_s): popped[0] += 1)
+	v.set_spray(true)
+	check(not b.corked and popped[0] == 1, "podium: the first spray pops the cork")
+	var t := 0.0
+	while t < 20.0 and b.fill > 0.0:
+		v.aim_at(target.base + Vector3(0, 1.4, 0))
+		v.set_spray(true)
+		if fmod(t, 1.0) < 0.017:
+			v.shake(0.2)
+		v._process(1.0 / 60.0)
+		t += 1.0 / 60.0
+	check(target.wet > 0.0, "podium: the stream lands on the person it's aimed at (wet %.2f)" % target.wet)
+	check(v.player_soaked >= 1 and v.player_hits > 20, "podium: the player soaks people (%d soaked, %d hits)" % [v.player_soaked, v.player_hits])
+	check(b.fill <= 0.0 and t > 5.0 and t < 20.0, "podium: the bottle runs dry after a while (%.1f s)" % t)
+	check(not v.bottles[0].corked and not v.bottles[2].corked, "podium: the AI drivers pop their corks")
+	for k in 60 * 40:
+		v._process(1.0 / 60.0)
+	check(v.all_empty(), "podium: every bottle ends up empty")
+	v.queue_free()
+
+
 ## TDR_ONLY=test_end_of_race: a race, then the results and spectator checks.
 func test_end_of_race() -> void:
 	test_results_and_spectator(test_ai_race_completes())
@@ -3601,7 +3701,68 @@ func test_results_and_spectator(rep: Dictionary) -> void:
 	screen.chosen.connect(func(id): picked.append(id))
 	screen._buttons[0].pressed.emit()
 	check(picked == ["menu"], "results screen buttons report their id")
+	# Every driver's race lap by lap, and the race analysis.
+	var log_ok := true
+	var grid_ok := true
+	var stint_ok := true
+	var gap_ok := false
+	for r in rows:
+		var lap_log: Array = r["lap_log"]
+		var e := sim.entries[int(r["car"])]
+		if lap_log.size() != e.lap_times.size():
+			log_ok = false
+		for k in lap_log.size():
+			var l: Dictionary = lap_log[k]
+			if int(l["lap"]) != k + 1 or int(l["pos"]) < 1 or int(l["pos"]) > sim.car_count() or str(l["compound"]) == "" \
+					or not is_equal_approx(float(l["time"]), e.lap_times[k]) or float(l["gap"]) < 0.0:
+				log_ok = false
+		if int(r["grid"]) < 1 or int(r["grid"]) > sim.car_count() or int(r["gained"]) != int(r["grid"]) - int(r["pos"]):
+			grid_ok = false
+		var covered := 0
+		for st in r["stints"]:
+			covered += int(st["laps"])
+		if not lap_log.is_empty() and (covered != lap_log.size() or r["stints"].is_empty()):
+			stint_ok = false
+		if int(r["laps"]) == int(rows[0]["laps"]) and not lap_log.is_empty() and float(lap_log[-1]["gap"]) < 0.001:
+			gap_ok = true   # somebody led the last lap over the line
+	check(log_ok, "every driver's lap log: one entry per lap with position, time, tyre and gap")
+	check(grid_ok, "grid positions known and places gained = grid - finish")
+	check(stint_ok, "the stints cover every lap")
+	check(gap_ok, "the first car over the line is 0 s behind the leader on the last lap")
+	var gs := []
+	for r in rows:
+		gs.append(int(r["grid"]))
+	gs.sort()
+	check(gs == range(1, sim.car_count() + 1), "the grid positions are 1..N once each (%s)" % str(gs))
+	check(RaceResults.has_analysis(d), "a race with laps has the race analysis")
+	screen.open_driver(int(rows[1]["car"]))
+	check(screen.is_driver_open() and screen._driver_car == int(rows[1]["car"]), "clicking a row opens that driver's race data")
+	screen._driver_nav("next")
+	check(screen._driver_car == int(rows[2]["car"]), "next driver steps down the order")
+	screen.close_driver()
+	check(not screen.is_driver_open() and screen._table_view.visible, "back goes to the table")
+	screen.toggle_analysis()
+	check(screen.is_analysis_open() and not screen._table_view.visible, "race analysis replaces the table")
+	var an: ResultsAnalysis = screen._analysis
+	check(an.picked.has(me) and an.picked[me] == 0 and an.picked.size() == 2, "you and the winner start on the graphs")
+	an._toggle(int(rows[5]["car"]))
+	check(an.picked.size() == 3 and an.picked[int(rows[5]["car"])] == 2, "clicking a driver adds them in the next colour")
+	an._toggle(int(rows[0]["car"]))
+	an._toggle(int(rows[6]["car"]))
+	check(an.picked[int(rows[6]["car"])] == 1 and an.picked[int(rows[5]["car"])] == 2, "a driver keeps their colour when others change")
+	screen.open_driver(me)
+	screen.close_driver()
+	check(screen.is_analysis_open(), "back from a driver opened on the analysis returns to it")
 	screen.queue_free()
+	# The race sound fades away under the results.
+	var ra := RaceAudio.new()
+	root.add_child(ra)
+	ra.setup(sim.cars, sim.defs, me)
+	ra.fade_out(1.0)
+	for _k in 30:
+		ra.update(0.05, Vector2.ZERO, 0.5, 0.0)
+	check(ra.level == 0.0, "race sound faded to silence (%.2f)" % ra.level)
+	ra.queue_free()
 
 
 func test_pause_menu() -> void:
@@ -3613,12 +3774,7 @@ func test_pause_menu() -> void:
 	check(PauseOptions.button_ids(true, true).has("lobby"), "online host can also end the race for everyone")
 	check(not PauseOptions.button_ids(true, false).has("lobby"), "a guest can't end the race")
 	check(PauseOptions.label_for("restart", true, true).contains("everyone"), "the host's restart says it restarts for everyone")
-	for id in ["restart", "lobby", "menu", "desktop"]:
-		check(PauseOptions.confirm_text(id, true, true).size() == 3 and PauseOptions.confirm_text(id, false, false).size() == 3,
-			"%s asks \"are you sure?\" (Yes / No popup)" % id)
-	check(PauseOptions.confirm_text("resume", false, false).is_empty() and PauseOptions.confirm_text("settings", false, false).is_empty(),
-		"resume and settings don't ask")
-	check(PauseOptions.confirm_text("menu", true, true)[1].contains("everyone"), "the host is told quitting closes the race for everyone")
+	check(not (PauseOptions as Script).get_script_method_list().any(func(m): return m.name == "confirm_text"), "no \"are you sure?\" popups in the pause menu")
 	var gd = load("res://modules/core/game_data.gd").new()
 	gd.persist_prefs = false
 	gd._register_defaults()
@@ -3877,9 +4033,16 @@ func test_graphics_effects() -> void:
 			"down": [8.8, 9.6], "release": 10.5, "fumble": -1,
 			"guns": [[{"wheel": 0, "off": 0.8, "on": 3.8}, {"wheel": 2, "off": 3.8, "on": 6.8}],
 				[{"wheel": 1, "off": 0.8, "on": 3.8}, {"wheel": 3, "off": 3.8, "on": 6.8}]]}}
+	crews._process(1.0 / 30.0)
+	var idle_seen := 0
+	for b in crews.crews:
+		idle_seen += crews.crew_in_sight(b)
+	check(idle_seen == 0, "idle pit crews are out of sight in their garages (%d in sight)" % idle_seen)
 	crews.set_stop(0, PitCrews.Stop.COMING, 0.0, work)
 	for f in 120:
 		crews._process(1.0 / 30.0)
+	check(crews.crew_in_sight(4) == PitCrews.CREW_SIZE and crews.crew_in_sight(5) == 0,
+		"called in: the crew come out of the garage (%d out), the next garage's stay in" % crews.crew_in_sight(4))
 	var box: Vector2 = t2.pit_box(4)["pos"]
 	var near := 0
 	for p in crews.crews[4].people:
@@ -3899,6 +4062,13 @@ func test_graphics_effects() -> void:
 	check(not crews.wheels_off(0), "end of the stop: wheels back on")
 	crews.set_stop(0, PitCrews.Stop.LEAVING, 10.0, work)
 	check(crews.car_lift(0) == 0.0, "car off the jacks when it leaves")
+	crews.set_stop(0, PitCrews.Stop.NONE, 0.0, {})
+	for f in 300:
+		crews._process(1.0 / 30.0)
+	check(crews.crew_in_sight(4) == 0 and crews.crews[4].settled, "after the stop the crew walk back into the garage (%d still out)" % crews.crew_in_sight(4))
+	crews.drive_member(0, "gun_l", box, 0.0)
+	crews._process(1.0 / 30.0)
+	check(crews.crew_in_sight(4) == 1, "a co-op player's crew member is always in sight")
 	tv2.free()
 
 
@@ -4443,6 +4613,12 @@ func test_hud_timing() -> void:
 			break
 	check(RaceHud.short_name("Driver 727") == "Driver 727" and RaceHud.short_name("Alessandro Bellini-Rossi") == "A. Bellini-Ross", "driver names fit the tower")
 	check(RaceHud.fmt_sector(32.4567) == "32.457" and RaceHud.fmt_sector(0.0) == "--.---", "sector times format")
+	# GT3-style dash: red beats yellow beats blue beats the chequered white.
+	check(RaceHud.dash_flag_colour(true, true, true, true, true) == RaceHud.DASH_RED, "dash: red flag first")
+	check(RaceHud.dash_flag_colour(false, true, true, true, false) == RaceHud.DASH_YELLOW, "dash: yellow over blue")
+	check(RaceHud.dash_flag_colour(false, false, true, false, true) == RaceHud.DASH_BLUE, "dash: blue over green")
+	check(RaceHud.dash_flag_colour(false, false, false, true, false) == RaceHud.DASH_WHITE, "dash: white at the end of the race")
+	check(RaceHud.dash_flag_colour(false, false, false, false, false).a == 0.0, "dash: no flag, normal screen")
 
 
 ## Online play: hit boxes match the bodywork, remote cars are placed where
@@ -4572,6 +4748,21 @@ func test_online_contacts() -> void:
 	check(cv.highlight_alpha() == 0.0, "highlight has faded away after its time")
 	cv.wake_highlight()
 	check(cv.highlight_alpha() == 1.0, "zooming brings a faded highlight back")
+	cv.free()
+	# The highlight is a thin outline a few pixels wide, drawn pulled towards
+	# the camera so the ground can't cut through it; the car to let past gets
+	# a bolder line than your own.
+	cv = CarView.new()
+	cv.def = CarCatalog.load_all()["bmw_m4_gt3"]
+	cv.set_highlight(CarView.Highlight.SELF)
+	var self_px: float = cv._hl_mat.get_shader_parameter("line_px")
+	check(self_px > 0.0 and self_px <= 3.0, "own car: a thin outline (%.1f px)" % self_px)
+	check(float(cv._hl_mat.get_shader_parameter("lift")) >= 0.5, "the outline is lifted clear of the ground")
+	cv.set_highlight_zoom(10.0)
+	check(float(cv._hl_mat.get_shader_parameter("lift")) > 2.0, "lifted further when zoomed out")
+	cv.set_highlight(CarView.Highlight.GIVE_BACK)
+	cv.set_highlight_zoom(1.0)
+	check(float(cv._hl_mat.get_shader_parameter("line_px")) > self_px, "the car to let past has a bolder outline")
 	cv.free()
 
 
