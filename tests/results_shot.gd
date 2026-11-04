@@ -1,7 +1,9 @@
 extends Node
 ## Screenshot of the results screen after a quick AI race (no 3D world, so
 ## it's fast in xvfb):
-##   godot --path . res://tests/results_shot.tscn -- <out.png> [laps] [ai] [track]
+##   godot --path . res://tests/results_shot.tscn -- <out.png> [laps] [ai] [track] [--view=analysis|driver|both]
+## --view=analysis also saves the race analysis, driver the own driver's race
+## data, both every view (<out>_analysis.png, <out>_driver.png).
 ## Runs the race in the pure sim, scores it as round 1 of a 6-round season
 ## with a pit stop and a penalty, and shows RaceResults with the standings.
 
@@ -67,4 +69,25 @@ func _ready() -> void:
 	await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png(out)
 	print("[screenshot] ", out)
+	var view := ""
+	for x in OS.get_cmdline_user_args():
+		if str(x).begins_with("--view="):
+			view = str(x).substr(7)
+	if view in ["analysis", "both"]:
+		r.toggle_analysis()
+		await _shot(out.get_basename() + "_analysis.png")
+	if view in ["driver", "both"]:
+		r.open_driver(me)
+		await _shot(out.get_basename() + "_driver.png")
+		var other: int = sim.running_order[0] if sim.running_order[0] != me else sim.running_order[1]
+		r.open_driver(other)
+		await _shot(out.get_basename() + "_driver_winner.png")
 	get_tree().quit()
+
+
+func _shot(path: String) -> void:
+	for _f in 4:
+		await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png(path)
+	print("[screenshot] ", path)

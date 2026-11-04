@@ -82,6 +82,7 @@ func setup(sim: RaceSim, p_authority := true) -> void:
 		c.car = i
 		c.best_sectors.resize(track.sectors.size())
 		c.best_sectors.fill(0.0)
+		c.grid_pos = sim.entries[i].position
 		cars.append(c)
 		_loops.append({})
 		_prev_d.append(sim.entries[i].distance)
@@ -112,6 +113,7 @@ func observe(sim: RaceSim) -> Array:
 	if sim.phase == RaceSim.Phase.COUNTDOWN:
 		for i in sim.car_count():
 			_prev_d[i] = sim.entries[i].distance
+			cars[i].grid_pos = sim.entries[i].position
 		_prev_t = sim.race_time
 		return out
 	var new_laps := _archive_laps(sim, out)
@@ -142,6 +144,11 @@ func on_events(evs: Array) -> void:
 				feed.add({"t": _now(), "lap": _leader_laps, "kind": "strategy", "car": car,
 					"text": str(ev.get("text", ""))})
 			"pit_stop":
+				var sc := int(ev.get("car", -1))
+				if sc >= 0 and sc < cars.size():
+					cars[sc].stops.append({"lap": int(ev.get("lap", 0)), "stationary_s": snappedf(float(ev.get("stationary_s", 0.0)), 0.01),
+						"tyre": str(ev.get("tyre", "")), "fuel_l": snappedf(float(ev.get("fuel_l", 0.0)), 0.1),
+						"driver": str(ev.get("driver", "")), "in_window": bool(ev.get("in_window", false))})
 				# Driver line-ups: who took over in the box.
 				var who := str(ev.get("driver", ""))
 				if who != "":
@@ -207,11 +214,14 @@ func _archive_laps(sim: RaceSim, out: Array) -> bool:
 				avg += t
 			avg /= maxf(temps.size(), 1.0)
 			var lap_time := e.lap_times[k]
+			var stops_now := int(e.pit.get("stops", 0)) if newest else (int(c.laps[-1].get("stops", 0)) if not c.laps.is_empty() else 0)
 			c.laps.append({"lap": k + 1, "time": lap_time, "sectors": sectors, "position": e.position,
 				"gap_leader": snappedf(c.gap_leader, 0.001), "tyre_avg_c": snappedf(avg, 0.1),
 				"tyre_temps": temps.map(func(x): return snappedf(x, 0.1)), "fuel_l": snappedf(car.fuel_l, 0.01),
 				"weather": sim.env.weather, "wetness": snappedf(sim.env.wetness, 0.01),
-				"race_time": snappedf(sim.race_time, 0.001)})
+				"race_time": snappedf(sim.race_time, 0.001),
+				"compound": sim.compounds[i].id if i < sim.compounds.size() and sim.compounds[i] else "",
+				"stops": stops_now, "pitted": stops_now > (int(c.laps[-1].get("stops", 0)) if not c.laps.is_empty() else 0)})
 			c.update_average()
 			for s in sectors.size():
 				if s < c.best_sectors.size() and (c.best_sectors[s] <= 0.0 or sectors[s] < c.best_sectors[s]):
