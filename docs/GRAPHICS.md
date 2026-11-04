@@ -23,9 +23,13 @@ occlusion and glow. The camera always shows this full 3D scene at every zoom
   have `data/scenery/<id>.json` (every circuit placed on the map, all but Albert Park): every building at its
   real size and height, the named grandstands (seats facing the circuit,
   roofs on the big ones), road and foot bridges, trees and hedges where they
-  really stand, and a painted ground map under it all (fields with
-  tramlines, woods, car parks with their bays, roads, paths, ponds, sand and
-  the circuit's other loops) that the terrain shader blends over the grass.
+  really stand, and the ground itself modelled under it all (fields with
+  crop rows and tramlines, woods, car parks with their bays, roads with edge
+  lines and centre dashes, paths, ponds with ripples, sand and the circuit's
+  other loops). The ground is geometry, not a picture: build_scenery.py cuts
+  every shape along the terrain mesh's own triangles, and the terrain shader
+  lays those meshes on the hillside (`drape`) and draws each surface's detail
+  from world position, so edges and texture stay sharp at any zoom.
   Settings > Graphics > Trackside switches it off (`GfxSettings.real_scenery`).
   See "Real trackside scenery" below for how the data is made.
 - `CarView` is one car: its model, livery, wheels, lights, spray, tyre smoke
@@ -178,7 +182,14 @@ The tool reads the track's `geo` block (written by the tracks module's
 `build_tracks.py`) to line map data up with the circuit, covers the whole
 terrain square, and drops anything that would stand on the track or pit
 lane (where OpenStreetMap and the track disagree by a few metres). The
-ground map is a 1.5 m per pixel WebP picture inside the JSON. To add a
+land cover is stored as ready-made meshes in 320 m tiles (`land`: vertices,
+a kind and variant per vertex, indices; see `_doc` in the file), cut for the
+terrain grid TrackView builds (10 m cells on hilly tracks, 16 m on flat ones),
+so a change to the track's shape or terrain size means rebuilding it.
+`--land-only` rebuilds just the land cover and keeps the buildings, bridges
+and trees (no LIDAR download); `--preview out.png` draws it flat. Kinds are
+listed in `KINDS` in the tool and `K_*` in `shaders/terrain.gdshader` (the
+tests check they agree). Needs shapely as well. To add a
 track: build the track first, add it to `tools/scenery.json` (with
 `"lidar": "ea_england"` for English circuits), run the tool, check a
 screenshot (`-- --single --track <id> --zoom 1 --screenshot out.png`).

@@ -9,9 +9,10 @@ extends RefCounted
 ## safety car along between updates so it looks smooth.
 ##
 ## How it works:
-##  * Incidents (the damage module's "incident" events, big "collision"
-##    events) and stranded cars (stopped on the circuit) raise local yellow
-##    flags for that part of the track: no overtaking there.
+##  * Real incidents raise local yellow flags for that part of the track (no
+##    overtaking there): a car into the barrier, a heavy crash between cars,
+##    a car spun or crawling off the track, a stranded car (stopped on the
+##    circuit). Ordinary contact between cars (rubbing, a tap) does not.
 ##  * A car stopped on the racing surface, a retired car, a big crash or
 ##    several stranded cars escalate to a VSC (everyone keeps above a
 ##    reference lap, shown as a delta) or a full SC.
@@ -25,7 +26,8 @@ extends RefCounted
 ##    slow down) and then a time penalty (RaceSim.add_penalty), added to the
 ##    car's race time in the final classification.
 ##  * The host setting RaceSettings.safety_car_enabled switches the VSC and
-##    SC on or off. Local yellow flags always apply.
+##    SC on or off; flags_enabled switches the yellow flags (both off =
+##    "Safety car: Off", no flags at all).
 
 enum Mode { GREEN, VSC, SC }
 const MODE_NAMES := ["green", "vsc", "sc"]
@@ -43,6 +45,22 @@ const MOVING_AGAIN := 8.0
 const YELLOW_HALF_M := 120.0     ## a local yellow covers this much track either side
 const YELLOW_HOLD_S := 12.0      ## stays out this long after the hazard is gone
 const STRANDED_YELLOW_S := 2.0
+## Car to car contact (an incident's severity, 0..1): below CONTACT_DEBRIS_SEV
+## it's racing (nothing happens); from there it leaves bits on the track that
+## build up for the marshals; from CONTACT_YELLOW_SEV it's a crash that
+## brings out a local yellow by itself.
+const CONTACT_DEBRIS_SEV := 0.35
+const CONTACT_YELLOW_SEV := 0.6
+## Spun: going slower than this and facing more than ~105 degrees away from
+## the track direction, or still rotating fast.
+const SPUN_MAX_SPEED := 25.0
+const SPUN_DOT := -0.25
+const SPIN_YAW_RATE := 2.5
+## Off: crawling on the grass / in the gravel (or against the barrier).
+const OFF_MAX_SPEED := 12.0
+const HAZARD_YELLOW_S := 0.75     ## spun or off this long: local yellow
+const RX_PUSH_OFF_S := 6.0     ## rallycross: a retired car is pushed off after resting this long
+const RX_PUSH_GAP_S := 8.0     ## ... once the next car is at least this many seconds away
 const STRANDED_VSC_S := 6.0
 const STRANDED_SC_S := 16.0
 const RECOVERY_VSC_S := 25.0     ## marshals clear a stranded car in this time
@@ -52,6 +70,7 @@ const VSC_ENDING_S := 6.0
 const SC_GAP_TARGET := 25.0      ## leader keeps this far behind the safety car
 const SC_SPAWN_AHEAD := 160.0
 const SC_PIT_SPEED := 17.0
+const GIVE_BACK_SC := -2          ## give_back victim: the safety car
 const GIVE_BACK_S := 12.0        ## time to give a place back before a penalty
 const PENALTY_S := 5.0
 const VSC_DELTA_WARN := -0.5
@@ -86,6 +105,7 @@ var sc_lights: String = "off"    ## "off", "amber" (out), "green" (coming in)
 var yellows: Array = []
 ## Per car
 var stranded_t: PackedFloat64Array = []   ## seconds stopped on the circuit
+var _hazard_t: PackedFloat64Array = []    ## seconds spun or off and slow
 var recovered: PackedByteArray = []       ## marshals have dealt with it (ignored from now on)
 var carried: PackedByteArray = []         ## a recovery vehicle has it (lifted or on the strap)
 ## Recovery vehicles at work (CarRecovery jobs, one per retired car out on the
@@ -120,6 +140,7 @@ func _init(p_sim: RaceSim) -> void:
 	enabled = sim.settings.safety_car_enabled
 	var n := sim.cars.size()
 	stranded_t.resize(n)
+	_hazard_t.resize(n)
 	recovered.resize(n)
 	carried.resize(n)
 	_cleared.resize(n)
@@ -135,6 +156,41 @@ func _init(p_sim: RaceSim) -> void:
 
 
 # --- Queries (AI, HUD, other race rules) ------------------------------------
+
+## False in rallycross (and derby), and on circuits with "Safety car: Off":
+## no yellow flags, VSC, safety car or double yellows. Marshals still clear
+## debris, in the gaps, and recovery vehicles still fetch retired cars.
+func flags_used() -> bool:
+	return sim.settings.discipline == RaceSettings.DISCIPLINE_CIRCUIT and sim.settings.flags_enabled
+
+
+## Seconds until the next car reaches track distance s (INF with none
+## coming). Stopped and retired cars don't count; a car just past s counts as
+## still there for a moment.
+func time_to_traffic(s: float) -> float:
+	var L := sim.track.length
+	var best := INF
+	for i in sim.cars.size():
+		var e := sim.entries[i]
+		if e.finished or e.dnf or out_of_play(i) or _pitting(i):
+			continue
+		var c := sim.cars[i]
+		var v := c.speed()
+		if v < 2.0:
+			continue
+		var d := fposmod(s - c.track_s, L)
+		if d > L - 25.0:
+			return 0.0
+		best = minf(best, d / maxf(v, 5.0))
+	return best
+
+
+## What the marshals at s go by (TrackMarshals.step clear_s). Everywhere they
+## only go out in the gaps between cars: on circuits the double yellows slow
+## the field down as well, in rallycross there are no flags to protect them.
+func marshal_clear_s(s: float) -> float:
+	return time_to_traffic(s)
+
 
 ## True once car i is no longer driven by the physics: craned / towed away,
 ## or recovered and gone.
@@ -162,6 +218,8 @@ func marshal_views() -> Array:
 
 ## Double yellow flags at track distance s (marshals on the circuit there).
 func double_yellow_at(s: float) -> bool:
+	if not flags_used():
+		return false
 	for job in marshal_jobs:
 		if not job["done"] and _in_zone(s, fposmod(float(job["s"]) - TrackMarshals.DOUBLE_BEFORE_M, sim.track.length),
 				fposmod(float(job["s"]) + TrackMarshals.DOUBLE_AFTER_M, sim.track.length)):
@@ -188,6 +246,8 @@ func mode_name() -> String:
 
 ## "green", "yellow" (only local yellows out), "vsc" or "sc".
 func neutralisation() -> String:
+	if not flags_used():
+		return "green"
 	if mode != Mode.GREEN:
 		return MODE_NAMES[mode]
 	return "yellow" if not yellows.is_empty() or not marshal_jobs.is_empty() else "green"
@@ -277,6 +337,14 @@ func controls_restart(i: int) -> bool:
 	return mode == Mode.SC and stage == "restart" and sc_train_leader() == i
 
 
+## The car that car i has been told to give a place back to: a car index,
+## GIVE_BACK_SC for the safety car, or -1 when there's no such order.
+func give_back_target(i: int) -> int:
+	if not give_back.has(i):
+		return -1
+	return int(give_back[i]["victim"])
+
+
 ## A short line for the HUD about what car i must do (empty = nothing).
 func instruction_for(i: int) -> String:
 	if i < 0 or i >= sim.cars.size():
@@ -293,7 +361,7 @@ func instruction_for(i: int) -> String:
 			if unlapping[i]:
 				return "SAFETY CAR - lapped cars may overtake: unlap yourself"
 			match stage:
-				"in_this_lap": return "SAFETY CAR IN THIS LAP"
+				"in_this_lap": return "Get ready: green flag when the safety car is in"
 				"restart":
 					if controls_restart(i):
 						return "Restart: you control the pace, go when ready"
@@ -342,6 +410,9 @@ func step(dt: float, prev_s: PackedFloat64Array) -> void:
 	# they stop (they're part of the arena now).
 	if sim.settings.is_derby():
 		return
+	if sim.settings.is_rallycross():
+		_step_rallycross(dt)
+		return
 	var racing := sim.phase == RaceSim.Phase.RACING
 	if sim.phase == RaceSim.Phase.CHEQUERED or sim.phase == RaceSim.Phase.FINISHED:
 		if mode != Mode.GREEN or not yellows.is_empty() or sc_visible:
@@ -353,6 +424,7 @@ func step(dt: float, prev_s: PackedFloat64Array) -> void:
 	if not racing:
 		return
 	_read_incidents()
+	_track_hazards(dt)
 	_track_stranded(dt)
 	_update_recoveries(dt)
 	_update_marshals(dt, prev_s)
@@ -366,27 +438,88 @@ func step(dt: float, prev_s: PackedFloat64Array) -> void:
 	_update_unlapping()
 
 
+## Rallycross: no flags, VSC, safety car or recovery vehicles. Crashes still
+## leave debris that marshals sweep up in the gaps between cars, and a car
+## that retires is pushed behind the barrier by marshals once it has stopped
+## and there's a gap.
+func _step_rallycross(dt: float) -> void:
+	var racing := sim.phase == RaceSim.Phase.RACING
+	var over := sim.phase == RaceSim.Phase.CHEQUERED or sim.phase == RaceSim.Phase.FINISHED
+	if not racing and not over:
+		return
+	if racing:
+		_read_incidents()
+	_update_marshals(dt, PackedFloat64Array())
+	for i in sim.cars.size():
+		var c := sim.cars[i]
+		if recovered[i] or not sim.entries[i].dnf:
+			continue
+		stranded_t[i] = stranded_t[i] + dt if c.speed() < STOPPED_SPEED else 0.0
+		if stranded_t[i] >= RX_PUSH_OFF_S and time_to_traffic(c.track_s) > RX_PUSH_GAP_S:
+			recovered[i] = 1
+			_event({"type": "flag", "flag": "recovered", "car": i,
+				"reason": "Marshals have pushed %s's car behind the barrier" % sim.entries[i].driver_name})
+
+
 func _read_incidents() -> void:
+	# Contact between cars is not an incident by itself: rubbing, a tap or a
+	# bump-and-run raise nothing. A flag comes from what the contact leads
+	# to: a car spun, off or stopped (_track_hazards, _track_stranded), or a
+	# heavy shunt that leaves bits on the racing line.
 	for e in sim.events:
-		var t: String = e.get("type", "")
-		var sev := 0.0
-		if t == "incident":
-			sev = float(e.get("severity", 0.0))
-		elif t == "collision":
-			sev = clampf(float(e.get("impulse", 0.0)) / 16000.0, 0.0, 1.0)
-		else:
+		if e.get("type", "") != "incident":
 			continue
-		if sev < 0.25:
-			continue
-		var car := int(e.get("car", e.get("a", -1)))
+		var kind: String = e.get("kind", "")
+		var sev := float(e.get("severity", 0.0))
+		var car := int(e.get("car", -1))
 		var s: float = sim.cars[car].track_s if car >= 0 and car < sim.cars.size() else 0.0
 		if e.has("pos") and e["pos"] is Vector2:
 			s = sim.track.project(e["pos"])["s"]
-		_add_yellow(s, car, "Incident")
 		var at: Vector2 = e["pos"] if e.has("pos") and e["pos"] is Vector2 else sim.track.position_at(s)
-		TrackMarshals.add_debris(debris, sim.track.length, s, at, sev)
+		match kind:
+			"collision", "impact":
+				# Car to car: only a real crash counts.
+				if sev < CONTACT_DEBRIS_SEV:
+					continue
+				TrackMarshals.add_debris(debris, sim.track.length, s, at, sev)
+				if sev >= CONTACT_YELLOW_SEV:
+					_add_yellow(s, car, "Crash")
+			"puncture", "gearbox_failure":
+				# The car limps on: a flag only if it stops (_track_stranded).
+				continue
+			_:
+				# Into the barrier, an engine letting go (oil, smoke)...
+				if sev < 0.25:
+					continue
+				_add_yellow(s, car, "Incident")
+				TrackMarshals.add_debris(debris, sim.track.length, s, at, sev)
 		if sev >= 0.85:
 			_big_incident_until = sim.race_time + 8.0
+
+
+## Cars that have spun, or gone off and are crawling on the grass or in the
+## gravel: a local yellow while it lasts (plus the usual hold). Running wide
+## at speed and carrying on doesn't count.
+func _track_hazards(dt: float) -> void:
+	for i in sim.cars.size():
+		var c := sim.cars[i]
+		var e := sim.entries[i]
+		if recovered[i] or e.finished or e.dnf or _pitting(i) or c.air_h > 0.0:
+			_hazard_t[i] = 0.0
+			continue
+		var hazard := false
+		var v := c.speed()
+		if v < SPUN_MAX_SPEED and v >= STOPPED_SPEED:
+			var facing := Vector2.from_angle(c.heading)
+			var along := Vector2.from_angle(sim.track.heading_at(c.track_s))
+			if facing.dot(along) < SPUN_DOT or absf(c.yaw_rate) > SPIN_YAW_RATE:
+				hazard = true
+		if not hazard and v < OFF_MAX_SPEED and (c.surface == TrackData.Surface.GRAVEL
+				or c.surface == TrackData.Surface.GRASS or c.surface == TrackData.Surface.BARRIER):
+			hazard = true
+		_hazard_t[i] = _hazard_t[i] + dt if hazard else 0.0
+		if _hazard_t[i] >= HAZARD_YELLOW_S:
+			_add_yellow(c.track_s, i, "Car off" if c.surface != TrackData.Surface.TRACK and c.surface != TrackData.Surface.KERB else "Car spun")
 
 
 func _track_stranded(dt: float) -> void:
@@ -463,21 +596,23 @@ func _update_marshals(dt: float, prev_s: PackedFloat64Array) -> void:
 			var job := TrackMarshals.plan(sim.track, spot, _marshal_ids)
 			marshal_jobs.append(job)
 			debris.remove_at(k)
-			_event({"type": "flag", "flag": "double_yellow", "zone_s": [
-				fposmod(float(job["s"]) - TrackMarshals.DOUBLE_BEFORE_M, sim.track.length),
-				fposmod(float(job["s"]) + TrackMarshals.DOUBLE_AFTER_M, sim.track.length)],
-				"reason": "Double yellow: marshals on track clearing debris"})
+			if flags_used():
+				_event({"type": "flag", "flag": "double_yellow", "zone_s": [
+					fposmod(float(job["s"]) - TrackMarshals.DOUBLE_BEFORE_M, sim.track.length),
+					fposmod(float(job["s"]) + TrackMarshals.DOUBLE_AFTER_M, sim.track.length)],
+					"reason": "Double yellow: marshals on track clearing debris"})
 			continue
 		k += 1
 	k = 0
 	while k < marshal_jobs.size():
 		var job: Dictionary = marshal_jobs[k]
-		TrackMarshals.step(job, dt)
+		TrackMarshals.step(job, dt, marshal_clear_s(float(job["s"])))
 		if job["done"]:
-			_event({"type": "flag", "flag": "clear", "car": -1, "reason": "Debris cleared, marshals back behind the barrier"})
+			if flags_used():
+				_event({"type": "flag", "flag": "clear", "car": -1, "reason": "Debris cleared, marshals back behind the barrier"})
 			marshal_jobs.remove_at(k)
 			continue
-		if not prev_s.is_empty() and mode == Mode.GREEN:
+		if not prev_s.is_empty() and mode == Mode.GREEN and flags_used():
 			_check_double_yellow_speed(job, prev_s)
 		k += 1
 
@@ -744,7 +879,7 @@ func follower_step(dt: float) -> void:
 	for job in recoveries:
 		CarRecovery.step(job, dt)
 	for job in marshal_jobs:
-		TrackMarshals.step(job, dt)
+		TrackMarshals.step(job, dt, marshal_clear_s(float(job["s"])))
 	if not sc_visible:
 		return
 	if sc_in_pit:
@@ -958,6 +1093,8 @@ func _leader_laps() -> int:
 # --- Helpers ----------------------------------------------------------------
 
 func _add_yellow(s: float, car: int, why: String) -> void:
+	if not flags_used():
+		return
 	var L := sim.track.length
 	var from := fposmod(s - YELLOW_HALF_M, L)
 	var to := fposmod(s + YELLOW_HALF_M * 0.5, L)
@@ -1066,7 +1203,7 @@ func to_dict(full := false) -> Dictionary:
 		"marshal_jobs": marshal_jobs.duplicate(true),
 	}
 	if full:
-		d["full"] = {"stranded_t": stranded_t.duplicate(), "cleared": _cleared.duplicate(),
+		d["full"] = {"stranded_t": stranded_t.duplicate(), "hazard_t": _hazard_t.duplicate(), "cleared": _cleared.duplicate(),
 			"vsc_warned": vsc_warned.duplicate(), "vsc_penalised": vsc_penalised.duplicate(),
 			"unlap_from": unlap_from.duplicate(), "prev_order": _prev_order.duplicate(),
 			"sc_behind": _sc_behind.duplicate(), "big_until": _big_incident_until,
@@ -1100,6 +1237,8 @@ func apply_dict(d: Dictionary) -> void:
 	if d.has("full"):
 		var f: Dictionary = d["full"]
 		stranded_t = f["stranded_t"].duplicate()
+		if f.has("hazard_t") and f["hazard_t"].size() == stranded_t.size():
+			_hazard_t = f["hazard_t"].duplicate()
 		_cleared = f["cleared"].duplicate()
 		vsc_warned = f["vsc_warned"].duplicate()
 		vsc_penalised = f["vsc_penalised"].duplicate()

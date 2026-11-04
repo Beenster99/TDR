@@ -40,10 +40,12 @@ const ITEMS := [
 	["map", "Track map"],
 	["tower", "Timing tower"],
 	["standings", "Compact standings"],
-	["timing", "Position and lap times"],
+	["timing", "Position and laps"],
 	["pit", "Pit panel"],
 	["damage", "Damage"],
-	["tyres", "Tyres and conditions"],
+	["tyres", "Tyres and grip"],
+	["conditions", "Time, weather and track"],
+	["fuel", "Fuel"],
 	["sectors", "Sectors and gaps"],
 	["speed", "Speed, gear and revs"],
 	["hint", "Pit wall hint"],
@@ -54,7 +56,7 @@ const ITEMS := [
 	["messages", "Messages"],
 ]
 ## Items about the player's own car (a placeholder when spectating).
-const CAR_ITEMS := ["timing", "pit", "damage", "tyres", "sectors", "speed", "pitguide"]
+const CAR_ITEMS := ["timing", "pit", "damage", "tyres", "fuel", "sectors", "speed", "pitguide"]
 ## Where the player put each item, how big, shown or not.
 var layout := HudLayout.new()
 ## True while the HUD layout editor is open: every item that's switched on is
@@ -202,7 +204,9 @@ func item_shown(id: String) -> bool:
 		return false
 	match id:
 		"pit": return sim.pits.enabled and _pit_panel_height(me) > 0.0
+		"hint": return sim.settings.has_pit_wall()   # no pit wall in rallycross or derby
 		"damage": return sim.damage_level != CarDamage.Level.OFF
+		"fuel": return sim.settings.fuel_enabled
 		"flags": return _flag_lines(me)[0] != "" or _flag_lines(me)[1] != ""
 		"radio": return radio_time > 0.0 and not radio_msg.is_empty()
 		"messages": return message_time > 0.0
@@ -221,18 +225,20 @@ func item_size(id: String) -> Vector2:
 			return _mm_rect.size * scale_f + Vector2(20, 20)
 		"tower": return Vector2(TOWER_W, _tower_height())
 		"standings": return Vector2(330, 34 + _standings_rows() * 22)
-		"timing": return Vector2(300, 150)
+		"timing": return Vector2(300, _timing_height(me))
 		"pit":
 			var h := _pit_panel_height(me) if me >= 0 and sim.pits.enabled else 0.0
 			return Vector2(300, maxf(h, 136.0) if editing else h)
 		"damage": return Vector2(300, 116)
-		"tyres": return Vector2(300, 186)
+		"tyres": return Vector2(136, 164)
+		"conditions": return Vector2(260, 84.0 if _forecast_text(sim.env) == "" else 106.0)
+		"fuel": return Vector2(200, 56)
 		"sectors": return Vector2(_sectors_width(), 82)
 		"speed": return Vector2(250, 120)
 		"hint": return Vector2(260, 20)
 		"pitguide": return Vector2(440, 74)
 		"lights": return Vector2(224, 44)
-		"flags": return Vector2(520, 58)
+		"flags": return Vector2(520, 84.0 if _giving_back(me) else 58.0)
 		"radio": return _radio_size()
 		"messages": return Vector2(1000, 50)
 	return Vector2.ZERO
@@ -254,15 +260,17 @@ func default_pos(id: String, sz: Vector2, vp: Vector2) -> Vector2:
 		"tower": return Vector2(10, 10)
 		"standings": return Vector2(vp.x - 340, 10)
 		"timing": return Vector2(lx, 10)
-		"pit": return Vector2(lx, 170)
+		"pit": return Vector2(lx, 20.0 + _timing_height(session.local_car))
 		"damage": return Vector2(lx, vp.y - 322)
-		"tyres": return Vector2(10, vp.y - 196)
+		"tyres": return Vector2(10, vp.y - 174)
+		"conditions": return Vector2(vp.x - 270, vp.y - 246)
+		"fuel": return Vector2(156, vp.y - 66)
 		"sectors": return Vector2((vp.x - sz.x) * 0.5, vp.y - 110)
 		"speed": return Vector2(vp.x - 260, vp.y - 130)
 		"hint": return Vector2((vp.x - sz.x) * 0.5, vp.y - 28)
 		"pitguide": return Vector2((vp.x - sz.x) * 0.5, vp.y - 200)
 		"lights": return Vector2((vp.x - sz.x) * 0.5, 48)
-		"flags": return Vector2((vp.x - sz.x) * 0.5, 96)
+		"flags": return Vector2((vp.x - sz.x) * 0.5, 70)
 		"radio": return Vector2((vp.x - sz.x) * 0.5, 196)
 		"messages": return Vector2((vp.x - sz.x) * 0.5, 115)
 	return Vector2.ZERO
@@ -394,6 +402,8 @@ func _draw() -> void:
 		draw_set_transform(r.position, 0.0, Vector2(s, s))
 		_draw_item(id, me, r.size / s)
 	draw_set_transform(Vector2.ZERO)
+	if not editing:
+		_draw_give_back_pointer(me)
 	if me < 0 and not editing:
 		_text(Vector2(20, 40), "SPECTATING", 22)
 
@@ -420,9 +430,15 @@ func _draw_item(id: String, me: int, sz: Vector2) -> void:
 			else:
 				_placeholder(sz, "Damage", "shows in races with damage on")
 		"tyres": _draw_tyres(me)
+		"conditions": _draw_conditions()
+		"fuel":
+			if sim.settings.fuel_enabled:
+				_draw_fuel(me)
+			else:
+				_placeholder(sz, "Fuel", "shows in races with fuel on")
 		"sectors": _draw_sectors_and_gaps(me)
 		"speed": _draw_speed(me)
-		"hint": _text(Vector2(0, 14), "P / D-pad →  Pit wall", 13, Color(1, 1, 1, 0.45), HORIZONTAL_ALIGNMENT_CENTER, sz.x)
+		"hint": _text(Vector2(0, 14), InputPrompt.key("strategy_screen") + "  Pit wall", 13, Color(1, 1, 1, 0.45), HORIZONTAL_ALIGNMENT_CENTER, sz.x)
 		"lights": _draw_lights()
 		"pitguide": _draw_pit_guide(me)
 		"flags": _draw_race_control(me)
@@ -453,26 +469,66 @@ func _draw_lights() -> void:
 
 
 ## Position, lap, current / last / best lap time.
+## The position panel's height: one row, plus a second for a penalty or the
+## rallycross joker.
+func _timing_height(me: int) -> float:
+	return 84.0 if _timing_extra_row(me) else 56.0
+
+
+func _timing_extra_row(me: int) -> bool:
+	if me < 0:
+		return false
+	var sim := session.sim
+	var e := sim.entries[me]
+	return e.penalty_s > 0.0 or (sim.settings.is_rallycross() and sim.track.has_joker() and not e.finished)
+
+
+## Position and lap count (lap times are on the timing tower and the
+## sectors panel).
 func _draw_timing(me: int) -> void:
 	var sim := session.sim
 	var e := sim.entries[me]
-	_panel(Rect2(0, 0, 300, 150))
-	_text(Vector2(14, 38), "P%d / %d" % [e.position, sim.car_count()], 34)
+	_panel(Rect2(0, 0, 300, _timing_height(me)))
+	_text(Vector2(14, 42), "P%d / %d" % [e.position, sim.car_count()], 34)
 	var lap_now := mini(e.laps_done + 1, sim.settings.laps)
-	_text(Vector2(160, 38), "LAP %d/%d" % [lap_now, sim.settings.laps], 20)
-	var cur := sim.race_time - e.lap_start_time if e.started_lap and not e.finished else 0.0
-	_text(Vector2(14, 72), "Time  " + fmt_time(cur), 18)
-	_text(Vector2(14, 96), "Last  " + fmt_time(e.lap_times[-1] if e.lap_times.size() > 0 else 0.0), 18, Color(1, 1, 1, 0.8))
-	_text(Vector2(14, 120), "Best  " + fmt_time(e.best_lap), 18, Color(0.6, 1, 0.6))
+	_text(Vector2(160, 40), "LAP %d/%d" % [lap_now, sim.settings.laps], 20)
 	if e.penalty_s > 0.0:
-		_text(Vector2(160, 72), "+%d s penalty" % int(e.penalty_s), 16, Color(1, 0.55, 0.3))
+		_text(Vector2(14, 72), "+%d s penalty" % int(e.penalty_s), 16, Color(1, 0.55, 0.3))
 	# Rallycross: has the joker been taken yet? Amber until it has, and a
 	# warning on the last lap it can still be taken.
 	if sim.settings.is_rallycross() and sim.track.has_joker() and not e.finished:
 		var done := e.jokers >= sim.settings.joker_laps
 		var last_lap := sim.settings.laps - (1 if sim.track.joker_entry_s > sim.track.joker_exit_s and sim.settings.laps > 1 else 0)
 		var col := Color(0.45, 1.0, 0.55) if done else (Color(1, 0.35, 0.25) if lap_now >= last_lap else Color(1, 0.75, 0.3))
-		_text(Vector2(160, 120), "JOKER " + ("DONE" if done else ("NOW!" if lap_now >= last_lap else "TO DO")), 16, col)
+		_text(Vector2(160, 72), "JOKER " + ("DONE" if done else ("NOW!" if lap_now >= last_lap else "TO DO")), 16, col)
+
+
+const JOKER_COLOUR := Color(1.0, 0.55, 0.1)
+
+## Rallycross: the joker lane on the minimap, in orange, with where it leaves
+## the lap and "J". It pulses while the local car still has to take it.
+func _draw_minimap_joker(origin: Vector2, scale_f: float) -> void:
+	var sim := session.sim
+	var t := sim.track
+	var js := PackedVector2Array()
+	for p in t.joker_path:
+		js.append(origin + (p - _mm_rect.position) * scale_f)
+	var col := JOKER_COLOUR
+	var me := session.local_car
+	if me >= 0 and not editing and sim.entries[me].jokers < sim.settings.joker_laps:
+		col.a = 0.65 + 0.35 * sin(Time.get_ticks_msec() * 0.006)
+	draw_polyline(js, Color(0, 0, 0, 0.7), 7.0)
+	draw_polyline(js, col, 4.0)
+	var entry := js[0]
+	draw_circle(entry, 5.0, Color(0, 0, 0, 0.7))
+	draw_circle(entry, 3.5, JOKER_COLOUR)
+	# "J" beside the middle of the lane, on the side away from the lap.
+	var mid := js[js.size() / 2]
+	var lap_mid := origin + (t.position_at(t.joker_entry_s + fposmod(t.joker_exit_s - t.joker_entry_s, t.length) * 0.5) - _mm_rect.position) * scale_f
+	var away := (mid - lap_mid).normalized() if mid.distance_to(lap_mid) > 0.5 else Vector2.UP
+	var span := _mm_rect.size * scale_f
+	var at := (mid + away * 12.0).clamp(origin + Vector2(6, 8), origin + span - Vector2(6, 2))
+	_text(at + Vector2(-5, 5), "J", 14, JOKER_COLOUR)
 
 
 ## Speed, gear and the rev bar.
@@ -493,40 +549,52 @@ func _draw_speed(me: int) -> void:
 		_text(br + Vector2(120, 110), "OFF TRACK", 14, Color(1, 0.5, 0.3))
 
 
-## Tyre temperatures and wear, time of day, weather, grip and fuel.
+## Grip, then each tyre's temperature (and wear) in a 2 x 2 grid.
 func _draw_tyres(me: int) -> void:
 	var sim := session.sim
 	var c := sim.cars[me]
-	var bl := Vector2.ZERO
-	_panel(Rect2(bl, Vector2(300, 186)))
-	var tc := sim.compounds[me]
-	_text(bl + Vector2(14, 24), "TYRES  " + tc.display_name.to_upper(), 14, Color(1, 1, 1, 0.7))
-	var pos := [Vector2(20, 36), Vector2(80, 36), Vector2(20, 92), Vector2(80, 92)]
-	for k in 4:
-		var t := c.tyre_temp[k]
-		var r := Rect2(bl + pos[k], Vector2(48, 48))
-		draw_rect(r, _temp_colour(t, tc))
-		_text(r.position + Vector2(0, 30), "%d°" % roundi(Units.temp_value(t)), 16, Color.BLACK, HORIZONTAL_ALIGNMENT_CENTER, 48)
-		if sim.settings.tyre_wear_enabled:
-			_text(r.position + Vector2(0, 46), "%d%%" % roundi((1.0 - c.tyre_wear[k]) * 100.0), 11, Color(0, 0, 0, 0.75), HORIZONTAL_ALIGNMENT_CENTER, 48)
 	var env := sim.env
-	var h := env.time_of_day_h
-	_text(bl + Vector2(146, 50), "%02d:%02d  %s" % [int(h), int(fmod(h, 1.0) * 60.0), SimEnvironment.weather_name(env.weather)], 15)
-	_text(bl + Vector2(146, 72), "Air %s  Track %s" % [Units.temp(env.ambient_c), Units.temp(env.track_c)], 15)
-	_text(bl + Vector2(146, 94), _surface_text(env), 15, Color(0.6, 0.85, 1) if env.wetness > 0.05 else Color.WHITE)
-	var forecast := _forecast_text(env)
-	if forecast != "":
-		_text(bl + Vector2(146, 116), forecast, 14, Color(1, 0.85, 0.5))
+	var tc := sim.compounds[me]
+	_panel(Rect2(0, 0, 136, 164))
 	var avg := 0.0
 	for k in 4:
 		avg += tc.temp_grip_factor(c.tyre_temp[k])
 	var off_line := c.lateral_offset - env.raceline_offset(c.track_idx)
 	var grip := avg / 4.0 * env.grip_factor(tc, off_line, c.speed())
-	_text(bl + Vector2(146, 138), "Grip %d%%" % int(grip * 100.0), 15, Color(0.6, 1, 0.6) if grip > 0.85 else Color(1, 0.7, 0.4))
-	if sim.settings.fuel_enabled:
-		var fl := sim.pits.fuel_laps(me)
-		_text(bl + Vector2(146, 160), "Fuel %s  %s" % [Units.fuel(c.fuel_l), "(%.1f laps)" % fl if fl < 99.0 else ""], 15,
-			Color(1, 0.5, 0.3) if fl < 1.5 else Color.WHITE)
+	_text(Vector2(12, 24), "GRIP %d%%" % int(grip * 100.0), 18, Color(0.6, 1, 0.6) if grip > 0.85 else Color(1, 0.7, 0.4))
+	_text(Vector2(12, 40), tc.display_name.to_upper(), 11, Color(1, 1, 1, 0.6), HORIZONTAL_ALIGNMENT_LEFT, 116)
+	var pos := [Vector2(14, 50), Vector2(74, 50), Vector2(14, 106), Vector2(74, 106)]
+	for k in 4:
+		var t := c.tyre_temp[k]
+		var r := Rect2(pos[k], Vector2(48, 48))
+		draw_rect(r, _temp_colour(t, tc))
+		_text(r.position + Vector2(0, 30), "%d°" % roundi(Units.temp_value(t)), 16, Color.BLACK, HORIZONTAL_ALIGNMENT_CENTER, 48)
+		if sim.settings.tyre_wear_enabled:
+			_text(r.position + Vector2(0, 46), "%d%%" % roundi((1.0 - c.tyre_wear[k]) * 100.0), 11, Color(0, 0, 0, 0.75), HORIZONTAL_ALIGNMENT_CENTER, 48)
+
+
+## Time of day and weather, the track's state, air and track temperature,
+## and the forecast.
+func _draw_conditions() -> void:
+	var env := session.sim.env
+	var forecast := _forecast_text(env)
+	_panel(Rect2(0, 0, 260, 84.0 if forecast == "" else 106.0))
+	var h := env.time_of_day_h
+	_text(Vector2(14, 26), "%02d:%02d  %s" % [int(h), int(fmod(h, 1.0) * 60.0), SimEnvironment.weather_name(env.weather)], 15)
+	_text(Vector2(14, 48), _surface_text(env), 15, Color(0.6, 0.85, 1) if env.wetness > 0.05 else Color.WHITE)
+	_text(Vector2(14, 70), "Air %s  Track %s" % [Units.temp(env.ambient_c), Units.temp(env.track_c)], 15)
+	if forecast != "":
+		_text(Vector2(14, 92), forecast, 14, Color(1, 0.85, 0.5))
+
+
+## Fuel on board and the laps it's good for.
+func _draw_fuel(me: int) -> void:
+	var sim := session.sim
+	var fl := sim.pits.fuel_laps(me)
+	_panel(Rect2(0, 0, 200, 56))
+	_text(Vector2(12, 20), "FUEL", 12, Color(1, 1, 1, 0.6))
+	_text(Vector2(12, 44), "%s  %s" % [Units.fuel(sim.cars[me].fuel_l), "(%.1f laps)" % fl if fl < 99.0 else ""], 18,
+		Color(1, 0.5, 0.3) if fl < 1.5 else Color.WHITE)
 
 
 ## The pit panel's height (0: nothing to show).
@@ -549,6 +617,12 @@ func _pit_panel_height(me: int) -> float:
 ## of the limit, and when to brake (PitRules.guide_info). pit_guide_on:
 ## Settings > Gameplay > Pit lane guide.
 var pit_guide_on := true
+## The car race control told us to give a place back to (-1 none, -2 the
+## safety car); the race scene keeps it up to date. car_screen_pos(i) gives
+## that car's spot on screen (null when it can't), for the pointer to it.
+var give_back_to := -1
+var car_screen_pos: Callable
+const GIVE_BACK_COL := Color(1.0, 0.42, 0.2)
 const SAMPLE_GUIDE := {"stage": "approach", "to_limit": 180.0, "limit": 16.67, "speed": 52.0, "brake_at": 135.0}
 
 
@@ -680,7 +754,7 @@ func _draw_pit_panel(me: int) -> void:
 		y += 22
 		if mates:
 			var pend := session.pending_swap(me)
-			var txt := "Driver change: no (N)"
+			var txt := "Driver change: no (%s)" % InputPrompt.key("pit_driver")
 			var col := Color(1, 1, 1, 0.7)
 			if not pend.is_empty():
 				var other := int(pend["b"]) if int(pend["a"]) == session.local_peer else int(pend["a"])
@@ -933,6 +1007,7 @@ func _flag_lines(me: int) -> Array:
 			title = "SAFETY CAR"
 			if rc.stage == "in_this_lap":
 				title = "SAFETY CAR IN THIS LAP"
+				col = Color(0.3, 0.9, 0.4)   # its lights have gone green
 			elif rc.stage == "restart":
 				title = "RESTART"
 				col = Color(0.3, 0.9, 0.4)
@@ -944,6 +1019,10 @@ func _flag_lines(me: int) -> Array:
 			elif me >= 0 and rc.yellow_at(sim.cars[me].track_s):
 				title = "YELLOW FLAG"
 	return [title, line, col]
+
+
+## How opaque the flag board is (0..1): see-through over the track.
+const FLAG_BOARD_ALPHA := 0.55
 
 
 func _draw_race_control(me: int) -> void:
@@ -958,17 +1037,83 @@ func _draw_race_control(me: int) -> void:
 		line = "Race control: slow down, no overtaking"
 	var w := 520.0
 	var r := Rect2(0, 0, w, 58 if line != "" and title != "" else 34)
+	# See-through, so the track ahead still shows under it.
 	if title != "":
-		draw_rect(r, Color(0, 0, 0, 0.6))
+		draw_rect(r, Color(0, 0, 0, FLAG_BOARD_ALPHA * 0.6))
 		var flash := int(Time.get_ticks_msec() / 400) % 2 == 0 or rc.neutralisation() == "sc" or sample
-		draw_rect(Rect2(r.position, Vector2(w, 34)), col if flash else col.darkened(0.35))
-		_text(r.position + Vector2(0, 25), title, 22, Color.BLACK, HORIZONTAL_ALIGNMENT_CENTER, w)
+		var bar := col if flash else col.darkened(0.35)
+		bar.a = FLAG_BOARD_ALPHA
+		draw_rect(Rect2(r.position, Vector2(w, 34)), bar)
+		_text(r.position + Vector2(0, 25), title, 22, Color(0, 0, 0, 0.9), HORIZONTAL_ALIGNMENT_CENTER, w)
 	if line != "" and line.to_upper() != title:
 		var y := r.position.y + (52 if title != "" else 24)
 		if title == "":
-			draw_rect(r, Color(0, 0, 0, 0.6))
+			draw_rect(r, Color(0, 0, 0, FLAG_BOARD_ALPHA * 0.6))
 		var warn := rc.give_back.has(me)
 		_text(Vector2(r.position.x, y), line, 17, Color(1, 0.5, 0.3) if warn else Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, w)
+		if _giving_back(me):
+			_draw_give_back_row(me, Vector2(0, y + 6), w)
+
+
+## Is our car under orders to give a place back (and to whom we know)?
+func _giving_back(me: int) -> bool:
+	return me >= 0 and give_back_to != -1 and session.sim.race_control.give_back.has(me)
+
+
+## Under the give-back order: the car to let past (its colour, model and
+## where it is from us), in the same orange-red as its outline on track.
+func _draw_give_back_row(me: int, at: Vector2, w: float) -> void:
+	var sim := session.sim
+	draw_rect(Rect2(at.x, at.y, w, 24), Color(0, 0, 0, 0.6))
+	draw_rect(Rect2(at.x, at.y, 4, 24), GIVE_BACK_COL)
+	var what := ""
+	var gap := 0.0
+	if give_back_to == RaceControl.GIVE_BACK_SC:
+		what = "Safety car"
+		gap = sim.race_control.gap_to_sc(me)
+		if gap > sim.track.length * 0.5:
+			gap -= sim.track.length
+	else:
+		var j := give_back_to
+		draw_rect(Rect2(at.x + 12, at.y + 5, 14, 14), sim.defs[j].colour)
+		what = "%s  P%d" % [sim.defs[j].display_name, sim.running_order.find(j) + 1]
+		gap = sim.entries[j].distance - sim.entries[me].distance
+	var where := "alongside"
+	if gap > 4.0:
+		where = "%d m ahead" % roundi(gap)
+	elif gap < -4.0:
+		where = "%d m behind you" % roundi(-gap)
+	_text(Vector2(at.x, at.y + 18), "LET PAST:  %s  -  %s" % [what, where], 15, GIVE_BACK_COL, HORIZONTAL_ALIGNMENT_CENTER, w)
+
+
+## When the car to let past is off screen, an arrow on the screen's edge
+## points to it (the 3D "LET PAST" tag marks it once it's in view).
+func _draw_give_back_pointer(me: int) -> void:
+	if not _giving_back(me) or not car_screen_pos.is_valid():
+		return
+	var sp = car_screen_pos.call(give_back_to)
+	if not (sp is Vector2):
+		return
+	var view := Rect2(Vector2.ZERO, size)
+	if view.grow(-30.0).has_point(sp):
+		return
+	var c := view.get_center()
+	var d: Vector2 = sp - c
+	if d.length() < 1.0:
+		return
+	var inner := view.grow(-44.0)
+	var half := inner.size * 0.5
+	var k := minf(half.x / maxf(absf(d.x), 0.001), half.y / maxf(absf(d.y), 0.001))
+	var tip := c + d * k
+	var dir := d.normalized()
+	var side := dir.orthogonal()
+	var pulse := 0.75 + 0.25 * sin(Time.get_ticks_msec() * 0.007)
+	var col := Color(GIVE_BACK_COL, pulse)
+	draw_colored_polygon(PackedVector2Array([tip + dir * 18.0, tip - dir * 10.0 + side * 16.0, tip - dir * 10.0 - side * 16.0]), col)
+	draw_polyline(PackedVector2Array([tip + dir * 18.0, tip - dir * 10.0 + side * 16.0, tip - dir * 10.0 - side * 16.0, tip + dir * 18.0]),
+		Color(0, 0, 0, 0.7), 2.0)
+	var label_at := tip - dir * 40.0 + Vector2(-60, 5)
+	_text(label_at, "LET PAST", 14, col, HORIZONTAL_ALIGNMENT_CENTER, 120)
 
 
 func _leader_lap() -> int:
@@ -984,6 +1129,9 @@ func _build_minimap() -> void:
 	var lo := Vector2(INF, INF)
 	var hi := -lo
 	for p in t.points:
+		lo = lo.min(p)
+		hi = hi.max(p)
+	for p in t.joker_path:
 		lo = lo.min(p)
 		hi = hi.max(p)
 	var span := hi - lo
@@ -1006,6 +1154,8 @@ func _draw_minimap(origin: Vector2) -> void:
 	var sim := session.sim
 	var rc := sim.race_control
 	var t := sim.track
+	if t.has_joker():
+		_draw_minimap_joker(origin, scale_f)
 	# Yellow flag zones along the track, and the safety car.
 	for y in rc.yellows:
 		var zone := PackedVector2Array()
@@ -1026,8 +1176,8 @@ func _draw_minimap(origin: Vector2) -> void:
 				for k in 7:
 					band.append(origin + (t.position_at(float(rj["s"]) - v * 0.8 + v * k / 6.0) - _mm_rect.position) * scale_f)
 				draw_polyline(band, rejoin_colour(rj), 6.0)
-	# Double yellows where marshals are out: a thicker band.
-	for job in rc.marshal_jobs:
+	# Double yellows where marshals are out: a thicker band (circuits only).
+	for job in (rc.marshal_jobs if rc.flags_used() else []):
 		var zone := PackedVector2Array()
 		var from := float(job["s"]) - TrackMarshals.DOUBLE_BEFORE_M
 		var span_m := TrackMarshals.DOUBLE_BEFORE_M + TrackMarshals.DOUBLE_AFTER_M
@@ -1059,7 +1209,10 @@ func _draw_standings(me: int) -> void:
 	for p in rows:
 		var i := sim.running_order[p]
 		var e := sim.entries[i]
-		var col := Color(1, 0.9, 0.3) if i == me else (Color(0.75, 0.85, 1) if not e.is_ai else Color.WHITE)
+		var kind := row_kind(i, me)
+		var col := row_text_colour(kind)
+		if kind != ROW_AI:
+			_draw_player_row(Rect2(x0 - 6, 30 + p * 22, 320, 20), kind)
 		var right := _status_text(i)
 		if right == "" and p > 0:
 			var gap := sim.entries[sim.running_order[0]].distance - e.distance
@@ -1145,17 +1298,27 @@ func _draw_tower(me: int) -> void:
 		prev = p
 		var i := sim.running_order[p]
 		var e := sim.entries[i]
-		var mine := i == me
+		var kind := row_kind(i, me)
+		var mine := kind == ROW_ME
+		var row := Rect2(x + 2, y, TOWER_W - 4, TOWER_ROW)
 		if mine:
-			draw_rect(Rect2(x + 2, y, TOWER_W - 4, TOWER_ROW), Color(1, 0.85, 0.2, 0.22))
+			_draw_player_row(row, kind)
+		elif i == give_back_to and _giving_back(me):
+			draw_rect(row, Color(GIVE_BACK_COL, 0.3))
+		elif kind != ROW_AI:
+			_draw_player_row(row, kind)
 		elif p % 2 == 1:
-			draw_rect(Rect2(x + 2, y, TOWER_W - 4, TOWER_ROW), Color(1, 1, 1, 0.04))
-		var col := Color(1, 0.92, 0.45) if mine else (Color(0.75, 0.85, 1) if not e.is_ai else Color.WHITE)
+			draw_rect(row, Color(1, 1, 1, 0.04))
+		var col := row_text_colour(kind)
 		var base := y + TOWER_ROW - 6.0
 		draw_rect(Rect2(x + 4, y + 3, 4, TOWER_ROW - 6), sim.defs[i].colour)
-		_text(Vector2(x + 12, base), str(p + 1), 16, col, HORIZONTAL_ALIGNMENT_RIGHT, 26)
+		if kind != ROW_AI:   # position in a solid tag, like a TV graphic
+			draw_rect(Rect2(x + 11, y + 2, 30, TOWER_ROW - 4), ROW_ME_COLOUR if mine else ROW_PLAYER_COLOUR)
+			draw_string(font, Vector2(x + 12, base), str(p + 1), HORIZONTAL_ALIGNMENT_RIGHT, 26, 16, Color(0.05, 0.05, 0.08))
+		else:
+			_text(Vector2(x + 12, base), str(p + 1), 16, col, HORIZONTAL_ALIGNMENT_RIGHT, 26)
 		draw_badge(Rect2(x + 44, y + 3, 36, TOWER_ROW - 6), sim.defs[i])
-		_text(Vector2(x + 86, base), short_name(e.at_wheel()), 15, col)
+		_text(Vector2(x + 86, base), short_name(e.at_wheel()), 16 if mine else 15, col)
 		var tc: CarTelemetry = tel.cars[i] if tel != null and i < tel.cars.size() else null
 		var last := e.lap_times[-1] if e.lap_times.size() > 0 else 0.0
 		var last_col := Color(1, 1, 1, 0.8)
@@ -1174,6 +1337,45 @@ func _draw_tower(me: int) -> void:
 		if e.penalty_s > 0.0:
 			_text(Vector2(x + 166, base), "+%ds" % int(e.penalty_s), 11, Color(1, 0.55, 0.3))
 		y += TOWER_ROW
+
+
+## Tower and standings rows: this player's car (or the team's car on the pit
+## wall), a car another person online is driving, or an AI car.
+const ROW_AI := 0
+const ROW_ME := 1
+const ROW_PLAYER := 2
+const ROW_ME_COLOUR := Color(1.0, 0.8, 0.22)
+const ROW_PLAYER_COLOUR := Color(0.3, 0.75, 1.0)
+
+
+func row_kind(i: int, me: int) -> int:
+	var mine := me if me >= 0 else session.team_car
+	if i == mine:
+		return ROW_ME
+	var e := session.sim.entries[i]
+	if not e.is_ai or e.is_player_driving():
+		return ROW_PLAYER
+	return ROW_AI
+
+
+static func row_text_colour(kind: int) -> Color:
+	match kind:
+		ROW_ME: return Color(1, 0.95, 0.7)
+		ROW_PLAYER: return Color(0.8, 0.92, 1)
+	return Color.WHITE
+
+
+## A player's row stands right out: a strong tinted band with a bright frame
+## and a solid edge stripe, gold for you (gently breathing so the eye finds
+## it), blue for other people online.
+func _draw_player_row(r: Rect2, kind: int) -> void:
+	var c := ROW_ME_COLOUR if kind == ROW_ME else ROW_PLAYER_COLOUR
+	var glow := 1.0
+	if kind == ROW_ME:
+		glow = 0.85 + 0.15 * sin(Time.get_ticks_msec() * 0.004)
+	draw_rect(r, Color(c, 0.42 * glow))
+	draw_rect(r.grow(-1.0), Color(c, 0.95), false, 2.0)
+	draw_rect(Rect2(r.end.x - 7.0, r.position.y, 7.0, r.size.y), c)
 
 
 ## Gap from car `behind` to car `ahead`: whole laps when it's been lapped,

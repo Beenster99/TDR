@@ -9,6 +9,7 @@ var steer: float = 0.0      ## -1 (left) .. 1 (right)
 var shift_up: bool = false  ## reserved for manual gearbox (wave 2+)
 var shift_down: bool = false
 var pit_request: bool = false ## reserved for fuel/pits (wave 3)
+var handbrake: bool = false   ## locks the rear wheels while held
 
 
 static func neutral() -> CarInput:
@@ -24,6 +25,7 @@ func sanitized() -> CarInput:
 	c.shift_up = shift_up
 	c.shift_down = shift_down
 	c.pit_request = pit_request
+	c.handbrake = handbrake
 	return c
 
 
@@ -34,7 +36,7 @@ func to_bytes() -> PackedByteArray:
 	b[0] = int(round(clampf(throttle, 0.0, 1.0) * 255.0))
 	b[1] = int(round(clampf(brake, 0.0, 1.0) * 255.0))
 	b[2] = int(round((clampf(steer, -1.0, 1.0) * 0.5 + 0.5) * 254.0))
-	b[3] = int(shift_up) | (int(shift_down) << 1) | (int(pit_request) << 2)
+	b[3] = int(shift_up) | (int(shift_down) << 1) | (int(pit_request) << 2) | (int(handbrake) << 3)
 	return b
 
 
@@ -48,6 +50,7 @@ static func from_bytes(b: PackedByteArray) -> CarInput:
 	c.shift_up = (b[3] & 1) != 0
 	c.shift_down = (b[3] & 2) != 0
 	c.pit_request = (b[3] & 4) != 0
+	c.handbrake = (b[3] & 8) != 0
 	return c
 
 

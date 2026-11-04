@@ -11,6 +11,11 @@ const LOW_SPEED := 3.0        ## slip-angle regularisation (m/s)
 const ROLL_RESIST := 0.015
 const FUEL_DENSITY := 0.74    ## kg per litre
 const TC_LIMIT := 0.95        ## traction control: max share of grip used for drive
+## Standing starts: below this speed (m/s) traction control lets the tyres
+## spin when the driver floors it (launch slip), so feathering the throttle
+## off the line is quicker than flooring it, with or without the aid.
+const LAUNCH_SPEED := 12.0
+const LAUNCH_TC_SLIP := 0.15
 const ABS_LIMIT := 0.97
 const REVERSE_FORCE := 3500.0
 const REVERSE_MAX_SPEED := 6.0
@@ -102,6 +107,13 @@ const TAKEOFF_GAP := 0.02
 ## unload and add a little kick).
 const JUMP_KICK := 1.15
 const LANDING_HARD := 5.0
+## Handbrake: locks the rear wheels. A locked tyre slides, so its grip acts
+## straight against the way it's sliding (share of its grip, kinetic), the
+## rear loses its sideways hold and swings round; the clutch is in, so no
+## drive reaches the rear wheels. Below HANDBRAKE_CREEP (m/s) of slide the
+## force eases off so a parked car doesn't shiver.
+const HANDBRAKE_SLIDE := 0.85
+const HANDBRAKE_CREEP := 1.0
 
 
 ## wear_rate: tyre wear multiplier (0 = tyres never wear, 1 = normal).
@@ -139,6 +151,7 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 		surf_roll += DIRT_ROLL * s.dirt
 	if s.surface == TrackData.Surface.GRAVEL:
 		surf_roll = lerpf(GRAVEL_CRAWL_ROLL, surf_roll, smoothstep(GRAVEL_CRAWL_SPEED, GRAVEL_DIG_SPEED, s.vel.length()))
+	s.handbrake = inp.handbrake
 	# In the air (off a jump): no tyre forces until it lands.
 	var air := track.allows_air()
 	if air and s.air_h > 0.0:
@@ -153,7 +166,7 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 	var steer_target := clampf(inp.steer, -1.0, 1.0) * d.max_steer
 	if s.assist_track > 0:
 		steer_target = _track_assist(s, inp, steer_target, d, track, q)
-	if s.assist_stability:
+	if s.assist_stability and not s.handbrake:
 		steer_target = _assisted_steer(s, steer_target, d, tc)
 	s.steer_angle = move_toward(s.steer_angle, steer_target, d.steer_rate * dt)
 	var full_damage := s.damage_level == CarDamage.Level.FULL
@@ -250,15 +263,20 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 		s.tyre_psi[i] = p_hot
 		mu *= t_c.pressure_grip_factor(p_hot)
 		p_heat[i] = t_c.pressure_heat_factor(p_hot)
+		var lat_dirt := 1.0
 		if i >= 2:
 			mu *= d.rear_grip * (1.0 - 0.3 * s.damage_suspension) * mech_r
+			# Loose dirt: some cars' tails step out (derby cars a lot). Only
+			# the sideways grip goes; the driven wheels still dig in for traction.
+			if s.dirt > 0.0:
+				lat_dirt = lerpf(1.0, d.dirt_rear_grip, s.dirt)
 		else:
 			mu *= d.front_grip * (1.0 - 0.15 * s.damage_suspension) * mech_f
 		if s.puncture[i] > 0.5:
 			mu *= PUNCTURE_GRIP
 		mu = maxf(mu, 0.1)
 		cap[i] = mu * fz[i] * (lon_f if i < 2 else lon_r)
-		cap_y[i] = mu * fz[i] * (lat_f if i < 2 else lat_r)
+		cap_y[i] = maxf(mu * lat_dirt, 0.1) * fz[i] * (lat_f if i < 2 else lat_r)
 	var cap_f := cap[0] + cap[1]
 	var cap_r := cap[2] + cap[3]
 	var cap_yf := cap_y[0] + cap_y[1]
@@ -312,6 +330,10 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 				# A damaged engine gets worse the harder it is worked.
 				var load := throttle * clampf(s.rpm / d.redline_rpm, 0.0, 1.0)
 				s.damage_engine = minf(s.damage_engine + CarDamage.ENGINE_LEAK_RATE * s.damage_engine * load * dt, 1.0)
+			if track.discipline == "derby" and CarDamage.is_wrecked(s):
+				# Demolition Derby: a wreck drives on until the engine boils
+				# dry (radiator and oil lines gone), quicker when worked hard.
+				s.damage_engine = minf(s.damage_engine + CarDamage.WRECK_BOIL_RATE * (0.4 + 0.6 * throttle) * dt, 1.0)
 		drive_force = torque * ratio * d.drivetrain_efficiency / d.wheel_radius
 		power_kw = torque * s.rpm * TAU / 60.0 / 1000.0
 		if throttle < 0.05 and vx > 1.0:
@@ -349,8 +371,11 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 		var use_f := s.fy_front / maxf(cap_yf, 1.0)
 		var spare_r := drive_r * sqrt(maxf(TC_LIMIT * TC_LIMIT - use_r * use_r, 0.0))
 		var spare_f := drive_f * sqrt(maxf(TC_LIMIT * TC_LIMIT - use_f * use_f, 0.0))
-		fx_r_demand = minf(fx_r_demand, maxf(spare_r, drive_r * 0.2))
-		fx_f_demand = minf(fx_f_demand, maxf(spare_f, drive_f * 0.2))
+		var slack := 0.0
+		if vx < LAUNCH_SPEED:
+			slack = LAUNCH_TC_SLIP * throttle * throttle * (1.0 - vx / LAUNCH_SPEED)
+		fx_r_demand = minf(fx_r_demand, maxf(spare_r, drive_r * 0.2) * (1.0 + slack))
+		fx_f_demand = minf(fx_f_demand, maxf(spare_f, drive_f * 0.2) * (1.0 + slack))
 	if s.assist_abs and brake_total > 0.0:
 		# ABS keeps the wheels rolling and leaves room for cornering force.
 		var ab_f := s.fy_front / maxf(cap_yf, 1.0)
@@ -368,7 +393,7 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 		fx_f *= 0.9
 	if excess_r > 0.0:
 		fx_r *= 0.9
-	s.wheelspin = excess_r > 0.0 and drive_force > 0.0
+	s.wheelspin = excess_r > 0.0 and drive_force > 0.0 and not s.handbrake
 
 	# --- Lateral forces (simplified Pacejka with friction circle) ----------
 	var vy_front := vy + s.yaw_rate * a
@@ -387,6 +412,15 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 		# Each axle's slip curve is the average of its two tyres.
 		fy_f = -lat_cap_f * 0.5 * ((wtc[0] as TyreCompound).lateral_curve(alpha_f) + (wtc[1] as TyreCompound).lateral_curve(alpha_f))
 		fy_r = -lat_cap_r * 0.5 * ((wtc[2] as TyreCompound).lateral_curve(alpha_r) + (wtc[3] as TyreCompound).lateral_curve(alpha_r))
+	# Handbrake: the rear wheels are locked and slide.
+	var hb_slide := 0.0
+	if s.handbrake:
+		var slide := Vector2(vx, vy_rear)
+		hb_slide = slide.length()
+		var along := slide / maxf(hb_slide, HANDBRAKE_CREEP)
+		fx_r = -along.x * cap_r * HANDBRAKE_SLIDE
+		fy_r = -along.y * cap_yr * HANDBRAKE_SLIDE
+		excess_r = 0.0
 	s.fy_front = fy_f
 	s.fy_rear = fy_r
 	s.grip_usage_rear = sqrt((fx_r / maxf(cap_r, 1.0)) ** 2 + (fy_r / maxf(cap_yr, 1.0)) ** 2)
@@ -394,7 +428,7 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 	# --- Stability assist: brake one wheel to stop a slide ----------------
 	var esc_torque := 0.0
 	var esc_drag := 0.0
-	if s.assist_stability and vx > 5.0:
+	if s.assist_stability and vx > 5.0 and not s.handbrake:
 		var r_ref := vx * tan(delta) / L
 		var r_max := (cap_yf + cap_yr) / m / vx
 		r_ref = clampf(r_ref, -r_max, r_max)
@@ -426,7 +460,7 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 	var yaw_torque := a * (fx_f * sin_d + fy_f * cos_d) - b * fy_r + esc_torque
 	# A locked diff makes both driven wheels turn at the same speed, which
 	# resists the car turning: understeer on power, stability when lifting.
-	if s.gear >= 1 and absf(vx) > 3.0:
+	if s.gear >= 1 and absf(vx) > 3.0 and not s.handbrake:
 		var through_diff := drive_force * (1.0 - d.front_drive_split)
 		var lock := d.diff_power if through_diff > 0.0 else d.diff_coast
 		var rel := s.yaw_rate * d.track_width / absf(vx)
@@ -449,7 +483,10 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 	# Parking: kill creep when stationary with no drive. On a hill only the
 	# brakes hold the car (if they're strong enough for the slope).
 	if speed < 0.3 and absf(drive_force) < 1.0:
-		if brake > 0.1 and brake * d.brake_force > g_plane.length() * m * 1.2:
+		var hold := brake * d.brake_force if brake > 0.1 else 0.0
+		if s.handbrake:
+			hold = maxf(hold, cap_r * HANDBRAKE_SLIDE)
+		if hold > g_plane.length() * m * 1.2:
 			s.vel = Vector2.ZERO
 			s.yaw_rate *= 0.5
 		elif g_plane.length() < 0.3:
@@ -493,6 +530,9 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 	var axle_power := PackedFloat64Array([
 		(absf(fy_f) * slip_v_f + absf(fx_f) * long_slip_f) / 1000.0,
 		(absf(fy_r) * slip_v_r + absf(fx_r) * long_slip_r) / 1000.0])
+	if s.handbrake:
+		# Locked rears: the whole slide scrubs the tyres.
+		axle_power[1] = Vector2(fx_r, fy_r).length() * hb_slide / 1000.0
 	for i in 4:
 		var axle_fz := fz[0] + fz[1] if i < 2 else fz[2] + fz[3]
 		var share := fz[i] / maxf(axle_fz, 1.0)
@@ -533,6 +573,7 @@ static func _fly(s: CarState, inp: CarInput, d: CarDefinition, track: TrackData,
 	s.ax = 0.0
 	s.ay = 0.0
 	s.wheelspin = false
+	s.handbrake = inp.handbrake
 	s.rpm = move_toward(s.rpm, lerpf(d.idle_rpm, d.redline_rpm * 0.97, inp.throttle), d.redline_rpm * 2.0 * dt)
 	s.pos += s.vel * dt
 	s.heading = wrapf(s.heading + s.yaw_rate * dt, -PI, PI)

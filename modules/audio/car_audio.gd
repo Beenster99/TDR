@@ -6,11 +6,13 @@ extends Node2D
 ## see engine_profile()). The family's baked loops exist at many rpm bands, on
 ## throttle and on overrun. We play the two bands either side of the revs,
 ## crossfade them and nudge their pitch, and crossfade throttle against
-## overrun. On top: rev limiter, gearshift cuts and blips, exhaust pops and
-## crackles, turbo whistle and wastegate flutter, supercharger whine, hybrid
+## overrun. On top: rev limiter, gearshift cuts and blips (no exhaust pops or
+## crackles), turbo whistle and wastegate flutter, supercharger whine, hybrid
 ## motor whine, straight-cut gearbox whine.
 ## Tyres and road: squeal (cornering past the grip peak), scrub (just under
-## it), lock-up and wheelspin, road roar, kerbs, gravel, grass, wind, rain spray.
+## it), lock-up, wheelspin and the handbrake, road roar, kerbs, gravel,
+## grass, wind, rain spray. Tyres only squeal on tarmac and kerbs: sliding
+## on gravel, grass, dirt or mud makes that surface's own noise instead.
 ## Passing cars get a Doppler shift.
 
 const SPEED_OF_SOUND := 343.0
@@ -46,7 +48,6 @@ var _squeal_level := 0.0
 var _scrub_level := 0.0
 var _lock_level := 0.0
 var _last_thr := 0.0
-var _pop_clock := 0.0
 var _rng := RandomNumberGenerator.new()
 var _time := 0.0
 var _doppler := 1.0
@@ -79,6 +80,7 @@ func setup(p_def: CarDefinition, p_state: CarState, p_local: bool) -> void:
 	_layers["road"] = _player(SoundBank.get_sound("road_roar"))
 	_layers["kerb"] = _player(SoundBank.get_sound("kerb"))
 	_layers["gravel"] = _player(SoundBank.get_sound("gravel"))
+	_layers["dirt"] = _player(SoundBank.get_sound("dirt"))
 	_layers["grass"] = _player(SoundBank.get_sound("grass"))
 	if is_local:
 		_layers["scrub"] = _player(SoundBank.get_sound("tyre_scrub"))
@@ -114,7 +116,7 @@ static func engine_cylinders(d: CarDefinition) -> int:
 
 
 ## What an engine sounds like: {family, turbo, supercharged, hybrid,
-## gear_whine, limiter_hz, pops}. A car can say it outright in its JSON:
+## gear_whine, limiter_hz}. A car can say it outright in its JSON:
 ##   "engine": {"sound": {"family": "v6_turbo", "hybrid": true}}
 ## otherwise it is worked out from the cylinders and the description
 ## ("twin-turbo", "flat-six", "Mid-engined ... V8" = flat-plane crank ...).
@@ -155,8 +157,6 @@ static func engine_profile(d: CarDefinition) -> Dictionary:
 		"gear_whine": bool(given.get("gear_whine", d.class_tag != "Road" and d.class_tag != "Safety" and d.class_tag != "")),
 		# Limiter bounce: high-revving NA engines bang off it fast, turbos slower.
 		"limiter_hz": float(given.get("limiter_hz", 9.0 if turbo else 14.0)),
-		# How much it pops and crackles on the overrun.
-		"pops": float(given.get("pops", 1.0 if family.begins_with("v8_cross") else (0.8 if turbo else 0.6))),
 	}
 	return p
 
@@ -242,8 +242,6 @@ func _update_engine(delta: float, speed: float, vs: float) -> void:
 				_shot("flutter", -10.0, _rng.randf_range(0.9, 1.1))
 		elif state.gear < _gear and state.gear >= 1:
 			_blip_t = 0.13
-			if _rng.randf() < 0.5 * profile["pops"]:
-				_shot("crackle", -9.0, _rng.randf_range(0.9, 1.15))
 		_gear = state.gear
 	_cut_t = maxf(_cut_t - delta, 0.0)
 	_blip_t = maxf(_blip_t - delta, 0.0)
@@ -257,8 +255,6 @@ func _update_engine(delta: float, speed: float, vs: float) -> void:
 		_limiter_phase += profile["limiter_hz"] * delta
 		if _limiter_phase >= 1.0:
 			_limiter_phase -= 1.0
-			if _rng.randf() < 0.25 * profile["pops"]:
-				_pop(-10.0)
 		var cut := _limiter_phase < 0.4
 		mix = 0.15 if cut else 1.0
 		rpm = red * (0.985 - 0.03 * (1.0 - _limiter_phase))
@@ -269,16 +265,9 @@ func _update_engine(delta: float, speed: float, vs: float) -> void:
 	if _blip_t > 0.0:
 		mix = maxf(mix, 0.75)
 		rpm += (red - rpm) * 0.12 * (_blip_t / 0.13)
-	# Overrun pops: lifting off at high revs, more on some engines.
+	# No exhaust pops or crackles on the overrun, limiter or downshifts: they
+	# sounded like constant banging, so lifting off is just the overrun loop.
 	var rev := clampf((rpm - idle) / maxf(red - idle, 1.0), 0.0, 1.0)
-	if _last_thr > 0.7 and _throttle < 0.25 and rev > 0.55 and _rng.randf() < 0.6 * profile["pops"]:
-		_pop(-8.0)
-	if _throttle < 0.1 and rev > 0.45:
-		_pop_clock += delta * 4.0 * rev * profile["pops"]
-		if _pop_clock > 1.0:
-			_pop_clock = 0.0
-			if _rng.randf() < 0.5:
-				_pop(-14.0 + 6.0 * rev)
 	# Band crossfade.
 	var on_gain := lerpf(0.4, 1.0, rev) * vs
 	var off_gain := lerpf(0.3, 0.55, rev) * vs
@@ -355,27 +344,34 @@ func _update_tyres(delta: float, speed: float, vs: float) -> void:
 	var kerb := state.surface == SURF_KERB
 	var moving := clampf(speed / 8.0, 0.0, 1.0)
 	var wet := clampf(wetness, 0.0, 1.0)
+	# Loose earth under the car (rallycross and derby dirt, mud when wet).
+	var loose := clampf(state.dirt, 0.0, 1.0) if (on_tarmac or kerb) else 0.0
 	# Sideways: past the grip peak it squeals, just under it the tyres scrub.
 	var lat := maxf(absf(state.slip_angle_rear) - 0.06, absf(state.slip_angle_front) - 0.085)
 	var squeal := clampf(lat * 6.0, 0.0, 1.0)
 	var scrub := clampf((maxf(absf(state.slip_angle_rear), absf(state.slip_angle_front)) - 0.03) * 12.0, 0.0, 1.0)
-	# Lengthways: wheelspin, and heavy braking (locking without ABS, ABS chatter with it).
+	# Lengthways: wheelspin, the handbrake, and heavy braking (locking without
+	# ABS, ABS chatter with it).
 	var lock := 0.0
 	if state.wheelspin:
 		lock = 0.55
+	if state.handbrake:
+		lock = maxf(lock, 0.7)
+		squeal = maxf(squeal, 0.35)
 	if state.ax < -11.0:
 		var b := clampf((-state.ax - 11.0) / 9.0, 0.0, 1.0)
 		if state.assist_abs:
 			b *= 0.35 * (0.5 + 0.5 * sin(_time * TAU * 16.0))
 		lock = maxf(lock, b)
-	var grip_surface := 1.0 if (on_tarmac or kerb) else 0.0
+	# Rubber only squeals on a hard surface: none on gravel, grass, dirt or mud.
+	var grip_surface := (1.0 if (on_tarmac or kerb) else 0.0) * (1.0 - loose)
 	var dry := 1.0 - 0.75 * wet  # wet tyres hiss more than they squeal
 	_squeal_level = lerpf(_squeal_level, squeal * moving * grip_surface * dry, 1.0 - exp(-15.0 * delta))
 	_scrub_level = lerpf(_scrub_level, scrub * (1.0 - squeal) * moving * grip_surface, 1.0 - exp(-12.0 * delta))
 	_lock_level = lerpf(_lock_level, lock * moving * grip_surface * dry, 1.0 - exp(-20.0 * delta))
 	var load := clampf(state.load_factor, 0.6, 1.4)
-	_level(_layers["squeal"], 0.55 * _squeal_level * vs, (0.92 + 0.18 * _squeal_level + 0.06 * (load - 1.0)) * _doppler)
-	_level(_layers["lock"], 0.6 * _lock_level * vs, (0.85 + 0.2 * clampf(speed / 60.0, 0.0, 1.0)) * _doppler)
+	_level(_layers["squeal"], 0.45 * _squeal_level * vs, (0.9 + 0.1 * _squeal_level + 0.05 * (load - 1.0)) * _doppler)
+	_level(_layers["lock"], 0.55 * _lock_level * vs, (0.85 + 0.15 * clampf(speed / 60.0, 0.0, 1.0)) * _doppler)
 	if _layers.has("scrub"):
 		_level(_layers["scrub"], 0.3 * _scrub_level * vs, 0.9 + 0.3 * clampf(speed / 50.0, 0.0, 1.0))
 	var sp := clampf(speed / 70.0, 0.0, 1.0)
@@ -389,6 +385,11 @@ func _update_tyres(delta: float, speed: float, vs: float) -> void:
 		0.75 + 0.5 * clampf(speed / 40.0, 0.0, 1.0))
 	_level(_layers["grass"], (0.6 * clampf(speed / 20.0, 0.1, 1.0) if grass and speed > 0.5 else 0.0) * vs,
 		0.7 + 0.5 * clampf(speed / 40.0, 0.0, 1.0))
+	# Dirt: a rolling rumble that grows into a scrabble of grit and clods
+	# when the car slides, spins its wheels or locks them. Mud is lower.
+	var churn := maxf(maxf(squeal, scrub * 0.5), lock)
+	var dirt_vol := loose * (0.35 * clampf(speed / 25.0, 0.0, 1.0) + 0.5 * churn * moving) if speed > 0.5 else 0.0
+	_level(_layers["dirt"], dirt_vol * vs, (0.7 + 0.45 * clampf(speed / 40.0, 0.0, 1.0) + 0.15 * churn) * (1.0 - 0.25 * wet) * _doppler)
 	if _layers.has("wind"):
 		_level(_layers["wind"], 0.16 * sp * sp * vs, 0.7 + 0.6 * sp)
 	if _layers.has("spray"):
@@ -403,10 +404,6 @@ func _shot(sound: String, db: float, pitch := 1.0) -> void:
 	p.pitch_scale = pitch * _doppler
 	if p.is_inside_tree():
 		p.play()
-
-
-func _pop(db: float) -> void:
-	_shot("pop_%d" % _rng.randi_range(1, 4), db, _rng.randf_range(0.8, 1.2))
 
 
 func silence() -> void:

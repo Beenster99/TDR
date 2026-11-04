@@ -2,10 +2,12 @@
 """Real trackside scenery for a circuit, from open data.
 
 Builds modules/graphics/data/scenery/<track>.json: the buildings (with real
-heights where known), grandstands, bridges and trees around a circuit, plus a
-painted ground map (fields, woods, car parks with their bays, roads, paths,
-water, gravel, the circuit's other loops). Trackside (graphics) turns it into
-3D objects, so a circuit looks like itself from above.
+heights where known), grandstands, bridges and trees around a circuit, plus
+the land cover modelled as meshes (fields, woods, car parks with their bays,
+roads with their lines, paths, water, gravel, the circuit's other loops), cut
+along the game's terrain triangles so it lies exactly on the hillside.
+Trackside (graphics) turns it into 3D objects, so a circuit looks like itself
+from above.
 
 Sources (all openly licensed, credited in the output's "sources"):
   - OpenStreetMap (ODbL): footprints, names, landuse, roads, trees, hedges.
@@ -20,8 +22,8 @@ Usage:
   python3 modules/graphics/tools/build_scenery.py silverstone [more ids]
   options: --cache DIR (downloads are kept there, default ~/.cache/tdr-tracks)
            --no-lidar  (OSM only, even where LIDAR is configured)
-Needs numpy and Pillow; LIDAR also needs scipy, pyproj and tifffile
-(pip install scipy pyproj tifffile imagecodecs).
+Needs numpy, Pillow and shapely (2.1+); LIDAR also needs scipy, pyproj and tifffile
+(pip install shapely scipy pyproj tifffile imagecodecs).
 
 To add a track: run the tracks module's build_tracks.py first (the track JSON
 must have "geo"), add an entry to tools/scenery.json, then run this.
@@ -52,42 +54,14 @@ OUT = os.path.join(ROOT, "modules", "graphics", "data", "scenery")
 R_EARTH = 6378137.0
 UA = {"User-Agent": "TDR-scenery-builder/1.0 (top-down racer, open data)"}
 
-GROUND_CELL = 1.5          # metres per ground-map pixel
-SUPERSAMPLE = 3            # drawn bigger, then shrunk: smooth edges
 TILE_DEG_M = 800.0         # OSM API download tile size (m)
-
-# --- ground map colours (RGBA 0..255); alpha 0 keeps the game's own grass ----
-
-C = {
-    "field": [(124, 118, 66, 255), (104, 112, 58, 255), (138, 116, 80, 255), (96, 108, 54, 255), (150, 136, 84, 255)],
-    "grass": [(70, 104, 46, 150), (78, 112, 50, 150), (64, 96, 42, 150)],
-    "scrub": (66, 82, 40, 230),
-    "wood": (34, 52, 24, 255),
-    "residential": (92, 100, 72, 170),
-    "industrial": (112, 112, 108, 230),
-    "farmyard": (122, 114, 96, 230),
-    "water": (40, 62, 74, 255),
-    "sand": (196, 182, 140, 255),
-    "dirt": (128, 108, 78, 255),
-    "asphalt": (78, 78, 82, 255),
-    "parking": (88, 88, 92, 255),
-    "parking_grass": (98, 110, 62, 220),
-    "bay_line": (196, 196, 190, 255),
-    "road": (62, 62, 66, 255),
-    "road_line": (200, 200, 190, 255),
-    "path": (150, 144, 128, 230),
-    "track_dirt": (126, 110, 82, 220),
-    "raceway": (70, 70, 74, 255),
-    "hedge": (40, 58, 28, 255),
-    "footprint": (70, 70, 70, 255),
-    "pitch": (74, 124, 50, 200),
-}
 
 ROAD_W = {"motorway": 11, "trunk": 10, "primary": 8.5, "secondary": 7.5, "tertiary": 7, "unclassified": 6,
           "residential": 6, "living_street": 5, "service": 4.5, "motorway_link": 6, "trunk_link": 6,
           "primary_link": 6, "secondary_link": 6, "tertiary_link": 6}
 PATHS = {"footway": 1.8, "path": 1.4, "cycleway": 2.2, "bridleway": 2.0, "pedestrian": 4.0, "steps": 2.0}
 
+MAJOR = ("motorway", "trunk", "primary", "secondary", "motorway_link", "trunk_link", "primary_link")
 HOUSE = ("house", "detached", "semidetached_house", "terrace", "bungalow", "residential", "apartments", "cottage")
 SHED = ("garage", "garages", "shed", "carport", "hut")
 
@@ -386,82 +360,329 @@ class Lidar:
         return float(np.percentile(self.chm[i, j], q))
 
 
-# --- build -------------------------------------------------------------------
+# --- land cover: real geometry, not a picture --------------------------------
 
-class Ground:
-    def __init__(self, origin, size):
-        self.o = origin
-        self.k = SUPERSAMPLE / GROUND_CELL
-        self.n = (np.ceil(size / GROUND_CELL)).astype(int)
-        self.img = Image.new("RGBA", (int(self.n[0] * SUPERSAMPLE), int(self.n[1] * SUPERSAMPLE)), (0, 0, 0, 0))
-        self.d = ImageDraw.Draw(self.img)
+# Ground kinds the game draws (terrain shader, COLOR.g). 0 = the game's own
+# grass. Keep in step with KIND_* in shaders/terrain.gdshader.
+KINDS = ["grass", "field", "meadow", "scrub", "wood", "residential", "industrial", "farmyard", "water", "sand",
+         "dirt", "asphalt", "parking", "parking_grass", "bay_line", "road", "road_line", "path", "track_dirt",
+         "raceway", "hedge", "footprint", "pitch", "road_dash"]
+KIND = {k: i for i, k in enumerate(KINDS)}
+SPLIT = 255                # a terrain triangle shared by several kinds (see "pieces")
+CHUNK = 16                 # cells per side cut at a time
+MESH_CHUNK = 32            # cells per side of each mesh tile the game draws
 
-    def px(self, p):
-        q = (np.asarray(p) - self.o) * self.k
-        return [tuple(v) for v in q.tolist()]
 
-    def poly(self, outer, col, holes=()):
+class Land:
+    """Land cover as polygons, cut along the game's terrain triangles so the
+    game can lay it on the hillside exactly: each terrain triangle is either
+    wholly one kind (tri_kind) or split into pieces (triangles of their own).
+    Painted bottom layer first, like the old ground map: later shapes cover
+    earlier ones, kind "grass" rubs out (the game's grass shows)."""
+
+    def __init__(self, origin, size, cell):
+        self.o = np.asarray(origin, float)
+        self.cell = float(cell)
+        self.n = np.ceil(np.asarray(size) / cell).astype(int)
+        self.items = []     # (z, seq, kind id, variant, geometry)
+
+    def _add(self, geom, kind, z, key=""):
+        import shapely
+        if geom is None or geom.is_empty:
+            return
+        if not geom.is_valid:
+            geom = shapely.make_valid(geom)
+        geom = shapely.get_parts(geom)
+        geom = [g for g in geom if g.geom_type in ("Polygon", "MultiPolygon") and g.area > 0.01]
+        if not geom:
+            return
+        g = shapely.union_all(geom) if len(geom) > 1 else geom[0]
+        g = g.simplify(0.04)
+        var = zlib.crc32(key.encode()) & 0xFF if key else 0
+        self.items.append((z, len(self.items), KIND[kind], var, g))
+
+    def poly(self, outer, kind, z, holes=(), key=""):
+        from shapely.geometry import Polygon
         if len(outer) < 3:
             return
-        if not holes:
-            self.d.polygon(self.px(outer), fill=col)
+        hs = [h for h in holes if len(h) >= 3]
+        self._add(Polygon(outer, hs), kind, z, key)
+
+    def line(self, pts, width_m, kind, z, key="", join="round"):
+        from shapely.geometry import LineString
+        if len(pts) < 2:
             return
-        m = Image.new("L", self.img.size, 0)
-        md = ImageDraw.Draw(m)
-        md.polygon(self.px(outer), fill=255)
-        for h in holes:
-            if len(h) >= 3:
-                md.polygon(self.px(h), fill=0)
-        self.img.paste(Image.new("RGBA", self.img.size, col), (0, 0), m)
+        self._add(LineString(pts).buffer(width_m * 0.5, quad_segs=3, join_style=join, mitre_limit=3.0), kind, z, key)
 
-    def rows(self, outer, col, key):
-        """Crop rows / tramlines across a field: faint parallel lines at the
-        field's own angle, clipped to it."""
-        q = np.array(self.px(outer))
-        lo = np.floor(q.min(0)).astype(int)
-        hi = np.ceil(q.max(0)).astype(int) + 1
-        size = tuple((hi - lo).tolist())
-        if min(size) < 4:
-            return
-        m = Image.new("L", size, 0)
-        ImageDraw.Draw(m).polygon([tuple(v) for v in (q - lo).tolist()], fill=255)
-        stripes = Image.new("RGBA", size, (0, 0, 0, 0))
-        sd = ImageDraw.Draw(stripes)
-        ang = (zlib.crc32(key.encode()) % 180) * math.pi / 180.0
-        d = np.array([math.cos(ang), math.sin(ang)])
-        nrm = np.array([-d[1], d[0]])
-        c = np.array(size) * 0.5
-        L = float(np.hypot(*size))
-        gap = 12.0 * self.k     # tramlines every 12 m
-        k = -L
-        while k < L:
-            a = c + nrm * k - d * L
-            b = c + nrm * k + d * L
-            sd.line([tuple(a), tuple(b)], fill=col, width=max(1, int(0.9 * self.k)))
-            k += gap
-        self.img.paste(stripes, tuple(lo.tolist()), Image.composite(stripes, Image.new("RGBA", size, (0, 0, 0, 0)), m))
+    def dashes(self, pts, width_m, dash, gap, kind, z):
+        """A dashed centre line (dash metres on, gap metres off)."""
+        from shapely.geometry import LineString
+        from shapely.ops import substring
+        import shapely
+        ls = LineString(pts)
+        L = ls.length
+        segs = []
+        d = gap * 0.5
+        while d + dash < L:
+            segs.append(substring(ls, d, d + dash))
+            d += dash + gap
+        if segs:
+            self._add(shapely.union_all([s.buffer(width_m * 0.5, cap_style="flat") for s in segs]), kind, z)
 
-    def line(self, pts, width_m, col):
-        w = max(1, int(round(width_m * self.k)))
-        self.d.line(self.px(pts), fill=col, width=w, joint="curve")
-        r = w / 2
-        for p in self.px([pts[0], pts[-1]]):
-            self.d.ellipse([p[0] - r, p[1] - r, p[0] + r, p[1] + r], fill=col)
+    def erase(self, geom, z):
+        self._add(geom, "grass", z)
 
-    def webp(self):
-        im = self.img.resize((int(self.n[0]), int(self.n[1])), Image.LANCZOS)
-        buf = io.BytesIO()
-        im.save(buf, "WEBP", lossless=True, quality=100, method=6)
-        return buf.getvalue()
+    def encode(self):
+        import shapely
+        from shapely import STRtree
+        nx, ny = int(self.n[0]), int(self.n[1])
+        items = sorted(self.items, key=lambda it: (it[0], it[1]))
+        geoms = np.array([it[4] for it in items], dtype=object)
+        tree = STRtree(geoms)
+        tk = np.zeros((ny, nx, 2), np.uint8)
+        tv = np.zeros((ny, nx, 2), np.uint8)
+        pk, pv, pxy = [], [], []
+        c = self.cell
+        half = c * c * 0.5
+        for cy in range(0, ny, CHUNK):
+            for cx in range(0, nx, CHUNK):
+                w, h = min(CHUNK, nx - cx), min(CHUNK, ny - cy)
+                x0, y0 = self.o + np.array([cx, cy]) * c
+                bx = shapely.box(x0, y0, x0 + w * c, y0 + h * c)
+                idx = tree.query(bx, predicate="intersects")
+                if len(idx) == 0:
+                    continue
+                # visible part of each shape in this chunk, top layer first
+                covered = None
+                vis = []
+                for i in sorted(idx, reverse=True):
+                    g = shapely.intersection(geoms[i], bx)
+                    if g.is_empty or g.area < 1e-3:
+                        continue
+                    v = g if covered is None else shapely.difference(g, covered)
+                    covered = g if covered is None else shapely.union(covered, g)
+                    if items[i][2] != 0 and not v.is_empty and v.area > 1e-3:
+                        vis.append((items[i][2], items[i][3], v))
+                if not vis:
+                    continue
+                # the chunk's terrain triangles: (a, b, c) and (b, d, c), as TrackView builds them
+                jj, ii = np.mgrid[0:h, 0:w]
+                ax = x0 + ii.ravel() * c
+                ay = y0 + jj.ravel() * c
+                A = np.stack([ax, ay], -1)
+                B, Cc, D = A + [c, 0], A + [0, c], A + [c, c]
+                t0 = np.stack([A, B, Cc, A], 1)
+                t1 = np.stack([B, D, Cc, B], 1)
+                tris = shapely.polygons(np.concatenate([t0, t1]))
+                tcell = np.concatenate([np.stack([jj.ravel() + cy, ii.ravel() + cx, np.zeros(w * h, int)], -1),
+                                        np.stack([jj.ravel() + cy, ii.ravel() + cx, np.ones(w * h, int)], -1)])
+                ttree = STRtree(tris)
+                for kind, var, v in vis:
+                    ti = ttree.query(v, predicate="intersects")
+                    if len(ti) == 0:
+                        continue
+                    inter = shapely.intersection(v, tris[ti])
+                    ar = shapely.area(inter)
+                    full = ar > half * 0.9995
+                    for t in ti[full]:
+                        r, q, s = tcell[t]
+                        tk[r, q, s] = kind
+                        tv[r, q, s] = var
+                    part = (~full) & (ar > 0.01)
+                    if not part.any():
+                        continue
+                    for t in ti[part]:
+                        r, q, s = tcell[t]
+                        tk[r, q, s] = SPLIT
+                    parts = shapely.get_parts(inter[part])
+                    parts = parts[shapely.get_type_id(parts) == 3]
+                    parts = parts[shapely.area(parts) > 0.01]
+                    if len(parts) == 0:
+                        continue
+                    tri = shapely.get_parts(shapely.constrained_delaunay_triangles(parts))
+                    tri = tri[shapely.area(tri) > 1e-4]
+                    xy = shapely.get_coordinates(shapely.get_exterior_ring(tri)).reshape(-1, 4, 2)[:, :3]
+                    # wind them like the terrain (positive area in game x, y)
+                    e1, e2 = xy[:, 1] - xy[:, 0], xy[:, 2] - xy[:, 0]
+                    flip = (e1[:, 0] * e2[:, 1] - e1[:, 1] * e2[:, 0]) < 0
+                    xy[flip] = xy[flip][:, [0, 2, 1]]
+                    pxy.append(xy.astype(np.float32))
+                    pk.append(np.full(len(xy), kind, np.uint8))
+                    pv.append(np.full(len(xy), var, np.uint8))
+        pxy = np.concatenate(pxy) if pxy else np.zeros((0, 3, 2), np.float32)
+        pk = np.concatenate(pk) if pk else np.zeros(0, np.uint8)
+        pv = np.concatenate(pv) if pv else np.zeros(0, np.uint8)
+        self.stats = {"full": int(((tk != 0) & (tk != SPLIT)).sum()), "split": int((tk == SPLIT).sum()),
+                      "pieces": int(len(pk))}
+        return self._mesh(tk, tv, pk, pv, pxy)
+
+    def _mesh(self, tk, tv, pk, pv, pxy):
+        """Ready-to-draw meshes in MESH_CHUNK-cell tiles: vertices (x, 0, y)
+        (the game's shader lays them on the hillside), a colour per vertex
+        (r 0, g kind / 255, b variant / 255) and triangle indices."""
+        ny, nx = tk.shape[:2]
+        c = self.cell
+        o = self.o
+        cent = pxy.mean(1)
+        pc = np.floor((cent - o) / (c * MESH_CHUNK)).astype(int)
+        V, K, I, table = [], [], [], []
+        nv = ni = 0
+        for cy in range(0, ny, MESH_CHUNK):
+            for cx in range(0, nx, MESH_CHUNK):
+                vx, vk, ix = [], [], []
+                count = 0
+
+                def add(xy, kind, var, tri):
+                    nonlocal count
+                    vx.append(xy)
+                    vk.append(np.repeat([[kind, var]], len(xy), 0))
+                    ix.append(tri + count)
+                    count += len(xy)
+
+                # whole triangles: runs of cells along a row with one kind become strips
+                for r in range(cy, min(cy + MESH_CHUNK, ny)):
+                    q = cx
+                    qe = min(cx + MESH_CHUNK, nx)
+                    while q < qe:
+                        k0, k1 = tk[r, q, 0], tk[r, q, 1]
+                        same = k0 == k1 and tv[r, q, 0] == tv[r, q, 1] and k0 not in (0, SPLIT)
+                        if same:
+                            e = q + 1
+                            while e < qe and tk[r, e, 0] == k0 and tk[r, e, 1] == k0 and \
+                                    tv[r, e, 0] == tv[r, q, 0] and tv[r, e, 1] == tv[r, q, 0]:
+                                e += 1
+                            L = e - q
+                            xs = o[0] + np.arange(q, e + 1) * c
+                            top = np.stack([xs, np.full(L + 1, o[1] + r * c)], -1)
+                            bot = np.stack([xs, np.full(L + 1, o[1] + (r + 1) * c)], -1)
+                            i = np.arange(L)
+                            A, B, Cc, D = i, i + 1, L + 1 + i, L + 2 + i
+                            tri = np.stack([np.stack([A, B, Cc], -1), np.stack([B, D, Cc], -1)], 1).reshape(-1)
+                            add(np.vstack([top, bot]), k0, tv[r, q, 0], tri)
+                            q = e
+                            continue
+                        a = o + np.array([q, r]) * c
+                        for s_, kk in ((0, k0), (1, k1)):
+                            if kk in (0, SPLIT):
+                                continue
+                            pts = np.array([a, a + [c, 0], a + [0, c]]) if s_ == 0 else \
+                                np.array([a + [c, 0], a + [c, c], a + [0, c]])
+                            add(pts, kk, tv[r, q, s_], np.arange(3))
+                        q += 1
+                # the pieces of split triangles in this tile (shared corners merged)
+                sel = (pc[:, 0] == cx // MESH_CHUNK) & (pc[:, 1] == cy // MESH_CHUNK)
+                if sel.any():
+                    t = pxy[sel].reshape(-1, 2)
+                    kv = np.repeat(np.stack([pk[sel], pv[sel]], -1), 3, 0)
+                    key = np.concatenate([np.round(t * 1000).astype(np.int64), kv.astype(np.int64)], 1)
+                    uniq, inv = np.unique(key, axis=0, return_index=False, return_inverse=True)
+                    first = np.zeros(len(uniq), int)
+                    first[inv.reshape(-1)] = np.arange(len(inv))
+                    vx.append(t[first])
+                    vk.append(kv[first])
+                    ix.append(inv.reshape(-1) + count)
+                    count += len(uniq)
+                if count == 0:
+                    continue
+                vxa = np.concatenate(vx).astype(np.float32)
+                V.append(vxa)
+                K.append(np.concatenate(vk))
+                I.append(np.concatenate(ix).astype(np.int32))
+                lo, hi = vxa.min(0), vxa.max(0)
+                table.append([nv, count, ni, len(I[-1]), round(float(lo[0]), 2), round(float(lo[1]), 2),
+                              round(float(hi[0]), 2), round(float(hi[1]), 2)])
+                nv += count
+                ni += len(I[-1])
+        V = np.concatenate(V) if V else np.zeros((0, 2), np.float32)
+        K = np.concatenate(K) if K else np.zeros((0, 2), np.uint8)
+        I = np.concatenate(I) if I else np.zeros(0, np.int32)
+        xyz = np.zeros((len(V), 3), np.float32)
+        xyz[:, 0], xyz[:, 2] = V[:, 0], V[:, 1]
+        col = np.zeros((len(V), 4), np.float32)
+        col[:, 1] = K[:, 0] / 255.0
+        col[:, 2] = K[:, 1] / 255.0
+        col[:, 3] = 1.0
+        self.stats.update(verts=int(len(V)), tris=int(len(I) // 3))
+
+        def b64(a):
+            raw = np.ascontiguousarray(a).tobytes()
+            return base64.b64encode(zlib.compress(raw, 9)).decode(), len(raw)
+
+        out = {"format": 1, "origin": np.round(self.o, 3).tolist(), "cell": self.cell, "n": [int(nx), int(ny)],
+               "kinds": KINDS,
+               "_doc": "Land cover meshes, one per tile: chunks = [first vertex, vertex count, first index, index "
+                       "count, x0, y0, x1, y1]. verts float32 (x, 0, y); cols float32 RGBA (g = kind / 255, "
+                       "b = variant / 255); idx int32 (per tile, from its first vertex). Each zlib then base64, "
+                       "*_bytes = size unpacked.",
+               "chunks": table}
+        for name, arr in (("verts", xyz), ("cols", col), ("idx", I)):
+            out[name], out[name + "_bytes"] = b64(arr)
+        self._tk, self._pk, self._pxy = tk, pk, pxy
+        return out
+
+    def preview(self, path, land, px_per_m=1.0):
+        """Draw the land cover as a PNG (a quick look without the game)."""
+        cols = {"field": (150, 130, 80), "meadow": (90, 120, 60), "scrub": (70, 90, 45), "wood": (30, 60, 30),
+                "residential": (110, 120, 90), "industrial": (130, 130, 128), "farmyard": (125, 115, 95),
+                "water": (40, 70, 110), "sand": (200, 185, 140), "dirt": (130, 110, 80), "asphalt": (80, 80, 84),
+                "parking": (90, 90, 95), "parking_grass": (100, 115, 65), "bay_line": (240, 240, 240),
+                "road": (60, 60, 64), "road_line": (230, 230, 230), "path": (170, 160, 140),
+                "track_dirt": (125, 110, 80), "raceway": (70, 70, 74), "hedge": (35, 55, 25),
+                "footprint": (120, 120, 120), "pitch": (80, 130, 55), "road_dash": (230, 230, 230)}
+        nx, ny = land["n"]
+        k = px_per_m
+        im = Image.new("RGB", (int(nx * self.cell * k), int(ny * self.cell * k)), (70, 110, 50))
+        d = ImageDraw.Draw(im)
+        c = self.cell * k
+        for r, q, s_ in zip(*np.nonzero((self._tk != 0) & (self._tk != SPLIT))):
+            a = np.array([q, r]) * c
+            pts = [a, a + [c, 0], a + [0, c]] if s_ == 0 else [a + [c, 0], a + [c, c], a + [0, c]]
+            d.polygon([tuple(p) for p in pts], fill=cols[KINDS[self._tk[r, q, s_]]])
+        for kd, t in zip(self._pk, self._pxy):
+            d.polygon([tuple(((p - self.o) * k).tolist()) for p in t], fill=cols[KINDS[kd]])
+        im.save(path)
 
 
-def pick(cols, key):
-    return cols[zlib.crc32(key.encode()) % len(cols)] if isinstance(cols, list) else cols
+# --- build -------------------------------------------------------------------
+
+def has_elevation(track):
+    e = track.get("elevation") or {}
+    return len(e.get("height_m", [])) == len(track["centerline"]) and len(track["centerline"]) > 0
 
 
-def build(tid, cfg, cache, use_lidar):
+def circuit_band(track, extra):
+    """The road (each side's own width) plus `extra` metres, as polygons:
+    one quad per centre-line step, and the pit lane."""
+    from shapely.geometry import Polygon, LineString
+    cl = np.array(track["centerline"])
+    p, wl, wr = cl[:, :2], cl[:, 2], cl[:, 3]
+    d = np.roll(p, -1, 0) - np.roll(p, 1, 0)
+    d /= np.maximum(np.hypot(d[:, 0], d[:, 1]), 1e-9)[:, None]
+    nrm = np.stack([-d[:, 1], d[:, 0]], -1)
+    kerb = track.get("kerb_width_m", 1.0)
+    left = p - nrm * (wl + kerb + extra)[:, None]
+    right = p + nrm * (wr + kerb + extra)[:, None]
+    out = []
+    n = len(p)
+    for i in range(n):
+        j = (i + 1) % n
+        q = Polygon([left[i], left[j], right[j], right[i]])
+        out.append(q if q.is_valid else q.buffer(0))
+    if track.get("pit_lane"):
+        out.append(LineString(track["pit_lane"]["path"]).buffer(track["pit_lane"].get("width_m", 12.0) * 0.5 + 1.0))
+    return out
+
+
+def build(tid, cfg, cache, use_lidar, land_only=False):
     path = os.path.join(TRACKS, tid + ".json")
     track = json.load(open(path))
+    dst = os.path.join(OUT, tid + ".json")
+    old = None
+    if land_only:
+        if not os.path.exists(dst):
+            raise RuntimeError(f"{tid}: --land-only needs an existing {os.path.relpath(dst, ROOT)}")
+        old = json.load(open(dst))
+        use_lidar = False
     if "geo" not in track:
         raise RuntimeError(f"{tid} has no 'geo' block (it isn't placed on the map)")
     geo = Geo(track["geo"])
@@ -478,7 +699,8 @@ def build(tid, cfg, cache, use_lidar):
             print("   LIDAR: Environment Agency DSM 1 m")
         except Exception as e:
             print("   LIDAR unavailable, OSM only:", e)
-    ground = Ground(origin, size)
+    # the game's terrain grid (TrackView._build_terrain): 10 m cells on hills, 16 m flat
+    land = Land(origin, size, 10.0 if has_elevation(track) else 16.0)
     lo, hi = origin, origin + size
 
     def in_area(p):
@@ -539,13 +761,10 @@ def build(tid, cfg, cache, use_lidar):
     layers.sort(key=lambda L: L[0])
     for z, kind, p, holes, key in layers:
         if kind == "bay":
-            ground.poly(p, C["parking"])
-            ground.line(np.vstack([p, p[:1]]), 0.15, C["bay_line"])
+            land.poly(p, "parking", z)
+            land.line(np.vstack([p, p[:1]]), 0.15, "bay_line", z + 0.5, join="mitre")
             continue
-        col = pick(C[kind], key)
-        ground.poly(p, col, holes)
-        if kind == "field":
-            ground.rows(p, tuple(int(v * 0.86) for v in col[:3]) + (255,), key)
+        land.poly(p, kind, z, holes, key)
 
     # lines: other race loops, roads, paths, hedges
     for wid, (tags, refs) in ways.items():
@@ -557,218 +776,242 @@ def build(tid, cfg, cache, use_lidar):
             p = way_xy(refs, xy)
             if in_area(p):
                 w = parse_m(tags.get("width")) or (10.0 if tags.get("sport") != "karting" else 7.0)
-                ground.line(p, w, C["raceway"])
+                land.line(p, w, "raceway", 14)
         elif hw in ROAD_W:
             p = way_xy(refs, xy)
             if in_area(p):
                 w = parse_m(tags.get("width")) or ROAD_W[hw]
-                ground.line(p, w + 0.6, C["road_line"])
-                ground.line(p, w, C["road"])
+                if hw in MAJOR:   # white edge lines on the bigger roads
+                    land.line(p, w + 0.5, "road_line", 15)
+                land.line(p, w, "road", 16)
+                if w >= 5.5 and hw not in ("service", "living_street"):
+                    land.dashes(p, 0.12, 3.0, 6.0, "road_dash", 17)
         elif hw == "track":
             p = way_xy(refs, xy)
             if in_area(p):
                 paved = tags.get("surface") in ("asphalt", "paved", "concrete")
-                ground.line(p, 3.2, C["road"] if paved else C["track_dirt"])
+                land.line(p, 3.2, "road" if paved else "track_dirt", 12, wid)
         elif hw in PATHS:
             p = way_xy(refs, xy)
             if in_area(p):
-                ground.line(p, PATHS[hw], C["path"])
+                land.line(p, PATHS[hw], "path", 13)
         elif br == "hedge":
             p = way_xy(refs, xy)
             if in_area(p):
-                ground.line(p, 2.0, C["hedge"])
+                land.line(p, 2.0, "hedge", 11)
         elif tags.get("waterway") in ("river", "stream", "canal", "ditch", "drain"):
             p = way_xy(refs, xy)
             if in_area(p):
-                ground.line(p, 4.0 if tags["waterway"] in ("river", "canal") else 1.6, C["water"])
+                land.line(p, 4.0 if tags["waterway"] in ("river", "canal") else 1.6, "water", 10)
 
-    # ---- buildings and grandstands ----
-    out_b = []
-    mask_pts = []
-    for tags, p in buildings_fp:
-        b = tags.get("building") or tags.get("building:part")
-        if b == "bridge":
-            continue
-        if not in_area(p):
-            continue
-        p = p[:-1] if np.allclose(p[0], p[-1]) else p
-        p = simplify(np.vstack([p, p[:1]]), 0.4)[:-1]
-        if len(p) < 3 or poly_area(p) < 6.0:
-            continue
-        cl = clear.at(p)
-        if cl.min() < 2.0:      # it would stand on the road: OSM and the track disagree
-            continue
-        grand = b == "grandstand" or tags.get("leisure") == "bleachers" or tags.get("building") == "stadium"
-        kind = "grandstand" if grand else "house" if b in HOUSE else "shed" if b in SHED else \
-            "roof" if b in ("roof", "canopy") else "building"
-        h = parse_m(tags.get("height"))
-        if h is None and tags.get("building:levels"):
-            h = (parse_m(tags.get("building:levels")) or 1) * 3.2 + (2.0 if kind == "house" else 0.0)
-        src = "osm" if h is not None else "default"
-        if lidar is not None:
-            lh = lidar.height_in(p)
-            if lh is not None and lh > 1.8:
-                h, src = lh, "lidar"
-        if h is None:
-            h = {"grandstand": 12.0, "house": 7.5, "shed": 3.0, "roof": 5.0}.get(kind, 7.0)
-        h = float(np.clip(h, 2.4, 45.0))
-        ground.poly(p, C["footprint"])
-        mask_pts.append(p)
-        # which edge faces the circuit (grandstand seats look that way)
-        front = int(np.argmin([clear.at(((p[k] + p[(k + 1) % len(p)]) * 0.5)[None])[0] for k in range(len(p))]))
-        rec = {"k": kind, "h": round(h, 1), "p": np.round(p, 2).tolist()}
-        if src != "lidar":
-            rec["est"] = 1
-        if tags.get("name"):
-            rec["name"] = tags["name"]
-        if kind == "grandstand":
-            rec["front"] = front
-        out_b.append(rec)
-    print(f"   {len(out_b)} buildings ({sum(1 for b in out_b if b['k'] == 'grandstand')} grandstands, "
-          f"{sum(1 for b in out_b if 'est' not in b)} with measured heights)")
-
-    # ---- bridges (decks over roads, the circuit, water) ----
-    out_br = []
-    for wid, (tags, refs) in ways.items():
-        if tags.get("bridge") in (None, "no") or not (tags.get("highway") or tags.get("railway")):
-            continue
-        p = way_xy(refs, xy)
-        if not in_area(p):
-            continue
-        hw = tags.get("highway")
-        w = parse_m(tags.get("width")) or (PATHS.get(hw, 0) + 1.2 if hw in PATHS else ROAD_W.get(hw, 6.0))
-        h = 6.0
-        if lidar is not None:
-            i, j = lidar.ij(p)
-            mid = lidar.chm[i[1:-1], j[1:-1]] if len(p) > 2 else lidar.chm[i, j]
-            if len(mid) and np.median(mid) > 2.5:
-                h = float(np.clip(np.max(mid), 4.5, 12.0))
-        # only bridges that cross something drivable or near the circuit matter
-        if clear.at(p).min() > 300:
-            continue
-        out_br.append({"w": round(w, 1), "h": round(h, 1), "p": np.round(p, 2).tolist(),
-                       "kind": "foot" if hw in PATHS else "road"})
-        ground.line(p, w, C["asphalt"])
-    print(f"   {len(out_br)} bridges")
-
-    # ---- trees ----
-    trees = []
-    keep_out = runoff + 4.0
-    woods = [(tags, way_xy(o[0], xy)) for tags, o, _ in areas(ways, rels)
-             if (tags.get("landuse") == "forest" or tags.get("natural") == "wood") and o]
-    woods = [(t, p) for t, p in woods if p is not None and len(p) >= 4]
-    rng = np.random.default_rng(zlib.crc32(tid.encode()))
-    if lidar is not None:
-        from scipy import ndimage
-        chm = ndimage.gaussian_filter(lidar.chm, 1.2)
-        peak = (chm == ndimage.maximum_filter(chm, size=5)) & (chm > 2.6)
-        # no trees on roofs
-        bm = Image.new("L", (chm.shape[1], chm.shape[0]), 0)
-        bd = ImageDraw.Draw(bm)
-        for p in mask_pts:
-            bd.polygon([tuple(v) for v in (p - lidar.o).tolist()], fill=255)
-        bm = np.array(bm) > 0
-        bm = ndimage.binary_dilation(bm, iterations=3)
-        peak &= ~bm
-        ii, jj = np.nonzero(peak)
-        pts = np.stack([jj + 0.5, ii + 0.5], -1) + lidar.o
-        hs = chm[ii, jj]
-        ok = clear.at(pts) > keep_out
-        pts, hs = pts[ok], hs[ok]
-        conifer_w = [p for t, p in woods if t.get("leaf_type") == "needleleaved"]
-        con = np.zeros(len(pts), bool)
-        for p in conifer_w:
-            con |= inside(p, pts)
-        for q, h, c in zip(pts, hs, con):
-            kind = 2 if h < 4.5 else (1 if c else 0)
-            trees.append([round(float(q[0]), 1), round(float(q[1]), 1), round(float(h), 1), kind])
-        # Deep inside big woods the ground estimate rides on the canopy, so
-        # the surface model shows no trees there: fill the gaps.
-        occ = set((int(t[0] // 5), int(t[1] // 5)) for t in trees)
-        filled = 0
-        for tags, p in woods:
+    if not land_only:
+        # ---- buildings and grandstands ----
+        out_b = []
+        mask_pts = []
+        for tags, p in buildings_fp:
+            b = tags.get("building") or tags.get("building:part")
+            if b == "bridge":
+                continue
             if not in_area(p):
                 continue
-            lo2, hi2 = p.min(0), p.max(0)
-            gx, gy = np.meshgrid(np.arange(lo2[0], hi2[0], 6.5), np.arange(lo2[1], hi2[1], 6.5))
-            cand = np.stack([gx.ravel(), gy.ravel()], -1) + rng.uniform(-2.2, 2.2, (gx.size, 2))
-            cand = cand[inside(p, cand)]
-            cand = cand[clear.at(cand) > keep_out]
-            for q in cand:
-                c = (int(q[0] // 5), int(q[1] // 5))
-                if any((c[0] + a, c[1] + b) in occ for a in (-1, 0, 1) for b in (-1, 0, 1)):
-                    continue
-                occ.add(c)
-                kind = 1 if tags.get("leaf_type") == "needleleaved" else 0
-                trees.append([round(float(q[0]), 1), round(float(q[1]), 1), round(float(rng.uniform(12, 20)), 1), kind])
-                filled += 1
-        print(f"   {filled} trees filled in deep woods")
-    else:
-        for tags, p in woods:
-            if not in_area(p):
+            p = p[:-1] if np.allclose(p[0], p[-1]) else p
+            p = simplify(np.vstack([p, p[:1]]), 0.4)[:-1]
+            if len(p) < 3 or poly_area(p) < 6.0:
                 continue
-            lo2, hi2 = p.min(0), p.max(0)
-            # an even, jittered canopy: dense near the circuit, bigger trees
-            # further spaced out far away (keeps the tree count sane on
-            # tracks surrounded by forest, e.g. Spa or Hockenheim)
-            kind = 1 if tags.get("leaf_type") == "needleleaved" else 0
-            for spacing, near in ((7.5, True), (12.0, False)):
-                gx, gy = np.meshgrid(np.arange(lo2[0], hi2[0], spacing), np.arange(lo2[1], hi2[1], spacing))
-                cand = np.stack([gx.ravel(), gy.ravel()], -1)
-                if len(cand) == 0:
-                    continue
-                cand = cand + rng.uniform(-spacing * 0.35, spacing * 0.35, cand.shape)
-                cl = clear.at(cand)
-                cand, cl = cand[cl > keep_out], cl[cl > keep_out]
-                cand = cand[(cl < 250.0) if near else (cl >= 250.0)]
-                if len(cand) == 0:
-                    continue
-                cand = cand[inside(p, cand)]
-                lo_h, hi_h = (9, 16) if near else (15, 22)
-                for q in cand:
-                    trees.append([round(float(q[0]), 1), round(float(q[1]), 1), round(float(rng.uniform(lo_h, hi_h)), 1), kind])
+            cl = clear.at(p)
+            if cl.min() < 2.0:      # it would stand on the road: OSM and the track disagree
+                continue
+            grand = b == "grandstand" or tags.get("leisure") == "bleachers" or tags.get("building") == "stadium"
+            kind = "grandstand" if grand else "house" if b in HOUSE else "shed" if b in SHED else \
+                "roof" if b in ("roof", "canopy") else "building"
+            h = parse_m(tags.get("height"))
+            if h is None and tags.get("building:levels"):
+                h = (parse_m(tags.get("building:levels")) or 1) * 3.2 + (2.0 if kind == "house" else 0.0)
+            src = "osm" if h is not None else "default"
+            if lidar is not None:
+                lh = lidar.height_in(p)
+                if lh is not None and lh > 1.8:
+                    h, src = lh, "lidar"
+            if h is None:
+                h = {"grandstand": 12.0, "house": 7.5, "shed": 3.0, "roof": 5.0}.get(kind, 7.0)
+            h = float(np.clip(h, 2.4, 45.0))
+            mask_pts.append(p)
+            # which edge faces the circuit (grandstand seats look that way)
+            front = int(np.argmin([clear.at(((p[k] + p[(k + 1) % len(p)]) * 0.5)[None])[0] for k in range(len(p))]))
+            rec = {"k": kind, "h": round(h, 1), "p": np.round(p, 2).tolist()}
+            if src != "lidar":
+                rec["est"] = 1
+            if tags.get("name"):
+                rec["name"] = tags["name"]
+            if kind == "grandstand":
+                rec["front"] = front
+            out_b.append(rec)
+        print(f"   {len(out_b)} buildings ({sum(1 for b in out_b if b['k'] == 'grandstand')} grandstands, "
+              f"{sum(1 for b in out_b if 'est' not in b)} with measured heights)")
+
+        # ---- bridges (decks over roads, the circuit, water) ----
+        out_br = []
         for wid, (tags, refs) in ways.items():
-            if tags.get("natural") == "tree_row" or tags.get("barrier") == "hedge":
-                p = way_xy(refs, xy)
+            if tags.get("bridge") in (None, "no") or not (tags.get("highway") or tags.get("railway")):
+                continue
+            p = way_xy(refs, xy)
+            if not in_area(p):
+                continue
+            hw = tags.get("highway")
+            w = parse_m(tags.get("width")) or (PATHS.get(hw, 0) + 1.2 if hw in PATHS else ROAD_W.get(hw, 6.0))
+            h = 6.0
+            if lidar is not None:
+                i, j = lidar.ij(p)
+                mid = lidar.chm[i[1:-1], j[1:-1]] if len(p) > 2 else lidar.chm[i, j]
+                if len(mid) and np.median(mid) > 2.5:
+                    h = float(np.clip(np.max(mid), 4.5, 12.0))
+            # only bridges that cross something drivable or near the circuit matter
+            if clear.at(p).min() > 300:
+                continue
+            out_br.append({"w": round(w, 1), "h": round(h, 1), "p": np.round(p, 2).tolist(),
+                           "kind": "foot" if hw in PATHS else "road"})
+            land.line(p, w, "asphalt", 18)
+        print(f"   {len(out_br)} bridges")
+
+        # ---- trees ----
+        trees = []
+        keep_out = runoff + 4.0
+        woods = [(tags, way_xy(o[0], xy)) for tags, o, _ in areas(ways, rels)
+                 if (tags.get("landuse") == "forest" or tags.get("natural") == "wood") and o]
+        woods = [(t, p) for t, p in woods if p is not None and len(p) >= 4]
+        rng = np.random.default_rng(zlib.crc32(tid.encode()))
+        if lidar is not None:
+            from scipy import ndimage
+            chm = ndimage.gaussian_filter(lidar.chm, 1.2)
+            peak = (chm == ndimage.maximum_filter(chm, size=5)) & (chm > 2.6)
+            # no trees on roofs
+            bm = Image.new("L", (chm.shape[1], chm.shape[0]), 0)
+            bd = ImageDraw.Draw(bm)
+            for p in mask_pts:
+                bd.polygon([tuple(v) for v in (p - lidar.o).tolist()], fill=255)
+            bm = np.array(bm) > 0
+            bm = ndimage.binary_dilation(bm, iterations=3)
+            peak &= ~bm
+            ii, jj = np.nonzero(peak)
+            pts = np.stack([jj + 0.5, ii + 0.5], -1) + lidar.o
+            hs = chm[ii, jj]
+            ok = clear.at(pts) > keep_out
+            pts, hs = pts[ok], hs[ok]
+            conifer_w = [p for t, p in woods if t.get("leaf_type") == "needleleaved"]
+            con = np.zeros(len(pts), bool)
+            for p in conifer_w:
+                con |= inside(p, pts)
+            for q, h, c in zip(pts, hs, con):
+                kind = 2 if h < 4.5 else (1 if c else 0)
+                trees.append([round(float(q[0]), 1), round(float(q[1]), 1), round(float(h), 1), kind])
+            # Deep inside big woods the ground estimate rides on the canopy, so
+            # the surface model shows no trees there: fill the gaps.
+            occ = set((int(t[0] // 5), int(t[1] // 5)) for t in trees)
+            filled = 0
+            for tags, p in woods:
                 if not in_area(p):
                     continue
-                step = 8.0 if tags.get("natural") == "tree_row" else 3.5
-                for a, b in zip(p[:-1], p[1:]):
-                    L = np.hypot(*(b - a))
-                    for k in range(int(L / step) + 1):
-                        q = a + (b - a) * (k * step / max(L, 1e-6))
-                        if clear.at(q[None])[0] > keep_out:
-                            if tags.get("natural") == "tree_row":
-                                trees.append([round(float(q[0]), 1), round(float(q[1]), 1), round(float(rng.uniform(8, 14)), 1), 0])
-                            else:
-                                trees.append([round(float(q[0]), 1), round(float(q[1]), 1), round(float(rng.uniform(2.2, 3.4)), 1), 2])
-        for nid, tags in tnodes.items():
-            if tags.get("natural") == "tree" and nid in xy:
-                q = xy[nid]
-                if clear.at(q[None])[0] > keep_out:
-                    trees.append([round(float(q[0]), 1), round(float(q[1]), 1), parse_m(tags.get("height")) or 11.0, 0])
-    print(f"   {len(trees)} trees and bushes")
+                lo2, hi2 = p.min(0), p.max(0)
+                gx, gy = np.meshgrid(np.arange(lo2[0], hi2[0], 6.5), np.arange(lo2[1], hi2[1], 6.5))
+                cand = np.stack([gx.ravel(), gy.ravel()], -1) + rng.uniform(-2.2, 2.2, (gx.size, 2))
+                cand = cand[inside(p, cand)]
+                cand = cand[clear.at(cand) > keep_out]
+                for q in cand:
+                    c = (int(q[0] // 5), int(q[1] // 5))
+                    if any((c[0] + a, c[1] + b) in occ for a in (-1, 0, 1) for b in (-1, 0, 1)):
+                        continue
+                    occ.add(c)
+                    kind = 1 if tags.get("leaf_type") == "needleleaved" else 0
+                    trees.append([round(float(q[0]), 1), round(float(q[1]), 1), round(float(rng.uniform(12, 20)), 1), kind])
+                    filled += 1
+            print(f"   {filled} trees filled in deep woods")
+        else:
+            for tags, p in woods:
+                if not in_area(p):
+                    continue
+                lo2, hi2 = p.min(0), p.max(0)
+                # an even, jittered canopy: dense near the circuit, bigger trees
+                # further spaced out far away (keeps the tree count sane on
+                # tracks surrounded by forest, e.g. Spa or Hockenheim)
+                kind = 1 if tags.get("leaf_type") == "needleleaved" else 0
+                for spacing, near in ((7.5, True), (12.0, False)):
+                    gx, gy = np.meshgrid(np.arange(lo2[0], hi2[0], spacing), np.arange(lo2[1], hi2[1], spacing))
+                    cand = np.stack([gx.ravel(), gy.ravel()], -1)
+                    if len(cand) == 0:
+                        continue
+                    cand = cand + rng.uniform(-spacing * 0.35, spacing * 0.35, cand.shape)
+                    cl = clear.at(cand)
+                    cand, cl = cand[cl > keep_out], cl[cl > keep_out]
+                    cand = cand[(cl < 250.0) if near else (cl >= 250.0)]
+                    if len(cand) == 0:
+                        continue
+                    cand = cand[inside(p, cand)]
+                    lo_h, hi_h = (9, 16) if near else (15, 22)
+                    for q in cand:
+                        trees.append([round(float(q[0]), 1), round(float(q[1]), 1), round(float(rng.uniform(lo_h, hi_h)), 1), kind])
+            for wid, (tags, refs) in ways.items():
+                if tags.get("natural") == "tree_row" or tags.get("barrier") == "hedge":
+                    p = way_xy(refs, xy)
+                    if not in_area(p):
+                        continue
+                    step = 8.0 if tags.get("natural") == "tree_row" else 3.5
+                    for a, b in zip(p[:-1], p[1:]):
+                        L = np.hypot(*(b - a))
+                        for k in range(int(L / step) + 1):
+                            q = a + (b - a) * (k * step / max(L, 1e-6))
+                            if clear.at(q[None])[0] > keep_out:
+                                if tags.get("natural") == "tree_row":
+                                    trees.append([round(float(q[0]), 1), round(float(q[1]), 1), round(float(rng.uniform(8, 14)), 1), 0])
+                                else:
+                                    trees.append([round(float(q[0]), 1), round(float(q[1]), 1), round(float(rng.uniform(2.2, 3.4)), 1), 2])
+            for nid, tags in tnodes.items():
+                if tags.get("natural") == "tree" and nid in xy:
+                    q = xy[nid]
+                    if clear.at(q[None])[0] > keep_out:
+                        trees.append([round(float(q[0]), 1), round(float(q[1]), 1), parse_m(tags.get("height")) or 11.0, 0])
+        print(f"   {len(trees)} trees and bushes")
+    else:
+        # keep the buildings, bridges and trees already built (LIDAR included)
+        out_b, out_br, trees = old["buildings"], old["bridges"], old["trees"]
+        for br in out_br:
+            land.line(np.array(br["p"]), br["w"], "asphalt", 18)
+        if any("LIDAR" in x for x in old.get("sources", [])):
+            lidar = True
 
-    data = ground.webp()
+    # The circuit, its kerbs and run-off (and the pit lane) are the game's own:
+    # keep that band clear, so no map gravel or tarmac shows beside them.
+    # Gravel traps and the circuit's own outline mapped near it are left out
+    # altogether (the game draws its own gravel; the map's sits a few metres
+    # off and would read as a stray line of gravel round the track).
+    import shapely
+    band = shapely.union_all(circuit_band(track, track.get("runoff_m", 30.0) + 3.0))
+    near = shapely.union_all(circuit_band(track, track.get("runoff_m", 30.0) + 40.0))
+    land.items = [it for it in land.items
+                  if not (it[2] in (KIND["sand"], KIND["raceway"]) and it[4].intersects(near))]
+    land.erase(band, 100)
+
+    t0 = time.time()
+    ground = land.encode()
+    print(f"   land: {land.stats['full']} whole triangles, {land.stats['split']} split into "
+          f"{land.stats['pieces']} pieces; {land.stats['verts']} vertices, {land.stats['tris']} triangles "
+          f"({time.time() - t0:.0f} s)")
     out = {
-        "format": 1,
+        "format": 2,
         "track": tid,
         "sources": ["Map data © OpenStreetMap contributors (ODbL), openstreetmap.org/copyright"] +
                    (["Heights: Environment Agency LIDAR Composite DSM 1 m, © Environment Agency copyright and/or "
                      "database right, Open Government Licence v3.0"] if lidar is not None else []),
-        "ground": {"origin": np.round(origin, 2).tolist(), "size": np.round(size, 2).tolist(),
-                   "webp": base64.b64encode(data).decode()},
+        "land": ground,
         "buildings": out_b,
         "bridges": out_br,
         "trees_format": ["x", "y", "height_m", "kind (0 broadleaf, 1 conifer, 2 bush)"],
         "trees": trees,
     }
     os.makedirs(OUT, exist_ok=True)
-    dst = os.path.join(OUT, tid + ".json")
     with open(dst, "w") as f:
         json.dump(out, f, separators=(",", ":"))
-    print(f"   wrote {os.path.relpath(dst, ROOT)} ({os.path.getsize(dst) / 1e6:.1f} MB, ground map {len(data) / 1e6:.1f} MB)")
-    return ground
+    print(f"   wrote {os.path.relpath(dst, ROOT)} ({os.path.getsize(dst) / 1e6:.1f} MB)")
+    return land, ground
 
 
 def main():
@@ -776,14 +1019,16 @@ def main():
     ap.add_argument("tracks", nargs="*", help="track ids (default: every track in tools/scenery.json)")
     ap.add_argument("--cache", default=os.path.expanduser("~/.cache/tdr-tracks"))
     ap.add_argument("--no-lidar", action="store_true")
-    ap.add_argument("--preview", help="also save the ground map as a PNG here")
+    ap.add_argument("--land-only", action="store_true",
+                    help="rebuild only the land cover, keeping the buildings, bridges and trees already built")
+    ap.add_argument("--preview", help="also save the land cover as a PNG here (1 px per metre)")
     args = ap.parse_args()
     cfg = json.load(open(os.path.join(HERE, "scenery.json")))
     ids = args.tracks or list(cfg["tracks"])
     for tid in ids:
-        g = build(tid, cfg["tracks"].get(tid, {}), args.cache, not args.no_lidar)
+        land, ground = build(tid, cfg["tracks"].get(tid, {}), args.cache, not args.no_lidar, args.land_only)
         if args.preview:
-            g.img.resize((int(g.n[0]), int(g.n[1])), Image.LANCZOS).save(args.preview)
+            land.preview(args.preview if len(ids) == 1 else args.preview.replace(".png", f"_{tid}.png"), ground)
 
 
 if __name__ == "__main__":

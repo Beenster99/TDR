@@ -67,10 +67,13 @@ func setup(p_track: TrackData, p_env: SimEnvironment = null) -> void:
 	_build_road()
 	_build_walls()
 	_build_markings()
+	if not track.jumps.is_empty():
+		_build_jump_markings()
 	if track.has_pit_lane():
 		_build_pit_lane()
 	if track.has_joker():
 		_build_joker()
+		_build_joker_posts()
 
 
 ## The rallycross joker lane: a road the joker's width along its path (dirt
@@ -119,6 +122,61 @@ func _build_joker() -> void:
 				st.add_index(b + 1)
 		base += m * cols
 	_mesh_node(st, road_material, "Joker")
+
+
+## Orange and white marker posts along both edges of the joker lane, where it
+## has left the lap, so the joker reads from above at any zoom.
+const JOKER_POST_GAP_M := 5.0
+func _build_joker_posts() -> void:
+	var post := BoxMesh.new()
+	post.size = Vector3(0.7, 1.3, 0.7)
+	var m := StandardMaterial3D.new()
+	m.vertex_color_use_as_albedo = true
+	m.roughness = 0.6
+	post.material = m
+	var xs: Array[Transform3D] = []
+	var cs: Array[Color] = []
+	var path := track.joker_path
+	var off := track.joker_width * 0.5 + 0.9
+	var d := 0.0
+	var k := 0
+	while d <= track.joker_length:
+		var i := clampi(track.joker_cum.bsearch(d) - 1, 0, path.size() - 2)
+		var a := path[i]
+		var b := path[i + 1]
+		var span := maxf(track.joker_cum[i + 1] - track.joker_cum[i], 0.001)
+		var p := a.lerp(b, clampf((d - track.joker_cum[i]) / span, 0.0, 1.0))
+		var dir := (b - a).normalized()
+		var nrm := Vector2(-dir.y, dir.x)
+		for side in [-1.0, 1.0]:
+			var q: Vector2 = p + nrm * off * side
+			# Only beside the lane, not out on the lap where the two meet.
+			if clearance_lap(q) > 1.0:
+				xs.append(Transform3D(Basis(), Vector3(q.x, track.surface_height_at(q) + 0.65, q.y)))
+				cs.append(Color(1.0, 0.45, 0.05) if k % 2 == 0 else Color(0.95, 0.95, 0.92))
+		d += JOKER_POST_GAP_M
+		k += 1
+	if xs.is_empty():
+		return
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.use_colors = true
+	mm.mesh = post
+	mm.instance_count = xs.size()
+	for j in xs.size():
+		mm.set_instance_transform(j, xs[j])
+		mm.set_instance_color(j, cs[j])
+	var mmi := MultiMeshInstance3D.new()
+	mmi.name = "JokerPosts"
+	mmi.multimesh = mm
+	add_child(mmi)
+
+
+## How far q is outside the lap's road and kerbs (negative = on them).
+func clearance_lap(q: Vector2) -> float:
+	var t := track.project(q)
+	var o: float = t["offset"]
+	return absf(o) - ((t["w_right"] if o >= 0.0 else t["w_left"]) + track.kerb_width)
 
 
 ## Sun direction for the hillshade cue (WorldView keeps it in step with the sun).
@@ -190,6 +248,17 @@ func terrain_height(p: Vector2) -> float:
 
 ## Height of the grass mesh as drawn (its triangles, not the smooth
 ## hillside), so a car off the road can be kept on top of it.
+## The terrain grid as built: [origin, cell size m, points per side, lowest
+## and highest point]. Scenery lays its land cover on it.
+func terrain_grid() -> Array:
+	var lo := INF
+	var hi := -INF
+	for h in _terrain_h:
+		lo = minf(lo, h)
+		hi = maxf(hi, h)
+	return [_terrain_grid.position, _terrain_cell, _terrain_n, lo, hi]
+
+
 func terrain_mesh_height(p: Vector2, _hint := -1) -> float:
 	if _terrain_h.is_empty():
 		return -INF
@@ -368,6 +437,13 @@ func _build_terrain() -> void:
 	_terrain_grid = Rect2(bounds.position, Vector2(nx, ny) * cell)
 	_terrain_cell = cell
 	_terrain_n = Vector2i(nx + 1, ny + 1)
+	# the grid's heights for the shader: it lights the grass from them and
+	# lays Scenery's land cover (fields, roads, water...) on the same triangles
+	var img := Image.create_from_data(_terrain_n.x, _terrain_n.y, false, Image.FORMAT_RF, _terrain_h.to_byte_array())
+	terrain_material.set_shader_parameter("heights", ImageTexture.create_from_image(img))
+	terrain_material.set_shader_parameter("grid_origin", bounds.position)
+	terrain_material.set_shader_parameter("grid_cell", cell)
+	terrain_material.set_shader_parameter("grid_n", _terrain_n)
 	var mi := _mesh_node(st, terrain_material, "Terrain")
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if has_elevation() else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
@@ -442,6 +518,8 @@ func _build_road() -> void:
 	# asphalt
 	_ribbon(st, func(i): return [-track.width_left[i], track.width_right[i]], func(_i): return K_ASPHALT, 0.03, 6)
 	_mesh_node(st, road_material, "Asphalt")
+	# A derby arena's road (tarmac or dirt) runs right up to its walls.
+	var derby := track.discipline == "derby"
 	# kerbs on corners (both sides), raised a touch
 	for side in [-1.0, 1.0]:
 		var ks := SurfaceTool.new()
@@ -461,7 +539,7 @@ func _build_road() -> void:
 			var e := (track.width_right[i] if sd > 0 else track.width_left[i]) + _kerb_w(i, sd)
 			var w := _runoff_width(i, sd)
 			return [sd * e, sd * (e + w)] if sd > 0 else [sd * (e + w), sd * e],
-			func(i): return K_GRAVEL if _is_gravel(i, sd) else K_TARMAC, 0.02, 2)
+			func(i): return K_ASPHALT if derby else (K_GRAVEL if _is_gravel(i, sd) else K_TARMAC), 0.02, 2)
 		_mesh_node(rs, road_material, "Runoff")
 
 
@@ -469,6 +547,8 @@ func _build_road() -> void:
 ## (rallycross) or where the joker lane runs alongside.
 func _kerb_w(i: int, sd: float) -> float:
 	if absf(curvature[i]) <= 0.006 or track.dirt_at(track.cum_s[i]) >= 0.3:
+		return 0.0
+	if track.discipline == "derby":   # no kerbs in a derby arena (they'd cross the other road at the crossovers)
 		return 0.0
 	if track.has_joker():
 		var e := track.width_right[i] if sd > 0 else track.width_left[i]
@@ -494,6 +574,8 @@ func _is_gravel(i: int, side: float) -> bool:
 
 
 func _runoff_width(i: int, side: float) -> float:
+	if track.discipline == "derby":
+		return track.runoff + 0.3   # tuck under the wall
 	var ro := track.runoff_right if side > 0 else track.runoff_left
 	var w := minf(4.0, track.runoff * 0.3)
 	if ro.size() == track.point_count() and ro[i] != TrackData.Surface.GRASS:
@@ -578,6 +660,63 @@ func _in_pit_area(q: Vector2) -> bool:
 		return false
 	var pr := track.project_pit(q)
 	return pr.get("dist", INF) < track.pit_width * 0.5 + 6.0 if pr.has("dist") else false
+
+
+## The pit wall (TrackData.pit_wall): a concrete wall in blocks as thick as
+## the one cars hit, with a dark debris fence along its track side, so it
+## reads as solid from above.
+const PIT_WALL_H := 1.0
+const PIT_FENCE_H := 2.6
+
+func _build_pit_wall() -> void:
+	var pts := track.pit_wall
+	var half := TrackData.PIT_WALL_HALF
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var fence := Color(0.13, 0.15, 0.15)
+	var n := pts.size()
+	var ys := PackedFloat32Array()
+	for p in pts:
+		ys.append(maxf(terrain_height(p), surface_height(p)) - 0.05)
+	for j in n - 1:
+		var a := pts[j]
+		var b := pts[j + 1]
+		var d := b - a
+		if d.length() < 0.01:
+			continue
+		# side normal pointing at the track (away from the lane)
+		var nrm := d.orthogonal().normalized()
+		var lane := track.pit_position_at(track.project_pit(a)["d"])
+		if nrm.dot(lane - a) > 0.0:
+			nrm = -nrm
+		var ya := ys[j]
+		var yb := ys[j + 1]
+		var shade: float = 0.78 if (int(j * TrackData.PIT_WALL_STEP / 6.0) % 2 == 0) else 0.86
+		var top := Color(shade, shade, shade * 0.98)
+		var face := Color(shade * 0.82, shade * 0.82, shade * 0.81)
+		var t0 := a + nrm * half
+		var t1 := b + nrm * half
+		var l0 := a - nrm * half
+		var l1 := b - nrm * half
+		var h := PIT_WALL_H
+		_quad(st, Vector3(t0.x, ya, t0.y), Vector3(t1.x, yb, t1.y), Vector3(t1.x, yb + h, t1.y), Vector3(t0.x, ya + h, t0.y), face)
+		_quad(st, Vector3(l0.x, ya, l0.y), Vector3(l1.x, yb, l1.y), Vector3(l1.x, yb + h, l1.y), Vector3(l0.x, ya + h, l0.y), face)
+		_quad(st, Vector3(t0.x, ya + h, t0.y), Vector3(t1.x, yb + h, t1.y), Vector3(l1.x, yb + h, l1.y), Vector3(l0.x, ya + h, l0.y), top)
+		# the debris fence on top, along the track side
+		var f0 := a + nrm * (half - 0.08)
+		var f1 := b + nrm * (half - 0.08)
+		_quad(st, Vector3(f0.x, ya + h, f0.y), Vector3(f1.x, yb + h, f1.y), Vector3(f1.x, yb + PIT_FENCE_H, f1.y), Vector3(f0.x, ya + PIT_FENCE_H, f0.y), fence)
+	# closed ends
+	for e in [[0, 1], [n - 1, n - 2]]:
+		var p := pts[e[0]]
+		var nn := (pts[e[1]] - p).normalized().orthogonal() * half
+		var y := ys[e[0]]
+		_quad(st, Vector3(p.x - nn.x, y, p.y - nn.y), Vector3(p.x + nn.x, y, p.y + nn.y),
+			Vector3(p.x + nn.x, y + PIT_WALL_H, p.y + nn.y), Vector3(p.x - nn.x, y + PIT_WALL_H, p.y - nn.y), Color(0.66, 0.66, 0.65))
+	var mat := StandardMaterial3D.new()
+	mat.vertex_color_use_as_albedo = true
+	mat.roughness = 0.85
+	_mesh_node(st, mat, "PitWall", true)
 
 
 ## One run of barrier of a single type: concrete wall (grey blocks), armco
@@ -713,6 +852,78 @@ func _build_markings() -> void:
 	_mesh_node(st, mat, "Markings")
 
 
+## Demolition Derby ramps, painted so they read from above: yellow-and-black
+## chevrons up the take-off ramp pointing the way you jump, a hazard stripe
+## along the lip, and white chevrons down the landing.
+const JUMP_PAINT_LIFT := 0.05
+func _build_jump_markings() -> void:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var yellow := Color(0.98, 0.78, 0.08)
+	var black := Color(0.06, 0.06, 0.06)
+	var white := Color(0.93, 0.93, 0.9)
+	for j in track.jumps:
+		var lip := float(j["s"])
+		var up := float(j["up_m"])
+		var top := float(j["top_m"])
+		var down := float(j["down_m"])
+		var k := track.index_at(lip)
+		var wl: float = track.width_left[k] - 0.4
+		var wr: float = track.width_right[k] - 0.4
+		# Take-off ramp: black base with yellow chevrons.
+		_ramp_paint(st, lip - up, lip, -wl, wr, black)
+		var n := maxi(int(up / 2.2), 2)
+		for c in n:
+			var s0 := lip - up + (c + 0.25) * up / n
+			_chevron(st, s0, 0.9, minf(wl, wr) * 0.45, -wl, wr, yellow)
+		# The lip: yellow and black hazard blocks across the road.
+		var blocks := int((wl + wr) / 1.2)
+		for b in blocks:
+			var o0 := -wl + b * (wl + wr) / blocks
+			var o1 := -wl + (b + 1) * (wl + wr) / blocks
+			_ramp_paint(st, lip - 0.15, lip + 0.75, o0, o1, yellow if b % 2 == 0 else black, 0.004)
+		# Landing ramp: white chevrons on the way down.
+		var m := maxi(int(down / 3.5), 2)
+		for c in m:
+			var s0 := lip + top + (c + 0.3) * down / m
+			_chevron(st, s0, 0.6, minf(wl, wr) * 0.45, -wl, wr, white)
+	var mat := StandardMaterial3D.new()
+	mat.vertex_color_use_as_albedo = true
+	mat.roughness = 0.7
+	_mesh_node(st, mat, "JumpMarkings")
+
+
+## A painted patch on the road surface from s0 to s1 and across from off0 to
+## off1, following the ramp's slope (cut into 1 m steps along the road).
+func _ramp_paint(st: SurfaceTool, s0: float, s1: float, off0: float, off1: float, col: Color, extra := 0.0) -> void:
+	var steps := maxi(int(ceil((s1 - s0) / 1.0)), 1)
+	for i in steps:
+		var a := s0 + (s1 - s0) * i / steps
+		var b := s0 + (s1 - s0) * (i + 1) / steps
+		_paint_tri(st, [[a, off0], [b, off0], [b, off1]], col, extra)
+		_paint_tri(st, [[a, off0], [b, off1], [a, off1]], col, extra)
+
+
+## One chevron (a V pointing the race direction): two bands from the road's
+## edges, band thick along the road, meeting at the centre reach metres ahead.
+func _chevron(st: SurfaceTool, s0: float, band: float, reach: float, off_l: float, off_r: float, col: Color) -> void:
+	for side in [off_l, off_r]:
+		var pts := [[s0, side], [s0 + band, side], [s0 + reach + band, 0.0], [s0 + reach, 0.0]]
+		_paint_tri(st, [pts[0], pts[1], pts[2]], col, 0.008)
+		_paint_tri(st, [pts[0], pts[2], pts[3]], col, 0.008)
+
+
+func _paint_tri(st: SurfaceTool, pts: Array, col: Color, extra: float) -> void:
+	var vs := []
+	for p in pts:
+		var at := track.position_at(float(p[0]), float(p[1]))
+		vs.append(Vector3(at.x, height(float(p[0]), float(p[1])) + JUMP_PAINT_LIFT + extra, at.y))
+	st.set_color(col)
+	st.set_normal(Vector3.UP)
+	for v in [vs[0], vs[1], vs[2], vs[0], vs[2], vs[1]]:
+		st.add_vertex(v)
+
+
 func _flat(st: SurfaceTool, a: Vector2, b: Vector2, c: Vector2, d: Vector2, y: float, col: Color) -> void:
 	st.set_color(col)
 	st.set_normal(Vector3.UP)
@@ -810,20 +1021,9 @@ func _build_pit_lane() -> void:
 				st.add_index(b)
 	_mesh_node(st, road_material, "PitLane")
 	# pit wall on the track side, speed-limit lines and the boxes
-	var wall: Array = []
-	var dd := track.pit_limit_start
-	while dd <= track.pit_limit_end:
-		var off := -track.pit_side * (w * 0.5 + 0.6)
-		wall.append([track.pit_position_at(dd, off), 0.0, 0.0, -1])
-		dd += 4.0
-	if wall.size() >= 2:
-		var ws := SurfaceTool.new()
-		ws.begin(Mesh.PRIMITIVE_TRIANGLES)
-		_wall(ws, wall)
-		var mat := StandardMaterial3D.new()
-		mat.vertex_color_use_as_albedo = true
-		mat.roughness = 0.85
-		_mesh_node(ws, mat, "PitWall", true)
+	# (TrackData.pit_wall: between the track's edge and the lane, solid)
+	if track.has_pit_wall():
+		_build_pit_wall()
 	var mk := SurfaceTool.new()
 	mk.begin(Mesh.PRIMITIVE_TRIANGLES)
 	for lim in [track.pit_limit_start, track.pit_limit_end]:
