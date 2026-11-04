@@ -3392,6 +3392,40 @@ func test_rebinding() -> void:
 	back.load("user://test_controls.cfg")
 	check(InputSetup.keys_of(back.get_value("prefs", "controls"), "accelerate") == [KEY_I], "bindings load back from the settings file")
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://test_controls.cfg"))
+	# Clearing: every binding of a control can go, on either device, and stays gone.
+	var c := InputSetup.with_binding({}, "handbrake", "keys", 0, null)
+	c = InputSetup.with_binding(c, "handbrake", "pad", 0, null)
+	check(InputSetup.keys_of(c, "handbrake").is_empty() and InputSetup.pads_of(c, "handbrake").is_empty(), "handbrake can be left with no binding at all")
+	c = InputSetup.with_binding(c, "zoom_in", "keys", 1, null)
+	check(InputSetup.keys_of(c, "zoom_in") == [KEY_E], "clearing key 2 of zoom in keeps key 1 (%s)" % str(InputSetup.keys_of(c, "zoom_in")))
+	var cfg2 := ConfigFile.new()
+	cfg2.set_value("prefs", "controls", c)
+	cfg2.save("user://test_controls_clear.cfg")
+	var back2 := ConfigFile.new()
+	back2.load("user://test_controls_clear.cfg")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://test_controls_clear.cfg"))
+	var loaded: Dictionary = back2.get_value("prefs", "controls")
+	check(InputSetup.keys_of(loaded, "handbrake").is_empty() and InputSetup.pads_of(loaded, "handbrake").is_empty(),
+		"a cleared binding is saved as cleared (the default doesn't come back)")
+	InputSetup.apply_bindings(loaded)
+	ev.physical_keycode = KEY_SPACE
+	check(InputMap.action_get_events("handbrake").is_empty() and not InputMap.event_is_action(ev, "handbrake"), "a cleared handbrake takes no input")
+	check(InputPrompt.key("handbrake") == InputPrompt.UNBOUND, "a prompt for a control with nothing bound says so")
+	check(InputSetup.cleared_message(loaded, "handbrake", "pad") == "Cleared. Handbrake has no controller binding now.", "clearing names the control")
+	var rc := InputEventMouseButton.new()
+	rc.button_index = MOUSE_BUTTON_RIGHT
+	rc.pressed = true
+	var del := InputEventKey.new()
+	del.keycode = KEY_DELETE
+	del.pressed = true
+	var px := InputEventJoypadButton.new()
+	px.button_index = JOY_BUTTON_X
+	px.pressed = true
+	var pa := InputEventJoypadButton.new()
+	pa.button_index = JOY_BUTTON_A
+	pa.pressed = true
+	check(InputSetup.is_clear_event(rc) and InputSetup.is_clear_event(del) and InputSetup.is_clear_event(px)
+		and not InputSetup.is_clear_event(pa), "right-click, Delete and pad X clear a binding; A doesn't")
 	InputSetup.register_actions()
 	ev.physical_keycode = KEY_W
 	check(InputMap.event_is_action(ev, "accelerate"), "defaults come back on a reset")
