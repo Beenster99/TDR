@@ -16,6 +16,8 @@ const MODEL_PATH := "res://modules/graphics/cars/%s.glb"
 const PAINT_SHADER := preload("res://modules/graphics/shaders/car_paint.gdshader")
 const PATTERNS := {"solid": 0, "stripes": 1, "split": 2, "sash": 3, "chevron": 4, "bmw": 5, "halves": 6}
 const SMALL_PARTS := ["mirror_l", "mirror_r", "interior", "diffuser"]
+## Parts that cast no shadow (with SMALL_PARTS, calipers and the numbers).
+const NO_SHADOW_PARTS := ["headlights", "taillights", "canards", "splitter", "splitter_up"]
 const DECAL_ATLAS := preload("res://modules/graphics/textures/decals.png")
 const DIGITS := preload("res://modules/graphics/textures/digits.png")
 ## Classes that race in sponsor stickers (road cars and the safety car stay clean).
@@ -306,6 +308,10 @@ func _style(n: Node) -> void:
 			gi.visibility_range_end = GfxSettings.car_detail_distance
 			gi.visibility_range_end_margin = 50.0
 			gi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+		# Bits too small (or too far inside the body) to throw a shadow you'd
+		# see from above: each would cost a draw in the shadow pass per car.
+		if base in SMALL_PARTS or base in NO_SHADOW_PARTS or base.ends_with("_caliper") or base.begins_with("number_"):
+			gi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	if not n is MeshInstance3D:
 		return
 	var mi := n as MeshInstance3D

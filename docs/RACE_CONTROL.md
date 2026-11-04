@@ -107,7 +107,26 @@ tag, its timing tower row turns orange, the race control box names it with
 how far ahead or behind it is, and an arrow on the screen edge points to it
 when it's out of view (`RaceControl.give_back_target(i)`; all of it clears
 the moment the place is given back). Passing a stopped, crawling or off-track car, a car in the
-pit lane, or (when waved by) as a lapped car is allowed. Pit-lane penalties
+pit lane, or (when waved by) as a lapped car is allowed.
+
+Only clear gains count (so the player isn't told to give places back for
+racing incidents):
+- A pass counts once the passer is more than `PASS_MARGIN_M` (6 m, over a car
+  length) ahead; side by side or nose to tail in a queue is not an overtake.
+- A car in trouble may always be passed: off the circuit, spun, stopped,
+  causing a yellow, or any of those in the last `TROUBLE_GRACE_S` (6 s), or
+  going under `SLOW_CAR_FRAC` (70 %) of the passer's speed
+  (`RaceControl.in_trouble(j)`).
+- A move started under green stands: if the passer was within `ALONGSIDE_M`
+  (8 m) of the car a moment before (a picture of the field taken every 0.5 s)
+  and both were racing under green, a yellow / VSC / SC that comes out
+  mid-move doesn't count it.
+- An order is dropped with no further action if the victim loses the place by
+  itself (goes off, spins, stops or pits) before it's given back.
+- Once given back, the victim counts as ahead again straight away, so the two
+  cars don't trade "overtakes" while they're still close.
+- Test: `TDR_ONLY=test_give_back_clear_gains`; probe:
+  `tests/give_back_probe.gd` (one car ignores yellows, prints every order). Pit-lane penalties
 from the fuel/pit stop rules use the same `RaceSim.add_penalty(car, s, reason)`.
 Penalties go in `RaceEntry.penalty_s` and are added to the race time in the
 classification (laps first, then time + penalties).
