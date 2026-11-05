@@ -1,0 +1,1198 @@
+{
+ "licence": "Apache-2.0",
+ "phrases": {
+  "and": {
+   "file": "and.ogg",
+   "s": 0.535
+  },
+  "box box box this lap": {
+   "file": "box_box_box_this_lap.ogg",
+   "s": 1.838
+  },
+  "car behind is closing defend": {
+   "file": "car_behind_is_closing_defend.ogg",
+   "s": 2.345
+  },
+  "driver change at this stop": {
+   "file": "driver_change_at_this_stop.ogg",
+   "s": 1.921
+  },
+  "eight": {
+   "file": "eight.ogg",
+   "s": 0.514
+  },
+  "eighteen": {
+   "file": "eighteen.ogg",
+   "s": 0.711
+  },
+  "eighty": {
+   "file": "eighty.ogg",
+   "s": 0.667
+  },
+  "eighty eight": {
+   "file": "eighty_eight.ogg",
+   "s": 0.873
+  },
+  "eighty five": {
+   "file": "eighty_five.ogg",
+   "s": 0.909
+  },
+  "eighty four": {
+   "file": "eighty_four.ogg",
+   "s": 0.903
+  },
+  "eighty nine": {
+   "file": "eighty_nine.ogg",
+   "s": 0.916
+  },
+  "eighty one": {
+   "file": "eighty_one.ogg",
+   "s": 0.91
+  },
+  "eighty seven": {
+   "file": "eighty_seven.ogg",
+   "s": 1.003
+  },
+  "eighty six": {
+   "file": "eighty_six.ogg",
+   "s": 0.884
+  },
+  "eighty three": {
+   "file": "eighty_three.ogg",
+   "s": 0.934
+  },
+  "eighty two": {
+   "file": "eighty_two.ogg",
+   "s": 0.934
+  },
+  "eleven": {
+   "file": "eleven.ogg",
+   "s": 0.711
+  },
+  "fifteen": {
+   "file": "fifteen.ogg",
+   "s": 0.764
+  },
+  "fifty": {
+   "file": "fifty.ogg",
+   "s": 0.742
+  },
+  "fifty eight": {
+   "file": "fifty_eight.ogg",
+   "s": 0.921
+  },
+  "fifty five": {
+   "file": "fifty_five.ogg",
+   "s": 1.055
+  },
+  "fifty four": {
+   "file": "fifty_four.ogg",
+   "s": 0.962
+  },
+  "fifty nine": {
+   "file": "fifty_nine.ogg",
+   "s": 0.978
+  },
+  "fifty one": {
+   "file": "fifty_one.ogg",
+   "s": 0.939
+  },
+  "fifty seven": {
+   "file": "fifty_seven.ogg",
+   "s": 1.08
+  },
+  "fifty six": {
+   "file": "fifty_six.ogg",
+   "s": 0.943
+  },
+  "fifty three": {
+   "file": "fifty_three.ogg",
+   "s": 0.996
+  },
+  "fifty two": {
+   "file": "fifty_two.ogg",
+   "s": 0.993
+  },
+  "five": {
+   "file": "five.ogg",
+   "s": 0.661
+  },
+  "forty": {
+   "file": "forty.ogg",
+   "s": 0.725
+  },
+  "forty eight": {
+   "file": "forty_eight.ogg",
+   "s": 0.918
+  },
+  "forty five": {
+   "file": "forty_five.ogg",
+   "s": 0.956
+  },
+  "forty four": {
+   "file": "forty_four.ogg",
+   "s": 0.987
+  },
+  "forty nine": {
+   "file": "forty_nine.ogg",
+   "s": 1.012
+  },
+  "forty one": {
+   "file": "forty_one.ogg",
+   "s": 0.977
+  },
+  "forty seven": {
+   "file": "forty_seven.ogg",
+   "s": 1.098
+  },
+  "forty six": {
+   "file": "forty_six.ogg",
+   "s": 0.933
+  },
+  "forty three": {
+   "file": "forty_three.ogg",
+   "s": 0.966
+  },
+  "forty two": {
+   "file": "forty_two.ogg",
+   "s": 1.042
+  },
+  "four": {
+   "file": "four.ogg",
+   "s": 0.586
+  },
+  "four new derby tyres": {
+   "file": "four_new_derby_tyres.ogg",
+   "s": 1.626
+  },
+  "four new full wets": {
+   "file": "four_new_full_wets.ogg",
+   "s": 1.427
+  },
+  "four new intermediates": {
+   "file": "four_new_intermediates.ogg",
+   "s": 1.532
+  },
+  "four new race slicks": {
+   "file": "four_new_race_slicks.ogg",
+   "s": 1.355
+  },
+  "four new rallycross tyres": {
+   "file": "four_new_rallycross_tyres.ogg",
+   "s": 1.921
+  },
+  "four new road semi slicks": {
+   "file": "four_new_road_semi_slicks.ogg",
+   "s": 1.757
+  },
+  "fourteen": {
+   "file": "fourteen.ogg",
+   "s": 0.771
+  },
+  "front downforce down": {
+   "file": "front_downforce_down.ogg",
+   "s": 1.556
+  },
+  "front downforce up": {
+   "file": "front_downforce_up.ogg",
+   "s": 1.46
+  },
+  "front left": {
+   "file": "front_left.ogg",
+   "s": 0.87
+  },
+  "front right": {
+   "file": "front_right.ogg",
+   "s": 0.875
+  },
+  "fuel to the end": {
+   "file": "fuel_to_the_end.ogg",
+   "s": 1.218
+  },
+  "litres of fuel": {
+   "file": "litres_of_fuel.ogg",
+   "s": 1.327
+  },
+  "manage the tyres they have to last": {
+   "file": "manage_the_tyres_they_have_to_last.ogg",
+   "s": 2.408
+  },
+  "new derby tyres": {
+   "file": "new_derby_tyres.ogg",
+   "s": 1.404
+  },
+  "new derby tyres front left": {
+   "file": "new_derby_tyres_front_left.ogg",
+   "s": 2.08
+  },
+  "new derby tyres front right": {
+   "file": "new_derby_tyres_front_right.ogg",
+   "s": 2.139
+  },
+  "new derby tyres fronts": {
+   "file": "new_derby_tyres_fronts.ogg",
+   "s": 1.88
+  },
+  "new derby tyres left side": {
+   "file": "new_derby_tyres_left_side.ogg",
+   "s": 2.091
+  },
+  "new derby tyres rear left": {
+   "file": "new_derby_tyres_rear_left.ogg",
+   "s": 2.025
+  },
+  "new derby tyres rear right": {
+   "file": "new_derby_tyres_rear_right.ogg",
+   "s": 2.038
+  },
+  "new derby tyres rears": {
+   "file": "new_derby_tyres_rears.ogg",
+   "s": 1.865
+  },
+  "new derby tyres right side": {
+   "file": "new_derby_tyres_right_side.ogg",
+   "s": 2.115
+  },
+  "new full wets": {
+   "file": "new_full_wets.ogg",
+   "s": 1.109
+  },
+  "new full wets front left": {
+   "file": "new_full_wets_front_left.ogg",
+   "s": 1.916
+  },
+  "new full wets front right": {
+   "file": "new_full_wets_front_right.ogg",
+   "s": 1.898
+  },
+  "new full wets fronts": {
+   "file": "new_full_wets_fronts.ogg",
+   "s": 1.606
+  },
+  "new full wets left side": {
+   "file": "new_full_wets_left_side.ogg",
+   "s": 1.841
+  },
+  "new full wets rear left": {
+   "file": "new_full_wets_rear_left.ogg",
+   "s": 1.788
+  },
+  "new full wets rear right": {
+   "file": "new_full_wets_rear_right.ogg",
+   "s": 1.788
+  },
+  "new full wets rears": {
+   "file": "new_full_wets_rears.ogg",
+   "s": 1.607
+  },
+  "new full wets right side": {
+   "file": "new_full_wets_right_side.ogg",
+   "s": 1.956
+  },
+  "new intermediates": {
+   "file": "new_intermediates.ogg",
+   "s": 1.157
+  },
+  "new intermediates front left": {
+   "file": "new_intermediates_front_left.ogg",
+   "s": 1.964
+  },
+  "new intermediates front right": {
+   "file": "new_intermediates_front_right.ogg",
+   "s": 1.975
+  },
+  "new intermediates fronts": {
+   "file": "new_intermediates_fronts.ogg",
+   "s": 1.672
+  },
+  "new intermediates left side": {
+   "file": "new_intermediates_left_side.ogg",
+   "s": 1.957
+  },
+  "new intermediates rear left": {
+   "file": "new_intermediates_rear_left.ogg",
+   "s": 1.932
+  },
+  "new intermediates rear right": {
+   "file": "new_intermediates_rear_right.ogg",
+   "s": 1.896
+  },
+  "new intermediates rears": {
+   "file": "new_intermediates_rears.ogg",
+   "s": 1.658
+  },
+  "new intermediates right side": {
+   "file": "new_intermediates_right_side.ogg",
+   "s": 1.955
+  },
+  "new race slicks": {
+   "file": "new_race_slicks.ogg",
+   "s": 1.104
+  },
+  "new race slicks front left": {
+   "file": "new_race_slicks_front_left.ogg",
+   "s": 1.817
+  },
+  "new race slicks front right": {
+   "file": "new_race_slicks_front_right.ogg",
+   "s": 1.785
+  },
+  "new race slicks fronts": {
+   "file": "new_race_slicks_fronts.ogg",
+   "s": 1.678
+  },
+  "new race slicks left side": {
+   "file": "new_race_slicks_left_side.ogg",
+   "s": 1.797
+  },
+  "new race slicks rear left": {
+   "file": "new_race_slicks_rear_left.ogg",
+   "s": 1.74
+  },
+  "new race slicks rear right": {
+   "file": "new_race_slicks_rear_right.ogg",
+   "s": 1.705
+  },
+  "new race slicks rears": {
+   "file": "new_race_slicks_rears.ogg",
+   "s": 1.56
+  },
+  "new race slicks right side": {
+   "file": "new_race_slicks_right_side.ogg",
+   "s": 1.922
+  },
+  "new rallycross tyres": {
+   "file": "new_rallycross_tyres.ogg",
+   "s": 1.631
+  },
+  "new rallycross tyres front left": {
+   "file": "new_rallycross_tyres_front_left.ogg",
+   "s": 2.351
+  },
+  "new rallycross tyres front right": {
+   "file": "new_rallycross_tyres_front_right.ogg",
+   "s": 2.308
+  },
+  "new rallycross tyres fronts": {
+   "file": "new_rallycross_tyres_fronts.ogg",
+   "s": 2.043
+  },
+  "new rallycross tyres left side": {
+   "file": "new_rallycross_tyres_left_side.ogg",
+   "s": 2.246
+  },
+  "new rallycross tyres rear left": {
+   "file": "new_rallycross_tyres_rear_left.ogg",
+   "s": 2.236
+  },
+  "new rallycross tyres rear right": {
+   "file": "new_rallycross_tyres_rear_right.ogg",
+   "s": 2.258
+  },
+  "new rallycross tyres rears": {
+   "file": "new_rallycross_tyres_rears.ogg",
+   "s": 2.138
+  },
+  "new rallycross tyres right side": {
+   "file": "new_rallycross_tyres_right_side.ogg",
+   "s": 2.29
+  },
+  "new road semi slicks": {
+   "file": "new_road_semi_slicks.ogg",
+   "s": 1.493
+  },
+  "new road semi slicks front left": {
+   "file": "new_road_semi_slicks_front_left.ogg",
+   "s": 2.264
+  },
+  "new road semi slicks front right": {
+   "file": "new_road_semi_slicks_front_right.ogg",
+   "s": 2.248
+  },
+  "new road semi slicks fronts": {
+   "file": "new_road_semi_slicks_fronts.ogg",
+   "s": 1.933
+  },
+  "new road semi slicks left side": {
+   "file": "new_road_semi_slicks_left_side.ogg",
+   "s": 2.209
+  },
+  "new road semi slicks rear left": {
+   "file": "new_road_semi_slicks_rear_left.ogg",
+   "s": 2.184
+  },
+  "new road semi slicks rear right": {
+   "file": "new_road_semi_slicks_rear_right.ogg",
+   "s": 2.112
+  },
+  "new road semi slicks rears": {
+   "file": "new_road_semi_slicks_rears.ogg",
+   "s": 1.98
+  },
+  "new road semi slicks right side": {
+   "file": "new_road_semi_slicks_right_side.ogg",
+   "s": 2.285
+  },
+  "nine": {
+   "file": "nine.ogg",
+   "s": 0.614
+  },
+  "nineteen": {
+   "file": "nineteen.ogg",
+   "s": 0.812
+  },
+  "ninety": {
+   "file": "ninety.ogg",
+   "s": 0.749
+  },
+  "ninety eight": {
+   "file": "ninety_eight.ogg",
+   "s": 0.981
+  },
+  "ninety five": {
+   "file": "ninety_five.ogg",
+   "s": 1.014
+  },
+  "ninety four": {
+   "file": "ninety_four.ogg",
+   "s": 0.98
+  },
+  "ninety nine": {
+   "file": "ninety_nine.ogg",
+   "s": 0.989
+  },
+  "ninety one": {
+   "file": "ninety_one.ogg",
+   "s": 0.957
+  },
+  "ninety seven": {
+   "file": "ninety_seven.ogg",
+   "s": 1.043
+  },
+  "ninety six": {
+   "file": "ninety_six.ogg",
+   "s": 0.964
+  },
+  "ninety three": {
+   "file": "ninety_three.ogg",
+   "s": 0.985
+  },
+  "ninety two": {
+   "file": "ninety_two.ogg",
+   "s": 0.989
+  },
+  "no fuel": {
+   "file": "no_fuel.ogg",
+   "s": 0.943
+  },
+  "no repairs we leave the damage": {
+   "file": "no_repairs_we_leave_the_damage.ogg",
+   "s": 2.147
+  },
+  "no tyres": {
+   "file": "no_tyres.ogg",
+   "s": 1.016
+  },
+  "one": {
+   "file": "one.ogg",
+   "s": 0.59
+  },
+  "one hundred": {
+   "file": "one_hundred.ogg",
+   "s": 0.903
+  },
+  "one hundred and eight": {
+   "file": "one_hundred_and_eight.ogg",
+   "s": 1.681
+  },
+  "one hundred and eighteen": {
+   "file": "one_hundred_and_eighteen.ogg",
+   "s": 1.79
+  },
+  "one hundred and eighty": {
+   "file": "one_hundred_and_eighty.ogg",
+   "s": 1.758
+  },
+  "one hundred and eighty eight": {
+   "file": "one_hundred_and_eighty_eight.ogg",
+   "s": 1.911
+  },
+  "one hundred and eighty five": {
+   "file": "one_hundred_and_eighty_five.ogg",
+   "s": 1.9
+  },
+  "one hundred and eighty four": {
+   "file": "one_hundred_and_eighty_four.ogg",
+   "s": 1.955
+  },
+  "one hundred and eighty nine": {
+   "file": "one_hundred_and_eighty_nine.ogg",
+   "s": 1.882
+  },
+  "one hundred and eighty one": {
+   "file": "one_hundred_and_eighty_one.ogg",
+   "s": 1.98
+  },
+  "one hundred and eighty seven": {
+   "file": "one_hundred_and_eighty_seven.ogg",
+   "s": 1.977
+  },
+  "one hundred and eighty six": {
+   "file": "one_hundred_and_eighty_six.ogg",
+   "s": 1.79
+  },
+  "one hundred and eighty three": {
+   "file": "one_hundred_and_eighty_three.ogg",
+   "s": 2.005
+  },
+  "one hundred and eighty two": {
+   "file": "one_hundred_and_eighty_two.ogg",
+   "s": 1.894
+  },
+  "one hundred and eleven": {
+   "file": "one_hundred_and_eleven.ogg",
+   "s": 1.782
+  },
+  "one hundred and fifteen": {
+   "file": "one_hundred_and_fifteen.ogg",
+   "s": 1.841
+  },
+  "one hundred and fifty": {
+   "file": "one_hundred_and_fifty.ogg",
+   "s": 1.789
+  },
+  "one hundred and fifty eight": {
+   "file": "one_hundred_and_fifty_eight.ogg",
+   "s": 1.963
+  },
+  "one hundred and fifty five": {
+   "file": "one_hundred_and_fifty_five.ogg",
+   "s": 2.103
+  },
+  "one hundred and fifty four": {
+   "file": "one_hundred_and_fifty_four.ogg",
+   "s": 2.031
+  },
+  "one hundred and fifty nine": {
+   "file": "one_hundred_and_fifty_nine.ogg",
+   "s": 2.013
+  },
+  "one hundred and fifty one": {
+   "file": "one_hundred_and_fifty_one.ogg",
+   "s": 2.135
+  },
+  "one hundred and fifty seven": {
+   "file": "one_hundred_and_fifty_seven.ogg",
+   "s": 2.006
+  },
+  "one hundred and fifty six": {
+   "file": "one_hundred_and_fifty_six.ogg",
+   "s": 1.969
+  },
+  "one hundred and fifty three": {
+   "file": "one_hundred_and_fifty_three.ogg",
+   "s": 2.026
+  },
+  "one hundred and fifty two": {
+   "file": "one_hundred_and_fifty_two.ogg",
+   "s": 2.025
+  },
+  "one hundred and five": {
+   "file": "one_hundred_and_five.ogg",
+   "s": 1.786
+  },
+  "one hundred and forty": {
+   "file": "one_hundred_and_forty.ogg",
+   "s": 1.853
+  },
+  "one hundred and forty eight": {
+   "file": "one_hundred_and_forty_eight.ogg",
+   "s": 1.959
+  },
+  "one hundred and forty five": {
+   "file": "one_hundred_and_forty_five.ogg",
+   "s": 2.103
+  },
+  "one hundred and forty four": {
+   "file": "one_hundred_and_forty_four.ogg",
+   "s": 2.026
+  },
+  "one hundred and forty nine": {
+   "file": "one_hundred_and_forty_nine.ogg",
+   "s": 2.005
+  },
+  "one hundred and forty one": {
+   "file": "one_hundred_and_forty_one.ogg",
+   "s": 2.101
+  },
+  "one hundred and forty seven": {
+   "file": "one_hundred_and_forty_seven.ogg",
+   "s": 2.087
+  },
+  "one hundred and forty six": {
+   "file": "one_hundred_and_forty_six.ogg",
+   "s": 1.962
+  },
+  "one hundred and forty three": {
+   "file": "one_hundred_and_forty_three.ogg",
+   "s": 2.028
+  },
+  "one hundred and forty two": {
+   "file": "one_hundred_and_forty_two.ogg",
+   "s": 1.996
+  },
+  "one hundred and four": {
+   "file": "one_hundred_and_four.ogg",
+   "s": 1.711
+  },
+  "one hundred and fourteen": {
+   "file": "one_hundred_and_fourteen.ogg",
+   "s": 1.839
+  },
+  "one hundred and nine": {
+   "file": "one_hundred_and_nine.ogg",
+   "s": 1.657
+  },
+  "one hundred and nineteen": {
+   "file": "one_hundred_and_nineteen.ogg",
+   "s": 1.755
+  },
+  "one hundred and ninety": {
+   "file": "one_hundred_and_ninety.ogg",
+   "s": 1.808
+  },
+  "one hundred and ninety eight": {
+   "file": "one_hundred_and_ninety_eight.ogg",
+   "s": 1.954
+  },
+  "one hundred and ninety five": {
+   "file": "one_hundred_and_ninety_five.ogg",
+   "s": 2.017
+  },
+  "one hundred and ninety four": {
+   "file": "one_hundred_and_ninety_four.ogg",
+   "s": 1.98
+  },
+  "one hundred and ninety nine": {
+   "file": "one_hundred_and_ninety_nine.ogg",
+   "s": 2.064
+  },
+  "one hundred and ninety one": {
+   "file": "one_hundred_and_ninety_one.ogg",
+   "s": 2.121
+  },
+  "one hundred and ninety seven": {
+   "file": "one_hundred_and_ninety_seven.ogg",
+   "s": 2.021
+  },
+  "one hundred and ninety six": {
+   "file": "one_hundred_and_ninety_six.ogg",
+   "s": 1.935
+  },
+  "one hundred and ninety three": {
+   "file": "one_hundred_and_ninety_three.ogg",
+   "s": 2.054
+  },
+  "one hundred and ninety two": {
+   "file": "one_hundred_and_ninety_two.ogg",
+   "s": 1.972
+  },
+  "one hundred and one": {
+   "file": "one_hundred_and_one.ogg",
+   "s": 1.621
+  },
+  "one hundred and seven": {
+   "file": "one_hundred_and_seven.ogg",
+   "s": 1.707
+  },
+  "one hundred and seventeen": {
+   "file": "one_hundred_and_seventeen.ogg",
+   "s": 1.928
+  },
+  "one hundred and seventy": {
+   "file": "one_hundred_and_seventy.ogg",
+   "s": 1.806
+  },
+  "one hundred and seventy eight": {
+   "file": "one_hundred_and_seventy_eight.ogg",
+   "s": 2.027
+  },
+  "one hundred and seventy five": {
+   "file": "one_hundred_and_seventy_five.ogg",
+   "s": 2.116
+  },
+  "one hundred and seventy four": {
+   "file": "one_hundred_and_seventy_four.ogg",
+   "s": 2.075
+  },
+  "one hundred and seventy nine": {
+   "file": "one_hundred_and_seventy_nine.ogg",
+   "s": 2.082
+  },
+  "one hundred and seventy one": {
+   "file": "one_hundred_and_seventy_one.ogg",
+   "s": 2.197
+  },
+  "one hundred and seventy seven": {
+   "file": "one_hundred_and_seventy_seven.ogg",
+   "s": 2.064
+  },
+  "one hundred and seventy six": {
+   "file": "one_hundred_and_seventy_six.ogg",
+   "s": 2.031
+  },
+  "one hundred and seventy three": {
+   "file": "one_hundred_and_seventy_three.ogg",
+   "s": 2.102
+  },
+  "one hundred and seventy two": {
+   "file": "one_hundred_and_seventy_two.ogg",
+   "s": 2.047
+  },
+  "one hundred and six": {
+   "file": "one_hundred_and_six.ogg",
+   "s": 1.592
+  },
+  "one hundred and sixteen": {
+   "file": "one_hundred_and_sixteen.ogg",
+   "s": 1.789
+  },
+  "one hundred and sixty": {
+   "file": "one_hundred_and_sixty.ogg",
+   "s": 1.801
+  },
+  "one hundred and sixty eight": {
+   "file": "one_hundred_and_sixty_eight.ogg",
+   "s": 1.93
+  },
+  "one hundred and sixty five": {
+   "file": "one_hundred_and_sixty_five.ogg",
+   "s": 2.079
+  },
+  "one hundred and sixty four": {
+   "file": "one_hundred_and_sixty_four.ogg",
+   "s": 2.033
+  },
+  "one hundred and sixty nine": {
+   "file": "one_hundred_and_sixty_nine.ogg",
+   "s": 2.017
+  },
+  "one hundred and sixty one": {
+   "file": "one_hundred_and_sixty_one.ogg",
+   "s": 2.06
+  },
+  "one hundred and sixty seven": {
+   "file": "one_hundred_and_sixty_seven.ogg",
+   "s": 2.071
+  },
+  "one hundred and sixty six": {
+   "file": "one_hundred_and_sixty_six.ogg",
+   "s": 1.96
+  },
+  "one hundred and sixty three": {
+   "file": "one_hundred_and_sixty_three.ogg",
+   "s": 2.031
+  },
+  "one hundred and sixty two": {
+   "file": "one_hundred_and_sixty_two.ogg",
+   "s": 2.027
+  },
+  "one hundred and ten": {
+   "file": "one_hundred_and_ten.ogg",
+   "s": 1.655
+  },
+  "one hundred and thirteen": {
+   "file": "one_hundred_and_thirteen.ogg",
+   "s": 1.818
+  },
+  "one hundred and thirty": {
+   "file": "one_hundred_and_thirty.ogg",
+   "s": 1.784
+  },
+  "one hundred and thirty eight": {
+   "file": "one_hundred_and_thirty_eight.ogg",
+   "s": 1.944
+  },
+  "one hundred and thirty five": {
+   "file": "one_hundred_and_thirty_five.ogg",
+   "s": 2.06
+  },
+  "one hundred and thirty four": {
+   "file": "one_hundred_and_thirty_four.ogg",
+   "s": 2.003
+  },
+  "one hundred and thirty nine": {
+   "file": "one_hundred_and_thirty_nine.ogg",
+   "s": 2.046
+  },
+  "one hundred and thirty one": {
+   "file": "one_hundred_and_thirty_one.ogg",
+   "s": 2.144
+  },
+  "one hundred and thirty seven": {
+   "file": "one_hundred_and_thirty_seven.ogg",
+   "s": 2.051
+  },
+  "one hundred and thirty six": {
+   "file": "one_hundred_and_thirty_six.ogg",
+   "s": 1.962
+  },
+  "one hundred and thirty three": {
+   "file": "one_hundred_and_thirty_three.ogg",
+   "s": 2.072
+  },
+  "one hundred and thirty two": {
+   "file": "one_hundred_and_thirty_two.ogg",
+   "s": 1.978
+  },
+  "one hundred and three": {
+   "file": "one_hundred_and_three.ogg",
+   "s": 1.708
+  },
+  "one hundred and twelve": {
+   "file": "one_hundred_and_twelve.ogg",
+   "s": 1.712
+  },
+  "one hundred and twenty": {
+   "file": "one_hundred_and_twenty.ogg",
+   "s": 1.896
+  },
+  "one hundred and twenty eight": {
+   "file": "one_hundred_and_twenty_eight.ogg",
+   "s": 1.938
+  },
+  "one hundred and twenty five": {
+   "file": "one_hundred_and_twenty_five.ogg",
+   "s": 2.016
+  },
+  "one hundred and twenty four": {
+   "file": "one_hundred_and_twenty_four.ogg",
+   "s": 1.98
+  },
+  "one hundred and twenty nine": {
+   "file": "one_hundred_and_twenty_nine.ogg",
+   "s": 1.93
+  },
+  "one hundred and twenty one": {
+   "file": "one_hundred_and_twenty_one.ogg",
+   "s": 1.927
+  },
+  "one hundred and twenty seven": {
+   "file": "one_hundred_and_twenty_seven.ogg",
+   "s": 2.004
+  },
+  "one hundred and twenty six": {
+   "file": "one_hundred_and_twenty_six.ogg",
+   "s": 1.874
+  },
+  "one hundred and twenty three": {
+   "file": "one_hundred_and_twenty_three.ogg",
+   "s": 2.029
+  },
+  "one hundred and twenty two": {
+   "file": "one_hundred_and_twenty_two.ogg",
+   "s": 1.954
+  },
+  "one hundred and two": {
+   "file": "one_hundred_and_two.ogg",
+   "s": 1.653
+  },
+  "plan for the next stop": {
+   "file": "plan_for_the_next_stop.ogg",
+   "s": 1.373
+  },
+  "point eight": {
+   "file": "point_eight.ogg",
+   "s": 0.831
+  },
+  "point five": {
+   "file": "point_five.ogg",
+   "s": 0.948
+  },
+  "point four": {
+   "file": "point_four.ogg",
+   "s": 0.851
+  },
+  "point nine": {
+   "file": "point_nine.ogg",
+   "s": 0.915
+  },
+  "point one": {
+   "file": "point_one.ogg",
+   "s": 0.858
+  },
+  "point seven": {
+   "file": "point_seven.ogg",
+   "s": 0.954
+  },
+  "point six": {
+   "file": "point_six.ogg",
+   "s": 0.863
+  },
+  "point three": {
+   "file": "point_three.ogg",
+   "s": 0.883
+  },
+  "point two": {
+   "file": "point_two.ogg",
+   "s": 0.876
+  },
+  "pressures": {
+   "file": "pressures.ogg",
+   "s": 0.779
+  },
+  "psi": {
+   "file": "psi.ogg",
+   "s": 0.624
+  },
+  "push now we need the pace": {
+   "file": "push_now_we_need_the_pace.ogg",
+   "s": 1.666
+  },
+  "rain is coming be ready for a tyre call": {
+   "file": "rain_is_coming_be_ready_for_a_tyre_call.ogg",
+   "s": 2.668
+  },
+  "rear downforce down": {
+   "file": "rear_downforce_down.ogg",
+   "s": 1.576
+  },
+  "rear downforce up": {
+   "file": "rear_downforce_up.ogg",
+   "s": 1.485
+  },
+  "rear left": {
+   "file": "rear_left.ogg",
+   "s": 0.889
+  },
+  "rear right": {
+   "file": "rear_right.ogg",
+   "s": 0.916
+  },
+  "save fuel lift and coast where you can": {
+   "file": "save_fuel_lift_and_coast_where_you_can.ogg",
+   "s": 2.624
+  },
+  "seven": {
+   "file": "seven.ogg",
+   "s": 0.688
+  },
+  "seventeen": {
+   "file": "seventeen.ogg",
+   "s": 0.903
+  },
+  "seventy": {
+   "file": "seventy.ogg",
+   "s": 0.804
+  },
+  "seventy eight": {
+   "file": "seventy_eight.ogg",
+   "s": 1.009
+  },
+  "seventy five": {
+   "file": "seventy_five.ogg",
+   "s": 1.098
+  },
+  "seventy four": {
+   "file": "seventy_four.ogg",
+   "s": 1.029
+  },
+  "seventy nine": {
+   "file": "seventy_nine.ogg",
+   "s": 1.058
+  },
+  "seventy one": {
+   "file": "seventy_one.ogg",
+   "s": 1.117
+  },
+  "seventy seven": {
+   "file": "seventy_seven.ogg",
+   "s": 1.127
+  },
+  "seventy six": {
+   "file": "seventy_six.ogg",
+   "s": 0.995
+  },
+  "seventy three": {
+   "file": "seventy_three.ogg",
+   "s": 1.074
+  },
+  "seventy two": {
+   "file": "seventy_two.ogg",
+   "s": 1.1
+  },
+  "six": {
+   "file": "six.ogg",
+   "s": 0.443
+  },
+  "sixteen": {
+   "file": "sixteen.ogg",
+   "s": 0.834
+  },
+  "sixty": {
+   "file": "sixty.ogg",
+   "s": 0.757
+  },
+  "sixty eight": {
+   "file": "sixty_eight.ogg",
+   "s": 0.906
+  },
+  "sixty five": {
+   "file": "sixty_five.ogg",
+   "s": 1.024
+  },
+  "sixty four": {
+   "file": "sixty_four.ogg",
+   "s": 1.018
+  },
+  "sixty nine": {
+   "file": "sixty_nine.ogg",
+   "s": 0.962
+  },
+  "sixty one": {
+   "file": "sixty_one.ogg",
+   "s": 0.977
+  },
+  "sixty seven": {
+   "file": "sixty_seven.ogg",
+   "s": 1.064
+  },
+  "sixty six": {
+   "file": "sixty_six.ogg",
+   "s": 0.988
+  },
+  "sixty three": {
+   "file": "sixty_three.ogg",
+   "s": 1.031
+  },
+  "sixty two": {
+   "file": "sixty_two.ogg",
+   "s": 0.973
+  },
+  "stay out stay out": {
+   "file": "stay_out_stay_out.ogg",
+   "s": 1.313
+  },
+  "ten": {
+   "file": "ten.ogg",
+   "s": 0.573
+  },
+  "thirteen": {
+   "file": "thirteen.ogg",
+   "s": 0.772
+  },
+  "thirty": {
+   "file": "thirty.ogg",
+   "s": 0.694
+  },
+  "thirty eight": {
+   "file": "thirty_eight.ogg",
+   "s": 0.869
+  },
+  "thirty five": {
+   "file": "thirty_five.ogg",
+   "s": 0.961
+  },
+  "thirty four": {
+   "file": "thirty_four.ogg",
+   "s": 0.96
+  },
+  "thirty nine": {
+   "file": "thirty_nine.ogg",
+   "s": 0.928
+  },
+  "thirty one": {
+   "file": "thirty_one.ogg",
+   "s": 0.943
+  },
+  "thirty seven": {
+   "file": "thirty_seven.ogg",
+   "s": 1.044
+  },
+  "thirty six": {
+   "file": "thirty_six.ogg",
+   "s": 0.915
+  },
+  "thirty three": {
+   "file": "thirty_three.ogg",
+   "s": 0.989
+  },
+  "thirty two": {
+   "file": "thirty_two.ogg",
+   "s": 0.924
+  },
+  "three": {
+   "file": "three.ogg",
+   "s": 0.592
+  },
+  "to": {
+   "file": "to.ogg",
+   "s": 0.485
+  },
+  "twelve": {
+   "file": "twelve.ogg",
+   "s": 0.682
+  },
+  "twenty": {
+   "file": "twenty.ogg",
+   "s": 0.726
+  },
+  "twenty eight": {
+   "file": "twenty_eight.ogg",
+   "s": 0.891
+  },
+  "twenty five": {
+   "file": "twenty_five.ogg",
+   "s": 0.942
+  },
+  "twenty four": {
+   "file": "twenty_four.ogg",
+   "s": 0.935
+  },
+  "twenty nine": {
+   "file": "twenty_nine.ogg",
+   "s": 0.901
+  },
+  "twenty one": {
+   "file": "twenty_one.ogg",
+   "s": 0.962
+  },
+  "twenty seven": {
+   "file": "twenty_seven.ogg",
+   "s": 0.974
+  },
+  "twenty six": {
+   "file": "twenty_six.ogg",
+   "s": 0.872
+  },
+  "twenty three": {
+   "file": "twenty_three.ogg",
+   "s": 0.939
+  },
+  "twenty two": {
+   "file": "twenty_two.ogg",
+   "s": 0.945
+  },
+  "two": {
+   "file": "two.ogg",
+   "s": 0.566
+  },
+  "two hundred": {
+   "file": "two_hundred.ogg",
+   "s": 0.873
+  },
+  "we fix the damage": {
+   "file": "we_fix_the_damage.ogg",
+   "s": 1.236
+  },
+  "you have the gap behind for a free stop": {
+   "file": "you_have_the_gap_behind_for_a_free_stop.ogg",
+   "s": 2.432
+  },
+  "zero": {
+   "file": "zero.ogg",
+   "s": 0.608
+  }
+ },
+ "voice": "Kokoro-82M bm_george"
+}
