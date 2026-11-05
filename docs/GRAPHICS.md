@@ -14,7 +14,19 @@ occlusion and glow. The camera always shows this full 3D scene at every zoom
   into a Camera3D looking down (narrow lens, slight tilt; see `GfxSettings`).
 - `TrackView` builds the circuit from `TrackData`: terrain, asphalt (rubbered
   racing line, edge lines, wet look), kerbs, tarmac and gravel run-off, walls,
-  tyre walls, start line, grid and the pit lane. When `TrackData` has
+  tyre walls, start line, grid and the pit lane.
+- **Road surface** (`shaders/road.gdshader`). The asphalt is layered like the
+  real thing: a 1 m close-up tile of stone aggregate in bitumen
+  (`textures/asphalt_detail.png`, made by `tools/build_asphalt.py`; tone,
+  normal and height in one RGBA image, imported lossless with mipmaps, no
+  alpha-border fix) sampled twice at different scales and angles so it never
+  repeats, and its relief catches the sun. Over it: paving strips with faint
+  joints, repair patches with sealed edges, crack-sealing lines, tyre
+  streaks running with the track, the rubbered line with two wheel tracks,
+  dusty grey off the line and marbles. Gravel uses the same tile three
+  times larger; the pit lane a finer one. In the wet, water fills the pores
+  first. Before/after shots: `tests/road_shot.tscn -- out.png <track> <s m |
+  -N = Nth sharpest corner> [zoom] [--wet] [--bench]`. When `TrackData` has
   elevation, the meshes follow it (`height_at`, `ground_height_at`, ...).
 - `Trackside` adds woods, grandstands with crowds, pit garages, the paddock
   and the start gantry. Placement comes from the track's shape and is the
