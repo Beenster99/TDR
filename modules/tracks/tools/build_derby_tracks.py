@@ -243,7 +243,7 @@ def build(spec):
         "barriers": {"source": "arena walls", "codes": {"W": "concrete wall", "T": "tyre wall", "G": "grass", "P": "paved run-off"},
                      "right": walls[0], "left": walls[1], "runoff_right": "P" * n, "runoff_left": "P" * n},
     }
-    # The road widens 20% on top of the drawn width, like every track (widen.py).
+    # The road widens 44% (20% twice) on top of the drawn width, like every track (widen.py).
     widen.widen_track(d)
     path = os.path.join(OUT, spec["id"] + ".json")
     with open(path, "w") as f:

@@ -44,10 +44,10 @@ Tracks are built, not hand-written, by `modules/tracks/tools/build_tracks.py`.
    that starts and ends on the track, and that an AI car laps it cleanly.
 4. Add the source to `modules/tracks/data/ATTRIBUTION.md` if it's a new one.
 
-Circuits are drawn 1.8 times their real width (`WIDTH_SCALE` in
-`tools/widen.py`: 1.5x, then 20% more on top): at the real width, seen from
-above, the road felt too narrow to keep a car on. Rallycross circuits and
-derby arenas are drawn 1.2 times their built width (`DISCIPLINE_SCALE`; the
+Circuits are drawn 2.16 times their real width (`WIDTH_SCALE` in
+`tools/widen.py`: 1.5x, then 20% more on top, twice): at the real width, seen
+from above, the road felt too narrow to keep a car on. Rallycross circuits and
+derby arenas are drawn 1.44 times their built width (`DISCIPLINE_SCALE`; the
 joker lane widens by the same). The centre line stays where it is, both edges
 move out, and the pit lane moves out with the edge beside it so the gap
 between track and lane stays the real one. Where two stretches of the road
