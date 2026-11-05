@@ -19,9 +19,9 @@ JSON
 "$GODOT" "${COMMON[@]}" -- --server --port "$PORT" --laps 1 --ai 2 --min-players 2 --quit-after-race ${SERVER_ARGS:-} >"$LOG/server.log" 2>&1 &
 S=$!
 sleep 2
-"$GODOT" "${COMMON[@]}" -- --join 127.0.0.1 --port "$PORT" --name Alice --car v8_mid_berlinetta --profile "$ALICE_PROFILE" --autodrive --ready --quit-after-race >"$LOG/alice.log" 2>&1 &
+"$GODOT" "${COMMON[@]}" -- --join 127.0.0.1 --port "$PORT" --name Alice --car v8_mid_berlinetta --profile "$ALICE_PROFILE" --autodrive --auto-resume 4 --ready --quit-after-race >"$LOG/alice.log" 2>&1 &
 A=$!
-"$GODOT" "${COMMON[@]}" -- --join 127.0.0.1 --port "$PORT" --name Bob --car flat6_rear_gt --autodrive --pause-at 5 --ready --quit-after-race >"$LOG/bob.log" 2>&1 &
+"$GODOT" "${COMMON[@]}" -- --join 127.0.0.1 --port "$PORT" --name Bob --car flat6_rear_gt --autodrive --pause-at 5 --auto-resume 2 --ready --quit-after-race >"$LOG/bob.log" 2>&1 &
 B=$!
 ( sleep "${TIMEOUT:-400}"; kill $S $A $B 2>/dev/null ) &
 W=$!
@@ -42,8 +42,18 @@ for f in alice bob; do grep -q "^\[net\] clock synced true .*, \([1-9][0-9]*\) o
 for f in alice bob; do grep -q "^\[race data\] saved" "$LOG/$f.log" || { echo "$f saved no race data"; ok=1; }; done
 # Alice's upgrades reached every machine through the lobby.
 for f in server bob; do grep -q "^\[setup\] Alice: .*engine.*visual" "$LOG/$f.log" || { echo "$f never got Alice's upgrades"; ok=1; }; done
-# Bob opens the pause menu (Esc) mid-race and leaves it open: online that
-# must not pause anyone (the race still finishes everywhere, checked above).
-grep -q "^\[pause\] Bob opened the menu at .* tree paused false" "$LOG/bob.log" || { echo "bob's pause menu paused the game"; ok=1; }
+# Bob presses Esc mid-race: the race pauses for everyone and everyone gets the
+# menu. Bob resumes after 2 s, Alice after 4 s; then a countdown and it goes
+# again everywhere (and still finishes, checked above). The race clock must
+# not have run on while paused.
+for f in server alice bob; do
+  grep -qE "^\[pause\] .*: paused at .*, waiting for (Alice, Bob|Bob, Alice)" "$LOG/$f.log" || { echo "$f wasn't paused with both players in the menu"; ok=1; }
+  grep -q "^\[pause\] .*: paused at .*, waiting for Alice$" "$LOG/$f.log" || { echo "$f didn't wait for Alice after Bob resumed"; ok=1; }
+  grep -q "^\[pause\] .*: racing again" "$LOG/$f.log" || { echo "$f never raced again after the pause"; ok=1; }
+  p=$(grep -m1 "^\[pause\] .*: paused at" "$LOG/$f.log" | sed -E 's/.*paused at ([0-9.]+) s.*/\1/')
+  r=$(grep -m1 "^\[pause\] .*: racing again at" "$LOG/$f.log" | sed -E 's/.*racing again at ([0-9.]+) s.*/\1/')
+  awk -v p="${p:-0}" -v r="${r:-99}" 'BEGIN { exit !(r - p < 1.0) }' || { echo "$f: the race ran on while paused ($p -> $r)"; ok=1; }
+done
+grep -q "^\[pause\] Alice pressed Resume" "$LOG/alice.log" || { echo "alice never got the menu when Bob paused"; ok=1; }
 grep -q "Prize money" "$LOG/alice.log" || { echo "alice was paid no prize money"; ok=1; }
 [ $ok -eq 0 ] && echo "NET LOOPBACK PASS" || { echo "NET LOOPBACK FAIL (logs in $LOG)"; exit 1; }
