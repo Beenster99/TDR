@@ -56,10 +56,27 @@ Reads the race (built on the pit wall race data, `RaceTelemetry`):
   traffic, the gap behind needed for a free stop, mandatory stops left and
   the window, fuel against laps to go;
 - the next weather change with its ETA and confidence;
-- rivals (the watched car, the cars around, the leaders): tyres and their
-  age, stops, pace, and their latest strategy call;
+- **pace**: who is fastest on the last lap, over the last 3 laps and over
+  the last 5 laps (in our class in a multi-class race), with where we rank
+  and how far off we are; the next backmarkers up the road and how far;
+- **our rival**, the car we're really racing (`RaceTelemetry.rival_of`: in
+  our class and on our lap, the nearer of the cars just ahead and behind):
+  orange in the timing, ringed in orange on the 3D view, first in the
+  rivals list. Backmarkers (a lap or more down on us) carry a blue "+1L"
+  tag in the timing, and the next ones up the road get blue rings;
+- rivals (our rival, the watched car, the cars around, the leaders): tyres
+  and their age, stops, pace, and their latest strategy call;
 - **Full pit wall** (or P) opens the full-screen strategist screen with the
-  weather radar and every car's sector times.
+  weather radar and every car's sector times. Its timing panel has a PACE
+  view (click the tab or press Tab): one table of every car with its last
+  lap, last 3 and last 5 laps (each with its rank and the gap to us), best
+  lap and race gap. Click a heading to sort on it, again to turn it round.
+  Our rival and the backmarkers are marked. Any car can be made the rival there with **MARK AS
+  RIVAL** on the selected car panel (and back to the worked-out one with
+  **AUTO RIVAL**).
+- **The rejoin band** (green / amber / red on the track where a stop now
+  would come out) is drawn only for the strategist (and the combined pit
+  wall role), never on the driver's screen.
 - **Onboard camera**: a live picture-in-picture window, top right of the 3D
   view, from any car's front camera (on the roof, looking ahead) or rear
   camera (looking back over the wing). Pick the car on the *Onboard camera*
@@ -85,6 +102,31 @@ A swap that involves the driver waits for the next pit stop (the console
 shows it's waiting; press A again to cancel). After a swap the screen
 changes over by itself: the new driver gets the HUD and the controls, the
 old driver the console.
+
+### Moving the panels
+
+Every panel on the console (timing, the pit crew / strategy panel, team
+radio and the onboard camera picture) and on the full pit wall (timing,
+weather radar, selected car, feed, onboard picture) can be moved, zoomed and
+resized with the mouse:
+
+- drag a panel's title bar (the strip along its top, marked with six dots)
+  to move it; drag the onboard picture from anywhere on it;
+- drag the grip in a panel's bottom right corner to zoom it: the whole
+  panel, text included, gets bigger (up to 200 %) or smaller (down to 60 %),
+  so the data is easier to read; the size shows while you drag;
+- drag a panel's right or bottom edge to make it wider or taller without
+  changing the text size (every panel has a smallest size that still fits
+  its contents);
+- the onboard picture resizes from its corner and stays 16:9;
+- panels snap to the screen edges and line up next to each other;
+- a click on a title bar that doesn't move still clicks what's there.
+
+On the console the 3D race frames itself in the biggest space the panels
+leave free. The layout is saved (`GameData.prefs["pit_wall_layout"]`, one
+for the console and one for the full pit wall) and comes back next race.
+**Reset layout** in the header puts everything back. Code: `PanelLayout`
+(ui); check: `tests/pit_wall_layout_check.tscn`.
 
 ## Controls (console)
 

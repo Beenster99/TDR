@@ -21,6 +21,16 @@ Command line: `--fuel 2 --tyre-wear 2 --pit-stops 1 --drivers 2`.
 - **Tyre wear**: wear follows the sliding work on each tyre and grows quickly
   on a tyre run too hot (wets on a drying track). "Real" is about 3.5% a lap on
   slicks. A worn tyre loses up to a third of its grip, mostly near the end.
+  Every car, player or AI, wears by the same physics. Hard sliding (lock-ups,
+  wheelspin, spins, scrubbing through a corner too fast) still wears and heats
+  a tyre more, but past about 16 kW of slip power per tyre only part of the
+  extra counts (`CarPhysics.SLIDE_KNEE_KW`), and a tyre run too hot wears at
+  most 2.5x the normal rate (`WEAR_HOT_MAX`). Clean driving stays under the
+  knee, so the AI (which always has traction control and ABS) is barely
+  touched. Without these a few seconds of sliding could cook a tyre past
+  150 C and wear it out within a lap. On a clockwise track the front-left is
+  the outside front through most corners, so it wears fastest (front-right
+  on an anticlockwise one). Probe: `tests/wear_probe.gd`.
 - **Mandatory stops** must be made inside the pit window. Automatic window:
   from about a fifth of the race in to a fifth before the end, never the last
   lap (the boxes are past the finish line). A stop counts in the lap the car

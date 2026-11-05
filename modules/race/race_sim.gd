@@ -62,6 +62,10 @@ var _incident_cooldown := PackedFloat64Array()
 ## Damage last seen per car [body total, punctures bitmask, engine failed,
 ## gearbox failed], to report what changed on cars simulated elsewhere.
 var _seen_damage: Array = []
+## Demolition Derby: seconds each car has sat still (see DERBY_STILL_OUT_S).
+var _derby_still: PackedFloat64Array = []
+const DERBY_STILL_SPEED := 1.0
+const DERBY_STILL_OUT_S := 15.0
 ## Events posted from outside the sim between steps (AI radio calls and
 ## strategy lines, later pit-wall commands). They join `events` at the start
 ## of the next step, so they are replicated like every other event.
@@ -106,6 +110,7 @@ func _init(p_settings: RaceSettings, p_track: TrackData, p_entries: Array[RaceEn
 		external.append(0)
 		_incident_cooldown.append(0.0)
 		_seen_damage.append([0.0, 0, false, false])
+		_derby_still.append(0.0)
 		if e.pit.is_empty():
 			e.pit = PitRules.new_state(compound.id)
 	pits = PitRules.new(self)
@@ -246,8 +251,11 @@ func step(inputs: Array) -> void:
 			if external[i] or race_control.out_of_play(i):
 				continue
 			var inp: CarInput = inputs[i] if i < inputs.size() and inputs[i] != null else CarInput.neutral()
+			if entries[i].dnf and entries[i].is_ai and not entries[i].finished and not settings.is_derby() and not settings.is_rallycross():
+				inp = race_control.parked_input(i, inp)  # retired: parked for the recovery vehicle
 			CarPhysics.step(cars[i], inp, defs[i], compounds[i], env, track, sub_dt, fuel_rate, events, i, wear_rate, wheel_compounds[i])
 		_resolve_collisions()
+		_resolve_pit_wall()
 	_apply_damage()
 
 	if follower:
@@ -287,7 +295,12 @@ func _refresh_track_position(c: CarState) -> void:
 	c.surface = track.surface_for(q)
 	c.in_joker = track.has_joker() and track.on_joker_route(c.pos, q, c.in_joker)
 	if c.in_joker:
-		c.track_s = track.joker_lap_s(track.project_joker(c.pos)["d"])
+		var jd: float = track.project_joker(c.pos)["d"]
+		c.track_s = track.joker_lap_s(jd)
+		c.dirt = track.joker_dirt_at(jd)
+	else:
+		# Loose dirt under a streamed car too (its tyre sounds and dust).
+		c.dirt = track.dirt_at(q["s"]) if c.surface <= TrackData.Surface.KERB else 0.0
 
 
 func _hold_cars_on_grid(inputs: Array) -> void:
@@ -486,8 +499,22 @@ const BODY_CORNER_R := 0.35
 
 func _resolve_collisions() -> void:
 	var n := cars.size()
+	# Cheap first look: two cars further apart than their reaches (half the
+	# length plus the body offset each, as in _collide_pair) can't touch.
+	var pos := PackedVector2Array()
+	var reach := PackedFloat64Array()
+	pos.resize(n)
+	reach.resize(n)
 	for i in n:
+		pos[i] = cars[i].pos
+		reach[i] = defs[i].length * 0.5 + absf(defs[i].body_offset)
+	for i in n:
+		var pi := pos[i]
+		var ri := reach[i]
 		for j in range(i + 1, n):
+			var r := ri + reach[j]
+			if pi.distance_squared_to(pos[j]) > r * r:
+				continue
 			_collide_pair(i, j)
 
 
@@ -586,6 +613,49 @@ static func body_contact(pos_a: Vector2, heading_a: float, da: CarDefinition,
 			deepest = db_k
 			point = qb[k]
 	return {"normal": n2, "depth": float(sep["depth"]) + radius, "point": point}
+
+
+# --- The pit wall: solid, like the barriers -------------------------------------
+
+func _resolve_pit_wall() -> void:
+	if not track.has_pit_wall():
+		return
+	for i in cars.size():
+		if external[i] or race_control.out_of_play(i):
+			continue
+		var c := cars[i]
+		var hit := pit_wall_contact(c.pos, c.heading, defs[i], track)
+		if hit.is_empty():
+			continue
+		var nrm: Vector2 = hit["normal"]   # out of the wall, towards the car
+		c.pos += nrm * float(hit["depth"])
+		var vn := -c.vel.dot(nrm)
+		if vn > 0.0:
+			c.vel += nrm * vn * float(TrackData.BARRIER_REBOUND[TrackData.Barrier.WALL])
+			c.vel *= 0.85
+			c.yaw_rate *= 0.6
+			events.append({"type": "barrier_impact", "car": i, "speed": vn, "normal": -nrm,
+				"barrier": TrackData.Barrier.WALL, "pit_wall": true})
+
+
+## How far a car's body is into the pit wall: {normal (out of the wall,
+## towards the car), depth} or {} if it's clear. The body is the rounded box
+## used for car contact, tested at its corners and the middle of each side.
+static func pit_wall_contact(pos: Vector2, heading: float, d: CarDefinition, track: TrackData) -> Dictionary:
+	var r := minf(BODY_CORNER_R, d.width * 0.5)
+	# Every probe point is within half the car's diagonal (plus the body
+	# offset) of its centre: a car that far from the wall can't touch it.
+	var reach := Vector2(d.length, d.width).length() * 0.5 + absf(d.body_offset) + r + TrackData.PIT_WALL_HALF + 1.0
+	if not track.pit_wall_near(pos, reach):
+		return {}
+	var q := _core_box(pos, heading, d, r)
+	var best := {}
+	for k in 8:
+		var p: Vector2 = q[k / 2] if k % 2 == 0 else (q[k / 2] + q[(k / 2 + 1) % 4]) * 0.5
+		var hit := track.pit_wall_contact(p, r, pos)
+		if not hit.is_empty() and (best.is_empty() or float(hit["depth"]) > float(best["depth"])):
+			best = hit
+	return best
 
 
 ## The four corners of a car's footprint shrunk by the corner radius r.
@@ -707,9 +777,14 @@ func _apply_damage() -> void:
 		if eng and not e.dnf and not e.finished:
 			e.dnf = true
 			events.append({"type": "retired", "car": i, "reason": "engine"})
-		elif settings.is_derby() and CarDamage.is_wrecked(c) and not e.dnf and not e.finished:
-			e.dnf = true
-			events.append({"type": "retired", "car": i, "reason": "wrecked"})
+		elif settings.is_derby() and not e.dnf and not e.finished and phase == Phase.RACING:
+			# Demolition Derby: you drive the wreck until it won't drive any
+			# more. A car that can't (or won't) move for DERBY_STILL_OUT_S is out.
+			var moving := c.vel.length() > DERBY_STILL_SPEED or c.air_h > 0.0
+			_derby_still[i] = 0.0 if moving else _derby_still[i] + TICK_DT
+			if _derby_still[i] >= DERBY_STILL_OUT_S:
+				e.dnf = true
+				events.append({"type": "retired", "car": i, "reason": "stopped"})
 
 
 func _damage_hit(i: int, dv: float, local: Vector2, salt: int) -> void:

@@ -25,6 +25,7 @@ var pit_crews: PitCrews          ## null on a dedicated server or a track withou
 var cars: Array[CarView] = []
 var safety_car: CarView           ## made on first use
 var driving_line: DrivingLineView ## the driving line aid (add_driving_aids)
+var joker_line: DrivingLineView   ## rallycross: the line through the joker lane (add_joker_line)
 var brake_boards: BrakeBoards
 var rejoin_marker: RejoinMarker  ## where a pit stop rejoins (made on first use)
 var recovery: RecoveryVehicles   ## made on first use
@@ -77,18 +78,21 @@ func setup(p_track: TrackData, p_env: SimEnvironment = null) -> void:
 	_apply_conditions()
 
 
-## Driving aids from Settings > Gameplay: the driving line (show_line) with
-## braking colours (show_brake), plus the brake marker boards, which are
-## always there. line: DrivingLine for the player's car. Call once after setup.
-func add_driving_aids(line: DrivingLine, show_line: bool, show_brake: bool) -> void:
-	brake_boards = BrakeBoards.new()
-	brake_boards.name = "BrakeBoards"
-	add_child(brake_boards)
-	brake_boards.setup(line, track_view)
+## Driving aids from Settings > Gameplay: the driving line (line_mode:
+## DrivingLineView.LINE_FULL / LINE_CORNERS / LINE_OFF; true / false still
+## mean full / off) with braking colours (show_brake), plus the brake marker
+## boards, which are always there. line: DrivingLine for the player's car.
+## Call once after setup.
+func add_driving_aids(line: DrivingLine, line_mode, show_brake: bool) -> void:
+	if track.discipline != "derby":   # no braking boards in a demolition derby arena
+		brake_boards = BrakeBoards.new()
+		brake_boards.name = "BrakeBoards"
+		add_child(brake_boards)
+		brake_boards.setup(line, track_view)
 	driving_line = DrivingLineView.new()
 	driving_line.name = "DrivingLineAid"
 	add_child(driving_line)
-	driving_line.setup(line, track_view, show_line, show_brake)
+	driving_line.setup(line, track_view, line_mode, show_brake)
 
 
 ## The pit guide line, limit lines and box marks for the player's car
@@ -110,6 +114,20 @@ func update_pit_guide(progress: float, speed: float, stopping: bool, on_marks: b
 func update_driving_line(pos: Vector2, speed: float) -> void:
 	if driving_line:
 		driving_line.update(pos, speed)
+	if joker_line:
+		joker_line.update(pos, speed)
+
+
+## Rallycross: the driving line through the joker lane (DrivingLine.build_joker),
+## with the same settings as the lap's line. Replaces any earlier one.
+func add_joker_line(line: DrivingLine, line_mode, show_brake: bool) -> void:
+	if joker_line:
+		joker_line.queue_free()
+	joker_line = DrivingLineView.new()
+	joker_line.name = "JokerLineAid"
+	add_child(joker_line)
+	joker_line.setup(line, track_view, line_mode, show_brake)
+	joker_line.set_branch_only(true)
 
 
 ## The band on the circuit where our car would rejoin after a clean pit
@@ -169,6 +187,7 @@ func set_safety_car(p_visible: bool, pos: Vector2, p_heading: float, speed: floa
 		safety_car.ground_normal = track_view.surface_normal
 		add_child(safety_car)
 		safety_car.add_roof_text("SAFETY\nCAR")
+		safety_car.add_safety_beacons()
 	safety_car.visible = p_visible
 	if not p_visible:
 		return
@@ -317,6 +336,7 @@ func set_camera(centre: Vector2, zoom: float, rotation_rad := 0.0) -> void:
 		return
 	var vp := get_viewport().get_visible_rect().size
 	var view_h := vp.y / maxf(zoom, 1e-4)                  # metres top to bottom
+	camera.fov = GfxSettings.fov_deg   # set_camera_view may have zoomed the lens
 	var half_fov := deg_to_rad(GfxSettings.fov_deg) * 0.5
 	_cam_dist = view_h * 0.5 / tan(half_fov)
 	var ground_y := track_view.terrain_height(centre)
@@ -329,13 +349,42 @@ func set_camera(centre: Vector2, zoom: float, rotation_rad := 0.0) -> void:
 	camera.near = clampf(_cam_dist * 0.02, 0.5, 200.0)
 	camera.far = _cam_dist * 3.0 + 4000.0
 	if sun:
-		sun.directional_shadow_max_distance = clampf(_cam_dist * 2.2, 150.0, 12000.0)
+		# Seen from above, everything on screen is about the same distance
+		# from the camera, so cascades only drew the world into the shadow
+		# map several times over. One shadow map that just covers the view
+		# (the far edge of the screen is ~1.1x the camera distance away)
+		# draws it once, at full resolution.
+		sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
+		sun.directional_shadow_max_distance = clampf(_cam_dist * 1.35 + 40.0, 150.0, 12000.0)
 	if pit_crews:
 		pit_crews.set_camera(centre, _cam_dist)
 	var hk := _cam_dist / 60.0
 	for v in cars:
 		if v.highlight != CarView.Highlight.NONE:
 			v.set_highlight_zoom(hk)
+	if safety_car and safety_car.highlight != CarView.Highlight.NONE:
+		safety_car.set_highlight_zoom(hk * (1.4 if safety_car.highlight == CarView.Highlight.SAFETY else 1.0))
+
+
+## A camera anywhere in the world instead of the view from above: at `from`
+## (3D metres), looking at `target`, with a lens of `fov_deg` (vertical).
+## The spectator's trackside TV cameras use it. The next set_camera() goes
+## back to the view from above.
+func set_camera_view(from: Vector3, target: Vector3, fov_deg: float) -> void:
+	if camera == null:
+		return
+	camera.fov = clampf(fov_deg, 1.0, 120.0)
+	camera.look_at_from_position(from, target, Vector3.UP)
+	var dist := from.distance_to(target)
+	camera.near = 0.3
+	camera.far = 6000.0
+	_cam_dist = dist
+	if sun:
+		# looking across the ground: near things need sharper shadows than far ones
+		sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
+		sun.directional_shadow_max_distance = clampf(dist * 3.0, 150.0, 1500.0)
+	if pit_crews:
+		pit_crews.set_camera(Vector2(target.x, target.z), dist)
 
 
 func _process(_delta: float) -> void:

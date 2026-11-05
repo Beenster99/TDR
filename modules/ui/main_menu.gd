@@ -50,6 +50,7 @@ var weather_stepper: Stepper
 var weather_change_stepper: Stepper
 var grid_stepper: Stepper
 var difficulty_stepper: Stepper
+var mistakes_stepper: Stepper
 var fuel_stepper: Stepper
 var wear_stepper: Stepper
 var stops_stepper: Stepper
@@ -113,6 +114,12 @@ const SETUP_PAGES := ["single", "lobby", "season_new", "season_hub"]
 var lobby_season_label: Label
 var _settings_steppers: Array[Stepper] = []
 var help_label: Label
+## The main menu's list of controls, named by what the player has mapped, on
+## the keyboard or the controller (whichever they used last).
+const CONTROLS_HELP := "Drive: {accelerate} throttle, {brake} brake, %s steer  ·  {handbrake} handbrake\n" \
+	+ "Zoom (hold): %s%s, {zoom_full} whole track  ·  {camera_toggle} camera  ·  {restart_race} restart  ·  {back_to_menu} menu\n" \
+	+ "Pits: {pit_box} box this lap  ·  {pit_limiter} pit limiter  ·  {pit_tyres} next tyres  ·  {pit_fuel} next fuel\n" \
+	+ "Change any of them in Settings > Controller."
 # Seasons
 var season_name_edit: LineEdit
 var points_stepper: Stepper
@@ -152,6 +159,11 @@ func _ready() -> void:
 	Net.race_started.connect(_on_race_started)
 	Net.internet_status_changed.connect(_refresh_lobby)
 	if Net.is_online():
+		# Back from an online race as the host: the rebuilt menu shows the
+		# settings we raced with, not the defaults.
+		if Net.is_server() and not Net.dedicated and Net.season_info.is_empty():
+			_restore_race(MEMORY_HOST)
+			_push_settings()
 		_show("lobby")
 		_refresh_lobby()
 	elif GameData.season != null:
@@ -209,7 +221,8 @@ func _handle_cmdline() -> void:
 	if GameData.arg("drivers"):
 		drivers_stepper.set_value(int(GameData.arg("drivers")))
 	if GameData.arg("safety-car"):
-		safety_car_stepper.set_value(str(GameData.arg("safety-car")) != "off")
+		var sc := str(GameData.arg("safety-car"))
+		safety_car_stepper.set_value(sc if sc in [RaceSettings.RC_ON, RaceSettings.RC_YELLOWS, RaceSettings.RC_OFF] else RaceSettings.RC_ON)
 	if GameData.arg("damage"):
 		damage_stepper.set_value(str(GameData.arg("damage")))
 	if GameData.arg("upgrades"):
@@ -274,7 +287,8 @@ func _handle_cmdline() -> void:
 
 func _process(_dt: float) -> void:
 	# Dedicated server auto-starts once enough players are ready.
-	if Net.is_server() and Net.dedicated and not Net.in_race:
+	# A playing host started with --host --min-players N (tests) does the same.
+	if Net.is_server() and (Net.dedicated or (GameData.arg("host") and GameData.arg("min-players"))) and not Net.in_race:
 		if Net.players.size() >= int(GameData.arg("min-players", 1)) and Net.all_ready():
 			_ready_all_check()
 
@@ -402,11 +416,14 @@ func _build_ui() -> void:
 	# Main page
 	var main := _page(root, "main")
 	main.add_theme_constant_override("separation", 10)
-	for b in [["Single race", func(): _show("single")], ["Season / championship", func(): _show("season_list")],
+	for b in [["Single race", func(): _restore_race(MEMORY_SINGLE); _show("single")], ["Season / championship", func(): _show("season_list")],
 			["Garage", _open_garage], ["Host online race", _on_host], ["Join online race", func(): _show("join")],
 			["Settings", _open_settings],
-			["Quit", func(): GameData.save_prefs(); get_tree().quit()]]:
+			["Quit", func(): pass]]:
 		var btn := _button(main, b[0], b[1])
+		if b[0] == "Quit":
+			_quit_button = btn
+			btn.pressed.connect(_on_quit_pressed)
 		btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		btn.custom_minimum_size = Vector2(440, 54)
 		btn.size_flags_horizontal = SIZE_SHRINK_BEGIN
@@ -439,6 +456,8 @@ func _build_ui() -> void:
 	ai_stepper = Stepper.numeric("AI drivers", 0, RaceSettings.MAX_CARS_SINGLE_CLASS - 1, 1, 5)
 	difficulty_stepper = Stepper.choice("AI difficulty", [[0.25, "Rookie"], [0.5, "Amateur"], [0.75, "Pro"],
 		[0.9, "Expert"], [1.0, "Alien"]], 0.75)
+	mistakes_stepper = Stepper.choice("AI mistakes", [[0.0, "Never"], [0.5, "Rare"], [1.0, "Normal"],
+		[1.7, "Often"], [3.0, "Chaotic"]], 1.0)
 	tod_stepper = Stepper.numeric("Start time", 0, 23, 1, 14, ":00")
 	clock_stepper = Stepper.choice("Clock speed", [[1, "Real time"], [2, "2x"], [5, "5x"], [10, "10x"],
 		[30, "30x"], [60, "60x (1 min = 1 h)"], [0, "Frozen"]], 1)
@@ -455,7 +474,8 @@ func _build_ui() -> void:
 	stops_stepper = Stepper.numeric("Mandatory pit stops", 0, 3, 1, 0)
 	drivers_stepper = Stepper.choice("Drivers per car", [[1, "1 (no driver changes)"],
 		[2, "2 (AI co-driver at stops)"], [3, "3 (endurance line-ups)"]], 2)
-	safety_car_stepper = Stepper.choice("Safety car", [[true, "On (yellows, VSC, SC)"], [false, "Off (yellow flags only)"]], true)
+	safety_car_stepper = Stepper.choice("Safety car", [[RaceSettings.RC_ON, "On (yellows, VSC, SC)"],
+		[RaceSettings.RC_YELLOWS, "Yellow flags only"], [RaceSettings.RC_OFF, "Off (no flags or safety car)"]], RaceSettings.RC_ON)
 	damage_stepper = Stepper.choice("Damage", [["off", "Off"], ["visual", "Visual only"],
 		["full", "Full (affects the car)"]], "full")
 	tuning_stepper = Stepper.choice("Car setups", [[true, "Free (tune per track)"], [false, "Fixed (all on default)"]], true)
@@ -465,7 +485,7 @@ func _build_ui() -> void:
 		RaceSettings.UPGRADES_ON)
 	_circuit_only.append_array([fuel_stepper, wear_stepper, stops_stepper, drivers_stepper, safety_car_stepper])
 	_derby_hidden = [damage_stepper, upgrades_stepper, tuning_stepper]
-	_settings_steppers = [laps_stepper, ai_stepper, difficulty_stepper, tod_stepper, clock_stepper, weather_stepper,
+	_settings_steppers = [laps_stepper, ai_stepper, difficulty_stepper, mistakes_stepper, tod_stepper, clock_stepper, weather_stepper,
 		weather_change_stepper, grid_stepper, damage_stepper, safety_car_stepper, fuel_stepper, wear_stepper, stops_stepper,
 		drivers_stepper, upgrades_stepper, tuning_stepper]
 
@@ -505,7 +525,7 @@ func _build_ui() -> void:
 	lobby.add_child(players_card)
 	var pbox := _card_box(players_card)
 	lobby_title = Label.new()
-	lobby_title.add_theme_font_size_override("font_size", 22)
+	lobby_title.add_theme_font_size_override("font_size", 20)
 	lobby_title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	pbox.add_child(lobby_title)
 	lobby_ready_label = Label.new()
@@ -515,7 +535,7 @@ func _build_ui() -> void:
 	var list_scroll := ScrollContainer.new()
 	list_scroll.size_flags_vertical = SIZE_EXPAND_FILL
 	list_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	list_scroll.custom_minimum_size = Vector2(0, 200)
+	list_scroll.custom_minimum_size = Vector2(0, 120)
 	pbox.add_child(list_scroll)
 	var list_v := VBoxContainer.new()
 	list_v.size_flags_horizontal = SIZE_EXPAND_FILL
@@ -535,7 +555,7 @@ func _build_ui() -> void:
 	crew_box.add_child(crew_head)
 	join_info_label = Label.new()
 	join_info_label.modulate = Color(0.75, 0.9, 1)
-	join_info_label.add_theme_font_size_override("font_size", 14)
+	join_info_label.add_theme_font_size_override("font_size", 13)
 	join_info_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	pbox.add_child(join_info_label)
 	lobby_season_label = Label.new()
@@ -544,23 +564,24 @@ func _build_ui() -> void:
 	lobby_season_label.modulate = Color(1, 0.95, 0.75)
 	pbox.add_child(lobby_season_label)
 	lobby.set_meta("settings_box", _settings_holder)
-	var actions := GridContainer.new()
-	actions.columns = 2
-	actions.add_theme_constant_override("h_separation", 10)
-	actions.add_theme_constant_override("v_separation", 8)
+	# One row of buttons, so the drivers list gets the height.
+	var actions := HBoxContainer.new()
+	actions.add_theme_constant_override("separation", 10)
 	lobby.add_child(actions)
 	ready_button = _button(actions, "Ready", func(): Net.update_me({"ready": not _my_ready()}))
 	start_button = _button(actions, "Start race", _on_start_online)
 	for big in [ready_button, start_button]:
-		big.add_theme_font_size_override("font_size", 20)
+		big.add_theme_font_size_override("font_size", 19)
 	var gb := _button(actions, "Garage", _open_garage)
 	var lb := _button(actions, "Leave", _on_leave)
 	for btn in [ready_button, start_button, gb, lb]:
-		btn.custom_minimum_size = Vector2(0, 48)
+		btn.custom_minimum_size = Vector2(0, 46)
 		btn.size_flags_horizontal = SIZE_EXPAND_FILL
 
 	for s in _settings_steppers:
 		s.value_changed.connect(func(_v): _push_settings())
+	for s in _remembered_steppers().values():
+		s.value_changed.connect(func(_v): _remember_race())
 
 	status_label = Label.new()
 	status_label.modulate = Color(1, 0.75, 0.4)
@@ -568,7 +589,8 @@ func _build_ui() -> void:
 	head.add_child(status_label)
 	var help := Label.new()
 	help_label = help
-	help.text = "Drive: W/S/A/D or arrows  ·  Pad: RT throttle, LT brake, left stick steer\nZoom (hold): Q/E or mouse wheel, Z whole track  ·  Pad: LB/RB or right stick, R3 whole track  ·  C/Y camera  ·  R/Back restart  ·  Esc/Start menu\nPits: B or D-pad left box this lap  ·  L or L3 pit limiter  ·  T or pad B next tyres  ·  F next fuel\nThese are the defaults: change any of them in Settings > Controller."
+	InputPrompt.live(help, func(): help.text = InputPrompt.fill(CONTROLS_HELP % [InputPrompt.pair("steer_left", "steer_right"),
+		InputPrompt.pair("zoom_in", "zoom_out"), InputPrompt.pick(" or mouse wheel", "")]))
 	help.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	help.modulate = Color(1, 1, 1, 0.45)
 	help.add_theme_font_size_override("font_size", 13)
@@ -753,6 +775,13 @@ func _on_race_type_changed(push := true) -> void:
 	var topts := _track_options(dsc)
 	if topts.is_empty():
 		return
+	# Remembering: keep what the old race type had, then bring back what this
+	# one had last time (its track, car, laps ...), if it was raced before.
+	var recalled := {}
+	if _mem_slot != "" and not _mem_restoring:
+		_remember_race(_mem_type)
+		recalled = _race_memory().get(_mem_slot, {}).get(dsc, {})
+	_mem_type = dsc
 	track_stepper.options = topts
 	if not topts.any(func(o): return o[0] == track_stepper.value):
 		track_stepper.set_value(topts[0][0])
@@ -766,7 +795,7 @@ func _on_race_type_changed(push := true) -> void:
 		class_stepper.set_value(class_stepper.value)
 	car_filter_stepper.options = _filter_options(dsc)
 	car_filter_stepper.set_value("")
-	if push and not _building and (not Net.is_online() or Net.is_server()):
+	if recalled.is_empty() and push and not _building and (not Net.is_online() or Net.is_server()):
 		if dsc == RaceSettings.DISCIPLINE_RALLYCROSS:
 			laps_stepper.set_value(6)   # a World RX final: 6 laps, 6 cars
 			ai_stepper.set_value(5)
@@ -778,6 +807,11 @@ func _on_race_type_changed(push := true) -> void:
 	_rebuild_car_options()
 	_limit_grid()
 	_refresh_cards()
+	if not recalled.is_empty():
+		_apply_remembered(recalled)
+		_refresh_cards()
+	if _mem_slot != "" and not _mem_restoring:
+		_remember_race()
 	if push:
 		_push_settings()
 
@@ -799,6 +833,15 @@ func _page(parent: Node, id: String) -> VBoxContainer:
 	parent.add_child(v)
 	pages[id] = v
 	return v
+
+
+var _quit_button: Button
+
+
+## Main menu Quit closes the game straight away (no "are you sure?").
+func _on_quit_pressed() -> void:
+	GameData.save_prefs()
+	get_tree().quit()
 
 
 func _button(parent: Node, text: String, cb: Callable) -> Button:
@@ -839,6 +882,8 @@ func _show(id: String) -> void:
 	if id != "lobby":
 		race_type_stepper.disabled = false
 	help_label.visible = id == "main"
+	if not id in [MEMORY_SINGLE, "lobby"]:
+		_mem_slot = ""   # seasons and guests don't touch the remembered settings
 	if id == "season_hub":
 		_refresh_hub()
 	elif id == "season_list":
@@ -904,12 +949,16 @@ func _layout(id: String) -> void:
 	_move(_circuit_card, _cols[0])
 	_move(_car_card, _cols[1] if single else _cols[0])
 	_circuit_card.visible = id != "season_hub" or (GameData.season != null and not GameData.season.is_complete())
-	# Big pictures when each card has a column to itself, smaller stacked.
-	_track_map.custom_minimum_size = Vector2(0, 300 if single else 170)
+	# Big pictures when each card has a column to itself, smaller stacked
+	# (they still grow into any spare height). Stacked, the descriptions are
+	# cut to two lines so both cards fit one screen without scrolling.
+	_track_map.custom_minimum_size = Vector2(0, 300 if single else 120)
 	_track_map.show_profile = single
-	_car_preview.custom_minimum_size = Vector2(0, 260 if single else 120)
+	_car_preview.custom_minimum_size = Vector2(0, 260 if single else 90)
 	for l in [_track_desc, _car_desc]:
 		l.add_theme_font_size_override("font_size", 15 if single else 14)
+		l.max_lines_visible = -1 if single else 2
+		l.text_overrun_behavior = TextServer.OVERRUN_NO_TRIMMING if single else TextServer.OVERRUN_TRIM_ELLIPSIS
 	_circuit_card.size_flags_vertical = SIZE_EXPAND_FILL
 	_car_card.size_flags_vertical = SIZE_EXPAND_FILL
 	if single or lobby:
@@ -1054,6 +1103,7 @@ func _settings_from_ui() -> RaceSettings:
 	s.laps = int(laps_stepper.value)
 	s.ai_count = int(ai_stepper.value)
 	s.ai_difficulty = float(difficulty_stepper.value)
+	s.ai_mistakes = float(mistakes_stepper.value)
 	s.environment = {"time_of_day_h": float(tod_stepper.value), "time_scale": float(clock_stepper.value),
 		"weather": str(weather_stepper.value), "weather_changes": bool(weather_change_stepper.value)}
 	s.grid_order = str(grid_stepper.value)
@@ -1063,7 +1113,7 @@ func _settings_from_ui() -> RaceSettings:
 	s.tyre_wear_enabled = s.tyre_wear_rate > 0.0
 	s.mandatory_pit_stops = int(stops_stepper.value)
 	s.drivers_per_car = int(drivers_stepper.value)
-	s.safety_car_enabled = bool(safety_car_stepper.value)
+	s.set_race_control_mode(str(safety_car_stepper.value))
 	s.set_damage_level(str(damage_stepper.value))
 	s.upgrades_mode = str(upgrades_stepper.value)
 	s.tuning_enabled = bool(tuning_stepper.value)
@@ -1143,8 +1193,11 @@ func _on_single() -> void:
 
 func _on_host() -> void:
 	var port := int(GameData.arg("port", Net.DEFAULT_PORT))
+	if not GameData.arg("host"):   # test runs set their own settings
+		_restore_race(MEMORY_HOST)
 	var err := Net.host(port, name_edit.text)
 	if err != OK:
+		_mem_slot = ""
 		_status("Could not host on port %d (error %d)." % [port, err])
 		return
 	var fields := _my_lobby_fields(car_stepper.value)
@@ -1212,15 +1265,24 @@ func _refresh_crews() -> void:
 			rs.custom_minimum_size = Vector2(400, 40)
 			ts.value_changed.connect(func(v): _set_crew(id, {"team": int(v)}))
 			rs.value_changed.connect(func(v): _set_crew(id, {"role": str(v)}))
+			# Co-op pit stops: the crew job this player does in the tyre change.
+			var js := Stepper.choice("Pit stop job", [["fuel", "fuel man"]], "fuel")
+			js.value_changed.connect(func(v): _set_crew(id, {"pit_job": str(v)}))
+			js.tooltip_text = "Co-op pit stops: the strategist refuels; the driver cleans the windscreen first, a third player lays out the tyres and guns and puts the air jacks in, then each of them does this job."
 			row.add_child(ts)
 			row.add_child(rs)
-			crew_box.add_child(row)
-			for st in [ts, rs]:   # after add_child: Stepper._ready sets its own size
-				st.custom_minimum_size = Vector2(0, 32)
+			var block := VBoxContainer.new()
+			block.add_theme_constant_override("separation", 1)
+			block.add_child(row)
+			block.add_child(js)
+			crew_box.add_child(block)
+			for st in [ts, rs, js]:   # after add_child: Stepper._ready sets its own size
+				st.custom_minimum_size = Vector2(0, 28)   # low rows: a full lobby fits one screen
 				st.size_flags_horizontal = SIZE_EXPAND_FILL
-				st.value_column = 130.0 if st == ts else 60.0
+				st.value_column = 100.0 if st == ts else (200.0 if st == js else 58.0)
 				st.add_theme_font_size_override("font_size", 15)
-			_crew_rows[id] = {"row": row, "team": ts, "role": rs}
+			ts.size_flags_stretch_ratio = 1.25
+			_crew_rows[id] = {"row": block, "team": ts, "role": rs, "job": js}
 		Sound.wire_buttons(crew_box)
 	var me := Net.my_id()
 	for id in ids:
@@ -1237,6 +1299,20 @@ func _refresh_crews() -> void:
 		r["role"].options = opts
 		r["role"].set_value(p.get("role", RaceEntry.ROLE_DRIVER))
 		r["role"].disabled = not mine or size <= 1 or Net.in_race
+		# Pit stop job: only in a car share, picked by the driver and a pit crew player.
+		var role := str(p.get("role", ""))
+		r["job"].visible = team >= 0 and size > 1
+		if RaceEntry.picks_pit_job(role):
+			var jobs := []
+			for j in RaceEntry.PIT_JOBS:
+				jobs.append([j, RaceEntry.PIT_JOB_NAMES[j]])
+			r["job"].options = jobs
+			r["job"].set_value(str(p.get("pit_job", "gun_l")) if str(p.get("pit_job", "")) in RaceEntry.PIT_JOBS else "gun_l")
+			r["job"].disabled = not mine or Net.in_race
+		else:
+			r["job"].options = [["fuel", "fuel man (strategist)"]]
+			r["job"].set_value("fuel")
+			r["job"].disabled = true
 
 
 ## Guests: the host's changes show straight away (the lobby is sent to every
@@ -1299,8 +1375,8 @@ func _player_row(id: int, p: Dictionary) -> Control:
 	sb.set_corner_radius_all(6)
 	sb.content_margin_left = 0
 	sb.content_margin_right = 10
-	sb.content_margin_top = 6
-	sb.content_margin_bottom = 6
+	sb.content_margin_top = 4
+	sb.content_margin_bottom = 4
 	if me:
 		sb.border_color = Color(1, 0.8, 0.3, 0.6)
 		sb.set_border_width_all(1)
@@ -1321,11 +1397,17 @@ func _player_row(id: int, p: Dictionary) -> Control:
 	text.size_flags_horizontal = SIZE_EXPAND_FILL
 	text.add_theme_constant_override("separation", 0)
 	row.add_child(text)
+	# Two lines per driver, so a full lobby fits one screen: the name with
+	# what they're doing on the right, then their car.
+	var name_row := HBoxContainer.new()
+	name_row.add_theme_constant_override("separation", 10)
+	text.add_child(name_row)
 	var name_l := Label.new()
 	name_l.text = str(p["name"]) + ("  (you)" if me else "")
-	name_l.add_theme_font_size_override("font_size", 21)
+	name_l.add_theme_font_size_override("font_size", 20)
 	name_l.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	text.add_child(name_l)
+	name_l.size_flags_horizontal = SIZE_EXPAND_FILL
+	name_row.add_child(name_l)
 	var bits := [car.display_name if car else str(p["car_id"])]
 	if TYRE_NAMES.get(p.get("tyre", "auto"), "") != "":
 		bits.append(TYRE_NAMES[p["tyre"]])
@@ -1357,7 +1439,8 @@ func _player_row(id: int, p: Dictionary) -> Control:
 		act.add_theme_color_override("font_color", Color(0.65, 0.85, 1) if doing != "" else Color(1, 1, 1, 0.5))
 		if ping > 150:
 			act.add_theme_color_override("font_color", Color(1, 0.6, 0.4))
-		text.add_child(act)
+		act.size_flags_vertical = SIZE_SHRINK_CENTER
+		name_row.add_child(act)
 	var tag := Label.new()
 	var tag_sb := StyleBoxFlat.new()
 	tag_sb.set_corner_radius_all(5)
@@ -1386,6 +1469,8 @@ func _player_row(id: int, p: Dictionary) -> Control:
 func _set_crew(id: int, fields: Dictionary) -> void:
 	if id == Net.my_id():
 		Net.update_me(fields)
+	elif Net.is_server() and fields.has("pit_job"):
+		Net.set_player_pit_job(id, str(fields["pit_job"]))
 	elif Net.is_server():
 		Net.set_player_team(id, int(fields.get("team", Net.players.get(id, {}).get("team", -1))), str(fields.get("role", "")))
 
@@ -1455,6 +1540,8 @@ func _refresh_lobby() -> void:
 	if GameData.arg("team") and Net.players.has(me) and not _cmdline_team_sent:
 		_cmdline_team_sent = true  # testing: --team 1 --role strategist
 		Net.update_me({"team": int(GameData.arg("team")) - 1, "role": str(GameData.arg("role", ""))})
+		if GameData.arg("pit-job"):
+			Net.update_me({"pit_job": str(GameData.arg("pit-job"))})
 	var host := Net.is_server()
 	var in_season := not Net.season_info.is_empty()
 	for s in _settings_steppers:
@@ -1478,6 +1565,7 @@ func _refresh_lobby() -> void:
 		laps_stepper.set_value(Net.settings.laps)
 		ai_stepper.set_value(Net.settings.ai_count)
 		difficulty_stepper.set_value(Net.settings.ai_difficulty)
+		mistakes_stepper.set_value(Net.settings.ai_mistakes)
 		var env := Net.settings.environment
 		tod_stepper.set_value(int(env.get("time_of_day_h", 14)))
 		clock_stepper.set_value(int(env.get("time_scale", 1)))
@@ -1488,7 +1576,7 @@ func _refresh_lobby() -> void:
 		wear_stepper.set_value(Net.settings.tyre_wear_rate if Net.settings.tyre_wear_enabled else 0.0)
 		stops_stepper.set_value(Net.settings.mandatory_pit_stops)
 		drivers_stepper.set_value(Net.settings.drivers_per_car)
-		safety_car_stepper.set_value(Net.settings.safety_car_enabled)
+		safety_car_stepper.set_value(Net.settings.race_control_mode())
 		damage_stepper.set_value(Net.settings.effective_damage_level())
 		upgrades_stepper.set_value(Net.settings.upgrades_mode)
 		if tuning_stepper.value != Net.settings.tuning_enabled:
@@ -1970,3 +2058,110 @@ func _limit_grid() -> void:
 		ai_stepper.set_value(most)
 		if not _building:
 			_push_settings()
+
+
+# --- Remembered race settings -------------------------------------------------
+# The single race page and the online host lobby each keep the settings they
+# were last left with, for every race type (circuit, rallycross, derby), in
+# GameData.prefs["race_memory"] (saved to disk, so they survive a restart):
+#   {"single": {"type": "rallycross", "circuit": {"track": "spa", "laps": 5 ...},
+#               "rallycross": {...}}, "host": {...}}
+# Seasons pick their own settings and guests see the host's, so neither uses it.
+
+const MEMORY_KEY := "race_memory"
+const MEMORY_SINGLE := "single"
+const MEMORY_HOST := "host"
+var _mem_slot := ""         ## "single" / "host" while that page is open, else ""
+var _mem_type := "circuit"  ## the race type the steppers hold values for
+var _mem_restoring := false
+
+
+## Pref key -> stepper for everything remembered (besides the race type).
+func _remembered_steppers() -> Dictionary:
+	return {"track": track_stepper, "class": class_stepper, "car_filter": car_filter_stepper, "car": car_stepper,
+		"tyre": tyre_stepper, "laps": laps_stepper, "ai": ai_stepper, "difficulty": difficulty_stepper, "mistakes": mistakes_stepper,
+		"time": tod_stepper, "clock": clock_stepper, "weather": weather_stepper,
+		"weather_changes": weather_change_stepper, "grid": grid_stepper, "fuel": fuel_stepper,
+		"tyre_wear": wear_stepper, "pit_stops": stops_stepper, "drivers": drivers_stepper,
+		"safety_car": safety_car_stepper, "damage": damage_stepper, "car_setups": tuning_stepper,
+		"upgrades": upgrades_stepper}
+
+
+func _race_memory() -> Dictionary:
+	var m = GameData.prefs.get(MEMORY_KEY, {})
+	return m if m is Dictionary else {}
+
+
+## Saves what the page shows now under race type `dsc` (default: the one picked).
+func _remember_race(dsc := "") -> void:
+	if _mem_slot == "" or _mem_restoring or _building:
+		return
+	if dsc == "":
+		dsc = _race_type()
+	var values := {}
+	var steppers := _remembered_steppers()
+	for k in steppers:
+		values[k] = steppers[k].value
+	var mem := _race_memory().duplicate(true)
+	var slot: Dictionary = mem.get(_mem_slot, {})
+	slot[dsc] = values
+	slot["type"] = _race_type()
+	mem[_mem_slot] = slot
+	GameData.set_pref(MEMORY_KEY, mem)
+
+
+## Brings back the settings this page (single or host) was last left with.
+func _restore_race(slot_name: String) -> void:
+	_mem_slot = slot_name
+	var slot: Dictionary = _race_memory().get(slot_name, {})
+	var dsc := str(slot.get("type", _race_type()))
+	if not race_type_stepper.options.any(func(o): return o[0] == dsc):
+		dsc = _race_type()
+	_mem_restoring = true
+	if dsc != _race_type():
+		race_type_stepper.set_value(dsc)
+		_on_race_type_changed(false)
+	_mem_type = dsc
+	var values: Dictionary = slot.get(dsc, {})
+	if not values.is_empty():
+		_apply_remembered(values)
+	_mem_restoring = false
+	_apply_race_type_rules()
+	_refresh_cards()
+	_setup_changed()
+
+
+## Sets the steppers to saved values, skipping any that no longer fit (a car or
+## track that's gone, a number out of range).
+func _apply_remembered(values: Dictionary) -> void:
+	var steppers := _remembered_steppers()
+	for k in steppers:
+		if not values.has(k):
+			continue
+		var st: Stepper = steppers[k]
+		var v = values[k]
+		if st.options.is_empty():
+			if not (v is int or v is float):
+				continue
+			st.set_value(clampf(float(v), st.min_value, st.max_value) if v is float \
+				else clampi(int(v), int(st.min_value), int(st.max_value)))
+		elif st.options.any(func(o): return _same_value(o[0], v)):
+			st.set_value(v)
+		else:
+			continue
+		if st == class_stepper or st == car_filter_stepper:
+			_rebuild_car_options()   # the car comes after these, so it's picked from the new list
+			_limit_grid()
+		elif st == car_stepper:
+			GameData.prefs["car_id"] = v
+	_limit_grid()
+
+
+## Saved values come back from disk as the same types, but numbers may be
+## int or float; anything else must match its type exactly.
+static func _same_value(a, b) -> bool:
+	var na := a is int or a is float
+	var nb := b is int or b is float
+	if na or nb:
+		return na and nb and is_equal_approx(float(a), float(b))
+	return typeof(a) == typeof(b) and a == b

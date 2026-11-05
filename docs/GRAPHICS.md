@@ -23,9 +23,13 @@ occlusion and glow. The camera always shows this full 3D scene at every zoom
   have `data/scenery/<id>.json` (every circuit placed on the map, all but Albert Park): every building at its
   real size and height, the named grandstands (seats facing the circuit,
   roofs on the big ones), road and foot bridges, trees and hedges where they
-  really stand, and a painted ground map under it all (fields with
-  tramlines, woods, car parks with their bays, roads, paths, ponds, sand and
-  the circuit's other loops) that the terrain shader blends over the grass.
+  really stand, and the ground itself modelled under it all (fields with
+  crop rows and tramlines, woods, car parks with their bays, roads with edge
+  lines and centre dashes, paths, ponds with ripples, sand and the circuit's
+  other loops). The ground is geometry, not a picture: build_scenery.py cuts
+  every shape along the terrain mesh's own triangles, and the terrain shader
+  lays those meshes on the hillside (`drape`) and draws each surface's detail
+  from world position, so edges and texture stay sharp at any zoom.
   Settings > Graphics > Trackside switches it off (`GfxSettings.real_scenery`).
   See "Real trackside scenery" below for how the data is made.
 - `CarView` is one car: its model, livery, wheels, lights, spray, tyre smoke
@@ -91,6 +95,15 @@ Every car model is built in Blender from the car's real dimensions:
   `godot --path . res://tests/car_gallery.tscn -- <out.png> [top|three] [class or car ids] [copies]`.
 - Only the sticker slots (after changing a shape's cabin, wing or regions):
   `blender -b --python modules/graphics/tools/build_cars.py -- --liveries-only`.
+
+AI-made bodies: a car whose shape file has an `ai_body` block gets its body
+from a mesh made by an AI image-to-3D model (Hunyuan3D 2.1, from one freely
+licensed photo; the Porsche 911 GT3 R so far). `tools/ai_body.py` scales it
+to the real length on the real axles, cuts off the AI's own wing and fused
+wheels (ours go on instead, with the upgrade wings), smooths it, cuts clean
+glass edges and paints the lights, then splits it into the same parts as
+every other car. The source meshes and where each photo came from are in
+`tools/ai_source/` (README.md there says how to make another).
 
 Each model is split into parts so upgrades and damage can swap or move them:
 `body`, `bumper_front`, `bumper_rear`, `cabin`, `splitter`, `diffuser`,
@@ -178,7 +191,14 @@ The tool reads the track's `geo` block (written by the tracks module's
 `build_tracks.py`) to line map data up with the circuit, covers the whole
 terrain square, and drops anything that would stand on the track or pit
 lane (where OpenStreetMap and the track disagree by a few metres). The
-ground map is a 1.5 m per pixel WebP picture inside the JSON. To add a
+land cover is stored as ready-made meshes in 320 m tiles (`land`: vertices,
+a kind and variant per vertex, indices; see `_doc` in the file), cut for the
+terrain grid TrackView builds (10 m cells on hilly tracks, 16 m on flat ones),
+so a change to the track's shape or terrain size means rebuilding it.
+`--land-only` rebuilds just the land cover and keeps the buildings, bridges
+and trees (no LIDAR download); `--preview out.png` draws it flat. Kinds are
+listed in `KINDS` in the tool and `K_*` in `shaders/terrain.gdshader` (the
+tests check they agree). Needs shapely as well. To add a
 track: build the track first, add it to `tools/scenery.json` (with
 `"lidar": "ea_england"` for English circuits), run the tool, check a
 screenshot (`-- --single --track <id> --zoom 1 --screenshot out.png`).
@@ -191,3 +211,25 @@ At the whole-track zoom the full scene is still drawn. Trees are MultiMeshes
 in 256 m tiles with automatic LODs, car parts that are too small to see
 (mirrors, interior, calipers) hide beyond `GfxSettings.car_detail_distance`,
 and shadows cover just what's on screen.
+
+- **One shadow map from above.** Seen from above everything on screen is
+  about the same distance from the camera, so the sun uses a single
+  orthogonal shadow map that just covers the view (`WorldView.set_camera`)
+  instead of four cascades, which drew the world into the shadow map up to
+  four times. The trackside TV cameras, which look across the ground, still
+  use four cascades.
+- **The ground in tiles.** The terrain is 24 x 24 cell tiles (240 m with
+  elevation), so only the tiles in view and in the sun's shadow view are
+  drawn; the shader takes its normals from the heights texture, so they meet
+  without seams.
+- **No shadows from the little things**: car lights, numbers, calipers,
+  canards, splitters, mirrors and interior, and bushes and hedges.
+- **Far trees.** Beyond 1200 m camera distance (zoomed well out) every tree
+  swaps to a ~20-triangle shape (`Trackside.TREE_FAR_FROM`).
+
+Measured with `tests/render_probe.tscn` (camera over the lap every few hundred
+metres, then each part of the world switched off in turn at the costliest
+spot) and `tests/perf_probe.tscn` (frame times along a lap with a full grid).
+At the usual close zoom triangles drawn per frame fell 3-8x and draw calls
+about 40 % at Brands Hatch, Silverstone and Spa; at Spa's whole-track zoom
+from 42 million to 5.6 million triangles.

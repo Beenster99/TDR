@@ -32,7 +32,7 @@ func _ready() -> void:
 	var w := WorldView.new()
 	add_child(w)
 	w.setup(t, null)
-	w.add_driving_aids(line, true, true)
+	w.add_driving_aids(line, DrivingLineView.LINE_FULL if OS.get_environment("LINE_MODE") == "" else int(OS.get_environment("LINE_MODE")), true)
 	for s in spots:
 		# The car 140 m before the corner at the reference lap speed, so the
 		# braking colours show as they would on a good lap.

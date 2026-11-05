@@ -1,7 +1,8 @@
 # Audio
 
-Every sound in Top Down Racer is synthesised. There are no recordings, so
-there is nothing to license. The audio module (`modules/audio/`) only
+Every sound in Top Down Racer is synthesised, so there is nothing to
+license. Licensed recordings can replace any of them without code changes
+(see "Recorded sounds" below). The audio module (`modules/audio/`) only
 listens to the race; it never changes it.
 
 ## Engines
@@ -35,8 +36,18 @@ How a family is made (`modules/audio/tools/engine_synth.py`):
 3. The exhaust, silencer and turbo are a fixed tone shape in Hz (the
    family's "voice"). Because it doesn't move with the revs, the engine keeps
    its character from idle to the limiter.
-4. Loops are baked on throttle and on the overrun at 14 rpm bands
-   (900 to 11,000 rpm) into `modules/audio/baked/`.
+4. **Combustion wanders** slowly from one firing to the next (correlated,
+   not white noise), so the engine sounds alive instead of a static buzz.
+5. **Induction roar:** each intake pulse rings the airbox at its own pitch
+   with a rush of air, on throttle only. Loud on engines without turbos (the
+   Porsche, Huracan and AMG howl through their intakes), quiet on turbo
+   engines, whose compressor silences the intake.
+6. **Tailpipe resonance:** the pipe is a tube with standing waves spaced by
+   its length (`tail`, in metres), which gives the hollow boom of a real
+   exhaust.
+7. Loops (1.5 s, long enough that the repeat isn't heard) are baked on
+   throttle and on the overrun at 14 rpm bands (900 to 11,000 rpm) into
+   `modules/audio/baked/`.
 
 In the game (`CarAudio`) the two bands either side of the revs are
 crossfaded and their pitch nudged to the exact rpm; throttle and overrun are
@@ -46,9 +57,9 @@ crossfaded by the pedal. On top:
   in and out (about 14 times a second for engines without turbos, 9 with),
   so a 9,400 rpm Porsche and a 7,500 rpm AMG hit very different walls.
 - **Gearshifts:** an upshift cuts the ignition for 85 ms with a paddle-shift
-  clack; a downshift blips the throttle and may crackle.
-- **Pops and crackles** when you lift off at high revs (most on cross-plane
-  V8s).
+  clack; a downshift blips the throttle.
+- **No exhaust pops or crackles** on the overrun, limiter or downshifts
+  (removed in audio 1.5.0: they sounded like constant banging).
 - **Turbo:** whistle that builds with boost (with lag), wastegate flutter
   when you lift. **Supercharger** whine with revs. **Hybrid** motor whine
   with speed (deploying and harvesting). **Straight-cut gearbox** whine on
@@ -65,16 +76,44 @@ Add an optional `sound` block to the car's `engine` in its JSON:
             "sound": { "family": "v6_turbo", "hybrid": true } }
 ```
 
-Keys: `family`, `turbo`, `supercharged`, `hybrid`, `gear_whine` (default on
-for race classes), `limiter_hz`, `pops` (0 none .. 1 lots). Without it the
+Keys: `family`, `samples` (a recorded voice, see below), `turbo`, `supercharged`, `hybrid`, `gear_whine` (default on
+for race classes), `limiter_hz`. Without it the
 family is worked out from `cylinders` and the description ("twin-turbo",
 "flat-six", "straight-six", "Mid-engined ... V8" = flat-plane, etc.).
 
+## Recorded sounds
+
+A recording always wins over the synthesised sound, with no code change:
+
+- **Any loop or one-shot:** put `modules/audio/samples/<name>.wav` (or
+  `.ogg`) in, named like the baked file (`tyre_squeal`, `tyre_lock`,
+  `road_roar`, `kerb`, `gravel`, `turbo_whistle`, `shift`, `flutter` ...).
+  Loops are made to loop from start to end, so trim them on a zero crossing.
+- **An engine:** put steady-rpm loops in
+  `modules/audio/samples/engines/<voice>/` as `on_<rpm>.wav` (full throttle)
+  and `off_<rpm>.wav` (overrun), e.g. `on_4000.wav`, `off_4000.wav`. Only
+  rpms that have both are used; four to eight rpm points from idle to the
+  redline are plenty. Name the folder after a family (`flat6_na`) to replace
+  that family for every car, or give one car its own voice with
+  `"engine": {"sound": {"samples": "porsche_911_gt3_r"}}`. A car whose
+  folder is missing falls back to its family's baked loops.
+
+Steady-rpm loops are what's needed (an engine held at a fixed rpm on a dyno
+or on the limiter in neutral, recorded from the exhaust side), not pass-bys
+or full onboard laps: the game makes the revs, gears and Doppler itself.
+Licensed libraries (e.g. Soundsnap) allow use inside a game but not giving
+the raw files away, which the packed .pck export respects.
+
 ## Tyres and surfaces
 
-- **Squeal** when cornering past the grip peak, **scrub** just under it
-  (your car), **lock-up / wheelspin** howl, **ABS chatter** under heavy
-  braking with ABS on.
+- **Squeal** when cornering past the grip peak: a rough, low howl of
+  rubber (racing tyres rasp, they don't whistle). **Scrub** just under it
+  (your car), **lock-up / wheelspin / handbrake** rasp, **ABS chatter**
+  under heavy braking with ABS on.
+- Tyres only squeal on tarmac and kerbs. Sliding on **gravel**, **grass**,
+  **dirt** or **mud** makes that surface's own noise: on rallycross and derby
+  dirt a rumble that turns into a scrabble of grit and clods when the car
+  slides, spins or locks its wheels (lower and duller in the wet: mud).
 - **Road roar** rising with speed, **kerb** buzz whose pitch follows your
   speed, **gravel** crunch, **grass** swish, **wind**.
 - **Rain:** on a wet track tyres hiss with **spray** instead of squealing.

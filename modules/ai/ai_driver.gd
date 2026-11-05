@@ -33,6 +33,22 @@ const DEFAULT_DIFFICULTY := 0.75
 const AERO_TRUST := 0.9      ## share of the downforce the profile counts on
 const OFF_LINE_TROUBLE := 4.0
 const BRAKE_TURNING := 0.35  ## share of braking grip left at the cornering limit
+const ALONGSIDE_GAP := 1.1   ## clear metres kept between our side and a car alongside
+const DEFEND_RATE := 2.5     ## m/s: fastest sideways move when covering a line
+const START_HOLD_MAX_M := 1200.0  ## opening lap: furthest the grid lanes are held
+const MISTAKE_RATE := 0.6     ## normal mistake rate, as a share of the rate before ai 1.9.0 (too frequent for short races)
+const MISTAKE_WIDE_M := 1.2  ## m: running wide takes the car this far past its room (wheels on the grass)
+const RACE_EDGE_KEEP := 0.8  ## m: racecraft (passing, defending, alongside) stays this far inside the room
+const PASS_FULL_GAP := 10.0  ## m (track distance): an attack moves fully off the line from this close
+const PASS_FADE_M := 10.0    ## ... and not at all from this much further back
+const YAW_DAMP := 0.08        ## s: steering (rad) per rad/s of unwanted rotation
+const YAW_BRAKE_EASE := 0.15  ## rad/s of unwanted rotation under braking: ease the brake
+## Rejoining after an off: how far beyond the kerb the car waits, how far
+## inside the white line it comes back on, and how far it holds that edge.
+const REJOIN_WAIT_OUT := 1.5
+const REJOIN_EDGE_IN := 0.5
+const REJOIN_HOLD_M := 400.0
+const REJOIN_WAIT_SPEED := 8.0
 
 ## What the driver is doing right now (for HUD / debugging).
 enum Mood { RACING, ATTACKING, DEFENDING, YIELDING, MISTAKE, RECOVERING }
@@ -40,6 +56,8 @@ enum Mood { RACING, ATTACKING, DEFENDING, YIELDING, MISTAKE, RECOVERING }
 var traits: Dictionary         ## as given (RaceEntry.traits)
 var profile: DriverTraits      ## after difficulty
 var _difficulty := DEFAULT_DIFFICULTY
+## How often this driver makes mistakes, x the normal rate (RaceSettings.ai_mistakes).
+var mistake_scale := 1.0
 ## Line-up driver at the wheel (RaceEntry.pit "driver_idx"): when it changes at
 ## a stop, the new driver's traits take over.
 var stint_driver := 0
@@ -78,6 +96,14 @@ var _profile_dirty := false
 var _profile_age := 0
 
 var lateral_bias: float = 0.0   ## offset from the line (m, + right)
+## Test hook: drive as if alone on track (stands in for a human who holds
+## their own line whatever the cars around them do).
+var ignore_traffic := false
+## Test hook: when set (not NAN), hold this offset from the line (m, + right).
+var hold_bias := NAN
+## Test hook: ignore local yellow flags when overtaking (stands in for a
+## human who races on through the yellows). Still follows the SC and VSC.
+var ignore_flags := false
 var speed_noise: float = 0.0
 var _block: int = -1
 var _block_trouble := false
@@ -85,6 +111,16 @@ var _block_clean := true
 var stuck_time: float = 0.0
 var stuck_idx: int = -1   ## line point at the last stuck check (-1 = not checked yet)
 var recover_time: float = 0.0
+## Coming back from an off: the side of the track the car went off (+1 right,
+## -1 left, 0 = not rejoining). It waits beyond the kerb until the traffic
+## coming up behind has gone by, comes back on along that edge and holds it
+## until it is up to speed, so it never crosses the racing line in front of
+## another car.
+var rejoin_side := 0
+var _rejoin_wait := 0.0
+var _rejoin_from := -1.0     ## track_s where it got back on the road (-1 = still off)
+var _rejoin_settle := 0.0    ## after rejoining: drift back to the line gently
+var _last_v_target := 0.0    ## speed aimed for on the previous tick
 
 var _pass_side := 0
 var _pass_target := -1
@@ -94,6 +130,15 @@ var _defend_side := 0
 var _defend_from := -1
 var _defend_timer := 0.0
 var _defend_decided := -1
+## Standing start: the lateral spot on the track the car started from (held
+## until the braking zone of the first corner, so the field races side by
+## side to turn 1 instead of filing onto the racing line), whether this
+## driver floors it off the line, and the launch throttle a careful starter
+## is feeling for.
+var _start_lat := NAN
+var _start_hold := false
+var _launch_hot := false
+var _launch_thr := 0.9
 var _mistake_kind := ""
 var _mistake_until := -1
 var _mistake_side := 0
@@ -121,6 +166,8 @@ static func for_car(sim: RaceSim, i: int) -> AIDriver:
 		difficulty = float(sim.settings.get("ai_difficulty"))
 	var d := AIDriver.new(sim.track, sim.defs[i], sim.compounds[i], t, sim.settings.seed * 31 + i, difficulty)
 	d.stint_driver = int(sim.entries[i].pit.get("driver_idx", 0))
+	if "ai_mistakes" in sim.settings:
+		d.mistake_scale = maxf(float(sim.settings.get("ai_mistakes")), 0.0)
 	return d
 
 
@@ -467,11 +514,22 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 	if sim.phase == RaceSim.Phase.COUNTDOWN:
 		stuck_idx = idx
 		stuck_time = 0.0
+		if is_nan(_start_lat):
+			_start_lat = float(sim.track.project(car.pos, -1)["offset"])
+			lateral_bias = (car.pos - line[idx]).dot(line_right[idx])  # start in our grid lane
+			_start_hold = true
+			# Aggressive starters floor it and spin the tyres; the rest feel
+			# for the grip. Always the same for the same driver and seed.
+			_launch_hot = rng.randf() < 0.15 + 0.8 * profile.aggression * profile.aggression
+			_launch_thr = 0.9
 		return inp
 
 	# --- Stuck recovery: reverse out, then carry on. ---
 	if recover_time > 0.0:
 		mood = Mood.RECOVERING
+		if car.surface >= TrackData.Surface.GRASS and _traffic_margin(sim, me) < 1.0:
+			inp.brake = 0.0  # off the road with a car coming: wait, don't back out into it
+			return inp
 		recover_time -= RaceSim.TICK_DT
 		inp.brake = 1.0
 		var to_line := line[(idx + 3) % n] - car.pos
@@ -480,6 +538,8 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 	if stuck_idx < 0:
 		stuck_idx = idx
 	stuck_time += RaceSim.TICK_DT
+	if rejoin_side != 0 and _rejoin_from < 0.0 and _rejoin_wait > 0.0 and speed < REJOIN_WAIT_SPEED + 1.0:
+		stuck_time = 0.0  # waiting for a gap on purpose
 	if stuck_time >= 3.0:
 		# Stuck = hardly moved along the line in 3 s while crawling. (The
 		# check used to start from line point 0, so every car on the grid
@@ -527,7 +587,7 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 	var ram := -1
 	var ram_lx := INF
 	for j in sim.cars.size():
-		if j == me:
+		if j == me or ignore_traffic:
 			continue
 		var o := sim.cars[j]
 		var rel := o.pos - car.pos
@@ -541,8 +601,13 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 			continue
 		var o_v := o.vel.dot(fwd)
 		var lapped_by := sim.entries[j].distance > my_dist + sim.track.length * 0.5
+		# Overlapping (nose level with our rear wheels or further up) and off
+		# to one side: alongside, even if mostly behind. Racing room is
+		# owed from the first bit of overlap.
+		var overlap := not derby and lx < o_len * 0.9 and lx > -o_len - 0.5 \
+			and absf(ly) > (half_w + o_half) * 0.7
 		# Cars behind: pressure, defending, letting leaders by.
-		if lx < -o_len * 0.6:
+		if lx < -o_len * 0.6 and not overlap:
 			if lx > behind_lx and lx > -30.0:
 				behind = j
 				behind_lx = lx
@@ -557,7 +622,7 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 		elif lx < o_len * 0.9:
 			pressure = 1.0
 			var away := -signf(ly) if absf(ly) > 0.05 else (1.0 if me < j else -1.0)
-			alongside.append([_line_offset(o.pos, idx), away, half_w + o_half + 1.1, lx])
+			alongside.append([_line_offset(o.pos, idx), away, half_w + o_half + ALONGSIDE_GAP, lx])
 		# Ahead.
 		else:
 			if lx < ahead_lx and absf(ly) < half_w + o_half + 2.5:
@@ -568,7 +633,9 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 				ram_lx = lx
 			if absf(ly) < half_w + o_half + 0.4 and not (derby and not sim.entries[j].dnf):
 				var gap := 3.0 + speed * lerpf(0.32, 0.16, p.aggression)
-				if sim.entries[me].laps_done == 0:
+				if _start_hold and o_v > speed - 1.0:
+					gap = 2.0 + speed * 0.12  # off the line: everyone goes together, nose to tail
+				elif sim.entries[me].laps_done == 0:
 					gap *= 1.5  # opening lap: brake a little earlier in the pack
 				if _pass_side != 0 and _pass_target == j:
 					gap *= 0.6
@@ -581,6 +648,7 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 	var rc := sim.race_control
 	var unlapping := rc.unlapping[me] == 1
 	var giving_back := rc.give_back.has(me)
+	var lax := ignore_flags and rc.mode == RaceControl.Mode.GREEN and rc.released[me] == 1
 	var sc_bias := INF
 	if rc.sc_visible and not rc.sc_in_pit and not cool_down:
 		var sc_gap := rc.gap_to_sc(me)
@@ -599,9 +667,9 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 				if sc_gap < RaceControl.SC_GAP_TARGET * 0.5:
 					sc_limit = rc.sc_speed * 0.8  # far too close: drop back
 				follow_limit = minf(follow_limit, sc_limit)
-	if _pass_target >= 0 and not rc.may_pass(me, _pass_target):
+	if _pass_target >= 0 and not lax and not rc.may_pass(me, _pass_target):
 		_pass_timer = 0.0
-	if rc.mode != RaceControl.Mode.GREEN or not rc.released[me] or rc.yellow_at(car.track_s):
+	if not lax and (rc.mode != RaceControl.Mode.GREEN or not rc.released[me] or rc.yellow_at(car.track_s)):
 		# No creeping past a car alongside when overtaking isn't allowed.
 		for j in sim.cars.size():
 			if j == me:
@@ -624,7 +692,7 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 			_pass_target = -1
 			_pass_cooldown = 1.0
 	if _pass_target < 0 and ahead >= 0 and not cool_down and ahead_lx < 30.0 and _pass_cooldown <= 0.0 \
-			and rc.may_pass(me, ahead):
+			and (lax or rc.may_pass(me, ahead)):
 		var o := sim.cars[ahead]
 		var closing := speed - o.vel.dot(fwd)
 		if closing > 0.3 or ahead_lx < 14.0:
@@ -650,9 +718,23 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 		var o := sim.cars[_pass_target]
 		var oly := _line_offset(o.pos, (idx + int(maxf((o.pos - car.pos).dot(fwd), 0.0) / SPACING)) % n)
 		var need := half_w + sim.defs[_pass_target].width * 0.5 + lerpf(1.7, 1.1, p.aggression)
-		want_bias = oly + _pass_side * need
-		# Not enough room any more on that side: give up and tuck back in.
-		if _room(_pass_side, idx) - _pass_side * oly < need - 0.6:
+		# Stay on the line until the gap is small enough to get alongside: sitting
+		# out wide 20 m behind through a corner only runs the car out of road
+		# on the exit (Spa, Zandvoort's last turns).
+		var gap_m := sim.entries[_pass_target].distance - my_dist
+		var commit := clampf((PASS_FULL_GAP + PASS_FADE_M - gap_m) / PASS_FADE_M, 0.0, 1.0)
+		# On a straight (nothing to run out of road on) pull out as early as wanted.
+		var bend := 0.0
+		for k in range(0, int(maxf(speed * 1.5, 30.0) / SPACING)):
+			bend = maxf(bend, absf(curv[(idx + k) % n]))
+		if bend < 0.004:
+			commit = 1.0
+		want_bias = (oly + _pass_side * need) * commit
+		# Not enough room on that side, here or just ahead: give up and tuck back in.
+		var room_ahead := _room(_pass_side, idx)
+		for k in range(1, int(20.0 / SPACING) + 1):
+			room_ahead = minf(room_ahead, _room(_pass_side, (idx + k * 2) % n))
+		if room_ahead - RACE_EDGE_KEEP - _pass_side * oly < need - 0.6 and commit > 0.0:
 			_pass_timer = 0.0
 	elif ahead >= 0 and ahead_lx < 20.0 and target_speed[idx] > sim.cars[ahead].vel.length() + 2.0:
 		pressure = maxf(pressure, 0.5)
@@ -671,13 +753,22 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 	if behind >= 0 and not cool_down and not yielding:
 		var b := sim.cars[behind]
 		var closing_b := b.vel.dot(fwd) - speed
+		# Where the attacker is (+ = on our right), relative to us.
+		var b_side := (b.pos - car.pos).dot(rgt)
+		var b_committed := corner_dir != 0 and b_side * corner_dir > half_w
 		if _defend_decided != behind:
 			_defend_decided = behind
 			var chance := p.defending * lerpf(0.4, 0.9, p.aggression)
-			if rng.randf() < chance and corner_dir != 0:
+			# One move, made before the attacker commits: never across a car
+			# that is already on that side.
+			if rng.randf() < chance and corner_dir != 0 and not b_committed:
 				_defend_side = corner_dir
 				_defend_from = behind
 				_defend_timer = 3.0
+		# The attacker has pulled out to the side we were covering and is
+		# close: the move is over, leave them the room.
+		if _defend_from == behind and b_side * _defend_side > half_w and behind_lx > -sim.defs[behind].length * 2.0:
+			_defend_timer = 0.0
 		if _defend_from == behind and _defend_timer > 0.0 and behind_lx > -18.0 and closing_b > -2.0:
 			# No moving under braking: only commit while the corner is still ahead.
 			if target_speed[(idx + 10) % n] > speed * 0.85 or absf(lateral_bias) > 0.3:
@@ -687,6 +778,19 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 	else:
 		_defend_decided = -1
 		_defend_from = -1
+
+	# Opening lap: hold the grid lane down to the first corner, then funnel in.
+	if _start_hold:
+		var brake_soon := false
+		for k in range(1, 3 + int(speed * 2.5 / SPACING)):
+			if target_speed[(idx + k) % n] < speed * 0.9:
+				brake_soon = true
+				break
+		if sim.entries[me].laps_done > 0 or brake_soon or car.surface >= TrackData.Surface.GRASS \
+				or sim.entries[me].distance > START_HOLD_MAX_M or rc.mode != RaceControl.Mode.GREEN:
+			_start_hold = false
+		elif _pass_target < 0:
+			want_bias = my_off + (_start_lat - car.lateral_offset)
 
 	# Let a leader through: move away from their line and lift a little.
 	var yield_scale := 1.0
@@ -701,34 +805,82 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 
 	# Mistakes: running wide.
 	if _mistake_kind == "wide" and _mistake_until >= 0:
-		want_bias = _mistake_side * minf(_room(_mistake_side, idx) + 1.5, 3.5)
+		want_bias = _mistake_side * (_room(_mistake_side, idx) + MISTAKE_WIDE_M)
+
+	if not is_nan(hold_bias):
+		want_bias = hold_bias
 
 	# Racing room: never move into a car alongside. If there is no room left
 	# on our side, the car further back lifts and drops in behind.
 	var squeezed := false
+	var look := 5.0 + 0.42 * speed
+	var aim := (idx + int(look / SPACING)) % n
+	# How far the line moves across the track (+ = right) between here and
+	# the steering aim point. A car alongside holds its piece of track, so
+	# when the line sweeps towards it (turn-in, apex, exit) we must not
+	# follow the line into it: keep the gap at the aim point too.
+	var sweep := ((room_left[aim] - room_right[aim]) - (room_left[idx] - room_right[idx])) * 0.5
 	for a in alongside:
 		var keep: float = a[0] + a[1] * a[2]
+		if derby:
+			pass  # Demolition Derby: contact is the point
+		elif a[1] < 0.0:
+			keep -= maxf(sweep, 0.0)
+		else:
+			keep -= minf(sweep, 0.0)
 		if a[1] > 0.0:
 			want_bias = maxf(want_bias, keep)
 		else:
 			want_bias = minf(want_bias, keep)
-		if (a[1] > 0.0 and keep > room_right[idx]) or (a[1] < 0.0 and -keep > room_left[idx]):
+		if (a[1] > 0.0 and keep > room_right[idx] - RACE_EDGE_KEEP) or (a[1] < 0.0 and -keep > room_left[idx] - RACE_EDGE_KEEP):
 			if a[3] > 0.0:
 				squeezed = true
-	want_bias = clampf(want_bias, -room_left[idx], room_right[idx])
+	# Room here and where we steer to: an attack out wide on a corner exit
+	# must not run us off where the line itself goes out to the edge.
+	# Off the line the car runs up to a metre wider than aimed on a corner
+	# exit, so racecraft keeps RACE_EDGE_KEEP more room to the edge than the
+	# room itself (the old clamp left 20 cm and attacks out wide ran off).
+	# A mistake (running wide) goes past the room: over the kerb with two
+	# wheels on the grass, which may end in a trip across it or a spin.
+	var wide := _mistake_kind == "wide" and _mistake_until >= 0
+	var edge_keep := -MISTAKE_WIDE_M if wide else RACE_EDGE_KEEP
+	var keep_l := maxf(minf(room_left[idx], room_left[aim]) - edge_keep, 0.0)
+	var keep_r := maxf(minf(room_right[idx], room_right[aim]) - edge_keep, 0.0)
+	want_bias = clampf(want_bias, -keep_l, keep_r)
 	var bias_rate := lerpf(2.5, 4.5, p.aggression)
+	if mood == Mood.DEFENDING:
+		bias_rate = minf(bias_rate, DEFEND_RATE)  # a steady move, not a chop
 	if not alongside.is_empty():
 		bias_rate = 6.0
+	elif _rejoin_settle > 0.0:
+		# Just back on after an off: drift over to the line, no darting across.
+		_rejoin_settle -= RaceSim.TICK_DT
+		bias_rate = 1.2
 	lateral_bias = move_toward(lateral_bias, want_bias, bias_rate * RaceSim.TICK_DT)
 	if absf(lateral_bias) > 0.6:
 		_block_clean = false
 	if follow_limit < INF:
 		_block_clean = false
 
+	# --- Rejoining after an off. ---
+	var rejoin_off := NAN    ## wanted offset from the track centre line while rejoining
+	var rejoin_cap := INF
+	if not derby:
+		var plan := _rejoin_plan(sim, me, half_w)
+		rejoin_off = plan[0]
+		rejoin_cap = plan[1]
+	if not is_nan(rejoin_off):
+		mood = Mood.RECOVERING
+		lateral_bias = my_off  # pick the line up from where the car is once it lets go
+
 	# --- Steering: pure pursuit on the racing line (+ offset). ---
-	var look := 5.0 + 0.42 * speed
-	var aim := (idx + int(look / SPACING)) % n
-	var target := line[aim] + line_right[aim] * clampf(lateral_bias, -room_left[aim], room_right[aim])
+	var slack := MISTAKE_WIDE_M if wide else 0.0
+	var target := line[aim] + line_right[aim] * clampf(lateral_bias, -room_left[aim] - slack, room_right[aim] + slack)
+	if not is_nan(rejoin_off):
+		# The plan is relative to the edge on rejoin_side: measured where we aim.
+		var ti := sim.track.index_at(car.track_s + look)
+		var aim_edge: float = sim.track.width_right[ti] if rejoin_side > 0 else sim.track.width_left[ti]
+		target = sim.track.position_at(car.track_s + look, rejoin_side * maxf(aim_edge + rejoin_off, half_w))
 	var local := target - car.pos
 	var lx := local.dot(fwd)
 	var ly := local.dot(rgt)
@@ -738,6 +890,15 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 	# Catch slides: steer into the slide when the rear steps out.
 	var excess_slip := car.slip_angle_rear - clampf(car.slip_angle_rear, -0.06, 0.06)
 	steer_angle += lerpf(0.7, 1.0, p.consistency) * excess_slip
+	# Catch the car rotating more (or less) than the path asks for, before
+	# it becomes a slide: under hard braking the rear goes light and the car
+	# starts to turn on its own (it used to wander off at Parabolica with the
+	# wheel straight).
+	var yaw_err := car.yaw_rate - speed * 2.0 * sin(alpha) / ld
+	# (Not on loose rallycross surfaces, where the car is meant to slide.)
+	var loose_here := loose[idx] if loose.size() == n else 0.0
+	if speed > 15.0:
+		steer_angle -= YAW_DAMP * (1.0 - loose_here) * lerpf(0.7, 1.0, p.consistency) * clampf(yaw_err, -0.6, 0.6)
 	inp.steer = clampf(steer_angle / def.max_steer, -1.0, 1.0)
 
 	# --- Speed. ---
@@ -760,10 +921,18 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 	scale *= (1.0 + speed_noise) * yield_scale
 	if squeezed:
 		scale *= 0.95
+	# A damaged car has less grip than the speeds were learned with: drive
+	# to what is left (the old way, it kept pushing and went off lap after lap).
+	scale *= _damage_scale(car, sim.damage_level == CarDamage.Level.FULL)
 	var v_target := target_speed[idx]
 	var look_pts := 2 + int(speed * 0.45 / SPACING)
 	for k in range(1, look_pts):
 		v_target = minf(v_target, target_speed[(idx + k) % n])
+	# Off the line (attacking, defending, alongside) the corner is tighter on
+	# the inside: the profile's speeds are for the line's radius, so brake for
+	# the radius actually being driven.
+	if absf(lateral_bias) > 0.5:
+		v_target = minf(v_target, _off_line_limit(idx, speed))
 	v_target *= scale
 	if _mistake_kind == "late" and _mistake_until >= 0:
 		v_target *= 1.10
@@ -778,14 +947,24 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 		# Rejoin carefully: wait for a gap when a car is coming.
 		if behind >= 0 and behind_lx > -25.0:
 			v_target = minf(v_target, 18.0)
+	v_target = minf(v_target, rejoin_cap)
 	v_target = minf(v_target, follow_limit)
 	v_target = minf(v_target, _race_control_limit(sim, me, rc, unlapping))
 	if giving_back:
 		v_target *= 0.8  # let the car we passed back through
 	if cool_down:
 		v_target = minf(v_target, 35.0)
+	_last_v_target = v_target
 	var err := v_target - speed
-	if err > 0.0:
+	var launching := _start_hold and speed < CarPhysics.LAUNCH_SPEED and car.gear == 1 and err > 0.0
+	if launching:
+		# Off the line: hot starters keep it floored through the wheelspin
+		# and lose a little; careful ones back off as soon as it spins.
+		inp.throttle = clampf(0.35 + err * 0.4, 0.0, 1.0)
+		if not _launch_hot:
+			_launch_thr = clampf(_launch_thr + (-2.0 if car.wheelspin else 0.6) * RaceSim.TICK_DT, 0.5, 1.0)
+			inp.throttle = minf(inp.throttle, _launch_thr)
+	elif err > 0.0:
 		inp.throttle = clampf(0.35 + err * 0.4, 0.0, 1.0)
 		# Slower drivers are more patient with the throttle out of corners.
 		if absf(curv[idx]) > 0.008:
@@ -794,8 +973,8 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 			inp.throttle *= 0.4
 		# Running wide on the exit: wait with the power.
 		var outward := -signf(curv[idx]) * signed_off
-		if outward > 1.0 and speed > 12.0 and car.surface <= TrackData.Surface.KERB:
-			inp.throttle *= clampf(1.0 - (outward - 1.0) * 0.45, 0.15, 1.0)
+		if outward > 0.6 and speed > 12.0 and car.surface <= TrackData.Surface.KERB:
+			inp.throttle *= clampf(1.0 - (outward - 0.6) * 0.6, 0.1, 1.0)
 	elif err < -0.8:
 		inp.brake = clampf(-err * 0.5, 0.0, 1.0)
 		# Trail braking: ease off the brake as the steering winds on, and when
@@ -803,9 +982,119 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 		inp.brake = minf(inp.brake, lerpf(1.0, lerpf(0.35, 0.55, p.aggression), minf(absf(inp.steer) / 0.45, 1.0)))
 		if absf(car.slip_angle_rear) > 0.12:
 			inp.brake *= 0.5
+		elif absf(yaw_err) > YAW_BRAKE_EASE and speed > 15.0:
+			inp.brake *= 0.7  # the car is starting to turn on its own: ease off to get the rear back
 	_last_pressure = pressure
 	_radio_tick(sim, me, follow_limit < INF and ahead >= 0, over, ahead)
 	return inp.quantized()
+
+
+## Share of the clean car's corner speed a damaged car can carry (1 = no
+## damage): suspension and punctures take grip (CarPhysics), lost bodywork
+## takes downforce, a bent car pulls to one side.
+static func _damage_scale(car: CarState, full: bool) -> float:
+	if not full:
+		return 1.0
+	var grip := 1.0 - 0.3 * car.damage_suspension
+	for i in 4:
+		if car.puncture[i] > 0.5:
+			grip *= CarPhysics.PUNCTURE_GRIP
+			break
+	return sqrt(maxf(grip, 0.2)) * (1.0 - 0.15 * car.damage_aero) * (1.0 - 0.1 * absf(car.alignment))
+
+
+## Highest speed now that still lets the car make every corner ahead at the
+## current offset from the line: a corner of radius R taken d metres to the
+## inside has radius R - d, so its speed scales by sqrt(1 - curv * d).
+func _off_line_limit(k0: int, speed: float) -> float:
+	var n := line.size()
+	var decel := _mu * _brake_frac * CarPhysics.G * 0.85
+	var reach := int(clampf(speed * speed / (2.0 * decel) + 20.0, 20.0, 240.0) / SPACING)
+	var best := INF
+	for k in range(1, reach):
+		var j := (k0 + k) % n
+		var off := clampf(lateral_bias, -room_left[j], room_right[j])
+		var f := 1.0 - curv[j] * off
+		if f >= 1.0:
+			continue  # the outside of this bend: no slower than the line
+		var v := target_speed[j] * sqrt(maxf(f, 0.25))
+		best = minf(best, sqrt(v * v + 2.0 * decel * k * SPACING))
+	return best
+
+
+## Rejoining after an off (see rejoin_side). Returns [where to steer, as metres
+## outward from the white line on rejoin_side (negative = on the road; NAN =
+## not rejoining), speed cap (INF = none)].
+func _rejoin_plan(sim: RaceSim, me: int, half_w: float) -> Array:
+	var car := sim.cars[me]
+	var track := sim.track
+	if sim.in_pit_lane(me) or car.in_joker:
+		rejoin_side = 0
+		return [NAN, INF]
+	var q := track.project(car.pos, car.track_idx)
+	var off: float = q["offset"]
+	var off_road := car.surface >= TrackData.Surface.GRASS
+	if rejoin_side == 0:
+		var w: float = q["w_right"] if off > 0.0 else q["w_left"]
+		if not off_road or absf(off) < w + 0.5:
+			return [NAN, INF]
+		rejoin_side = 1 if off > 0.0 else -1
+		_rejoin_wait = 0.0
+		_rejoin_from = -1.0
+	var side := rejoin_side
+	var lane := -(half_w + REJOIN_EDGE_IN)
+	var margin := _traffic_margin(sim, me)
+	if off_road and off * side > 0.0:
+		_rejoin_from = -1.0
+		if margin < 1.0:
+			# A car is coming: roll along beyond the kerb until it has gone by.
+			_rejoin_wait += RaceSim.TICK_DT
+			var wait_at := track.kerb_width + REJOIN_WAIT_OUT
+			return [wait_at, REJOIN_WAIT_SPEED if margin > 0.5 else 3.0]
+		return [lane, INF]
+	if off_road:
+		# Gone off on the other side (spun across): start again from there.
+		rejoin_side = 0
+		return [NAN, INF]
+	# Back on the road: keep to the edge it came on from until up to speed.
+	if _rejoin_from < 0.0:
+		_rejoin_from = car.track_s
+	var travelled := fposmod(car.track_s - _rejoin_from, track.length)
+	var up_to_speed := car.speed() >= _last_v_target * 0.85
+	if (up_to_speed and margin >= 1.0) or travelled > REJOIN_HOLD_M:
+		rejoin_side = 0
+		_rejoin_settle = 3.0
+		return [NAN, INF]
+	return [lane, INF]
+
+
+## How much room the traffic coming up behind on the road leaves this car to
+## come back on: the nearest car's gap over the gap this driver wants (>= 1 =
+## safe to go). A car alongside or just ahead counts as no room. The wait
+## gets less fussy the longer it lasts, so a long train can't hold it forever.
+func _traffic_margin(sim: RaceSim, me: int) -> float:
+	var car := sim.cars[me]
+	var L := sim.track.length
+	var my_v := car.vel.dot(Vector2.from_angle(sim.track.heading_at(car.track_s)))
+	var fussy := lerpf(1.2, 0.85, profile.aggression) * lerpf(1.0, 0.6, clampf((_rejoin_wait - 3.0) / 7.0, 0.0, 1.0))
+	var worst := INF
+	for j in sim.cars.size():
+		if j == me or sim.race_control.out_of_play(j) or sim.in_pit_lane(j) or sim.entries[j].dnf:
+			continue
+		var o := sim.cars[j]
+		if o.surface > TrackData.Surface.KERB:
+			continue
+		var gap := fposmod(car.track_s - o.track_s, L)
+		if gap > L * 0.5:
+			gap -= L   # negative: ahead of us
+		if gap < -8.0 or gap > 350.0:
+			continue
+		if gap <= 4.0:
+			return 0.0  # alongside
+		var closing := o.speed() - my_v
+		var need := (15.0 + maxf(closing, 0.0) * 2.0) * fussy
+		worst = minf(worst, gap / need)
+	return worst
 
 
 ## Speed race control allows: the VSC reference, closing up to the safety
@@ -885,7 +1174,7 @@ func _end_block(new_block: int, sim: RaceSim, me: int, dark: float, wetness: flo
 			break
 	if not corner_ahead:
 		return
-	var rate := (1.0 - p.consistency) * 0.02 + 0.0015
+	var rate := ((1.0 - p.consistency) * 0.02 + 0.0015) * MISTAKE_RATE * mistake_scale
 	rate *= 1.0 + _last_pressure * 2.5 * (1.0 - p.composure)
 	rate *= 1.0 + 0.5 * dark + 2.0 * wetness * (1.0 - p.wet_skill)
 	rate *= 1.0 + 0.5 * p.aggression

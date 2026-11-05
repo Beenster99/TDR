@@ -17,12 +17,18 @@ the outside of the turns) and have no pit lane.
 import json
 import math
 import os
+import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(os.path.dirname(HERE), "data")
+sys.path.insert(0, HERE)
+import widen  # noqa: E402
 STEP = 2.0          # metres between centre-line points
-GRID_CLEAR = 230.0  # no jumps this far behind the start line (the grid)
-CROSS_CLEAR = 45.0  # no jumps this close to a crossover
+GRID_CLEAR = 85.0   # no jumps this far behind the start line (the grid: 16 cars, 2 abreast)
+CROSS_CLEAR = 22.0  # no jumps this close to a crossover
+RUNOFF = 1.0        # the road runs right up to the walls: just this strip (still road) before them
+SCALE = 1.5         # every arena layout is drawn this much bigger than its curve
+                    # (the AI got lost in the tight 2026-11-03 arenas)
 
 
 def lemniscate(a, squash=1.0):
@@ -63,7 +69,7 @@ def pretzel(a, b):
 
 
 def sample(curve, n=4000):
-    pts = [curve(2.0 * math.pi * i / n) for i in range(n)]
+    pts = [tuple(SCALE * v for v in curve(2.0 * math.pi * i / n)) for i in range(n)]
     # resample at STEP metres
     out = [pts[0]]
     acc = 0.0
@@ -139,7 +145,7 @@ def build(spec):
         pts = [pts[0]] + list(reversed(pts[1:]))
     xs = crossings(pts)
     k = curvature(pts)
-    half = spec["width"] * 0.5
+    half = spec["width"] * SCALE * 0.5
     cl = [[round(p[0], 2), round(p[1], 2), half, half] for p in pts]
     # Jumps: at the given fractions, nudged to the straightest spot nearby
     # that is clear of the crossovers and the grid.
@@ -150,7 +156,7 @@ def build(spec):
         for di in range(-60, 61):
             i = (int(want * n) + di) % n
             s = i * STEP
-            up, top, down, h = spec.get("jump_shape", (12.0, 8.0, 18.0, 1.9))
+            up, top, down, h = spec.get("jump_shape", (9.0, 5.0, 11.0, 1.9))
             span = up + top + down
             if s - up < 20.0 or s + top + down > L - GRID_CLEAR:
                 continue
@@ -159,7 +165,7 @@ def build(spec):
             if not clear:
                 continue
             bend = max(abs(k[(i + o) % n]) for o in range(int(-up / STEP), int((top + down) / STEP)))
-            if bend > 0.02:
+            if bend > 0.035:
                 continue
             if any(abs(s - j["s"]) < span + 40.0 for j in jumps):
                 continue
@@ -183,7 +189,24 @@ def build(spec):
             else:
                 continue
             heights[i] = max(heights[i], y)
-    dirt = [[round(a * L, 1), round(b * L, 1)] for a, b in spec.get("dirt", [])]
+    # Dirt stretches, cut around the ramps: the ramps are packed hard so a
+    # car that stops on one can still drive up it.
+    dirt = []
+    for a, b in spec.get("dirt", []):
+        cuts = [(a * L, b * L)]
+        for j in jumps:
+            r0, r1 = j["s"] - j["up_m"] - 3.0, j["s"] + j["top_m"] + j["down_m"] + 3.0
+            nxt = []
+            for c0, c1 in cuts:
+                if r1 <= c0 or r0 >= c1:
+                    nxt.append((c0, c1))
+                    continue
+                if r0 - c0 > 4.0:
+                    nxt.append((c0, r0))
+                if c1 - r1 > 4.0:
+                    nxt.append((r1, c1))
+            cuts = nxt
+        dirt += [[round(c0, 1), round(c1, 1)] for c0, c1 in cuts]
     walls = []
     for side in (1, -1):
         row = ""
@@ -207,7 +230,7 @@ def build(spec):
         "centerline": cl,
         "start_index": 0,
         "sectors": [0.0, 0.333, 0.667],
-        "runoff_m": spec.get("runoff", 5.0),
+        "runoff_m": RUNOFF,
         "kerb_width_m": 0.9,
         "default_environment": spec.get("env", {"ambient_c": 17, "track_c": 22, "time_of_day_h": 19.5, "weather": "dry"}),
         "pit_lane": None,
@@ -220,6 +243,8 @@ def build(spec):
         "barriers": {"source": "arena walls", "codes": {"W": "concrete wall", "T": "tyre wall", "G": "grass", "P": "paved run-off"},
                      "right": walls[0], "left": walls[1], "runoff_right": "P" * n, "runoff_left": "P" * n},
     }
+    # The road widens 20% on top of the drawn width, like every track (widen.py).
+    widen.widen_track(d)
     path = os.path.join(OUT, spec["id"] + ".json")
     with open(path, "w") as f:
         json.dump(d, f, separators=(",", ":"))
@@ -230,23 +255,23 @@ def build(spec):
 TRACKS = [
     {"id": "derby_rustbelt_eight", "name": "Rustbelt Figure Eight", "short": "Rustbelt", "location": "County fairground",
      "description": "The classic county-fair figure eight: two loops and one crossover in the middle where every lap someone gets T-boned. Dirt on the far loop and a table-top jump on the way back.",
-     "curve": figure8_stadium(120.0, 55.0), "width": 13.0, "start": 0.12,
-     "dirt": [[0.55, 0.92]], "jumps": [0.7]},
+     "curve": figure8_stadium(58.0, 30.0), "width": 12.0, "start": 0.12,
+     "dirt": [[0.55, 0.92]], "jumps": [0.7], "jump_shape": (8.0, 5.0, 10.0, 2.2)},
     {"id": "derby_scrapyard_knot", "name": "Scrapyard Knot", "short": "Scrapyard", "location": "Breaker's yard",
      "description": "Three crossovers tied in a knot through a breaker's yard. Mostly loose dirt, two jumps, and nowhere to hide.",
-     "curve": trefoil(42.0), "width": 13.0, "start": 0.05,
+     "curve": trefoil(16.0), "width": 11.0, "start": 0.05,
      "dirt": [[0.0, 0.18], [0.3, 0.62], [0.74, 0.96]], "jumps": [0.33, 0.62]},
     {"id": "derby_harbour_bowtie", "name": "Harbour Bowtie", "short": "Harbour", "location": "Dockside container yard",
      "description": "Two long straights across the docks meet in an X, with tight hairpins at each end. Tarmac straights, dirt in the hairpins and a big jump off the quay.",
-     "curve": bowtie(170.0, 70.0), "width": 14.0, "start": 0.08,
-     "dirt": [[0.2, 0.31], [0.69, 0.8]], "jumps": [0.42], "jump_shape": (14.0, 10.0, 22.0, 2.3)},
+     "curve": bowtie(78.0, 34.0), "width": 12.0, "start": 0.08,
+     "dirt": [[0.2, 0.31], [0.69, 0.8]], "jumps": [0.42], "jump_shape": (10.0, 6.0, 13.0, 2.1)},
     {"id": "derby_quarry_pretzel", "name": "Quarry Pretzel", "short": "Quarry", "location": "Disused chalk quarry",
      "description": "A pretzel of a track in an old quarry: two crossovers, a gravelly dirt section round the back and jumps over the spoil heaps.",
-     "curve": pretzel(190.0, 100.0), "width": 13.0, "start": 0.0,
+     "curve": pretzel(62.0, 40.0), "width": 11.0, "start": 0.0,
      "dirt": [[0.38, 0.7]], "jumps": [0.15, 0.48, 0.66]},
     {"id": "derby_mudflat_infinity", "name": "Mudflat Infinity", "short": "Mudflat", "location": "Estuary marshes",
      "description": "A wide, fast infinity loop laid on the mudflats. Dirt all the way round apart from the start, a crossover in the middle and two jumps.",
-     "curve": lemniscate(190.0, 1.15), "width": 15.0, "start": 0.0,
+     "curve": lemniscate(72.0, 1.15), "width": 12.0, "start": 0.0,
      "dirt": [[0.1, 0.95]], "jumps": [0.22, 0.5],
      "climate": {"ambient_day_c": 14, "ambient_night_c": 7, "rain_chance": 0.55},
      "env": {"ambient_c": 13, "track_c": 15, "time_of_day_h": 16.0, "weather": "overcast"}},

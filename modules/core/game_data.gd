@@ -153,9 +153,14 @@ func load_prefs() -> void:
 		return
 	for key in cfg.get_section_keys("prefs") if cfg.has_section("prefs") else []:
 		var v = cfg.get_value("prefs", key)
+		# The old on/off racing line (before Full / Corners only / Off).
+		if key == "aid_racing_line":
+			if typeof(v) == TYPE_BOOL and not cfg.has_section_key("prefs", "aid_driving_line"):
+				prefs["aid_driving_line"] = 2 if v else 0
+			continue
 		var info := setting_info(key)
 		# Keep a saved value only if it's still one of the choices.
-		if info.get("kind") == "choice" and not info["options"].any(func(o): return o[0] == v):
+		if info.get("kind") == "choice" and not info["options"].any(func(o): return typeof(o[0]) == typeof(v) and o[0] == v):
 			continue
 		prefs[key] = v
 
@@ -178,8 +183,8 @@ func _register_defaults() -> void:
 		"Coloured braking zones on the racing line: green to keep the throttle down, yellow to lift, red to brake.")
 	register_setting("gameplay", "aid_track_assist", "Track assist", [[0, "Off"], [1, "Light"], [2, "Strong"]], 1,
 		"A gentle pull on the steering that helps you stay inside the track limits and on the driving line.")
-	register_setting("gameplay", "aid_racing_line", "Racing line", [[true, "On"], [false, "Off"]], true,
-		"Shows the ideal line through each corner.")
+	register_setting("gameplay", "aid_driving_line", "Driving line", [[2, "Full"], [1, "Corners only"], [0, "Off"]], 2,
+		"The ideal line on the track. Full: all the way round the lap. Corners only: from the braking zone through each corner, hidden on the straights.")
 	register_setting("gameplay", "pit_drive_in", "Pit stops", [["limit", "Drive to the pit limit"], ["self", "Drive the whole stop"]], "limit",
 		"Either way you drive into the pit lane yourself: follow the pit line and be down to the speed limit by the limit line. Drive to the pit limit: from the limit line the car drives itself to your box. Drive the whole stop: you stop on your box yourself (overshoot and it costs time). A countdown on screen shows when the crew release the car and you have it back.")
 	register_setting("gameplay", "aid_pit_guide", "Pit lane guide", [[true, "On"], [false, "Off"]], true,
@@ -188,14 +193,17 @@ func _register_defaults() -> void:
 		"Single player: calling a stop opens a quick menu (tyres, which tyres, front splitter, rear wing, fuel) and pauses the race while it's open.")
 	register_setting("gameplay", "manual_gears", "Gears", [[false, "Automatic"], [true, "Manual"]], false,
 		"Manual: change gear yourself with the shift buttons.")
-	register_setting("gameplay", "pit_crew_game", "Pit crew mini-game: be a wheel gunner", [[false, "Off: the AI crew do the stop"], [true, "On"]], false,
-		"At your stops you're one of the two wheel gunners in the box: run to each wheel (stick / WASD), hold the gun (RT / A / Space) to undo the nut, then hold it again and let go in the green. The driver guns the left side, a co-op team mate the right. Off, your AI crew do the stop at their own pace.")
+	register_setting("gameplay", "pit_crew_coop", "Co-op pit stops: play your crew job", [[true, "On"], [false, "Off: the AI crew do the stop"]], true,
+		"Sharing a car: at each stop the guide drives the car down the lane and everyone's camera closes in on the box. The strategist is the fuel man, the driver cleans the windscreen, a third player lays out the tyres and guns and plugs in the air jacks; then each of you does the tyre job you picked in the lobby. Grab ({crew_grab}) picks up and puts down, use ({crew_gun}) works the wheel gun and the cloth.")
 	register_setting("gameplay", "hud_timing_tower", "Timing tower", [[true, "Show"], [false, "Hide"]], true,
 		"The column on the left of the race screen: position, make, driver, last lap and gap to the car ahead.")
 	register_setting("gameplay", "highlight_me", "Highlight my car", [[true, "On"], [false, "Off"]], true,
-		"A soft gold outline on the ground round your own car (or your team's car on the pit wall), so you can find it at any zoom.")
+		"A thin gold outline round your own car (or your team's car on the pit wall), so you can find it at any zoom.")
 	register_setting("gameplay", "highlight_players", "Highlight other players", [[true, "On"], [false, "Off"]], true,
 		"Online: a faint blue outline round cars driven by other people, so you can tell them from the AI.")
+	register_setting("gameplay", "highlight_fade", "Car highlights fade", [[0, "Never: always shown"],
+		[5, "After 5 seconds"], [15, "After 15 seconds"], [30, "After 30 seconds"], [60, "After 1 minute"]], 0,
+		"The outlines round your car and other players' cars fade away after a while, counted from the green light. Zooming the camera brings them back for the same time again.")
 	register_setting("gameplay", "units", "Units of measure", [["metric", "Metric (km/h, °C, km, litres)"],
 		["uk", "UK (mph, °C, miles, litres)"], ["imperial", "US (mph, °F, miles, gallons)"]], "metric",
 		"How speeds, temperatures, distances and fuel are shown.")

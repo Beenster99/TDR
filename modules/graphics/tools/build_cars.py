@@ -1470,6 +1470,10 @@ def build_car(cid):
     clear_scene()
     car = Car(cid, data, shape)
     car.build()
+    if shape.get("ai_body"):      # body from an AI-generated mesh (tools/ai_body.py)
+        sys.path.insert(0, HERE)
+        import ai_body
+        ai_body.replace(car, shape["ai_body"])
     os.makedirs(OUT_GLB, exist_ok=True)
     os.makedirs(OUT_BLEND, exist_ok=True)
     bpy.ops.wm.save_as_mainfile(filepath=os.path.join(OUT_BLEND, cid + ".blend"), compress=True)

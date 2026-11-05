@@ -280,9 +280,20 @@ created by `RaceSession` and fed after each `sim.step()`.
   and "ideal" (no places lost, clear air). Stop time is a placeholder (8 s)
   until wave 3 defines pit work.
 - **Weather (`WeatherForecast`):** reads the `SimEnvironment` timeline when it
-  has one (deterministic, so identical on every machine): upcoming changes
-  with an ETA range and confidence, and radar cells drifting in on a seeded
-  wind. Fixed weather shows current conditions.
+  has one (deterministic, so identical on every machine). The radar is a rain
+  field (`rain_at`, `sample_grid`) drifting in on a seeded wind (20-43 km/h,
+  any direction): rain d metres upwind is what the timeline brings to the
+  track d / speed seconds later, so the radar is the truth. Cells have ragged
+  fronts, holes and cores, a limited width, and grow or fade a little on the
+  way in; over the circuit they match the race's rain exactly. The forecast
+  moves today's picture on at an estimated speed (up to 18% off, drifting
+  through the race) and assumes cells keep their strength: upcoming changes
+  with an ETA range (holds the real time about 95% of the time), how long
+  they last and a confidence, all getting better as the weather nears.
+  `rain_in(secs)` is the forecast rain at the track (the AI's pit strategy
+  uses it). Fixed weather shows current conditions. The pit wall draws it
+  with `WeatherRadar` (ui): map, range rings, rain colours, cell arrows,
+  10/20/30-minute lines, a past-and-forecast loop and zoom.
 - **Feed (`RaceFeed`):** AI radio and strategy calls posted with
   `RaceSim.post_event({"type": "radio"|"strategy", "car", "topic", "text", "plan"})`
   plus calls the data writes itself: fastest laps, passes in the top ten,
@@ -304,7 +315,7 @@ created by `RaceSession` and fed after each `sim.step()`.
 `InputSetup` (input module) registers all actions in code at start-up. Keyboard: WASD or arrows.
 Gamepad: RT throttle, LT brake, left-stick steering (analog, with
 deadzones), A/X as digital throttle/brake for pads without triggers, Y
-camera, Back restart, Start menu. `LocalInput` passes analog input straight
+camera, Back restart, Start pause menu. `LocalInput` passes analog input straight
 through with a steering expo curve. It smooths digital keys, and both get
 speed-sensitive steering lock. Menus and lobby use Godot's `ui_*` actions,
 so the D-pad/stick move focus, A selects and B goes back. `Stepper` makes

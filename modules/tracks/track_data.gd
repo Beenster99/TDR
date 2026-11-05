@@ -63,6 +63,25 @@ var pit_limit_start: float = 0.0   ## pit metres where the speed limit starts
 var pit_limit_end: float = 0.0     ## and ends
 var pit_box_count: int = 30
 var _pit_bounds := Rect2()
+var _pit_lane_cells := {}   ## pit_path segments near each cell (see _bucket_segments)
+## The pit wall: a concrete wall between the track and the pit lane, all
+## along the stretch where the lane runs beside the track with room for it
+## (never on the track or in the lane). Its centre line, in metres; cars
+## can't drive through it (RaceSim.resolve_pit_wall). Empty if no room.
+var pit_wall: PackedVector2Array = []
+var _pit_wall_bounds := Rect2()
+## The wall's segments bucketed into PIT_WALL_CELL m squares (cell key ->
+## segment indices, in order), so a car only tests the few segments near it.
+var _pit_wall_cells := {}
+const PIT_WALL_CELL := 8.0
+const PIT_WALL_CELL_MARGIN := 3.0  ## segments are listed in every cell within this of them
+const PIT_WALL_NEAR_MARGIN := 9.0  ## the same for pit_wall_near (a whole car's reach)
+var _pit_wall_near_cells := {}
+const PIT_WALL_HALF := 0.5        ## half the wall's thickness (m, as TrackView draws it)
+const PIT_WALL_MIN_GAP := 3.4     ## track edge to lane edge needed for the wall (clear of the kerb band)
+const PIT_WALL_MAX_GAP := 25.0    ## the lane's this far off: an access road, no wall
+const PIT_WALL_LANE_GAP := 1.5    ## the wall stands at most this far off the lane's edge
+const PIT_WALL_STEP := 2.0        ## m along the lane between wall points
 ## Pit lane surface: how far beside the lane the ground eases into it, and
 ## how far from the track's edge the lane still follows the track's height.
 const PIT_VERGE_M := 10.0
@@ -126,6 +145,8 @@ static func from_dict(d: Dictionary) -> TrackData:
 	if d.get("joker") is Dictionary and (d["joker"] as Dictionary).get("path", []).size() >= 2:
 		t._build_joker(d["joker"])
 	t._load_elevation(d.get("elevation"), start)
+	if t.has_joker():
+		t._build_joker_profile()
 	t._load_barriers(d.get("barriers"), start)
 	if t.pit_lane is Dictionary and t.pit_lane.get("path", []).size() >= 2:
 		t._build_pit(t.pit_lane)
@@ -156,6 +177,157 @@ func _build_pit(p: Dictionary) -> void:
 		lo = lo.min(q)
 		hi = hi.max(q)
 	_pit_bounds = Rect2(lo, hi - lo).grow(pit_width)
+	_pit_lane_cells = _bucket_segments(pit_path, PIT_WALL_CELL, pit_width * 0.5 + 0.5)
+	_build_pit_wall()
+
+
+## The pit wall's centre line: wherever the gap between the track's edge and
+## the lane's edge is at least PIT_WALL_MIN_GAP, in the stretch round the
+## garages (the run of such points that overlaps the speed-limit zone). It
+## stands in the middle of the gap, or PIT_WALL_LANE_GAP off the lane where
+## the gap is wide.
+func _build_pit_wall() -> void:
+	pit_wall = PackedVector2Array()
+	var h := pit_width * 0.5
+	var runs: Array = []      ## [[start d, points], ...]
+	var cur := PackedVector2Array()
+	var cur_start := 0.0
+	var hint := -1
+	var d := 0.0
+	while d <= pit_length:
+		var lane_edge := pit_position_at(d, -pit_side * h)
+		var q := project(lane_edge, hint)
+		hint = q["idx"]
+		var edge: float = q["w_right"] if pit_side > 0.0 else q["w_left"]
+		var gap: float = float(q["offset"]) * pit_side - edge
+		var ok := gap >= PIT_WALL_MIN_GAP and gap <= PIT_WALL_MAX_GAP
+		var wp := pit_position_at(d, -pit_side * (h + minf(gap * 0.5, PIT_WALL_LANE_GAP)))
+		if ok:
+			# Where the lane bends the offset point can fold back into the
+			# lane or out onto the track: no wall there.
+			var wq := project(wp, hint)
+			var w_edge: float = wq["w_right"] if pit_side > 0.0 else wq["w_left"]
+			ok = float(wq["offset"]) * pit_side - w_edge >= kerb_width + PIT_WALL_HALF \
+				and project_pit(wp)["dist"] >= h + PIT_WALL_HALF + 0.2
+		if ok:
+			if cur.is_empty():
+				cur_start = d
+			cur.append(wp)
+		elif not cur.is_empty():
+			runs.append([cur_start, cur])
+			cur = PackedVector2Array()
+		d += PIT_WALL_STEP
+	if not cur.is_empty():
+		runs.append([cur_start, cur])
+	# The longest run beside the garages (the speed-limit zone).
+	for r in runs:
+		var pts: PackedVector2Array = r[1]
+		var a: float = r[0]
+		var b: float = a + (pts.size() - 1) * PIT_WALL_STEP
+		if pts.size() >= 2 and b >= pit_limit_start and a <= pit_limit_end and pts.size() > pit_wall.size():
+			pit_wall = pts
+	if pit_wall.size() >= 2:
+		var lo := pit_wall[0]
+		var hi := pit_wall[0]
+		for p in pit_wall:
+			lo = lo.min(p)
+			hi = hi.max(p)
+		_pit_wall_bounds = Rect2(lo, hi - lo)
+	_bucket_pit_wall()
+
+
+func _bucket_pit_wall() -> void:
+	_pit_wall_cells = _bucket_segments(pit_wall, PIT_WALL_CELL, PIT_WALL_CELL_MARGIN)
+	_pit_wall_near_cells = _bucket_segments(pit_wall, PIT_WALL_CELL, PIT_WALL_NEAR_MARGIN)
+
+
+## False when nothing of the pit wall is within radius of c (cheap: one
+## look-up), so a car far from it can skip pit_wall_contact. True means
+## it might be.
+func pit_wall_near(c: Vector2, radius: float) -> bool:
+	if not has_pit_wall():
+		return false
+	if radius > PIT_WALL_NEAR_MARGIN:
+		return true
+	var near: PackedInt32Array = _pit_wall_near_cells.get(Vector2i(floori(c.x / PIT_WALL_CELL), floori(c.y / PIT_WALL_CELL)), PackedInt32Array())
+	var r2 := radius * radius
+	for i in near:
+		var a := pit_wall[i]
+		var seg := pit_wall[i + 1] - a
+		var l2 := seg.length_squared()
+		var foot := a if l2 < 1e-8 else a + seg * clampf((c - a).dot(seg) / l2, 0.0, 1.0)
+		if c.distance_squared_to(foot) <= r2:
+			return true
+	return false
+
+
+## Segments of a polyline bucketed into cell x cell squares: Vector2i cell ->
+## PackedInt32Array of the segments (in order) that come within margin of it.
+static func _bucket_segments(pts: PackedVector2Array, cell: float, margin: float) -> Dictionary:
+	var cells := {}
+	for i in pts.size() - 1:
+		var lo := pts[i].min(pts[i + 1]) - Vector2.ONE * margin
+		var hi := pts[i].max(pts[i + 1]) + Vector2.ONE * margin
+		for cx in range(floori(lo.x / cell), floori(hi.x / cell) + 1):
+			for cy in range(floori(lo.y / cell), floori(hi.y / cell) + 1):
+				var key := Vector2i(cx, cy)
+				var list: PackedInt32Array = cells.get(key, PackedInt32Array())
+				list.append(i)
+				cells[key] = list
+	return cells
+
+
+func has_pit_wall() -> bool:
+	return pit_wall.size() >= 2
+
+
+## Where a circle (centre c, radius r) is into the pit wall, or {} if it
+## isn't: {normal (unit, out of the wall towards keep_side's side), depth (m)}.
+## keep_side is a point on the side the circle should end up on (the car's
+## centre); a circle that has gone right through is pushed back to that side.
+func pit_wall_contact(c: Vector2, r: float, keep_side: Vector2) -> Dictionary:
+	if not has_pit_wall() or not _pit_wall_bounds.grow(r + PIT_WALL_HALF + 0.5).has_point(c):
+		return {}
+	var reach := r + PIT_WALL_HALF
+	var best := {}
+	# Only segments that can be within reach + 1 m: those listed in c's cell.
+	var near: PackedInt32Array
+	if reach + 1.0 <= PIT_WALL_CELL_MARGIN and not _pit_wall_cells.is_empty():
+		near = _pit_wall_cells.get(Vector2i(floori(c.x / PIT_WALL_CELL), floori(c.y / PIT_WALL_CELL)), PackedInt32Array())
+	else:
+		near = PackedInt32Array(range(pit_wall.size() - 1))
+	for i in near:
+		var a := pit_wall[i]
+		var b := pit_wall[i + 1]
+		var seg := b - a
+		var l2 := seg.length_squared()
+		if l2 < 1e-6:
+			continue
+		var t := clampf((c - a).dot(seg) / l2, 0.0, 1.0)
+		var foot := a + seg * t
+		var v := c - foot
+		var dist := v.length()
+		if dist >= reach + 1.0:
+			continue
+		var nrm: Vector2
+		var depth: float
+		if t > 0.0 and t < 1.0:
+			# Along the wall: out on the side the car is on.
+			var side_n := Vector2(-seg.y, seg.x) / sqrt(l2)
+			if side_n.dot(keep_side - a) < 0.0:
+				side_n = -side_n
+			var sd := side_n.dot(c - foot)   # + on the car's side
+			depth = reach - sd
+			nrm = side_n
+		else:
+			# Round the end of the wall.
+			if dist < 0.0001:
+				continue
+			depth = reach - dist
+			nrm = v / dist
+		if depth > 0.0 and (best.is_empty() or depth > float(best["depth"])):
+			best = {"normal": nrm, "depth": depth}
+	return best
 
 
 func _build() -> void:
@@ -312,8 +484,8 @@ func surface_for(q: Dictionary) -> int:
 	var off: float = q["offset"]
 	var edge: float = q["w_right"] if off >= 0.0 else q["w_left"]
 	var a := absf(off)
-	if a <= edge:
-		return TrackData.Surface.TRACK
+	if a <= edge or (discipline == "derby" and a <= edge + runoff):
+		return TrackData.Surface.TRACK   # a derby arena's road runs right up to the walls
 	if q.has("pos") and in_pit_lane(q["pos"]):
 		return TrackData.Surface.TRACK
 	if q.has("pos") and has_joker() and _joker_bounds.grow(JOKER_VERGE_M).has_point(q["pos"]):
@@ -354,13 +526,20 @@ func index_at(s: float) -> int:
 	return lo
 
 
-## Grid slot i (0 = pole). Two-wide staggered grid behind the line.
+## Grid slot i (0 = pole). Two-wide staggered grid behind the line; in a
+## Demolition Derby arena two abreast in tight rows (the arenas are small).
 func grid_slot(i: int) -> Dictionary:
 	var s := length - 12.0 - i * 8.0
+	if discipline == "derby":
+		s = length - 10.0 - floorf(i * 0.5) * DERBY_ROW_M
 	var side := -1.0 if i % 2 == 0 else 1.0
 	var w := minf(width_left[index_at(s)], width_right[index_at(s)])
-	var offset := side * minf(3.0, w * 0.45)
+	var offset := side * minf(4.0 if discipline == "circuit" else 3.0, w * 0.45)
 	return {"pos": position_at(s, offset), "heading": heading_at(s), "s": s}
+
+
+## Metres between rows on a Demolition Derby grid (two cars a row).
+const DERBY_ROW_M := 7.5
 
 
 # --- Loose surface (rallycross dirt sections) --------------------------------
@@ -386,7 +565,7 @@ func _load_dirt(ranges) -> void:
 		_dirt_pt[i] = _dirt_range_value(cum_s[i], dirt, length)
 
 
-static func _dirt_range_value(s: float, ranges: Array, loop_len: float) -> float:
+static func _dirt_range_value(s: float, ranges: Array, loop_len: float, blend := DIRT_BLEND_M) -> float:
 	var best := 0.0
 	for r in ranges:
 		var a: float = r[0]
@@ -402,8 +581,26 @@ static func _dirt_range_value(s: float, ranges: Array, loop_len: float) -> float
 				inside = minf(into, span - into)
 		else:
 			inside = minf(s - a, b - s)
-		best = maxf(best, clampf(0.5 + inside / DIRT_BLEND_M, 0.0, 1.0))
+		best = maxf(best, clampf(0.5 + inside / blend, 0.0, 1.0))
 	return best
+
+
+## How the lap's surface is drawn at distance s (graphics only; the grip is
+## dirt_at's): x = dirt eased over DIRT_LOOK_BLEND_M (0.5 still marks the
+## real join, so the ragged edge the road shader draws from it sits where the
+## grip changes), y = dirt dragged out onto the tarmac by the tyres, fading
+## over DIRT_TRAIL_M after a stretch ends (race direction).
+const DIRT_LOOK_BLEND_M := 14.0
+const DIRT_TRAIL_M := 45.0
+func dirt_look_at(s: float) -> Vector2:
+	if dirt.is_empty():
+		return Vector2.ZERO
+	var trail := 0.0
+	for r in dirt:
+		var past := fposmod(s - float(r[1]), length)
+		if past < DIRT_TRAIL_M:
+			trail = maxf(trail, 1.0 - past / DIRT_TRAIL_M)
+	return Vector2(_dirt_range_value(s, dirt, length, DIRT_LOOK_BLEND_M), trail)
 
 
 func has_dirt() -> bool:
@@ -465,6 +662,54 @@ func _build_joker(j: Dictionary) -> void:
 		lo = lo.min(q)
 		hi = hi.max(q)
 	_joker_bounds = Rect2(lo, hi - lo).grow(joker_width)
+
+
+## Height of the joker lane at each path point. Where it shares the ground
+## with the lap (its ends) it is the lap's height; once it runs away from the
+## lap it follows the hillside under it (smoothed), so it lies on the ground
+## instead of cutting under the grass where the lap beside it is lower.
+var joker_heights: PackedFloat64Array = []
+
+func _build_joker_profile() -> void:
+	var m := joker_path.size()
+	var lap_h := PackedFloat64Array()
+	var ground := PackedFloat64Array()
+	var w := PackedFloat64Array()
+	var h0 := joker_surface_height(project(joker_path[0]))
+	var h1 := joker_surface_height(project(joker_path[m - 1]))
+	for i in m:
+		var q := project(joker_path[i])
+		var off: float = q["offset"]
+		var edge: float = (q["w_right"] if off >= 0.0 else q["w_left"]) + kerb_width
+		lap_h.append(joker_surface_height(q))
+		var f := joker_cum[i] / maxf(joker_length, 1.0)
+		ground.append(ground_height_at(joker_path[i]) if terrain_size != Vector2i.ZERO else lerpf(h0, h1, f))
+		w.append(smoothstep(0.0, 10.0, absf(off) - edge))
+	# Smooth the hillside along the lane (about 8 m either way).
+	for _pass in 2:
+		var sm := ground.duplicate()
+		for i in range(1, m - 1):
+			var acc := 0.0
+			var n := 0
+			for k in range(maxi(i - 4, 0), mini(i + 5, m)):
+				acc += ground[k]
+				n += 1
+			sm[i] = acc / n
+		ground = sm
+	joker_heights.resize(m)
+	for i in m:
+		joker_heights[i] = lerpf(lap_h[i], ground[i], w[i])
+
+
+## Height of the joker lane d joker metres along it (0 without elevation).
+func joker_height_at(d: float) -> float:
+	if joker_heights.size() != joker_path.size():
+		return 0.0
+	var i := joker_cum.bsearch(d) - 1
+	i = clampi(i, 0, joker_path.size() - 2)
+	var span := joker_cum[i + 1] - joker_cum[i]
+	var f := clampf((d - joker_cum[i]) / span, 0.0, 1.0) if span > 0.0001 else 0.0
+	return lerpf(joker_heights[i], joker_heights[i + 1], f)
 
 
 func has_joker() -> bool:
@@ -530,6 +775,12 @@ func joker_dirt_at(d: float) -> float:
 	return _dirt_range_value(d, joker_dirt, 0.0) if not joker_dirt.is_empty() else 0.0
 
 
+## How the joker's surface is drawn d metres along it (graphics only), eased
+## like dirt_look_at's x.
+func joker_dirt_look_at(d: float) -> float:
+	return _dirt_range_value(d, joker_dirt, 0.0, DIRT_LOOK_BLEND_M) if not joker_dirt.is_empty() else 0.0
+
+
 ## The lap distance a car d metres along the joker counts as: the joker's
 ## length is spread evenly over the stretch of lap it replaces.
 func joker_lap_s(d: float) -> float:
@@ -584,7 +835,20 @@ func project_pit(pos: Vector2) -> Dictionary:
 func in_pit_lane(pos: Vector2) -> bool:
 	if not has_pit_lane() or not _pit_bounds.has_point(pos):
 		return false
-	return project_pit(pos)["dist"] <= pit_width * 0.5
+	# Same answer as project_pit(pos)["dist"] <= half the width, but only
+	# testing the few lane segments listed near pos.
+	var half := pit_width * 0.5
+	var near: PackedInt32Array = _pit_lane_cells.get(Vector2i(floori(pos.x / PIT_WALL_CELL), floori(pos.y / PIT_WALL_CELL)), PackedInt32Array())
+	for i in near:
+		var a := pit_path[i]
+		var seg := pit_path[i + 1] - a
+		var l2 := seg.length_squared()
+		if l2 < 1e-8:
+			continue
+		var foot := a + seg * clampf((pos - a).dot(seg) / l2, 0.0, 1.0)
+		if pos.distance_squared_to(foot) <= half * half:
+			return true
+	return false
 
 
 ## Position d metres along the pit lane, offset metres to the right of it.
@@ -730,7 +994,7 @@ func surface_height_at(pos: Vector2, hint: int = -1) -> float:
 		var jp := project_joker(pos)
 		var jout: float = jp["dist"] - joker_width * 0.5
 		if jout < PIT_VERGE_M:
-			h = lerpf(h, joker_surface_height(q), 1.0 - smoothstep(1.5, PIT_VERGE_M, jout))
+			h = lerpf(h, joker_height_at(jp["d"]), 1.0 - smoothstep(1.5, PIT_VERGE_M, jout))
 	return h
 
 

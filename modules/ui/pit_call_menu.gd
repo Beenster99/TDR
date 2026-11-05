@@ -14,7 +14,6 @@ extends Control
 signal confirmed(changes: Dictionary)
 signal cancelled
 
-const FUEL_STEPS := [-1.0, 0.0, 10.0, 20.0, 30.0, 50.0, 80.0]
 const YELLOW := Color(1.0, 0.88, 0.35)
 const W := 600.0
 const ROW_H := 44.0
@@ -90,14 +89,17 @@ func _build_rows() -> void:
 			rows.append({"id": key, "label": "Front splitter" if key == "wing_front" else "Rear wing", "options": opts,
 				"value": snappedf(float(want.get(key, _now[key])), 0.1), "help": help + " +%.1f s a wing." % PitRules.WING_CHANGE_S})
 	if sim.settings.fuel_enabled:
-		var fuel := []
-		for f in FUEL_STEPS:
-			fuel.append([f, "To the end" if f < 0.0 else _cap(RaceHud.fuel_plan_text(f))])
+		# To the end, none, then litre by litre up to a full tank, each with
+		# the laps it adds.
+		var fuel := [[-1.0, _cap(RaceHud.fuel_choice_text(sim, car, -1.0))], [0.0, "None"]]
+		var cap := floori(sim.defs[car].fuel_capacity_l)
+		for l in range(1, cap + 1):
+			fuel.append([float(l), RaceHud.fuel_choice_text(sim, car, float(l))])
 		var fv := float(plan["fuel"])
-		if not FUEL_STEPS.has(fv):
-			fuel.append([fv, RaceHud.fuel_plan_text(fv)])
+		if fv > 0.0:
+			fv = clampf(roundf(fv), 1.0, float(cap))
 		rows.append({"id": "fuel", "label": "Fuel", "options": fuel, "value": fv,
-			"help": "Fuel goes in while the tyres are changed (3 L a second)."})
+			"help": "By the litre (hold to run): each shows the laps it adds. Fuel goes in while the tyres are changed (3 L a second)."})
 	if sim.damage_level != CarDamage.Level.OFF:
 		rows.append({"id": "repair", "label": "Repairs", "options": [[true, "Fix damage"], [false, "Leave it"]],
 			"value": bool(plan["repair"]), "help": "Repairs come after the tyres and fuel."})
@@ -288,5 +290,6 @@ func _draw() -> void:
 		if sel:
 			draw_rect(br, Color(1, 1, 1, 0.8), false, 2.0)
 		draw_string(font, Vector2(br.position.x, br.position.y + 29), rows[k]["label"], HORIZONTAL_ALIGNMENT_CENTER, bw, 18, Color.WHITE)
-	draw_string(font, Vector2(r.position.x + 20, r.end.y - 14), "↑↓ choose   ←→ change   A / Enter box this lap   B / Esc cancel",
+	draw_string(font, Vector2(r.position.x + 20, r.end.y - 14), InputPrompt.fill(InputPrompt.pick("↑↓ choose   ←→ change", "D-pad ↑↓ choose   ←→ change")
+		+ "   {ui_accept} box this lap   {ui_cancel} cancel"),
 		HORIZONTAL_ALIGNMENT_LEFT, W - 40, 13, Color(1, 1, 1, 0.5))

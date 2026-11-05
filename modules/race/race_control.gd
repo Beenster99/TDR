@@ -9,9 +9,10 @@ extends RefCounted
 ## safety car along between updates so it looks smooth.
 ##
 ## How it works:
-##  * Incidents (the damage module's "incident" events, big "collision"
-##    events) and stranded cars (stopped on the circuit) raise local yellow
-##    flags for that part of the track: no overtaking there.
+##  * Real incidents raise local yellow flags for that part of the track (no
+##    overtaking there): a car into the barrier, a heavy crash between cars,
+##    a car spun or crawling off the track, a stranded car (stopped on the
+##    circuit). Ordinary contact between cars (rubbing, a tap) does not.
 ##  * A car stopped on the racing surface, a retired car, a big crash or
 ##    several stranded cars escalate to a VSC (everyone keeps above a
 ##    reference lap, shown as a delta) or a full SC.
@@ -25,34 +26,89 @@ extends RefCounted
 ##    slow down) and then a time penalty (RaceSim.add_penalty), added to the
 ##    car's race time in the final classification.
 ##  * The host setting RaceSettings.safety_car_enabled switches the VSC and
-##    SC on or off. Local yellow flags always apply.
+##    SC on or off; flags_enabled switches the yellow flags (both off =
+##    "Safety car: Off", no flags at all).
 
 enum Mode { GREEN, VSC, SC }
 const MODE_NAMES := ["green", "vsc", "sc"]
 
-## Safety car pace profile (m/s, m/s^2): a lap about 35-40 % slower than race pace.
+## Safety car pace profile (m/s, m/s^2), worked out along the racing line
+## (the same line the AI drives, kept a little in from the edges): a road car
+## on semi-slicks driven hard through the corners and held back on the
+## straights, so the lap is still well slower than race pace.
 const SC_MAX_SPEED := 38.0
-const SC_LAT_ACCEL := 6.0
-const SC_DECEL := 6.0
+const SC_LAT_ACCEL := 9.5
+const SC_DECEL := 8.0
 ## The VSC reference is a little quicker than the SC itself.
 const VSC_MAX_SPEED := 42.0
-const VSC_LAT_ACCEL := 7.5
+const VSC_LAT_ACCEL := 11.0
+## The safety car's line, built like the AI's (AIDriver._build_line): points
+## this far apart, pulled in from the edges in proportion so it keeps its
+## shape, to SC_LINE_MARGIN from the edge where the track's line goes to
+## SC_LINE_EDGE (raceline.py KERB_M).
+const SC_LINE_SPACING := 4.0
+const SC_LINE_MARGIN := 2.4
+const SC_LINE_EDGE := 0.3
+## Metres the SC takes to ease from the pit exit onto the racing line, and
+## from the line over to the pit entry.
+const SC_LINE_BLEND := 150.0
 ## Below this a car on the circuit counts as stopped.
 const STOPPED_SPEED := 3.0
 const MOVING_AGAIN := 8.0
 const YELLOW_HALF_M := 120.0     ## a local yellow covers this much track either side
 const YELLOW_HOLD_S := 12.0      ## stays out this long after the hazard is gone
 const STRANDED_YELLOW_S := 2.0
+## Car to car contact (an incident's severity, 0..1): below CONTACT_DEBRIS_SEV
+## it's racing (nothing happens); from there it leaves bits on the track that
+## build up for the marshals; from CONTACT_YELLOW_SEV it's a crash that
+## brings out a local yellow by itself.
+const CONTACT_DEBRIS_SEV := 0.35
+const CONTACT_YELLOW_SEV := 0.6
+## Spun: going slower than this and facing more than ~105 degrees away from
+## the track direction, or still rotating fast.
+const SPUN_MAX_SPEED := 25.0
+const SPUN_DOT := -0.25
+const SPIN_YAW_RATE := 2.5
+## Off: crawling on the grass / in the gravel (or against the barrier).
+const OFF_MAX_SPEED := 12.0
+const HAZARD_YELLOW_S := 0.75     ## spun or off this long: local yellow
+const RX_PUSH_OFF_S := 6.0     ## rallycross: a retired car is pushed off after resting this long
+const RX_PUSH_GAP_S := 8.0     ## ... once the next car is at least this many seconds away
 const STRANDED_VSC_S := 6.0
 const STRANDED_SC_S := 16.0
 const RECOVERY_VSC_S := 25.0     ## marshals clear a stranded car in this time
 const RECOVERY_SC_S := 40.0
+## An AI car that has been stuck this long (stopped, or crawling below
+## MOVING_AGAIN) is out of the race: beached in the gravel, wedged against
+## the barrier or stalled. The marshals send a crane or a tractor for it.
+## Shorter off the circuit (a car stuck there won't get going again) than
+## stopped on the racing surface.
+const STUCK_OFF_RETIRE_S := 15.0
+const STUCK_ON_RETIRE_S := 20.0
+## ... unless it gets this far along the track meanwhile (a car creeping
+## along the edge waiting for a gap to rejoin isn't stuck).
+const STUCK_PROGRESS_M := 30.0
 const VSC_MIN_S := 20.0
 const VSC_ENDING_S := 6.0
 const SC_GAP_TARGET := 25.0      ## leader keeps this far behind the safety car
 const SC_SPAWN_AHEAD := 160.0
 const SC_PIT_SPEED := 17.0
+const GIVE_BACK_SC := -2          ## give_back victim: the safety car
 const GIVE_BACK_S := 12.0        ## time to give a place back before a penalty
+## Only clear gains count as overtakes for the rules: the passer has to be
+## this far ahead (more than a car length), so cars side by side or nose to
+## tail in a queue don't trade "overtakes".
+const PASS_MARGIN_M := 6.0
+## A car that has been off, spun or stopped in the last few seconds is in
+## trouble: passing it is never an offence (it costs the passer nothing).
+const TROUBLE_GRACE_S := 6.0
+## A car this much slower than the passer is in trouble too.
+const SLOW_CAR_FRAC := 0.7
+## A move started before the flag: if the passer was already within this
+## distance of the car ahead (alongside or right on its tail) a moment
+## before, while both were racing under green, the pass stands.
+const ALONGSIDE_M := 8.0
+const PASS_LOOKBACK_S := 0.5     ## how often the "a moment before" picture is taken
 const PENALTY_S := 5.0
 const VSC_DELTA_WARN := -0.5
 const VSC_DELTA_PENALTY := -2.0
@@ -86,6 +142,7 @@ var sc_lights: String = "off"    ## "off", "amber" (out), "green" (coming in)
 var yellows: Array = []
 ## Per car
 var stranded_t: PackedFloat64Array = []   ## seconds stopped on the circuit
+var _hazard_t: PackedFloat64Array = []    ## seconds spun or off and slow
 var recovered: PackedByteArray = []       ## marshals have dealt with it (ignored from now on)
 var carried: PackedByteArray = []         ## a recovery vehicle has it (lifted or on the strap)
 ## Recovery vehicles at work (CarRecovery jobs, one per retired car out on the
@@ -98,6 +155,8 @@ var debris: Array = []
 var marshal_jobs: Array = []
 var _marshal_ids: int = 0
 var _cleared: PackedByteArray = []        ## a live stopped car the marshals have made safe (yellow only)
+var _stuck_t: PackedFloat64Array = []     ## seconds an AI car has been stopped or crawling (see STUCK_*_RETIRE_S)
+var _stuck_s: PackedFloat64Array = []     ## where it was on the track when that started
 var vsc_delta: PackedFloat64Array = []    ## seconds; below 0 = faster than allowed
 var vsc_warned: PackedByteArray = []
 var vsc_penalised: PackedByteArray = []
@@ -108,9 +167,27 @@ var released: PackedByteArray = []        ## crossed the line since the restart:
 var give_back: Dictionary = {}
 var _prev_order: Array[int] = []
 var _sc_behind: PackedByteArray = []      ## car was behind the SC last tick
+var _trouble_until: PackedFloat64Array = []  ## race_time until which the car counts as in trouble
+## Pictures of the field PASS_LOOKBACK_S apart (the older one is 0.5-1 s old):
+## distance and whether the car was free to race (green, no yellow there).
+var _ago_dist: PackedFloat64Array = []
+var _ago_free: PackedByteArray = []
+var _now_dist: PackedFloat64Array = []
+var _now_free: PackedByteArray = []
+var _ago_t: float = -1.0
 
+## The racing line the SC drives: points SC_LINE_SPACING apart, the track
+## distance at each (always growing round the lap, from _line_s[0]), and
+## the SC and VSC speed at each.
+var _line_pts: PackedVector2Array = []
+var _line_s: PackedFloat64Array = []
+var _line_step: float = SC_LINE_SPACING
 var _sc_profile: PackedFloat64Array = []
 var _vsc_profile: PackedFloat64Array = []
+var _pit_entry_off := 0.0                  ## track offset where the pit lane starts / ends
+var _pit_exit_off := 0.0
+var sc_d: float = 0.0                      ## SC distance along its racing line (on the circuit)
+var sc_join_d: float = -1.0                ## line distance where it came out of the pit lane (-1 = on the line)
 var _danger: float = 0.0                  ## how bad things are right now (0 none, 1 VSC, 2 SC)
 var _big_incident_until: float = -1.0
 
@@ -120,9 +197,12 @@ func _init(p_sim: RaceSim) -> void:
 	enabled = sim.settings.safety_car_enabled
 	var n := sim.cars.size()
 	stranded_t.resize(n)
+	_hazard_t.resize(n)
 	recovered.resize(n)
 	carried.resize(n)
 	_cleared.resize(n)
+	_stuck_t.resize(n)
+	_stuck_s.resize(n)
 	vsc_delta.resize(n)
 	vsc_warned.resize(n)
 	vsc_penalised.resize(n)
@@ -130,11 +210,52 @@ func _init(p_sim: RaceSim) -> void:
 	unlap_from.resize(n)
 	released.resize(n)
 	_sc_behind.resize(n)
+	_trouble_until.resize(n)
+	_trouble_until.fill(-1.0)
+	_ago_dist.resize(n)
+	_ago_free.resize(n)
+	_now_dist.resize(n)
+	_now_free.resize(n)
 	released.fill(1)
 	_build_profiles()
 
 
 # --- Queries (AI, HUD, other race rules) ------------------------------------
+
+## False in rallycross (and derby), and on circuits with "Safety car: Off":
+## no yellow flags, VSC, safety car or double yellows. Marshals still clear
+## debris, in the gaps, and recovery vehicles still fetch retired cars.
+func flags_used() -> bool:
+	return sim.settings.discipline == RaceSettings.DISCIPLINE_CIRCUIT and sim.settings.flags_enabled
+
+
+## Seconds until the next car reaches track distance s (INF with none
+## coming). Stopped and retired cars don't count; a car just past s counts as
+## still there for a moment.
+func time_to_traffic(s: float) -> float:
+	var L := sim.track.length
+	var best := INF
+	for i in sim.cars.size():
+		var e := sim.entries[i]
+		if e.finished or e.dnf or out_of_play(i) or _pitting(i):
+			continue
+		var c := sim.cars[i]
+		var v := c.speed()
+		if v < 2.0:
+			continue
+		var d := fposmod(s - c.track_s, L)
+		if d > L - 25.0:
+			return 0.0
+		best = minf(best, d / maxf(v, 5.0))
+	return best
+
+
+## What the marshals at s go by (TrackMarshals.step clear_s). Everywhere they
+## only go out in the gaps between cars: on circuits the double yellows slow
+## the field down as well, in rallycross there are no flags to protect them.
+func marshal_clear_s(s: float) -> float:
+	return time_to_traffic(s)
+
 
 ## True once car i is no longer driven by the physics: craned / towed away,
 ## or recovered and gone.
@@ -162,6 +283,8 @@ func marshal_views() -> Array:
 
 ## Double yellow flags at track distance s (marshals on the circuit there).
 func double_yellow_at(s: float) -> bool:
+	if not flags_used():
+		return false
 	for job in marshal_jobs:
 		if not job["done"] and _in_zone(s, fposmod(float(job["s"]) - TrackMarshals.DOUBLE_BEFORE_M, sim.track.length),
 				fposmod(float(job["s"]) + TrackMarshals.DOUBLE_AFTER_M, sim.track.length)):
@@ -188,6 +311,8 @@ func mode_name() -> String:
 
 ## "green", "yellow" (only local yellows out), "vsc" or "sc".
 func neutralisation() -> String:
+	if not flags_used():
+		return "green"
 	if mode != Mode.GREEN:
 		return MODE_NAMES[mode]
 	return "yellow" if not yellows.is_empty() or not marshal_jobs.is_empty() else "green"
@@ -221,8 +346,9 @@ func may_pass(i: int, j: int) -> bool:
 	var ej := sim.entries[j]
 	if ej.finished or ej.dnf or recovered[j] or stranded_t[j] >= 1.0 or _pitting(j) or _pitting(i):
 		return true
-	# A car that has gone off or is crawling back after a spin may be passed.
-	if cj.surface >= TrackData.Surface.GRASS or cj.speed() < maxf(STOPPED_SPEED + 2.0, sim.cars[i].speed() * 0.5):
+	# A car that has gone off, spun or is crawling back (or did a moment ago)
+	# may be passed.
+	if in_trouble(j) or cj.speed() < maxf(STOPPED_SPEED + 2.0, sim.cars[i].speed() * SLOW_CAR_FRAC):
 		return true
 	# Taking back a place someone has to give back.
 	if give_back.has(j) and int(give_back[j]["victim"]) == i:
@@ -236,13 +362,27 @@ func may_pass(i: int, j: int) -> bool:
 	return false
 
 
+## Car j is off, spun, stopped or crawling, or was in the last few seconds.
+func in_trouble(j: int) -> bool:
+	var cj := sim.cars[j]
+	return cj.surface >= TrackData.Surface.GRASS or stranded_t[j] >= 1.0 \
+			or sim.race_time < _trouble_until[j] or _causes_yellow(j)
+
+
+func _causes_yellow(j: int) -> bool:
+	for y in yellows:
+		if int(y["car"]) == j:
+			return true
+	return false
+
+
 ## Speed the VSC reference allows at track distance s (m/s).
 func vsc_speed_at(s: float) -> float:
-	return _vsc_profile[sim.track.index_at(s)] if not _vsc_profile.is_empty() else VSC_MAX_SPEED
+	return _line_value(_vsc_profile, line_d_at(s)) if not _vsc_profile.is_empty() else VSC_MAX_SPEED
 
 
 func sc_speed_at(s: float) -> float:
-	return _sc_profile[sim.track.index_at(s)] if not _sc_profile.is_empty() else SC_MAX_SPEED
+	return _line_value(_sc_profile, line_d_at(s)) if not _sc_profile.is_empty() else SC_MAX_SPEED
 
 
 ## Gap from car i forward to the safety car along the track (m); INF when
@@ -277,6 +417,14 @@ func controls_restart(i: int) -> bool:
 	return mode == Mode.SC and stage == "restart" and sc_train_leader() == i
 
 
+## The car that car i has been told to give a place back to: a car index,
+## GIVE_BACK_SC for the safety car, or -1 when there's no such order.
+func give_back_target(i: int) -> int:
+	if not give_back.has(i):
+		return -1
+	return int(give_back[i]["victim"])
+
+
 ## A short line for the HUD about what car i must do (empty = nothing).
 func instruction_for(i: int) -> String:
 	if i < 0 or i >= sim.cars.size():
@@ -293,7 +441,7 @@ func instruction_for(i: int) -> String:
 			if unlapping[i]:
 				return "SAFETY CAR - lapped cars may overtake: unlap yourself"
 			match stage:
-				"in_this_lap": return "SAFETY CAR IN THIS LAP"
+				"in_this_lap": return "Get ready: green flag when the safety car is in"
 				"restart":
 					if controls_restart(i):
 						return "Restart: you control the pace, go when ready"
@@ -342,6 +490,9 @@ func step(dt: float, prev_s: PackedFloat64Array) -> void:
 	# they stop (they're part of the arena now).
 	if sim.settings.is_derby():
 		return
+	if sim.settings.is_rallycross():
+		_step_rallycross(dt)
+		return
 	var racing := sim.phase == RaceSim.Phase.RACING
 	if sim.phase == RaceSim.Phase.CHEQUERED or sim.phase == RaceSim.Phase.FINISHED:
 		if mode != Mode.GREEN or not yellows.is_empty() or sc_visible:
@@ -353,6 +504,7 @@ func step(dt: float, prev_s: PackedFloat64Array) -> void:
 	if not racing:
 		return
 	_read_incidents()
+	_track_hazards(dt)
 	_track_stranded(dt)
 	_update_recoveries(dt)
 	_update_marshals(dt, prev_s)
@@ -366,27 +518,90 @@ func step(dt: float, prev_s: PackedFloat64Array) -> void:
 	_update_unlapping()
 
 
+## Rallycross: no flags, VSC, safety car or recovery vehicles. Crashes still
+## leave debris that marshals sweep up in the gaps between cars, and a car
+## that retires is pushed behind the barrier by marshals once it has stopped
+## and there's a gap.
+func _step_rallycross(dt: float) -> void:
+	var racing := sim.phase == RaceSim.Phase.RACING
+	var over := sim.phase == RaceSim.Phase.CHEQUERED or sim.phase == RaceSim.Phase.FINISHED
+	if not racing and not over:
+		return
+	if racing:
+		_read_incidents()
+	_update_marshals(dt, PackedFloat64Array())
+	for i in sim.cars.size():
+		var c := sim.cars[i]
+		if recovered[i] or not sim.entries[i].dnf:
+			continue
+		stranded_t[i] = stranded_t[i] + dt if c.speed() < STOPPED_SPEED else 0.0
+		if stranded_t[i] >= RX_PUSH_OFF_S and time_to_traffic(c.track_s) > RX_PUSH_GAP_S:
+			recovered[i] = 1
+			_event({"type": "flag", "flag": "recovered", "car": i,
+				"reason": "Marshals have pushed %s's car behind the barrier" % sim.entries[i].driver_name})
+
+
 func _read_incidents() -> void:
+	# Contact between cars is not an incident by itself: rubbing, a tap or a
+	# bump-and-run raise nothing. A flag comes from what the contact leads
+	# to: a car spun, off or stopped (_track_hazards, _track_stranded), or a
+	# heavy shunt that leaves bits on the racing line.
 	for e in sim.events:
-		var t: String = e.get("type", "")
-		var sev := 0.0
-		if t == "incident":
-			sev = float(e.get("severity", 0.0))
-		elif t == "collision":
-			sev = clampf(float(e.get("impulse", 0.0)) / 16000.0, 0.0, 1.0)
-		else:
+		if e.get("type", "") != "incident":
 			continue
-		if sev < 0.25:
-			continue
-		var car := int(e.get("car", e.get("a", -1)))
+		var kind: String = e.get("kind", "")
+		var sev := float(e.get("severity", 0.0))
+		var car := int(e.get("car", -1))
 		var s: float = sim.cars[car].track_s if car >= 0 and car < sim.cars.size() else 0.0
 		if e.has("pos") and e["pos"] is Vector2:
 			s = sim.track.project(e["pos"])["s"]
-		_add_yellow(s, car, "Incident")
 		var at: Vector2 = e["pos"] if e.has("pos") and e["pos"] is Vector2 else sim.track.position_at(s)
-		TrackMarshals.add_debris(debris, sim.track.length, s, at, sev)
+		match kind:
+			"collision", "impact":
+				# Car to car: only a real crash counts.
+				if sev < CONTACT_DEBRIS_SEV:
+					continue
+				TrackMarshals.add_debris(debris, sim.track.length, s, at, sev)
+				if sev >= CONTACT_YELLOW_SEV:
+					_add_yellow(s, car, "Crash")
+			"puncture", "gearbox_failure":
+				# The car limps on: a flag only if it stops (_track_stranded).
+				continue
+			_:
+				# Into the barrier, an engine letting go (oil, smoke)...
+				if sev < 0.25:
+					continue
+				_add_yellow(s, car, "Incident")
+				TrackMarshals.add_debris(debris, sim.track.length, s, at, sev)
 		if sev >= 0.85:
 			_big_incident_until = sim.race_time + 8.0
+
+
+## Cars that have spun, or gone off and are crawling on the grass or in the
+## gravel: a local yellow while it lasts (plus the usual hold). Running wide
+## at speed and carrying on doesn't count.
+func _track_hazards(dt: float) -> void:
+	for i in sim.cars.size():
+		var c := sim.cars[i]
+		var e := sim.entries[i]
+		if recovered[i] or e.finished or e.dnf or _pitting(i) or c.air_h > 0.0:
+			_hazard_t[i] = 0.0
+			continue
+		var hazard := false
+		var v := c.speed()
+		if v < SPUN_MAX_SPEED and v >= STOPPED_SPEED:
+			var facing := Vector2.from_angle(c.heading)
+			var along := Vector2.from_angle(sim.track.heading_at(c.track_s))
+			if facing.dot(along) < SPUN_DOT or absf(c.yaw_rate) > SPIN_YAW_RATE:
+				hazard = true
+		if not hazard and v < OFF_MAX_SPEED and (c.surface == TrackData.Surface.GRAVEL
+				or c.surface == TrackData.Surface.GRASS or c.surface == TrackData.Surface.BARRIER):
+			hazard = true
+		_hazard_t[i] = _hazard_t[i] + dt if hazard else 0.0
+		if hazard or c.surface >= TrackData.Surface.GRASS or stranded_t[i] >= 1.0:
+			_trouble_until[i] = sim.race_time + TROUBLE_GRACE_S
+		if _hazard_t[i] >= HAZARD_YELLOW_S:
+			_add_yellow(c.track_s, i, "Car off" if c.surface != TrackData.Surface.TRACK and c.surface != TrackData.Surface.KERB else "Car spun")
 
 
 func _track_stranded(dt: float) -> void:
@@ -404,6 +619,8 @@ func _track_stranded(dt: float) -> void:
 			_cleared[i] = 0
 		if stranded_t[i] >= STRANDED_YELLOW_S:
 			_add_yellow(c.track_s, i, "Car stopped")
+		if not e.dnf:
+			_track_stuck(i, dt)
 		if e.dnf:
 			# A retired car: send a crane or a tractor once it has come to rest.
 			if stranded_t[i] >= STRANDED_VSC_S and c.speed() < STOPPED_SPEED and recovery_for(i).is_empty():
@@ -413,6 +630,55 @@ func _track_stranded(dt: float) -> void:
 		if stranded_t[i] > limit + STRANDED_VSC_S:
 			_cleared[i] = 1  # a live car the marshals have pushed clear: yellow flag only
 			stranded_t[i] = STRANDED_YELLOW_S
+
+
+## An AI car that is stuck for good retires, so a recovery vehicle comes for
+## it (before, it sat parked at the side of the track for the rest of the
+## race). Cars driven by people are left to get themselves out.
+func _track_stuck(i: int, dt: float) -> void:
+	var c := sim.cars[i]
+	var e := sim.entries[i]
+	if not e.is_ai or sim.external[i] or not (e.started_lap or sim.race_time > 15.0):
+		_stuck_t[i] = 0.0
+		return
+	if c.speed() >= MOVING_AGAIN or c.air_h > 0.0:
+		_stuck_t[i] = 0.0
+		return
+	if _stuck_t[i] > 0.0 and absf(wrapf(c.track_s - _stuck_s[i], -sim.track.length * 0.5, sim.track.length * 0.5)) > STUCK_PROGRESS_M:
+		_stuck_t[i] = 0.0
+	var off := not _on_racing_surface(i)
+	# Crawling counts off the circuit (stuck in the gravel); on the track
+	# only a car that has properly stopped does.
+	if off or c.speed() < STOPPED_SPEED:
+		if _stuck_t[i] == 0.0:
+			_stuck_s[i] = c.track_s
+		_stuck_t[i] += dt
+	if _stuck_t[i] >= (STUCK_OFF_RETIRE_S if off else STUCK_ON_RETIRE_S):
+		e.dnf = true
+		_stuck_t[i] = 0.0
+		stranded_t[i] = maxf(stranded_t[i], STRANDED_YELLOW_S)
+		_cleared[i] = 0
+		sim.events.append({"type": "retired", "car": i, "reason": "stuck"})
+
+
+## Parked: a retired AI car (not a wreck in the derby) brakes to a stop and
+## stays there for the recovery vehicle. Before, the AI kept driving it, and
+## a car that can't race on (stuck, or the engine gone on a slope) crept
+## about and never came to rest. `driven` is what the AI wanted: its
+## steering is kept while the car is still rolling.
+func parked_input(i: int, driven: CarInput) -> CarInput:
+	var c := sim.cars[i]
+	var held := CarInput.neutral()
+	var v := c.speed()
+	if v > STOPPED_SPEED and driven != null:
+		held.steer = driven.steer
+	# Full brakes while rolling; at a standstill a held brake pedal would
+	# select reverse (below 0.5 it doesn't), so the handbrake holds it.
+	held.brake = 1.0 if v > 1.0 else 0.45
+	held.handbrake = v < STOPPED_SPEED
+	if c.gear == -1:
+		held.brake = 0.0  # in reverse the brake pedal drives it backwards
+	return held
 
 
 # --- Recovery vehicles ---------------------------------------------------------
@@ -463,21 +729,23 @@ func _update_marshals(dt: float, prev_s: PackedFloat64Array) -> void:
 			var job := TrackMarshals.plan(sim.track, spot, _marshal_ids)
 			marshal_jobs.append(job)
 			debris.remove_at(k)
-			_event({"type": "flag", "flag": "double_yellow", "zone_s": [
-				fposmod(float(job["s"]) - TrackMarshals.DOUBLE_BEFORE_M, sim.track.length),
-				fposmod(float(job["s"]) + TrackMarshals.DOUBLE_AFTER_M, sim.track.length)],
-				"reason": "Double yellow: marshals on track clearing debris"})
+			if flags_used():
+				_event({"type": "flag", "flag": "double_yellow", "zone_s": [
+					fposmod(float(job["s"]) - TrackMarshals.DOUBLE_BEFORE_M, sim.track.length),
+					fposmod(float(job["s"]) + TrackMarshals.DOUBLE_AFTER_M, sim.track.length)],
+					"reason": "Double yellow: marshals on track clearing debris"})
 			continue
 		k += 1
 	k = 0
 	while k < marshal_jobs.size():
 		var job: Dictionary = marshal_jobs[k]
-		TrackMarshals.step(job, dt)
+		TrackMarshals.step(job, dt, marshal_clear_s(float(job["s"])))
 		if job["done"]:
-			_event({"type": "flag", "flag": "clear", "car": -1, "reason": "Debris cleared, marshals back behind the barrier"})
+			if flags_used():
+				_event({"type": "flag", "flag": "clear", "car": -1, "reason": "Debris cleared, marshals back behind the barrier"})
 			marshal_jobs.remove_at(k)
 			continue
-		if not prev_s.is_empty() and mode == Mode.GREEN:
+		if not prev_s.is_empty() and mode == Mode.GREEN and flags_used():
 			_check_double_yellow_speed(job, prev_s)
 		k += 1
 
@@ -530,10 +798,12 @@ func _escalate() -> void:
 		var on_track := _on_racing_surface(i)
 		if sim.entries[i].dnf:
 			# A retired car out on the circuit needs a recovery vehicle on
-			# track: safety car until the car is clear.
+			# track until the car is clear: the safety car when it's on the
+			# racing surface, a VSC when it's off it (in the gravel, on the
+			# grass or against the barrier).
 			var job := recovery_for(i)
 			if t >= STRANDED_VSC_S and (job.is_empty() or not CarRecovery.car_clear(job)):
-				danger = maxf(danger, 2.0)
+				danger = maxf(danger, 2.0 if on_track else 1.0)
 				recovering += 1
 		elif on_track and t >= STRANDED_SC_S:
 			danger = maxf(danger, 2.0)
@@ -556,7 +826,7 @@ func _escalate() -> void:
 	if danger >= 2.0 and mode != Mode.SC and not final_lap:
 		_deploy_sc("Recovery vehicle on track" if recovering > 0 else ("Car stopped on track" if stranded < 2 else "Multiple cars stopped"))
 	elif danger >= 1.0 and mode == Mode.GREEN:
-		_deploy_vsc("Car stopped" if stranded == 1 else "Incident")
+		_deploy_vsc("Recovery vehicle on track" if recovering > 0 else ("Car stopped" if stranded == 1 else "Incident"))
 
 
 ## A retired car that a recovery vehicle has already got off the circuit.
@@ -591,6 +861,8 @@ func _deploy_sc(why: String) -> void:
 		var ahead := fposmod(t.pit_exit_s - lead_s, t.length)
 		if ahead > 60.0 and ahead < 700.0:
 			sc_s = t.pit_exit_s
+	sc_d = line_d_at(sc_s)
+	sc_join_d = sc_d if t.has_pit_lane() and sc_s == t.pit_exit_s else -1.0
 	sc_in_pit = false
 	sc_visible = true
 	sc_speed = sc_speed_at(sc_s) * 0.6
@@ -698,7 +970,7 @@ func _update_safety_car(dt: float) -> void:
 	var acc := 4.0 if target > sc_speed else SC_DECEL
 	sc_speed = move_toward(sc_speed, target, acc * dt)
 	var prev := sc_s
-	sc_s = fposmod(sc_s + sc_speed * dt, t.length)
+	_advance_sc_on_line(dt)
 	if stage == "in_this_lap" and _crossed(prev, sc_s, _peel_off_s()):
 		_send_sc_to_pits()
 		stage = "restart"
@@ -735,8 +1007,88 @@ func _place_sc() -> void:
 		sc_pos = t.pit_position_at(sc_s)
 		sc_heading = t.pit_heading_at(sc_s)
 	else:
-		sc_pos = t.position_at(sc_s)
-		sc_heading = t.heading_at(sc_s + 4.0)
+		sc_pos = _sc_pos_at(sc_d)
+		sc_heading = (_sc_pos_at(sc_d + 4.0) - sc_pos).angle()
+
+
+## Along the racing line: sc_d moves at the SC's speed, sc_s (track
+## distance, what the rules and the AI use) follows from it.
+func _advance_sc_on_line(dt: float) -> void:
+	if _line_pts.is_empty():
+		sc_s = fposmod(sc_s + sc_speed * dt, sim.track.length)
+		return
+	var L := _line_pts.size() * _line_step
+	sc_d = fposmod(sc_d + sc_speed * dt, L)
+	sc_s = line_s_at(sc_d)
+	if sc_join_d >= 0.0 and fposmod(sc_d - sc_join_d, L) > SC_LINE_BLEND:
+		sc_join_d = -1.0
+
+
+## Where the SC is at line distance d: on the racing line, easing in from
+## the pit exit after it comes out and over to the pit entry on its way in.
+func _sc_pos_at(d: float) -> Vector2:
+	var t := sim.track
+	if _line_pts.is_empty():
+		return t.position_at(sc_s + d - sc_d)
+	var L := _line_pts.size() * _line_step
+	var p := _line_point(d)
+	if sc_join_d >= 0.0:
+		var gone := fposmod(d - sc_join_d, L)
+		if gone < SC_LINE_BLEND:
+			var s := line_s_at(d)
+			p = t.position_at(s, _pit_exit_off).lerp(p, smoothstep(0.0, 1.0, gone / SC_LINE_BLEND))
+	if stage == "in_this_lap" and t.has_pit_lane() and _peel_off_s() == t.pit_entry_s:
+		var s := line_s_at(d)
+		var to_go := fposmod(t.pit_entry_s - s, t.length)
+		if to_go < SC_LINE_BLEND:
+			p = t.position_at(s, _pit_entry_off).lerp(p, smoothstep(0.0, 1.0, to_go / SC_LINE_BLEND))
+	return p
+
+
+func _line_point(d: float) -> Vector2:
+	var n := _line_pts.size()
+	var x := fposmod(d, n * _line_step) / _line_step
+	var k := int(x) % n
+	return _line_pts[k].lerp(_line_pts[(k + 1) % n], x - floorf(x))
+
+
+func _line_value(v: PackedFloat64Array, d: float) -> float:
+	var n := v.size()
+	var x := fposmod(d, n * _line_step) / _line_step
+	var k := int(x) % n
+	return lerpf(v[k], v[(k + 1) % n], x - floorf(x))
+
+
+## Track distance at line distance d.
+func line_s_at(d: float) -> float:
+	var n := _line_s.size()
+	var L := sim.track.length
+	var x := fposmod(d, n * _line_step) / _line_step
+	var k := int(x) % n
+	var s1 := _line_s[k + 1] if k + 1 < n else _line_s[0] + L
+	return fposmod(lerpf(_line_s[k], s1, x - floorf(x)), L)
+
+
+## Line distance at track distance s.
+func line_d_at(s: float) -> float:
+	var n := _line_s.size()
+	if n == 0:
+		return s
+	var L := sim.track.length
+	var base := _line_s[0]
+	s = fposmod(s - base, L) + base
+	var lo := 0
+	var hi := n - 1
+	while lo < hi:
+		var mid := (lo + hi + 1) / 2
+		if _line_s[mid] <= s:
+			lo = mid
+		else:
+			hi = mid - 1
+	var s0 := _line_s[lo]
+	var s1 := _line_s[lo + 1] if lo + 1 < n else base + L
+	var f := clampf((s - s0) / maxf(s1 - s0, 0.001), 0.0, 1.0)
+	return (lo + f) * _line_step
 
 
 ## Client: carry the SC along between race-state updates.
@@ -744,13 +1096,13 @@ func follower_step(dt: float) -> void:
 	for job in recoveries:
 		CarRecovery.step(job, dt)
 	for job in marshal_jobs:
-		TrackMarshals.step(job, dt)
+		TrackMarshals.step(job, dt, marshal_clear_s(float(job["s"])))
 	if not sc_visible:
 		return
 	if sc_in_pit:
 		sc_s = minf(sc_s + sc_speed * dt, sim.track.pit_length)
 	else:
-		sc_s = fposmod(sc_s + sc_speed * dt, sim.track.length)
+		_advance_sc_on_line(dt)
 	_place_sc()
 	mode_time += dt
 	stage_time += dt
@@ -805,7 +1157,7 @@ func _check_overtakes() -> void:
 			var j := order[q]
 			if prev_pos[j] >= prev_pos[i]:
 				continue
-			if may_pass(i, j) or _lapped_pair(i, j):
+			if may_pass(i, j) or _lapped_pair(i, j) or _started_under_green(i, j):
 				continue
 			var why := ""
 			if mode == Mode.SC:
@@ -822,6 +1174,7 @@ func _check_overtakes() -> void:
 			_event({"type": "warning", "car": i, "victim": j,
 				"text": "%s: give the place back to %s" % [why, sim.entries[j].driver_name]})
 	_prev_order = order.duplicate()
+	_take_lookback()
 	_check_sc_passes(neutral)
 	# Settle the give-backs.
 	for i in give_back.keys():
@@ -831,10 +1184,15 @@ func _check_overtakes() -> void:
 		if j == -2:
 			gave_back = gap_to_sc(i) < sim.track.length * 0.5 or not sc_visible or sc_in_pit
 		else:
-			gave_back = sim.entries[j].distance > sim.entries[i].distance + 3.0 or sim.entries[j].dnf or sim.entries[j].finished
+			# Given back, or the victim has since lost the place by itself
+			# (gone off, spun, into the pits): no further action.
+			gave_back = sim.entries[j].distance > sim.entries[i].distance + 3.0 or sim.entries[j].dnf \
+					or sim.entries[j].finished or in_trouble(j) or _pitting(j)
 		if gave_back:
 			give_back.erase(i)
 			_event({"type": "warning", "car": i, "text": "Place given back, no further action"})
+			if j >= 0:
+				_settle_behind(i, j)
 		elif sim.race_time >= float(g["until"]):
 			give_back.erase(i)
 			sim.add_penalty(i, PENALTY_S, String(g["why"]))
@@ -854,11 +1212,45 @@ func _settled_order() -> Array[int]:
 		for p in order.size() - 1:
 			var a := order[p]
 			var b := order[p + 1]
-			if rank[b] < rank[a] and sim.entries[a].distance - sim.entries[b].distance < 3.0 \
+			if rank[b] < rank[a] and sim.entries[a].distance - sim.entries[b].distance < PASS_MARGIN_M \
 					and not sim.entries[a].finished and not sim.entries[b].finished:
 				order[p] = b
 				order[p + 1] = a
 	return order
+
+
+## A give-back is done: from now on j counts as ahead of i, even while it's
+## still less than PASS_MARGIN_M up the road (else j "overtakes" i again).
+func _settle_behind(i: int, j: int) -> void:
+	var pi := _prev_order.find(i)
+	var pj := _prev_order.find(j)
+	if pi < 0 or pj < 0 or pj < pi:
+		return
+	_prev_order.remove_at(pj)
+	_prev_order.insert(pi, j)
+
+
+## Was car i already alongside or right behind j a moment ago, with both
+## racing under green? Then the move started before the flag and stands.
+func _started_under_green(i: int, j: int) -> bool:
+	if _ago_t < 0.0:
+		return false
+	return _ago_free[i] and _ago_free[j] and _ago_dist[j] - _ago_dist[i] < ALONGSIDE_M
+
+
+func _take_lookback() -> void:
+	if _ago_t >= 0.0 and sim.race_time - _ago_t < PASS_LOOKBACK_S:
+		return
+	var first := _ago_t < 0.0
+	_ago_dist = _now_dist.duplicate()
+	_ago_free = _now_free.duplicate()
+	_ago_t = sim.race_time
+	for i in sim.cars.size():
+		_now_dist[i] = sim.entries[i].distance
+		_now_free[i] = 1 if mode == Mode.GREEN and released[i] and not yellow_at(sim.cars[i].track_s) else 0
+	if first:
+		_ago_dist = _now_dist.duplicate()
+		_ago_free = _now_free.duplicate()
 
 
 ## Passing the safety car itself is only for lapped cars that were waved by.
@@ -958,6 +1350,8 @@ func _leader_laps() -> int:
 # --- Helpers ----------------------------------------------------------------
 
 func _add_yellow(s: float, car: int, why: String) -> void:
+	if not flags_used():
+		return
 	var L := sim.track.length
 	var from := fposmod(s - YELLOW_HALF_M, L)
 	var to := fposmod(s + YELLOW_HALF_M * 0.5, L)
@@ -1010,32 +1404,71 @@ func _event(e: Dictionary) -> void:
 
 func _build_profiles() -> void:
 	var t := sim.track
-	var n := t.point_count()
-	if n < 3:
+	if t.point_count() < 3:
 		return
+	_build_line()
+	var n := _line_pts.size()
+	# Curvature like the AI's: over a +-3 point window (24 m chord).
 	var curv := PackedFloat64Array()
 	curv.resize(n)
-	for i in n:
-		var a := t.seg_dir[(i - 1 + n) % n]
-		var b := t.seg_dir[i]
-		var ds := maxf((t.seg_len[(i - 1 + n) % n] + t.seg_len[i]) * 0.5, 0.5)
-		curv[i] = absf(a.angle_to(b)) / ds
-	# Smooth over about 30 m so kinks in the data don't make phantom corners.
-	var smooth := PackedFloat64Array()
-	smooth.resize(n)
-	for i in n:
-		var sum := 0.0
-		var w := 0.0
-		for o in range(-3, 4):
-			sum += curv[(i + o + n) % n]
-			w += 1.0
-		smooth[i] = sum / w
-	_sc_profile = _profile(smooth, SC_MAX_SPEED, SC_LAT_ACCEL, SC_DECEL)
-	_vsc_profile = _profile(smooth, VSC_MAX_SPEED, VSC_LAT_ACCEL, SC_DECEL + 1.5)
+	for k in n:
+		var a := _line_pts[(k - 3 + n) % n]
+		var b := _line_pts[k]
+		var c := _line_pts[(k + 3) % n]
+		var denom := a.distance_to(b) * b.distance_to(c) * c.distance_to(a)
+		curv[k] = absf(2.0 * (b - a).cross(c - b) / maxf(denom, 0.001))
+	_sc_profile = _profile(curv, SC_MAX_SPEED, SC_LAT_ACCEL, SC_DECEL)
+	_vsc_profile = _profile(curv, VSC_MAX_SPEED, VSC_LAT_ACCEL, SC_DECEL + 1.5)
+	if t.has_pit_lane():
+		_pit_entry_off = t.project(t.pit_position_at(0.0))["offset"]
+		_pit_exit_off = t.project(t.pit_position_at(t.pit_length))["offset"]
+
+
+## The track's racing line (the centre line where there is none), resampled
+## and pulled in from the edges the way the AI does it.
+func _build_line() -> void:
+	var t := sim.track
+	var src := t.raceline if t.raceline.size() > 10 else t.points
+	var m := src.size()
+	var total := 0.0
+	for i in m:
+		total += src[i].distance_to(src[(i + 1) % m])
+	var count := maxi(int(total / SC_LINE_SPACING), 3)
+	_line_step = total / count
+	_line_pts = PackedVector2Array()
+	_line_s = PackedFloat64Array()
+	var seg := 0
+	var seg_start := 0.0
+	var seg_len := src[0].distance_to(src[1 % m])
+	var hint := -1
+	for k in count:
+		var d := k * _line_step
+		while d > seg_start + seg_len:
+			seg_start += seg_len
+			seg = (seg + 1) % m
+			seg_len = src[seg].distance_to(src[(seg + 1) % m])
+		var p := src[seg].lerp(src[(seg + 1) % m], (d - seg_start) / maxf(seg_len, 0.001))
+		var q := t.project(p, hint)
+		hint = q["idx"]
+		var off: float = q["offset"]
+		var w: float = q["w_right"] if off > 0.0 else q["w_left"]
+		var lim := maxf(w - SC_LINE_MARGIN, 0.0)
+		var squeezed := clampf(off * lim / maxf(w - SC_LINE_EDGE, 0.1), -lim, lim)
+		_line_pts.append(p + Vector2(-q["dir"].y, q["dir"].x) * (squeezed - off))
+		_line_s.append(q["s"])
+	# Track distance keeps growing round the lap (it can stall at a hairpin
+	# apex, where the inside of the line covers little centre line).
+	var L := t.length
+	for k in range(1, count):
+		while _line_s[k] < _line_s[k - 1] - L * 0.5:
+			_line_s[k] += L
+		_line_s[k] = maxf(_line_s[k], _line_s[k - 1])
+	if _line_s[count - 1] >= _line_s[0] + L:
+		for k in count:
+			_line_s[k] = minf(_line_s[k], _line_s[0] + L - 0.01 * (count - k))
 
 
 func _profile(curv: PackedFloat64Array, vmax: float, lat: float, decel: float) -> PackedFloat64Array:
-	var t := sim.track
 	var n := curv.size()
 	var v := PackedFloat64Array()
 	v.resize(n)
@@ -1046,7 +1479,7 @@ func _profile(curv: PackedFloat64Array, vmax: float, lat: float, decel: float) -
 		for j in n:
 			var i := n - 1 - j
 			var nxt := v[(i + 1) % n]
-			v[i] = minf(v[i], sqrt(nxt * nxt + 2.0 * decel * t.seg_len[i]))
+			v[i] = minf(v[i], sqrt(nxt * nxt + 2.0 * decel * _line_step))
 	return v
 
 
@@ -1059,6 +1492,7 @@ func to_dict(full := false) -> Dictionary:
 		"mode": mode, "mode_time": mode_time, "reason": reason, "stage": stage, "stage_time": stage_time,
 		"wave_by": wave_by, "sc_laps": sc_laps, "deployments": deployments,
 		"sc_visible": sc_visible, "sc_s": sc_s, "sc_in_pit": sc_in_pit, "sc_speed": sc_speed, "sc_lights": sc_lights,
+		"sc_d": sc_d, "sc_join_d": sc_join_d,
 		"yellows": yellows.duplicate(true), "vsc_delta": vsc_delta.duplicate(),
 		"unlapping": unlapping.duplicate(), "released": released.duplicate(), "recovered": recovered.duplicate(),
 		"give_back": give_back.duplicate(true), "restart_lap": _restart_lap,
@@ -1066,12 +1500,16 @@ func to_dict(full := false) -> Dictionary:
 		"marshal_jobs": marshal_jobs.duplicate(true),
 	}
 	if full:
-		d["full"] = {"stranded_t": stranded_t.duplicate(), "cleared": _cleared.duplicate(),
+		d["full"] = {"stranded_t": stranded_t.duplicate(), "hazard_t": _hazard_t.duplicate(), "cleared": _cleared.duplicate(),
+			"stuck_t": _stuck_t.duplicate(), "stuck_s": _stuck_s.duplicate(),
 			"vsc_warned": vsc_warned.duplicate(), "vsc_penalised": vsc_penalised.duplicate(),
 			"unlap_from": unlap_from.duplicate(), "prev_order": _prev_order.duplicate(),
 			"sc_behind": _sc_behind.duplicate(), "big_until": _big_incident_until,
 			"leader_laps_at": _leader_laps_at, "danger": _danger,
-			"debris": debris.duplicate(true), "marshal_ids": _marshal_ids}
+			"debris": debris.duplicate(true), "marshal_ids": _marshal_ids,
+			"trouble_until": _trouble_until.duplicate(), "ago_t": _ago_t,
+			"ago_dist": _ago_dist.duplicate(), "ago_free": _ago_free.duplicate(),
+			"now_dist": _now_dist.duplicate(), "now_free": _now_free.duplicate()}
 	return d
 
 
@@ -1089,6 +1527,8 @@ func apply_dict(d: Dictionary) -> void:
 	sc_in_pit = d.get("sc_in_pit", false)
 	sc_speed = d.get("sc_speed", 0.0)
 	sc_lights = d.get("sc_lights", "off")
+	sc_d = d.get("sc_d", line_d_at(sc_s))
+	sc_join_d = d.get("sc_join_d", -1.0)
 	yellows = d.get("yellows", []).duplicate(true)
 	_restart_lap = d.get("restart_lap", 0)
 	give_back = d.get("give_back", {}).duplicate(true)
@@ -1100,7 +1540,13 @@ func apply_dict(d: Dictionary) -> void:
 	if d.has("full"):
 		var f: Dictionary = d["full"]
 		stranded_t = f["stranded_t"].duplicate()
+		if f.has("hazard_t") and f["hazard_t"].size() == stranded_t.size():
+			_hazard_t = f["hazard_t"].duplicate()
 		_cleared = f["cleared"].duplicate()
+		if f.has("stuck_t") and f["stuck_t"].size() == stranded_t.size():
+			_stuck_t = f["stuck_t"].duplicate()
+		if f.has("stuck_s") and f["stuck_s"].size() == stranded_t.size():
+			_stuck_s = f["stuck_s"].duplicate()
 		vsc_warned = f["vsc_warned"].duplicate()
 		vsc_penalised = f["vsc_penalised"].duplicate()
 		unlap_from = f["unlap_from"].duplicate()
@@ -1111,5 +1557,9 @@ func apply_dict(d: Dictionary) -> void:
 		_danger = f["danger"]
 		debris = f.get("debris", []).duplicate(true)
 		_marshal_ids = f.get("marshal_ids", 0)
+		for k in ["trouble_until", "ago_dist", "ago_free", "now_dist", "now_free"]:
+			if f.has(k) and f[k].size() == stranded_t.size():
+				set("_" + k, f[k].duplicate())
+		_ago_t = f.get("ago_t", -1.0)
 	if sc_visible:
 		_place_sc()

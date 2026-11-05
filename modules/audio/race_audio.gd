@@ -21,6 +21,9 @@ var _time := 0.0
 var _env: SimEnvironment
 var _listen_prev := Vector2.ZERO
 var _listen_vel := Vector2.ZERO
+## Overall level of every race sound, 0..1 (fade_out() takes it down, fade_in() back up).
+var level := 1.0
+var _fade_rate := 0.0
 
 
 func setup(cars: Array, defs: Array, local_car: int) -> void:
@@ -60,6 +63,10 @@ func _make_voice(i: int) -> CarAudio:
 ## zoom_out: 0 close .. 1 whole track; far out the rivals fade so it isn't noise.
 func update(delta: float, listen_at: Vector2, local_throttle: float, zoom_out: float) -> void:
 	_time += delta
+	if _fade_rate > 0.0:
+		level = move_toward(level, 0.0, _fade_rate * delta)
+	elif _fade_rate < 0.0:
+		level = move_toward(level, 1.0, -_fade_rate * delta)
 	_listener.global_position = listen_at if _local < 0 else _cars[_local].pos
 	if delta > 0.0:
 		_listen_vel = _listen_vel.lerp((_listener.global_position - _listen_prev) / delta, 0.3)
@@ -92,11 +99,27 @@ func update(delta: float, listen_at: Vector2, local_throttle: float, zoom_out: f
 	for i in _voices:
 		var c: CarState = _cars[i]
 		var thr := local_throttle if i == _local else _guess_throttle(c)
-		var vol := 1.0 if i == _local else 0.55 * (1.0 - 0.7 * zoom_out)
+		var vol := (1.0 if i == _local else 0.55 * (1.0 - 0.7 * zoom_out)) * level
 		var v: CarAudio = _voices[i]
 		v.wetness = wet
 		v.set_listener(_listener.global_position, _listen_vel)
 		v.update(delta, thr, vol)
+
+
+## Fades every race sound (engines, tyres, crashes, beeps) to silence over
+## `seconds`, e.g. when the results screen comes up. 0 = at once.
+func fade_out(seconds: float) -> void:
+	_fade_rate = 1.0 / seconds if seconds > 0.0 else 0.0
+	if seconds <= 0.0:
+		level = 0.0
+
+
+## Brings the race sound back up to full over `seconds` after fade_out()
+## (e.g. leaving the results to watch the rest of the race). 0 = at once.
+func fade_in(seconds: float) -> void:
+	_fade_rate = -1.0 / seconds if seconds > 0.0 else 0.0
+	if seconds <= 0.0:
+		level = 1.0
 
 
 ## Rivals: we don't get their pedals, so guess from how they accelerate.
@@ -124,7 +147,7 @@ func on_events(evs: Array) -> void:
 
 
 func _impact(car: int, speed: float, pos: Vector2, other := -1) -> void:
-	if speed < 1.5:
+	if speed < 1.5 or level < 0.01:
 		return
 	var key := car * 100 + other
 	if _time - float(_last_bump.get(key, -9.0)) < 0.25:
@@ -136,12 +159,14 @@ func _impact(car: int, speed: float, pos: Vector2, other := -1) -> void:
 	p.stream = SoundBank.get_sound("crash" if big else "bump")
 	p.global_position = pos
 	var near_me := car == _local or other == _local
-	p.volume_db = linear_to_db(clampf(speed / 15.0, 0.25, 1.0)) + (0.0 if near_me else -6.0)
+	p.volume_db = linear_to_db(clampf(speed / 15.0, 0.25, 1.0) * level) + (0.0 if near_me else -6.0)
 	p.pitch_scale = randf_range(0.85, 1.1)
 	p.play()
 
 
 func _beep(name: String, db := -4.0) -> void:
+	if level < 0.01:
+		return
 	_beeper.stream = SoundBank.get_sound(name)
-	_beeper.volume_db = db
+	_beeper.volume_db = db + linear_to_db(level)
 	_beeper.play()

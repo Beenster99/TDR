@@ -186,7 +186,9 @@ func _build() -> void:
 		_select_car(car_id))
 	_button(row2, "Done", _close)
 	var help := Label.new()
-	help.text = "Up/down: choose  ·  Left/right: change  ·  A: buy  ·  B: leave\nBought cars, upgrades and liveries are saved straight away. Picked levels are a preview until you buy them. Selling refunds half."
+	InputPrompt.live(help, func(): help.text = InputPrompt.fill(InputPrompt.pick("↑↓", "D-pad ↑↓")
+		+ ": choose  ·  ←→: change  ·  {ui_accept}: buy  ·  {ui_cancel}: leave\n"
+		+ "Bought cars, upgrades and liveries are saved straight away. Picked levels are a preview until you buy them. Selling refunds half."))
 	help.modulate = Color(1, 1, 1, 0.45)
 	help.add_theme_font_size_override("font_size", 13)
 	help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART   # never wider than the column

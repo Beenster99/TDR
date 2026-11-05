@@ -38,7 +38,6 @@ def render_car(car):
     idle, red = float(e["idle_rpm"]), float(e["redline_rpm"])
     up = float(e.get("shift_up_rpm", red * 0.98))
     fam, turbo, sc = family_for(car)
-    rng = np.random.default_rng(3)
     segs = []  # (seconds, rpm_from, rpm_to, load, limiter)
     segs.append((1.2, idle, idle, 0.0, False))
     segs.append((0.25, idle, idle * 2.6, 1.0, False))   # clutch drop
@@ -77,16 +76,7 @@ def render_car(car):
     if sc:
         f = 1000 * (0.4 + 2.2 * rpm / red)
         x += 0.06 * (0.3 + 0.7 * load) * rev * np.sin(2 * np.pi * np.cumsum(f) / SR)
-    # Overrun pops while lifting off.
-    lift = np.where((load < 0.1) & (rev > 0.45))[0]
-    es_sr = es.SR
-    es.SR = SR
-    for k in range(int(len(lift) / SR * 3)):
-        i = int(rng.choice(lift))
-        p = es.make_pop(int(rng.integers(100))) * rng.uniform(0.3, 0.8)
-        m = min(len(p), n - i)
-        x[i:i + m] += p[:m]
-    es.SR = es_sr
+    # No overrun pops: the game has none (audio 1.5.0).
     fade = np.minimum(1, np.minimum(t / 0.05, (t[-1] - t) / 0.2))
     x *= fade
     return x / (np.max(np.abs(x)) + 1e-9) * 0.85, fam

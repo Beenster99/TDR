@@ -3,6 +3,10 @@ extends RefCounted
 ## Host-chosen race options. In multiplayer the host's settings are sent to
 ## every client in the lobby (to_dict/from_dict) before the sim starts.
 
+const RC_ON := "on"
+const RC_YELLOWS := "yellows"
+const RC_OFF := "off"
+
 var track_id: String = "spielberg"
 ## Kind of racing (the race type): DISCIPLINE_CIRCUIT (road racing),
 ## DISCIPLINE_RALLYCROSS (mixed tarmac and dirt, short races, a joker lap,
@@ -20,6 +24,8 @@ var joker_laps: int = 1
 const JOKER_MISSED_PENALTY_S := 30.0
 ## Most cars on a rallycross grid (the circuits are about a kilometre long).
 const MAX_CARS_RALLYCROSS := 12
+## Most cars in a Demolition Derby (the arenas are small, 2 abreast on the grid).
+const MAX_CARS_DERBY := 16
 var laps: int = 3
 var ai_count: int = 5
 ## Most cars on the grid (players + AI): one class, or several classes mixed.
@@ -40,6 +46,9 @@ var environment: Dictionary = {}
 var grid_order: String = "standard"
 ## AI skill level, 0 = rookie .. 1 = alien (0.75 = the drivers as written).
 var ai_difficulty: float = 0.75
+## How often AI drivers make mistakes (late braking, running wide), as a
+## multiple of the normal rate: 0 = never, 1 = normal, 3 = chaotic.
+var ai_mistakes: float = 1.0
 ## Wave 3 switches (already read by the sim where noted)
 var fuel_enabled: bool = false     ## sim burns fuel when true
 var fuel_rate: float = 1.0         ## consumption multiplier
@@ -50,7 +59,10 @@ var damage_enabled: bool = false  ## true unless damage_level is "off"
 ## Damage (CarDamage): "off", "visual" (bodywork bends, car drives as new)
 ## or "full" (aero, suspension, alignment, engine, gearbox, punctures).
 var damage_level: String = "off"
-var safety_car_enabled: bool = true  ## VSC + safety car (yellow flags always)
+var safety_car_enabled: bool = true  ## VSC + safety car
+## Local yellow flags and double yellows (circuits). Off together with the
+## safety car when the host picks "Safety car: Off" (race_control_mode()).
+var flags_enabled: bool = true
 var mandatory_pit_stops: int = 0   ## stops each car must make inside the pit window
 ## Drivers sharing each car (1-3). With 2 or more, every AI car has a driver
 ## line-up that changes at its pit stops, and a solo player gets an AI
@@ -89,6 +101,8 @@ func max_cars() -> int:
 static func max_cars_for(p_class: String, p_discipline: String = DISCIPLINE_CIRCUIT) -> int:
 	if p_discipline == DISCIPLINE_RALLYCROSS:
 		return MAX_CARS_RALLYCROSS
+	if p_discipline == DISCIPLINE_DERBY:
+		return MAX_CARS_DERBY
 	return MAX_CARS_MULTI_CLASS if p_class == CLASS_MULTI else MAX_CARS_SINGLE_CLASS
 
 
@@ -104,15 +118,28 @@ func allows_coop() -> bool:
 func to_dict() -> Dictionary:
 	return {
 		"track_id": track_id, "car_class": car_class, "laps": laps, "ai_count": ai_count, "seed": seed,
-		"environment": environment, "grid_order": grid_order, "ai_difficulty": ai_difficulty, "fuel_enabled": fuel_enabled, "fuel_rate": fuel_rate,
+		"environment": environment, "grid_order": grid_order, "ai_difficulty": ai_difficulty, "ai_mistakes": ai_mistakes, "fuel_enabled": fuel_enabled, "fuel_rate": fuel_rate,
 		"start_fuel_l": start_fuel_l, "tyre_wear_enabled": tyre_wear_enabled,
-		"damage_enabled": damage_enabled, "damage_level": damage_level, "safety_car_enabled": safety_car_enabled,
+		"damage_enabled": damage_enabled, "damage_level": damage_level, "safety_car_enabled": safety_car_enabled, "flags_enabled": flags_enabled,
 		"mandatory_pit_stops": mandatory_pit_stops, "drivers_per_car": drivers_per_car, "finish_timeout_s": finish_timeout_s,
 		"tyre_wear_rate": tyre_wear_rate, "pit_window_open_lap": pit_window_open_lap,
 		"pit_window_close_lap": pit_window_close_lap,
 		"countdown_s": countdown_s, "upgrades_mode": upgrades_mode, "tuning_enabled": tuning_enabled,
 		"session_type": session_type, "discipline": discipline, "joker_laps": joker_laps,
 	}
+
+
+## The lobby's "Safety car" choice: RC_ON (yellows, VSC and safety car),
+## RC_YELLOWS (yellow flags only) or RC_OFF (no flags or safety car at all).
+func race_control_mode() -> String:
+	if not flags_enabled:
+		return RC_OFF
+	return RC_ON if safety_car_enabled else RC_YELLOWS
+
+
+func set_race_control_mode(m: String) -> void:
+	safety_car_enabled = m == RC_ON
+	flags_enabled = m != RC_OFF
 
 
 ## Sets damage_level and keeps damage_enabled in step with it.
@@ -127,6 +154,12 @@ func effective_damage_level() -> String:
 	if damage_level == "off" and damage_enabled:
 		return "full"
 	return damage_level
+
+
+## The pit wall (strategist screen) and its HUD hint: circuit racing only
+## (rallycross and demolition derby have no stops, flags or safety car).
+func has_pit_wall() -> bool:
+	return discipline == DISCIPLINE_CIRCUIT
 
 
 func is_derby() -> bool:
