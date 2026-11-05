@@ -4026,6 +4026,18 @@ func test_pause_menu() -> void:
 	check(off == ["resume", "restart", "settings", "menu", "desktop"], "offline: resume, restart, settings, quit to menu, quit to desktop")
 	check(PauseOptions.button_ids(true, true).has("lobby"), "online host can also end the race for everyone")
 	check(not PauseOptions.button_ids(true, false).has("lobby"), "a guest can't end the race")
+	check(PauseOptions.button_ids(true, true).has("resume_all") and not PauseOptions.button_ids(true, false).has("resume_all")
+		and not off.has("resume_all"), "only the online host can resume for everyone")
+	# Online shared pause: any player's Esc pauses everyone; it goes on once all resumed.
+	var ps := [9, 1, 5]
+	var w := NetPause.next([], ps, 5, true)
+	check(w == [1, 5, 9], "a guest's Esc puts every player in the pause menu (%s)" % [w])
+	w = NetPause.next(NetPause.next(w, ps, 5, false), ps, 1, false)
+	check(w == [9], "the race waits for the last player still in the menu")
+	w = NetPause.next(w, ps, 1, true)
+	check(w == [9, 1], "Esc again puts that player back in the menu")
+	check(NetPause.next(w, ps, 1, false, true).is_empty(), "the host can resume for everyone")
+	check(NetPause.next([], ps, 7, true) == [1, 5, 9], "someone who isn't a player (dedicated server) isn't waited for")
 	check(PauseOptions.label_for("restart", true, true).contains("everyone"), "the host's restart says it restarts for everyone")
 	check(not (PauseOptions as Script).get_script_method_list().any(func(m): return m.name == "confirm_text"), "no \"are you sure?\" popups in the pause menu")
 	var gd = load("res://modules/core/game_data.gd").new()

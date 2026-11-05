@@ -3,9 +3,12 @@ extends Control
 ## The in-race pause menu: Esc (or Start on a controller) during a race.
 ## Resume, restart the race, settings, quit to the main menu, quit to the
 ## desktop. Offline the race stops while it's open (the race scene pauses the
-## tree; this menu keeps running). Online the race carries on for everyone:
-## the menu is an overlay over the live race, the player's car gets no input
-## while it's open, and only the host can restart (for everyone).
+## tree; this menu keeps running). Online any player's Esc pauses the race for
+## everyone and opens everyone's menu, so they can all change settings (the
+## user asked, 2026-11-05); it goes again, after a 3 s countdown, once every
+## player has pressed Resume, or the host picks "Resume for everyone". A
+## player who has resumed sees a banner of who the race is waiting for, and
+## Esc there opens the menu again. Only the host can restart (for everyone).
 ##
 ## Settings here are the player's own game settings only (SettingsScreen with
 ## in_race): no garage, and the settings that change how the car drives are
@@ -16,6 +19,10 @@ extends Control
 ## "are you sure?" popup (the user asked for none, 2026-11-03).
 
 signal resumed
+## Online host: start the race again for everyone, whoever's still in the menu.
+signal resume_all_requested
+## Online: Esc on the waiting banner (this player wants the menu again).
+signal reopened
 signal restart_requested
 signal quit_to_menu_requested
 signal quit_to_desktop_requested
@@ -42,6 +49,12 @@ var _panel: PanelContainer
 var _shade: ColorRect
 var _buttons := {}           ## id -> Button
 var _note: Label
+## Online: who the race is waiting for (in the menu), and the banner shown
+## once this player has resumed but others haven't (or the countdown).
+var _waiting: Label
+var _banner: Label
+## Online: the menu is closed but the race is still paused: only the banner shows.
+var waiting_mode := false
 
 
 ## opts: {online, host, can_restart, restart_blocked, can_edit_hud}
@@ -60,8 +73,7 @@ func setup(opts: Dictionary) -> void:
 
 func _build() -> void:
 	_shade = ColorRect.new()
-	# Offline the race is frozen behind it; online keep the race in view.
-	_shade.color = Color(0.02, 0.025, 0.03, 0.35 if online else 0.6)
+	_shade.color = Color(0.02, 0.025, 0.03, 0.6)
 	_shade.mouse_filter = MOUSE_FILTER_IGNORE
 	add_child(_shade)
 	_shade.set_anchors_and_offsets_preset(PRESET_FULL_RECT)
@@ -78,16 +90,22 @@ func _build() -> void:
 	v.add_theme_constant_override("separation", 10)
 	_panel.add_child(v)
 	var title := Label.new()
-	title.text = "MENU" if online else "PAUSED"
+	title.text = "PAUSED"
 	title.add_theme_font_size_override("font_size", 40)
 	v.add_child(title)
 	var sub := Label.new()
-	sub.text = "The race carries on for everyone. Your car coasts while this is open." if online \
+	sub.text = "Paused for everyone. The race goes again when every player has pressed Resume." if online \
 		else "The race waits while this is open."
 	sub.modulate = Color(1, 0.86, 0.6) if online else Color(1, 1, 1, 0.6)
 	sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	sub.custom_minimum_size = Vector2(420, 0)
 	v.add_child(sub)
+	_waiting = Label.new()
+	_waiting.modulate = Color(1, 1, 1, 0.75)
+	_waiting.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_waiting.custom_minimum_size = Vector2(420, 0)
+	_waiting.visible = false
+	v.add_child(_waiting)
 	var gap := Control.new()
 	gap.custom_minimum_size = Vector2(0, 6)
 	v.add_child(gap)
@@ -112,12 +130,54 @@ func _build() -> void:
 		"{ui_accept}: choose  ·  " + InputPrompt.keys(["ui_cancel", "back_to_menu"]) + ": back to the race"))
 	v.add_child(_note)
 	Sound.wire_buttons(_panel)
+	_banner = Label.new()
+	_banner.add_theme_font_size_override("font_size", 30)
+	_banner.add_theme_color_override("font_outline_color", Color.BLACK)
+	_banner.add_theme_constant_override("outline_size", 8)
+	_banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_banner.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_banner.set_anchors_and_offsets_preset(PRESET_FULL_RECT)
+	_banner.visible = false
+	add_child(_banner)
+
+
+## Online: who the race is waiting for ("" hides the line).
+func set_waiting_text(text: String) -> void:
+	_waiting.text = text
+	_waiting.visible = text != ""
+	if waiting_mode:
+		_banner.text = text
+
+
+## Online: the menu closes but the race stays paused; show only a banner
+## (who it's waiting for, or the countdown). Esc opens the menu again.
+func show_waiting(text: String) -> void:
+	_close_settings()
+	visible = true
+	waiting_mode = true
+	_panel.visible = false
+	_shade.visible = true
+	_shade.color.a = 0.3
+	_banner.text = text
+	_banner.visible = true
+
+
+## Online: close without telling anyone (the race goes again for everyone).
+func close_quietly() -> void:
+	_close_settings()
+	waiting_mode = false
+	_banner.visible = false
+	visible = false
 
 
 func open() -> void:
-	if visible:
+	if visible and not waiting_mode:
 		return
 	visible = true
+	waiting_mode = false
+	_banner.visible = false
+	_shade.visible = true
+	_shade.color.a = 0.6
 	_panel.visible = true
 	_place.call_deferred()
 	_buttons["resume"].grab_focus.call_deferred()
@@ -141,6 +201,8 @@ func _on_pressed(id: String) -> void:
 	match id:
 		"resume":
 			resume()
+		"resume_all":
+			resume_all_requested.emit()
 		"settings":
 			_open_settings()
 		"restart", "lobby", "menu", "desktop":
@@ -187,6 +249,12 @@ func _close_settings() -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not visible or settings != null:
+		return
+	if waiting_mode:
+		if event.is_action_pressed("back_to_menu") or event.is_action_pressed("ui_cancel"):
+			get_viewport().set_input_as_handled()
+			open()
+			reopened.emit()
 		return
 	if event.is_action_pressed("back_to_menu") or event.is_action_pressed("ui_cancel"):
 		get_viewport().set_input_as_handled()
