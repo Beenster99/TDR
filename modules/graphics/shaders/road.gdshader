@@ -3,6 +3,10 @@ shader_type spatial;
 // lines), tarmac/gravel run-off and kerbs, chosen per vertex:
 //   COLOR.a  : 1 = asphalt, 0.75 = kerb, 0.5 = tarmac run-off, 0.25 = gravel, 0 = pit lane
 //   COLOR.r  : 1 - loose surface (rallycross dirt: 0 = all dirt), on asphalt
+//              and kerbs; eased over metres, 0.5 = the real join, which is
+//              drawn as a ragged edge with dust and loose stones around it
+//   COLOR.g  : 1 - dirt the tyres drag out onto tarmac after a dirt stretch
+//   COLOR.b  : 1 - fray: the joker lane frays out (ragged cut) over the lap
 //   UV.x     : distance along the track (m), UV.y : lateral offset (m)
 //   UV2.x    : offset from the racing line (m), UV2.y : distance to the track edge (m)
 //   (pit lane: UV.y = offset, + towards the garages; UV2.x = 1 where hatched;
@@ -33,6 +37,12 @@ void fragment() {
 	float n1 = texture(noise, p * 0.11).r;
 	float n2 = texture(noise, p * 0.9).r;
 	float n3 = texture(noise, p * 3.7).r;
+	// ragged edges: big lobes with finer bites out of them
+	float ragged = texture(noise, p * 0.05).r * 0.55 + texture(noise, p * 0.23).r * 0.3 + n2 * 0.15 - 0.5;
+	float fray = 1.0 - COLOR.b;
+	if (fray > 0.001 && fray + clamp(ragged * 2.2, -0.45, 0.45) > 0.5) {
+		discard;
+	}
 	vec3 c;
 	float rough;
 	float aa = fwidth(UV.y) * 1.2 + 0.001;
@@ -81,7 +91,31 @@ void fragment() {
 	}
 	// Rallycross dirt: packed brown earth with a darker, polished groove
 	// along the racing line, loose stones and ruts either side of it.
-	float dirt = (kind > 0.875) ? clamp(1.0 - COLOR.r, 0.0, 1.0) : 0.0;
+	// Where it meets tarmac the join is ragged (the eased COLOR.r cut with
+	// noise), with a dusty film and scattered stones on the tarmac beside it
+	// and tyre tracks of dirt carried out onto the tarmac after it.
+	float ease = (kind > 0.625) ? clamp(1.0 - COLOR.r, 0.0, 1.0) : 0.0;
+	float trail = (kind > 0.625) ? clamp(1.0 - COLOR.g, 0.0, 1.0) : 0.0;
+	float dirt = 0.0;
+	if (ease > 0.001 || trail > 0.001) {
+		float eaa = fwidth(ease) * 1.5 + 0.03;
+		dirt = smoothstep(0.5 - eaa, 0.5 + eaa, ease + clamp(ragged * 2.2, -0.45, 0.45));
+		// tracks: the cars' wheel paths along the racing line, streaky
+		// (two wheel tracks either side of the line, the cars spread a little)
+		float wobble = (texture(noise, vec2(UV.x * 0.02, 0.37)).r - 0.5) * 3.0;
+		float lx = abs(UV2.x + wobble);
+		float paths = exp(-pow((lx - 0.85) / 0.5, 2.0)) + 0.5 * exp(-pow(lx / 3.5, 2.0));
+		float streak = texture(noise, vec2(UV.x * 0.06, UV2.x * 0.3)).r + n3 * 0.15;
+		float tracks = clamp(paths, 0.0, 1.0) * smoothstep(0.5, 0.62, streak + trail * 0.35 - 0.12) * trail;
+		dirt = max(dirt, smoothstep(0.05, 0.5, tracks) * 0.8);
+		// dust: a pale film thinning away from the join
+		float dust = (smoothstep(0.05, 0.5, ease) * 0.55 + trail * paths * 0.35) * (1.0 - dirt);
+		c = mix(c, vec3(0.5, 0.43, 0.34) * (0.85 + 0.3 * n1), dust * (0.55 + 0.45 * n2) * 0.45);
+		// stones flung onto the tarmac near the join
+		float flung = smoothstep(0.2, 0.5, ease) * (1.0 - dirt) * smoothstep(0.7, 0.8, n3);
+		c = mix(c, vec3(0.5, 0.44, 0.36), flung * 0.6);
+		rough = mix(rough, 0.95, dust);
+	}
 	if (dirt > 0.001) {
 		vec3 earth = vec3(0.47, 0.35, 0.23) * (0.8 + 0.32 * n1) * (0.86 + 0.26 * n3);
 		float groove = exp(-pow(abs(UV2.x) / 2.4, 2.0));
