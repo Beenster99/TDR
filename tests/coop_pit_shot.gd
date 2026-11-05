@@ -78,6 +78,7 @@ func _ready() -> void:
 		g.enabled_override = true
 		g.autoplay = true
 		g.ring_colour = PitCrewGame.BLUE
+		g.guide = false
 		g.visible = false
 		add_child(g)
 		_mates.append(g)
