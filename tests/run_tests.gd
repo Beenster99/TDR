@@ -1180,7 +1180,8 @@ func test_pit_self_drive() -> void:
 		elif ph in [PitRules.PHASE_LIMIT, PitRules.PHASE_LEAVE, PitRules.PHASE_EXIT]:
 			target = t.pit_speed_limit - 0.5 if ph != PitRules.PHASE_EXIT else 30.0
 		if ignore_limit:
-			target = maxf(target, 30.0)
+			# well over the limit (and the tolerance), but slow enough to make the lane's bends
+			target = maxf(target, t.pit_speed_limit + 6.0)
 		var dv := target - c.speed()
 		if dv > 0.0:
 			inp.throttle = clampf(dv * 0.3, 0.0, 1.0)
@@ -1249,7 +1250,7 @@ func test_pit_self_drive() -> void:
 	place.call()
 	pits.set_plan(i, {"box": true, "tyre": PitRules.TYRE_KEEP})
 	out = run.call(true, 0.0, true, 90.0)
-	check((out[1] as Array).size() >= 1, "too fast at the limit line: a speeding penalty")
+	check((out[1] as Array).size() >= 1, "too fast at the limit line: a speeding penalty (%s)" % str(out[0]))
 
 	# 3. Overshooting the box a little costs time; a lot misses the box.
 	place.call()

@@ -19,6 +19,7 @@ extends RefCounted
 
 const STEP_M := 8.0
 const DRIVER_GRIP := 0.88
+const WING_GAIN_S := 0.05  # another click of wing only for at least this much lap time (drag costs top speed in a fight)
 const MAX_SPEED := 95.0
 ## Expected tyre temperature above the compound's best per degree of track
 ## temperature over 33 C (measured with tests/tyre_probe.gd).
@@ -60,7 +61,7 @@ static func recommend(def: CarDefinition, track: TrackData, conditions: Dictiona
 			var fw := clampf(roundf(d["wing_front"] + (w - d["wing_rear"]) * 0.7), 0.0, 10.0)
 			var trial := base.with_overrides({"tuning": {"wing_rear": w, "wing_front": fw}})
 			var t: float = _lap(trial, pts)["lap_s"]
-			if t < best_t - 0.01:
+			if t < best_t - WING_GAIN_S:
 				best_t = t
 				out["wing_rear"] = w
 				out["wing_front"] = fw
