@@ -17,9 +17,12 @@ the outside of the turns) and have no pit lane.
 import json
 import math
 import os
+import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(os.path.dirname(HERE), "data")
+sys.path.insert(0, HERE)
+import widen  # noqa: E402
 STEP = 2.0          # metres between centre-line points
 GRID_CLEAR = 85.0   # no jumps this far behind the start line (the grid: 16 cars, 2 abreast)
 CROSS_CLEAR = 22.0  # no jumps this close to a crossover
@@ -240,6 +243,8 @@ def build(spec):
         "barriers": {"source": "arena walls", "codes": {"W": "concrete wall", "T": "tyre wall", "G": "grass", "P": "paved run-off"},
                      "right": walls[0], "left": walls[1], "runoff_right": "P" * n, "runoff_left": "P" * n},
     }
+    # The road widens 20% on top of the drawn width, like every track (widen.py).
+    widen.widen_track(d)
     path = os.path.join(OUT, spec["id"] + ".json")
     with open(path, "w") as f:
         json.dump(d, f, separators=(",", ":"))
