@@ -1,7 +1,7 @@
 {
   "id": "physics",
   "name": "Physics",
-  "version": "1.17.1",
+  "version": "1.18.0",
   "status": "active",
   "summary": "How cars move: the vehicle model, tyre grip and temperatures, air and track temperature, weather: clock, temperatures, rain, standing water, drying line and rubber (SimEnvironment); slopes, crests and banking from the track elevation. Tyre compounds are JSON in data/.",
   "depends": {

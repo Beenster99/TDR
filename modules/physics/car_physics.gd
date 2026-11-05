@@ -264,6 +264,9 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 		mu *= t_c.pressure_grip_factor(p_hot)
 		p_heat[i] = t_c.pressure_heat_factor(p_hot)
 		var lat_dirt := 1.0
+		var lon_dirt := 1.0
+		if s.dirt > 0.0 and s.surface == TrackData.Surface.TRACK:
+			lon_dirt = lerpf(1.0, t_c.dirt_traction, s.dirt)
 		if i >= 2:
 			mu *= d.rear_grip * (1.0 - 0.3 * s.damage_suspension) * mech_r
 			# Loose dirt: some cars' tails step out (derby cars a lot). Only
@@ -275,7 +278,7 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 		if s.puncture[i] > 0.5:
 			mu *= PUNCTURE_GRIP
 		mu = maxf(mu, 0.1)
-		cap[i] = mu * fz[i] * (lon_f if i < 2 else lon_r)
+		cap[i] = mu * lon_dirt * fz[i] * (lon_f if i < 2 else lon_r)
 		cap_y[i] = maxf(mu * lat_dirt, 0.1) * fz[i] * (lat_f if i < 2 else lat_r)
 	var cap_f := cap[0] + cap[1]
 	var cap_r := cap[2] + cap[3]

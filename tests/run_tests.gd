@@ -389,7 +389,7 @@ func test_derby() -> void:
 		for k in 30:
 			CarPhysics.step(c, inp, def, d["tyres"][def.tyre_compound_id], env, t2, 1.0 / 120.0, 0.0, [], 0)
 		grip.append(absf(c.ay))
-	check(grip[1] < grip[0] * 0.9, "dirt grips less than tarmac (%.1f vs %.1f m/s2 sideways)" % [grip[1], grip[0]])
+	check(grip[1] < grip[0] * 0.97, "dirt grips a little less than tarmac (%.1f vs %.1f m/s2 sideways)" % [grip[1], grip[0]])
 	# A derby race: derby cars only, damage on, no safety car, wrecks retire,
 	# and it ends.
 	var s := RaceSettings.new()
@@ -440,10 +440,10 @@ func test_derby() -> void:
 		"compact arenas (longest %.0f m), a 16-car grid in %.0f m" % [longest, track.length - float(g15["s"])])
 	var loose := true
 	for id in ids:
-		loose = loose and d["cars"][id].dirt_rear_grip < 0.8
-	check(loose, "derby cars' tails step out on dirt (less rear grip there)")
-	# ...but the driven wheels still dig in: a launch on dirt is only a bit
-	# slower than on tarmac (rear-drive and front-drive alike).
+		loose = loose and d["cars"][id].dirt_rear_grip < 0.9 and d["cars"][id].dirt_rear_grip >= 0.75
+	check(loose, "derby cars' tails step out a little on dirt (rear grip 75-90% there)")
+	# ...but the driven wheels dig in (derby_tyre dirt_traction): a launch on
+	# dirt is about as quick as on tarmac (rear-drive and front-drive alike).
 	var mud := TrackCatalog.load_track("derby_mudflat_infinity")
 	var launch_ok := true
 	var launch_txt := ""
@@ -463,7 +463,7 @@ func test_derby() -> void:
 				CarPhysics.step(lc, lin, ld, d["tyres"][ld.tyre_compound_id], lenv, mud, 1.0 / 240.0, 0.0, [], 0)
 				k += 1
 			times.append(k / 240.0)
-		launch_ok = launch_ok and mud.dirt_at(250.0) > 0.9 and times[1] < times[0] * 1.4
+		launch_ok = launch_ok and mud.dirt_at(250.0) > 0.9 and times[1] < times[0] * 1.05
 		launch_txt += " %s %.1f/%.1f s" % [id.trim_prefix("derby_"), times[0], times[1]]
 	check(launch_ok, "derby cars get off the line on dirt (0-40 km/h tarmac/dirt:%s)" % launch_txt)
 	# The road runs right up to the arena walls: no gravel or run-off strip.

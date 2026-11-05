@@ -52,13 +52,17 @@ above (`TrackView._build_jump_markings`): yellow chevrons up the take-off
 ramp, a yellow and black hazard stripe on the lip, white chevrons down the
 landing. No braking boards in the arenas.
 
-Dirt (`TrackData.dirt_at`, shared with rallycross) grips less (the tyre's
-`dirt_grip`; derby cars run the `derby_tyre`, 0.86 on dirt, so they still get
-off the line) and on derby cars the rear loses much more sideways grip than
-the front (`chassis.dirt_rear_grip`: 0.55 rear-drive, 0.63 four-wheel drive,
-0.7 front-drive), so they slide their tails out on the dirt. That loss is
-sideways only: the driven wheels keep their traction, so a launch on dirt is
-only about 0.7 s slower to 40 km/h than on tarmac.
+Dirt (`TrackData.dirt_at`, shared with rallycross) is packed arena earth.
+Derby cars run the `derby_tyre`: 0.97 of its tarmac grip on dirt
+(`dirt_grip`) and 20% extra bite for drive and braking there
+(`dirt_traction`, which only acts on the longitudinal grip), so a car pulls
+hard out of a dirt hairpin and a launch on dirt is as quick as on tarmac.
+The rear loses a little sideways grip on dirt (`chassis.dirt_rear_grip`:
+0.78 rear-drive, 0.82 four-wheel drive, 0.86 front-drive), so the tail
+still steps out under power without spinning the car round. (The user asked
+for much more drive on dirt on 2026-11-05: with the old 0.86 / 0.55 figures a
+rear-drive car crawled through the dirt hairpins at 28-39 km/h and spun;
+now 47-66 km/h, see `tests/derby_lap_probe.gd`.)
 
 ## Jumps and flying (`CarPhysics`)
 
