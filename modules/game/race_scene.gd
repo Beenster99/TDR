@@ -573,6 +573,13 @@ func _after_tick() -> void:
 		_forced["hand_over"] = true
 		print("[coop] %s: %s" % [Net.local_name, RaceHud.toggle_driver_change(session, session.local_car)])
 		session.request_pit(session.local_car, {"box": true})
+	# Testing: --pause-at 5: open the pause menu after 5 s of racing and leave
+	# it open (online the race must carry on for everyone).
+	if GameData.arg("pause-at") and not _forced.has("pause") \
+			and session.sim.race_time >= float(GameData.arg("pause-at")):
+		_forced["pause"] = true
+		_open_pause_menu()
+		print("[pause] %s opened the menu at %.1f s, tree paused %s" % [Net.local_name, session.sim.race_time, get_tree().paused])
 	# Testing: --host-restart-at 5: the online host restarts the race for
 	# everyone (the pause menu's Restart) once, after 5 s of racing.
 	if GameData.arg("host-restart-at") and session.mode == RaceSession.Mode.SERVER \

@@ -21,7 +21,7 @@ S=$!
 sleep 2
 "$GODOT" "${COMMON[@]}" -- --join 127.0.0.1 --port "$PORT" --name Alice --car v8_mid_berlinetta --profile "$ALICE_PROFILE" --autodrive --ready --quit-after-race >"$LOG/alice.log" 2>&1 &
 A=$!
-"$GODOT" "${COMMON[@]}" -- --join 127.0.0.1 --port "$PORT" --name Bob --car flat6_rear_gt --autodrive --ready --quit-after-race >"$LOG/bob.log" 2>&1 &
+"$GODOT" "${COMMON[@]}" -- --join 127.0.0.1 --port "$PORT" --name Bob --car flat6_rear_gt --autodrive --pause-at 5 --ready --quit-after-race >"$LOG/bob.log" 2>&1 &
 B=$!
 ( sleep "${TIMEOUT:-400}"; kill $S $A $B 2>/dev/null ) &
 W=$!
@@ -42,5 +42,8 @@ for f in alice bob; do grep -q "^\[net\] clock synced true .*, \([1-9][0-9]*\) o
 for f in alice bob; do grep -q "^\[race data\] saved" "$LOG/$f.log" || { echo "$f saved no race data"; ok=1; }; done
 # Alice's upgrades reached every machine through the lobby.
 for f in server bob; do grep -q "^\[setup\] Alice: .*engine.*visual" "$LOG/$f.log" || { echo "$f never got Alice's upgrades"; ok=1; }; done
+# Bob opens the pause menu (Esc) mid-race and leaves it open: online that
+# must not pause anyone (the race still finishes everywhere, checked above).
+grep -q "^\[pause\] Bob opened the menu at .* tree paused false" "$LOG/bob.log" || { echo "bob's pause menu paused the game"; ok=1; }
 grep -q "Prize money" "$LOG/alice.log" || { echo "alice was paid no prize money"; ok=1; }
 [ $ok -eq 0 ] && echo "NET LOOPBACK PASS" || { echo "NET LOOPBACK FAIL (logs in $LOG)"; exit 1; }
