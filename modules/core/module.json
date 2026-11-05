@@ -1,7 +1,7 @@
 {
   "id": "core",
   "name": "Core",
-  "version": "1.4.6",
+  "version": "1.4.7",
   "status": "active",
   "summary": "Shared basics every module may use: the driver-intent contract (CarInput), JSON reading, the module registry, and the GameData autoload (content, command line, active race, scene paths). Player preferences saved on this machine (GameData.prefs, settings.cfg) with a registry of the options the Settings screen shows (GameData.register_setting), and Units for showing speed, power, temperature, distance and fuel in the player's units.",
   "depends": {},

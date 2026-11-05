@@ -131,12 +131,12 @@ func is_active() -> bool:
 
 
 ## The player's hands are on the mechanic: in the box, or in the lane while
-## the pit guide drives (a driver driving their own stop in, PitRules
-## self_drives, is still driving until the car stops).
+## the pit guide drives (the car's own driver drives it in, up to the limit
+## line or onto the box, PitRules.drive_mode, so is at the wheel until then).
 func hands_free() -> bool:
 	if stage == Stage.BOX:
 		return true
-	return stage == Stage.READY and not (session.local_car == car and _sim().pits.self_drives(car))
+	return stage == Stage.READY and not (session.local_car == car and not _sim().pits.controls(car))
 
 
 ## The race scene closes the camera in on the box while this is true.

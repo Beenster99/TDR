@@ -1161,6 +1161,44 @@ func test_pit_self_drive() -> void:
 	pits.set_self_drive(1, false)
 	check(not pits.self_drives(1), "AI cars are never self-driven")
 
+	# 5. Driving to the pit limit (the default): the driver drives into the
+	# lane, the guide takes the car from the limit line to its box, a
+	# countdown runs down to the release and the driver drives out.
+	pits.set_drive_in(i, PitRules.DRIVE_TO_LIMIT)
+	place.call()
+	pits.set_plan(i, {"box": true, "tyre": PitRules.TYRE_DRY, "fuel": 0.0})
+	stops = int(sim.entries[i].pit["stops"])
+	var guided_before := false
+	var guided_to_box := false
+	var counts := []
+	var driver_out := false
+	var pens5 := []
+	for n in 60 * 90:
+		var ins := [CarInput.neutral(), CarInput.neutral(), CarInput.neutral()]
+		ins[i] = drive.call(false, 0.0, false)
+		var ph := pits.phase(i)
+		if ph in [PitRules.PHASE_NONE, PitRules.PHASE_APPROACH, PitRules.PHASE_ENTRY] and pits.controls(i):
+			guided_before = true
+		if ph == PitRules.PHASE_LIMIT and pits.controls(i):
+			guided_to_box = true
+		var r := pits.release_in(i)
+		if r >= 0.0 and (counts.is_empty() or ceili(r) != counts[-1]):
+			counts.append(ceili(r))
+		if ph == PitRules.PHASE_LEAVE and not pits.controls(i):
+			driver_out = true
+		sim.step(ins)
+		for ev in sim.events:
+			if ev["type"] == "penalty" and int(ev["car"]) == i:
+				pens5.append(ev)
+		if driver_out and pits.phase(i) == PitRules.PHASE_NONE:
+			break
+	check(not guided_before, "drive to the pit limit: the driver keeps the wheel up to the limit line")
+	check(guided_to_box, "drive to the pit limit: the guide takes the car from the limit line to its box")
+	check(int(sim.entries[i].pit["stops"]) == stops + 1, "drive to the pit limit: the stop counts")
+	check(counts.has(3) and counts.has(2) and counts.has(1), "a countdown runs down to the release (%s)" % str(counts))
+	check(driver_out, "drive to the pit limit: the driver has the car back as the crew release it")
+	check(pens5.is_empty(), "drive to the pit limit: no speeding penalty (%s)" % str(pens5))
+
 	# The driver's pit call menu: tyres and wings into the plan.
 	var st2 := RaceSettings.new()
 	st2.laps = 10
@@ -1420,6 +1458,7 @@ func test_pit_crew_game() -> void:
 	sim3.cars[0].fuel_l = 20.0
 	sim3.pits.set_plan(0, {"box": true, "tyre": PitRules.TYRE_DRY, "wheels": "all", "fuel": 9.0, "repair": false})
 	p3["phase"] = PitRules.PHASE_APPROACH
+	p3["auto"] = true  # the pit guide brings the car in (hands free)
 	var games := []
 	for s in [sess, mate]:
 		var g: PitCrewGame = PitCrewGame.new()

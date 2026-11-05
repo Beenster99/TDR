@@ -8,11 +8,14 @@ extends RefCounted
 ## How a stop works:
 ##  * "Box this lap" (AI strategy, the player's box button, or a co-op pit
 ##    crew / strategist) sets the car's pit plan and its box flag. From about
-##    300 m before the pit entry the car is then driven in automatically,
-##    unless its driver drives in themselves (set_self_drive, Settings >
-##    Gameplay): then they follow the pit guide line (guide_line) into the
-##    lane, must be down to the limit by the limit line, stop on their box
-##    (BOX_STOP_*, overshooting costs time) and drive out with the limiter.
+##    300 m before the pit entry an AI car is then driven in automatically.
+##    A player at the wheel drives in themselves (set_drive_in, Settings >
+##    Gameplay): they follow the pit guide line (guide_line) into the lane
+##    and must be down to the limit by the limit line. Then either the car
+##    is guided to its box (DRIVE_TO_LIMIT) or they stop on it themselves
+##    (DRIVE_STOP: BOX_STOP_*, overshooting costs time). Either way they get
+##    the car back when the crew release it (release_in counts down to
+##    that) and drive out with the limiter on.
 ##  * A player can also just drive into the pit lane. They must be at the
 ##    speed limit by the limit line (the pit limiter button caps the speed),
 ##    or get a time penalty. From the limit line the car is guided to its box.
@@ -165,9 +168,16 @@ var _box: PackedInt32Array = []
 var _prev_s: PackedFloat64Array = []
 var _lap_fuel: PackedFloat64Array = []
 var _sent: Array = []            ## host: last pit state seen per car (events, penalties)
-## Cars whose driver drives in and stops in the box themselves (set by the
-## machine that simulates the car; not part of the race state).
+## How much of a stop car i's driver drives (DRIVE_*; set by the machine
+## that simulates the car; not part of the race state).
 var _self: PackedByteArray = []
+## set_drive_in modes: the guide drives the whole stop (AI cars); the driver
+## drives all of it, stopping on the box too; the driver drives up to the
+## pit limit line, the guide takes the car to the box, and the driver gets
+## it back when the crew release it.
+const DRIVE_GUIDED := 0
+const DRIVE_STOP := 1
+const DRIVE_TO_LIMIT := 2
 
 
 func _init(p_sim: RaceSim) -> void:
@@ -251,8 +261,10 @@ func controls(i: int) -> bool:
 	match p["phase"]:
 		PHASE_SERVICE:
 			return true
-		PHASE_LIMIT, PHASE_LEAVE:
+		PHASE_LIMIT:
 			return not self_drives(i)
+		PHASE_LEAVE:
+			return not drives_in(i)
 		PHASE_APPROACH, PHASE_ENTRY, PHASE_EXIT:
 			return p["auto"]
 	return false
@@ -264,17 +276,51 @@ func controls(i: int) -> bool:
 ## it (Settings > Gameplay). Turning it off mid-stop hands the rest of the
 ## stop to the guide (e.g. an AI co-driver taking over).
 func set_self_drive(i: int, on: bool) -> void:
+	set_drive_in(i, DRIVE_STOP if on else DRIVE_GUIDED)
+
+
+## How much of car i's pit stops its driver drives (DRIVE_*). Set by the
+## machine that simulates the car, for a player at the wheel (Settings >
+## Gameplay "Pit stops"). DRIVE_GUIDED mid-stop hands the rest of the stop
+## to the guide (e.g. an AI co-driver taking over).
+func set_drive_in(i: int, mode: int) -> void:
 	if i < 0 or i >= _self.size():
 		return
-	_self[i] = 1 if on else 0
+	_self[i] = mode
 	var p: Dictionary = sim.entries[i].pit
-	if not on and p["phase"] != PHASE_NONE and p["phase"] != PHASE_EXIT:
+	if mode == DRIVE_GUIDED and p["phase"] != PHASE_NONE and p["phase"] != PHASE_EXIT:
 		p["auto"] = true
 
 
-## True while car i's driver is driving its pit stop themselves.
+func drive_mode(i: int) -> int:
+	return _self[i] if i >= 0 and i < _self.size() else DRIVE_GUIDED
+
+
+## True while car i's driver is driving its pit stop themselves, stopping on
+## the box too (DRIVE_STOP).
 func self_drives(i: int) -> bool:
-	return i >= 0 and i < _self.size() and _self[i] == 1 and not sim.entries[i].pit["auto"]
+	return i >= 0 and i < _self.size() and _self[i] == DRIVE_STOP and not sim.entries[i].pit["auto"]
+
+
+## True while car i's driver drives at least part of this stop (into the
+## lane up to the limit line, and out of the box): DRIVE_STOP or
+## DRIVE_TO_LIMIT, and the guide hasn't taken the whole stop over.
+func drives_in(i: int) -> bool:
+	return i >= 0 and i < _self.size() and _self[i] != DRIVE_GUIDED and not sim.entries[i].pit["auto"]
+
+
+## Seconds until the crew release car i and its driver has it back (the
+## countdown on the driver's screen), or -1 when it isn't in its box, the
+## guide drives it out, or the release time isn't known yet (a player still
+## has a wheel to do).
+func release_in(i: int) -> float:
+	if not enabled or phase(i) != PHASE_SERVICE or not drives_in(i):
+		return -1.0
+	var p: Dictionary = sim.entries[i].pit
+	var tl: Dictionary = (p.get("work", {}) as Dictionary).get("crew", {})
+	if not tl.is_empty() and is_inf(float(tl.get("release", 0.0))):
+		return -1.0
+	return maxf(float(p["service_left"]), 0.0)
 
 
 # --- Plans (driver, pit crew, strategist or AI) -------------------------------
@@ -872,10 +918,10 @@ func box_marks(i: int, pos: Vector2) -> Dictionary:
 
 
 ## The pit limiter: no drive above the pit lane speed limit (always on for a
-## driver driving themselves from the limit line to the end of the limit).
+## driver at the wheel from the limit line to the end of the limit).
 func _limited(i: int, inp: CarInput) -> CarInput:
 	var p: Dictionary = sim.entries[i].pit
-	var on: bool = p["limiter"] or (p["phase"] in [PHASE_LIMIT, PHASE_LEAVE] and self_drives(i))
+	var on: bool = p["limiter"] or (p["phase"] in [PHASE_LIMIT, PHASE_LEAVE] and drives_in(i))
 	if on and sim.cars[i].speed() > sim.track.pit_speed_limit - 0.3:
 		var r := CarInput.new()
 		r.throttle = 0.0

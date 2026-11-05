@@ -4,6 +4,7 @@ extends Node
 ##              red where to brake for the limit line, and the HUD cues
 ##   box      - in the lane at the limit, closing on the box marks
 ##   menu     - the pit call menu over the race (single player)
+##   release  - in the box, the countdown to the crew releasing the car
 ##   godot --path . res://tests/pit_guide_shot.tscn -- <out.png> <scenario> [track] [seconds]
 
 var session: RaceSession
@@ -35,7 +36,7 @@ func _ready() -> void:
 	s.tuning_enabled = true
 	s.environment = {"time_h": 14.0, "weather": "dry"}
 	GameData.prefs["zoom"] = 0.3 if scenario == "approach" else 0.12
-	GameData.prefs["pit_drive_in"] = "self"
+	GameData.prefs["pit_drive_in"] = "limit" if scenario == "release" else "self"
 	var start := RaceFactory.plan(s, [{"name": "You", "car_id": "bmw_m4_gt3"}], GameData.cars, GameData.drivers)
 	session = RaceSession.create(RaceSession.Mode.OFFLINE, start, 0)
 	GameData.active_session = session
@@ -88,6 +89,16 @@ func _physics_process(_delta: float) -> void:
 				p["limiter"] = true
 			"menu":
 				scene.pit_menu.open(mine)
+			"release":
+				var box: Dictionary = t.pit_box(sim.pits.box_index(mine))
+				_place(me, box["pos"], box["heading"], 0.0)
+				var p: Dictionary = sim.entries[mine].pit
+				session.request_pit(mine, {"box": true, "tyre": PitRules.TYRE_DRY, "fuel": 0.0})
+				p["phase"] = PitRules.PHASE_LIMIT
+				p["auto"] = false
+				p["limiter"] = true
+				sim.pits._arrive(mine)
+				p["service_left"] = wait + 2.3
 	if sim.race_time - _t0 >= wait or (scenario == "menu" and Time.get_ticks_msec() > 0 and _armed and sim.race_time - _t0 >= 0.0 and Engine.get_physics_frames() % 120 == 0):
 		_shoot()
 
