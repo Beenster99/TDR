@@ -131,6 +131,8 @@ static func _ai_classes(cars: Dictionary, base: RaceSettings, human_car_id: Stri
 		return [cls]
 	if cls == "" and cars.has(human_car_id):
 		return [cars[human_car_id].class_tag]
+	if cls == RaceSettings.CLASS_MULTI:
+		return base.race_classes(Array(CarCatalog.classes(cars)))
 	return Array(CarCatalog.classes(cars))
 
 

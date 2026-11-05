@@ -1,7 +1,7 @@
 {
   "id": "season",
   "name": "Seasons",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "status": "active",
   "summary": "Single races and championships: a calendar of rounds (track, laps, weather and start time each), points systems (presets and custom, pole and fastest-lap bonuses), qualifying (off, simulated or driven), driver and team standings, saved seasons that carry on across sessions and online with the same group, AI drivers who keep their team, car and traits all season, and careers between seasons (development, retirements, hires, fires and rookies).",
   "depends": {

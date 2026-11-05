@@ -470,6 +470,109 @@ static func multi_class(sim: RaceSim) -> bool:
 	return false
 
 
+## The classes in this race, fastest first (Hypercar, LMP2, GT3, Road ...).
+static func race_classes(sim: RaceSim) -> Array[String]:
+	var defs := {}
+	var dsc := ""
+	for i in sim.car_count():
+		defs[i] = sim.defs[i]
+		dsc = sim.defs[i].discipline
+	return CarCatalog.classes(defs, dsc)
+
+
+## Car's place in its own class (1 = leading the class), from the running order.
+static func class_position(sim: RaceSim, car: int) -> int:
+	var cls := sim.defs[car].class_tag
+	var p := 0
+	for j in sim.running_order:
+		if sim.defs[j].class_tag == cls:
+			p += 1
+		if j == car:
+			return p
+	return 0
+
+
+## What car `other` is to `car` on the road (the strategist's "who is that?"):
+##   REL_RIVAL   same class, same lap: racing for position
+##   REL_LAPPED  same class, a lap or more down: a backmarker
+##   REL_LAPPING same class, a lap or more up: the class leaders coming through
+##   REL_SLOWER  a slower class: traffic to pass, not a fight
+##   REL_FASTER  a faster class: they'll come through, let them by cleanly
+const REL_RIVAL := "rival"
+const REL_LAPPED := "lapped"
+const REL_LAPPING := "lapping"
+const REL_SLOWER := "slower_class"
+const REL_FASTER := "faster_class"
+
+
+static func relation(sim: RaceSim, car: int, other: int) -> String:
+	var a := sim.defs[car].class_tag
+	var b := sim.defs[other].class_tag
+	if a != b:
+		var order := race_classes(sim)
+		return REL_FASTER if order.find(b) < order.find(a) else REL_SLOWER
+	var down := roundi((sim.entries[car].distance - sim.entries[other].distance) / sim.track.length)
+	if down >= 1:
+		return REL_LAPPED
+	if down <= -1:
+		return REL_LAPPING
+	return REL_RIVAL
+
+
+## Short words for a relation, for tags on the pit wall.
+static func relation_text(rel: String) -> String:
+	match rel:
+		REL_RIVAL: return "RACING US"
+		REL_LAPPED: return "BACKMARKER"
+		REL_LAPPING: return "LAPPING US"
+		REL_SLOWER: return "SLOWER CLASS"
+		REL_FASTER: return "FASTER CLASS"
+	return ""
+
+
+## Colours for those tags: orange for a fight, blue for traffic we pass,
+## pink for cars coming through us.
+static func relation_colour(rel: String) -> Color:
+	match rel:
+		REL_RIVAL: return Color(1.0, 0.6, 0.2)
+		REL_LAPPED, REL_SLOWER: return Color(0.45, 0.7, 1.0)
+		REL_LAPPING, REL_FASTER: return Color(1.0, 0.42, 0.72)
+	return Color.WHITE
+
+
+## The cars just ahead of and just behind `car` on the road (by where they
+## are on the lap, whatever lap they're on), skipping cars in the pit lane,
+## out or finished: {"ahead": car or -1, "ahead_s": seconds at our pace,
+## "behind": ..., "behind_s": ...}.
+func road_neighbours(sim: RaceSim, car: int) -> Dictionary:
+	var out := {"ahead": -1, "ahead_s": 0.0, "behind": -1, "behind_s": 0.0}
+	if car < 0 or car >= sim.car_count():
+		return out
+	var c := cars[car] if car < cars.size() else null
+	var v := maxf(sim.cars[car].speed(), 30.0)
+	if c != null and c.last5_avg > 0.0:
+		v = track.length / c.last5_avg
+	var d := sim.entries[car].distance
+	var best_a := INF
+	var best_b := INF
+	for j in sim.car_count():
+		if j == car or sim.entries[j].dnf or sim.entries[j].finished or sim.in_pit_lane(j):
+			continue
+		var m := fposmod(sim.entries[j].distance - d, track.length)
+		if m < best_a:
+			best_a = m
+			out["ahead"] = j
+		var mb := track.length - m
+		if mb < best_b:
+			best_b = mb
+			out["behind"] = j
+	if out["ahead"] >= 0:
+		out["ahead_s"] = best_a / v
+	if out["behind"] >= 0:
+		out["behind_s"] = best_b / v
+	return out
+
+
 ## Laps `other` is down on `car`, to the nearest lap: 1 for a car we have
 ## lapped or are about to lap (more than half a lap behind us in race
 ## distance), 0 on our lap, negative when they're ahead.
