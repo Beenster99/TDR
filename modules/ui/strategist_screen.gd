@@ -564,7 +564,7 @@ func _view_tabs(r: Rect2) -> void:
 		_text(Vector2(x + 4, r.position.y + 21), "Tab", 11, Color(1, 1, 1, 0.35))
 	# Key: what the colours mean.
 	var kx := r.end.x - 10
-	for item in [["backmarker", BACKMARKER], ["our rival", ORANGE], ["us", YELLOW], ["fastest", PURPLE]]:
+	for item in [["backmarker", BACKMARKER], ["our rival", ORANGE], ["us", YELLOW], ["fastest", PURPLE], ["coming through", RaceTelemetry.relation_colour(RaceTelemetry.REL_FASTER)]]:
 		var w := font.get_string_size(item[0], HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
 		_text(Vector2(kx - w, r.position.y + 21), item[0], 11, Color(item[1], 0.9))
 		draw_rect(Rect2(kx - w - 12, r.position.y + 13, 8, 8), item[1])
@@ -613,6 +613,15 @@ func _draw_timing(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 	for key in cols:
 		cols[key] = r.position.x + cols[key] * k
 	var n := sim.running_order.size()
+	var multi := RaceTelemetry.multi_class(sim)
+	# The strip along the bottom: who's just ahead and behind on the road,
+	# and whether we're racing them.
+	var me := _our_car()
+	var road_h := 52.0 if me >= 0 else 0.0
+	var road := tel.road_neighbours(sim, me) if me >= 0 else {}
+	if road_h > 0.0:
+		_draw_road(Rect2(r.position.x, r.end.y - road_h, r.size.x, road_h), sim, me, road)
+		r.size.y -= road_h
 	var rh := clampf((r.size.y - 34) / maxf(n, 1), 14.0, 28.0)
 	var fs := 15 if rh >= 22.0 else (13 if rh >= 17.0 else 11)
 	var hy := r.position.y + 22
@@ -622,7 +631,6 @@ func _draw_timing(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 	var sw := 52.0 * k
 	for s in sim.track.sectors.size():
 		_text(Vector2(cols["s1"] + s * sw, hy), "S%d" % (s + 1), 12, DIM)
-	var me := _our_car()
 	var riv := rival()
 	var ranks := _ranks()
 	for p in n:
@@ -640,14 +648,27 @@ func _draw_timing(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 		var cy := y + rh * 0.5 - 1
 		var dim_row := 0.6 if bm else 1.0
 		_text(Vector2(cols["pos"], ty), str(e.position), fs, Color.WHITE, HORIZONTAL_ALIGNMENT_RIGHT, 26 * k)
-		draw_rect(Rect2(cols["drv"] - 12 * k, y + 4, 5, rh - 10), sim.defs[i].colour)
+		var cls := sim.defs[i].class_tag
+		draw_rect(Rect2(cols["drv"] - 12 * k, y + 4, 5, rh - 10), CarCatalog.class_colour(cls) if multi else sim.defs[i].colour)
 		var name_end: float = cols["car"] - 6 * k
+		# The cars either side of us on the road get an arrow in their
+		# relation's colour (are we racing them, or is it traffic?).
+		var arrow := ""
+		if me >= 0 and i != me and (i == road.get("ahead", -1) or i == road.get("behind", -1)):
+			arrow = "▲" if i == road.get("ahead", -1) else "▼"
 		if bm:
-			name_end = _chip(name_end, cy, "+%dL" % tel.laps_behind(sim, me, i), BACKMARKER) - 4
+			name_end = _chip(name_end, cy, ("%s " % arrow if arrow != "" else "") + "+%dL" % tel.laps_behind(sim, me, i), BACKMARKER) - 4
 		elif i == riv:
-			name_end = _chip(name_end, cy, "RIVAL", ORANGE) - 4
+			name_end = _chip(name_end, cy, ("%s " % arrow if arrow != "" else "") + "RIVAL", ORANGE) - 4
+		elif arrow != "":
+			name_end = _chip(name_end, cy, arrow, RaceTelemetry.relation_colour(RaceTelemetry.relation(sim, me, i))) - 4
 		_text(Vector2(cols["drv"], ty), e.driver_name, fs, _name_colour(i, riv, bm), HORIZONTAL_ALIGNMENT_LEFT, name_end - cols["drv"])
-		_text(Vector2(cols["car"], ty), sim.defs[i].display_name, fs - 2, Color(DIM, DIM.a * dim_row), HORIZONTAL_ALIGNMENT_LEFT, 74 * k)
+		var car_x: float = cols["car"]
+		var car_name := sim.defs[i].display_name
+		if multi:   # the class and its place in it, in the class colour; then the make
+			car_x += _class_chip(Vector2(car_x, cy), cls, RaceTelemetry.class_position(sim, i), fs - 3, dim_row) + 4
+			car_name = str(RaceHud.badge_for(sim.defs[i])[0])
+		_text(Vector2(car_x, ty), car_name, fs - 2, Color(DIM, DIM.a * dim_row), HORIZONTAL_ALIGNMENT_LEFT, cols["last"] - 6 * k - car_x)
 		for key in RaceTelemetry.PACE_KEYS:
 			var v := tel.pace_value(i, key)
 			var top: Array = ranks.get(key, [])
@@ -695,6 +716,75 @@ func _draw_timing(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 			var pit_col := GREEN if c.pit["ideal"] else (Color(0.8, 1.0, 0.6) if c.pit["clear_air"] else Color(1, 1, 1, 0.55))
 			var mark := "  clear" if c.pit["clear_air"] else ""
 			_text(Vector2(cols["pit"], ty), "P%d%s" % [c.pit["rejoin_pos"], mark], fs - 1, pit_col)
+
+
+## A class chip ("GT3 2") starting at x, centred on cy; returns its width.
+func _class_chip(at: Vector2, cls: String, pos: int, fs: int, alpha := 1.0) -> float:
+	var t := "%s %d" % [CarCatalog.class_short(cls), pos] if pos > 0 else CarCatalog.class_short(cls)
+	var w := font.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x + 8
+	var r := Rect2(at.x, at.y - fs * 0.5 - 2, w, fs + 4)
+	draw_rect(r, Color(CarCatalog.class_colour(cls), alpha))
+	_text(Vector2(r.position.x, r.position.y + fs + 0.5), t, fs, CarCatalog.class_text_colour(cls), HORIZONTAL_ALIGNMENT_CENTER, w)
+	return w
+
+
+## Who's just ahead of and behind our car on the road (whatever lap they're
+## on), and what they are to us: a car we're racing, a backmarker, the
+## leaders lapping us, or another class coming through.
+func _draw_road(r: Rect2, sim: RaceSim, me: int, road: Dictionary) -> void:
+	var x0 := r.position.x + 10
+	draw_line(Vector2(x0, r.position.y + 2), Vector2(r.end.x - 10, r.position.y + 2), Color(1, 1, 1, 0.12))
+	_text(Vector2(x0, r.position.y + 16), "ON THE ROAD", 11, DIM)
+	var multi := RaceTelemetry.multi_class(sim)
+	for k in 2:
+		var ahead := k == 0
+		var j: int = road.get("ahead" if ahead else "behind", -1)
+		var y := r.position.y + 22 + k * 23
+		var x := x0
+		_text(Vector2(x, y + 11), ("AHEAD" if ahead else "BEHIND"), 12, Color(1, 1, 1, 0.75))
+		x += 64
+		if j < 0:
+			_text(Vector2(x, y + 11), "clear road", 14, DIM)
+			continue
+		var secs: float = road.get("ahead_s" if ahead else "behind_s", 0.0)
+		_text(Vector2(x, y + 11), "%.1f s" % secs, 14, YELLOW if secs < 1.0 else Color.WHITE, HORIZONTAL_ALIGNMENT_RIGHT, 52)
+		x += 62
+		var rel := RaceTelemetry.relation(sim, me, j)
+		var rc := RaceTelemetry.relation_colour(rel)
+		var tag := RaceTelemetry.relation_text(rel)
+		var tw := font.get_string_size(tag, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x + 10
+		_chip(x + tw, y + 6, tag, rc)
+		x += tw + 8
+		var cls := sim.defs[j].class_tag
+		if multi:
+			x += _class_chip(Vector2(x, y + 6), cls, RaceTelemetry.class_position(sim, j), 11) + 6
+		var name := sim.entries[j].driver_name
+		_text(Vector2(x, y + 11), name, 14, rc.lightened(0.3), HORIZONTAL_ALIGNMENT_LEFT, 170)
+		x += minf(font.get_string_size(name, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x, 170.0) + 10
+		_text(Vector2(x, y + 11), road_advice(sim, me, j, ahead), 13, Color(1, 1, 1, 0.7), HORIZONTAL_ALIGNMENT_LEFT, r.end.x - 10 - x)
+
+
+## What a car just ahead (or behind) on the road means for us, in a few words.
+static func road_advice(sim: RaceSim, me: int, j: int, ahead: bool) -> String:
+	var rel := RaceTelemetry.relation(sim, me, j)
+	var cls := sim.defs[j].class_tag
+	var their := RaceTelemetry.class_position(sim, j)
+	var ours := RaceTelemetry.class_position(sim, me)
+	var laps := absi(roundi((sim.entries[me].distance - sim.entries[j].distance) / sim.track.length))
+	var lap_s := "%d lap%s" % [laps, "" if laps == 1 else "s"]
+	match rel:
+		RaceTelemetry.REL_RIVAL:
+			return ("racing us for P%d in class: attack" % their) if ahead else ("racing us: defend P%d in class" % ours)
+		RaceTelemetry.REL_LAPPED:
+			return ("backmarker, %s down: pass it, don't fight" % lap_s) if ahead else ("backmarker, %s down: no threat" % lap_s)
+		RaceTelemetry.REL_LAPPING:
+			return ("%s up on us: not a fight" % lap_s) if ahead else ("class leaders, %s up: coming through, let them by" % lap_s)
+		RaceTelemetry.REL_SLOWER:
+			return ("%s traffic: pass it, not a fight" % cls) if ahead else ("%s behind: no threat" % cls)
+		RaceTelemetry.REL_FASTER:
+			var who := ("the %s leader" % cls) if their == 1 else ("%s P%d" % [cls, their])
+			return ("%s, pulling away: not a fight" % who) if ahead else ("%s coming through: let them by cleanly" % who)
+	return ""
 
 
 ## PACE: one table of every car in our class with its last lap, last 3 and

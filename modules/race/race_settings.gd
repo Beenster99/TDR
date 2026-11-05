@@ -37,6 +37,10 @@ var seed: int = 12345
 ## drive the classes the players picked).
 var car_class: String = ""
 const CLASS_MULTI := "multi"
+## A multi-class race's classes (2 or 3, e.g. ["Hypercar", "LMP2", "GT3"] for
+## a Le Mans grid, ["Hypercar", "GT3"] for a WEC race). Empty = every class.
+## Only used when car_class is CLASS_MULTI.
+var multi_classes: Array = []
 ## Conditions (see SimEnvironment.create): time_of_day_h, time_scale,
 ## weather ("dry" | "overcast" | "light_rain" | "heavy_rain" | "random"),
 ## weather_changes (bool). Empty = the track's defaults.
@@ -106,6 +110,18 @@ static func max_cars_for(p_class: String, p_discipline: String = DISCIPLINE_CIRC
 	return MAX_CARS_MULTI_CLASS if p_class == CLASS_MULTI else MAX_CARS_SINGLE_CLASS
 
 
+## The classes racing in a multi-class race, fastest first as given (the
+## chosen ones that exist among `available`, or all of `available`).
+func race_classes(available: Array) -> Array:
+	if car_class != CLASS_MULTI:
+		return [car_class] if car_class in available else []
+	var out: Array = []
+	for c in multi_classes:
+		if str(c) in available and not str(c) in out:
+			out.append(str(c))
+	return out if out.size() >= 2 else available.duplicate()
+
+
 func is_rallycross() -> bool:
 	return discipline == DISCIPLINE_RALLYCROSS
 
@@ -117,7 +133,7 @@ func allows_coop() -> bool:
 
 func to_dict() -> Dictionary:
 	return {
-		"track_id": track_id, "car_class": car_class, "laps": laps, "ai_count": ai_count, "seed": seed,
+		"track_id": track_id, "car_class": car_class, "multi_classes": multi_classes.duplicate(), "laps": laps, "ai_count": ai_count, "seed": seed,
 		"environment": environment, "grid_order": grid_order, "ai_difficulty": ai_difficulty, "ai_mistakes": ai_mistakes, "fuel_enabled": fuel_enabled, "fuel_rate": fuel_rate,
 		"start_fuel_l": start_fuel_l, "tyre_wear_enabled": tyre_wear_enabled,
 		"damage_enabled": damage_enabled, "damage_level": damage_level, "safety_car_enabled": safety_car_enabled, "flags_enabled": flags_enabled,

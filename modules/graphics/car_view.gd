@@ -576,6 +576,19 @@ func _recolour(n: Node, material_name: String, m: Material) -> void:
 				mi.set_surface_override_material(s, m)
 
 
+## Colours the roof number board, like the class-coloured number panels in
+## the WEC (multi-class races: Hypercar red, LMP2 blue, GT3 green ...).
+func set_number_colour(board: Color, digits: Color) -> void:
+	if _number_board_mat:
+		_number_board_mat.albedo_color = board
+	if _number_label:
+		_number_label.modulate = digits
+
+
+var _number_board_mat: StandardMaterial3D
+var _number_label: Label3D
+
+
 func _add_number() -> void:
 	if number <= 0:
 		return
@@ -590,10 +603,12 @@ func _add_number() -> void:
 	bmat.albedo_color = Color(0.95, 0.95, 0.93)
 	bmat.roughness = 0.4
 	pm.material = bmat
+	_number_board_mat = bmat
 	board.mesh = pm
 	board.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	at.add_child(board)
 	var l := Label3D.new()
+	_number_label = l
 	l.text = str(number)
 	l.font_size = 128
 	l.outline_size = 0

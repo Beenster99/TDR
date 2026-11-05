@@ -24,6 +24,9 @@ var _seen_engine_failed := false
 ## (Settings > Gameplay, or H in a race).
 const PREF_TOWER := "hud_timing_tower"
 const TOWER_W := 352.0
+## Multi-class races add a class column to the tower: a chip in the class
+## colour with the class and the car's place in it ("GT3 2").
+const CLASS_COL_W := 58.0
 const TOWER_ROW := 24.0
 ## How long a finished lap's sectors stay up before the next lap's go live.
 const LAP_HOLD_S := 4.0
@@ -234,8 +237,8 @@ func item_size(id: String) -> Vector2:
 		"map":
 			var scale_f: float = get_meta("mm_scale", 1.0)
 			return _mm_rect.size * scale_f + Vector2(20, 20)
-		"tower": return Vector2(TOWER_W, _tower_height())
-		"standings": return Vector2(330, 34 + _standings_rows() * 22)
+		"tower": return Vector2(tower_w(), _tower_height())
+		"standings": return Vector2(330 + (CLASS_COL_W - 10.0 if multi_class() else 0.0), 34 + _standings_rows() * 22)
 		"timing": return Vector2(300, _timing_height(me))
 		"pit":
 			var h := _pit_panel_height(me) if me >= 0 and sim.pits.enabled else 0.0
@@ -539,7 +542,7 @@ func _timing_extra_row(me: int) -> bool:
 		return false
 	var sim := session.sim
 	var e := sim.entries[me]
-	return e.penalty_s > 0.0 or (sim.settings.is_rallycross() and sim.track.has_joker() and not e.finished)
+	return multi_class() or e.penalty_s > 0.0 or (sim.settings.is_rallycross() and sim.track.has_joker() and not e.finished)
 
 
 ## Position and lap count (lap times are on the timing tower and the
@@ -548,11 +551,24 @@ func _draw_timing(me: int) -> void:
 	var sim := session.sim
 	var e := sim.entries[me]
 	_panel(Rect2(0, 0, 300, _timing_height(me)))
-	_text(Vector2(14, 42), "P%d / %d" % [e.position, sim.car_count()], 34)
 	var lap_now := mini(e.laps_done + 1, sim.settings.laps)
 	_text(Vector2(160, 40), "LAP %d/%d" % [lap_now, sim.settings.laps], 20)
-	if e.penalty_s > 0.0:
-		_text(Vector2(14, 72), "+%d s penalty" % int(e.penalty_s), 16, Color(1, 0.55, 0.3))
+	if multi_class():
+		# Multi-class: the place in our class is the one that counts, big,
+		# behind a chip in the class colour; overall under it.
+		var cls := sim.defs[me].class_tag
+		var in_cls := 0
+		for j in sim.car_count():
+			in_cls += 1 if sim.defs[j].class_tag == cls else 0
+		var cw := draw_class_chip(Rect2(14, 16, 0, 30), cls, "", 16)
+		_text(Vector2(22 + cw, 42), "P%d / %d" % [RaceTelemetry.class_position(sim, me), in_cls], 30)
+		_text(Vector2(14, 74), "P%d / %d overall" % [e.position, sim.car_count()], 16, Color(1, 1, 1, 0.7))
+		if e.penalty_s > 0.0:
+			_text(Vector2(190, 74), "+%d s pen." % int(e.penalty_s), 16, Color(1, 0.55, 0.3))
+	else:
+		_text(Vector2(14, 42), "P%d / %d" % [e.position, sim.car_count()], 34)
+		if e.penalty_s > 0.0:
+			_text(Vector2(14, 72), "+%d s penalty" % int(e.penalty_s), 16, Color(1, 0.55, 0.3))
 	# Rallycross: has the joker been taken yet? Amber until it has, and a
 	# warning on the last lap it can still be taken.
 	if sim.settings.is_rallycross() and sim.track.has_joker() and not e.finished:
@@ -1374,7 +1390,9 @@ func _draw_standings(me: int) -> void:
 	var sim := session.sim
 	var x0 := 10.0
 	var rows := _standings_rows()
-	_panel(Rect2(0, 0, 330, 34 + rows * 22))
+	var multi := multi_class()
+	var cx := CLASS_COL_W - 10.0 if multi else 0.0   # room for the class chip
+	_panel(Rect2(0, 0, 330 + cx, 34 + rows * 22))
 	_text(Vector2(x0, 22), "LAP %d / %d" % [_leader_lap(), sim.settings.laps], 16, Color(1, 1, 1, 0.8))
 	for p in rows:
 		var i := sim.running_order[p]
@@ -1382,18 +1400,22 @@ func _draw_standings(me: int) -> void:
 		var kind := row_kind(i, me)
 		var col := row_text_colour(kind)
 		if kind != ROW_AI:
-			_draw_player_row(Rect2(x0 - 6, 30 + p * 22, 320, 20), kind)
+			_draw_player_row(Rect2(x0 - 6, 30 + p * 22, 320 + cx, 20), kind)
 		var right := _status_text(i)
 		if right == "" and p > 0:
 			var gap := sim.entries[sim.running_order[0]].distance - e.distance
 			right = "+%.0f m" % gap if gap < sim.track.length else "+%d lap" % int(gap / sim.track.length)
-		draw_rect(Rect2(x0, 32 + p * 22, 8, 14), sim.defs[i].colour)
-		_text(Vector2(x0 + 14, 45 + p * 22), "%2d  %s" % [p + 1, e.at_wheel().left(18)], 15, col)
+		if multi:
+			draw_class_chip(Rect2(x0, 31 + p * 22, CLASS_COL_W - 8.0, 17), sim.defs[i].class_tag,
+				str(RaceTelemetry.class_position(sim, i)), 11)
+		else:
+			draw_rect(Rect2(x0, 32 + p * 22, 8, 14), sim.defs[i].colour)
+		_text(Vector2(x0 + 14 + cx, 45 + p * 22), "%2d  %s" % [p + 1, e.at_wheel().left(18)], 15, col)
 		if sim.pits.enabled and int(e.pit.get("stops", 0)) > 0:
-			_text(Vector2(x0 + 172, 45 + p * 22), str(e.pit["stops"]), 12, Color(1, 1, 1, 0.55))
+			_text(Vector2(x0 + 172 + cx, 45 + p * 22), str(e.pit["stops"]), 12, Color(1, 1, 1, 0.55))
 		if e.penalty_s > 0.0:
-			_text(Vector2(x0 + 140, 45 + p * 22), "+%ds" % int(e.penalty_s), 13, Color(1, 0.55, 0.3))
-		_text(Vector2(x0 + 200, 45 + p * 22), right, 15, col, HORIZONTAL_ALIGNMENT_RIGHT, 110)
+			_text(Vector2(x0 + 140 + cx, 45 + p * 22), "+%ds" % int(e.penalty_s), 13, Color(1, 0.55, 0.3))
+		_text(Vector2(x0 + 200 + cx, 45 + p * 22), right, 15, col, HORIZONTAL_ALIGNMENT_RIGHT, 110)
 
 
 ## PIT / FIN / DNF for a car, or "" while it's racing.
@@ -1451,26 +1473,42 @@ func _draw_tower(me: int) -> void:
 	var x := 0.0
 	var top := 0.0
 	var h := _tower_height()
-	_panel(Rect2(x, top, TOWER_W, h))
+	var multi := multi_class()
+	var tw := tower_w()
+	_panel(Rect2(x, top, tw, h))
 	_text(Vector2(x + 12, top + 26), "LAP %d / %d" % [_leader_lap(), sim.settings.laps], 18, Color.WHITE)
-	_text(Vector2(x + 12, top + 26), "%d CARS" % n, 14, Color(1, 1, 1, 0.55), HORIZONTAL_ALIGNMENT_RIGHT, TOWER_W - 24)
+	if multi:
+		# The classes racing, as a key in their colours.
+		var kx := x + tw - 12.0
+		var cls_list := RaceTelemetry.race_classes(sim)
+		for k in range(cls_list.size() - 1, -1, -1):
+			var w := _chip_width(CarCatalog.class_short(cls_list[k]), "", 11)
+			kx -= w
+			draw_class_chip(Rect2(kx, top + 11, w, 18), cls_list[k], "", 11)
+			kx -= 4.0
+	else:
+		_text(Vector2(x + 12, top + 26), "%d CARS" % n, 14, Color(1, 1, 1, 0.55), HORIZONTAL_ALIGNMENT_RIGHT, tw - 24)
 	var head := Color(1, 1, 1, 0.45)
+	# Multi-class: everything right of the position moves over for the class.
+	var cx := CLASS_COL_W if multi else 0.0
 	_text(Vector2(x + 12, top + 50), "POS", 11, head)
-	_text(Vector2(x + 86, top + 50), "DRIVER", 11, head)
-	_text(Vector2(x + 202, top + 50), "LAST", 11, head)
-	_text(Vector2(x + 274, top + 50), "GAP", 11, head, HORIZONTAL_ALIGNMENT_RIGHT, 66)
+	if multi:
+		_text(Vector2(x + 44, top + 50), "CLASS", 11, head)
+	_text(Vector2(x + 86 + cx, top + 50), "DRIVER", 11, head)
+	_text(Vector2(x + 202 + cx, top + 50), "LAST", 11, head)
+	_text(Vector2(x + 274 + cx, top + 50), "GAP", 11, head, HORIZONTAL_ALIGNMENT_RIGHT, 66)
 	var y := top + 58.0
 	var prev := -1
 	for p in shown:
 		if prev >= 0 and p != prev + 1:
-			draw_line(Vector2(x + 12, y + 2), Vector2(x + TOWER_W - 12, y + 2), Color(1, 1, 1, 0.25), 1.0)
+			draw_line(Vector2(x + 12, y + 2), Vector2(x + tw - 12, y + 2), Color(1, 1, 1, 0.25), 1.0)
 			y += 6.0
 		prev = p
 		var i := sim.running_order[p]
 		var e := sim.entries[i]
 		var kind := row_kind(i, me)
 		var mine := kind == ROW_ME
-		var row := Rect2(x + 2, y, TOWER_W - 4, TOWER_ROW)
+		var row := Rect2(x + 2, y, tw - 4, TOWER_ROW)
 		if mine:
 			_draw_player_row(row, kind)
 		elif i == give_back_to and _giving_back(me):
@@ -1481,20 +1519,23 @@ func _draw_tower(me: int) -> void:
 			draw_rect(row, Color(1, 1, 1, 0.04))
 		var col := row_text_colour(kind)
 		var base := y + TOWER_ROW - 6.0
-		draw_rect(Rect2(x + 4, y + 3, 4, TOWER_ROW - 6), sim.defs[i].colour)
+		draw_rect(Rect2(x + 4, y + 3, 4, TOWER_ROW - 6), CarCatalog.class_colour(sim.defs[i].class_tag) if multi else sim.defs[i].colour)
 		if kind != ROW_AI:   # position in a solid tag, like a TV graphic
 			draw_rect(Rect2(x + 11, y + 2, 30, TOWER_ROW - 4), ROW_ME_COLOUR if mine else ROW_PLAYER_COLOUR)
 			draw_string(font, Vector2(x + 12, base), str(p + 1), HORIZONTAL_ALIGNMENT_RIGHT, 26, 16, Color(0.05, 0.05, 0.08))
 		else:
 			_text(Vector2(x + 12, base), str(p + 1), 16, col, HORIZONTAL_ALIGNMENT_RIGHT, 26)
-		draw_badge(Rect2(x + 44, y + 3, 36, TOWER_ROW - 6), sim.defs[i])
-		_text(Vector2(x + 86, base), short_name(e.at_wheel()), 16 if mine else 15, col)
+		if multi:
+			draw_class_chip(Rect2(x + 44, y + 3, CLASS_COL_W - 4.0, TOWER_ROW - 6), sim.defs[i].class_tag,
+				str(RaceTelemetry.class_position(sim, i)), 12)
+		draw_badge(Rect2(x + 44 + cx, y + 3, 36, TOWER_ROW - 6), sim.defs[i])
+		_text(Vector2(x + 86 + cx, base), short_name(e.at_wheel()), 16 if mine else 15, col)
 		var tc: CarTelemetry = tel.cars[i] if tel != null and i < tel.cars.size() else null
 		var last := e.lap_times[-1] if e.lap_times.size() > 0 else 0.0
 		var last_col := Color(1, 1, 1, 0.8)
 		if last > 0.0 and tel != null and tel.fastest_lap > 0.0 and absf(last - tel.fastest_lap) < 0.0005:
 			last_col = SECTOR_PURPLE
-		_text(Vector2(x + 202, base), fmt_lap(last), 15, last_col)
+		_text(Vector2(x + 202 + cx, base), fmt_lap(last), 15, last_col)
 		var gap := _status_text(i)
 		var gap_col := Color(1, 0.6, 0.3) if gap == "PIT" else Color(1, 1, 1, 0.8)
 		if gap == "":
@@ -1503,10 +1544,41 @@ func _draw_tower(me: int) -> void:
 				gap_col = Color(1, 1, 1, 0.55)
 			else:
 				gap = _interval_text(sim.running_order[p - 1], i, tc.interval if tc != null else 0.0)
-		_text(Vector2(x + 274, base), gap, 15, gap_col, HORIZONTAL_ALIGNMENT_RIGHT, 66)
+		_text(Vector2(x + 274 + cx, base), gap, 15, gap_col, HORIZONTAL_ALIGNMENT_RIGHT, 66)
 		if e.penalty_s > 0.0:
-			_text(Vector2(x + 166, base), "+%ds" % int(e.penalty_s), 11, Color(1, 0.55, 0.3))
+			_text(Vector2(x + 166 + cx, base), "+%ds" % int(e.penalty_s), 11, Color(1, 0.55, 0.3))
 		y += TOWER_ROW
+
+
+## True in a multi-class race (more than one class on the grid).
+func multi_class() -> bool:
+	return session != null and session.sim != null and RaceTelemetry.multi_class(session.sim)
+
+
+func tower_w() -> float:
+	return TOWER_W + (CLASS_COL_W if multi_class() else 0.0)
+
+
+func _chip_width(label: String, num: String, fs: int) -> float:
+	var t := label if num == "" else "%s %s" % [label, num]
+	return font.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x + 10.0
+
+
+## A class chip: the class's short name (and a number, e.g. the place in the
+## class) on the class colour. A zero width sizes it to fit. Returns its width.
+func draw_class_chip(r: Rect2, cls: String, num: String, fs := 12) -> float:
+	var label := CarCatalog.class_short(cls)
+	if r.size.x <= 0.0:
+		r.size.x = _chip_width(label, num, fs)
+	draw_rect(r, CarCatalog.class_colour(cls))
+	var tc := CarCatalog.class_text_colour(cls)
+	var y := r.position.y + r.size.y * 0.5 + fs * 0.36
+	if num == "":
+		draw_string(font, Vector2(r.position.x, y), label, HORIZONTAL_ALIGNMENT_CENTER, r.size.x, fs, tc)
+	else:
+		draw_string(font, Vector2(r.position.x + 4, y), label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs - 1, tc)
+		draw_string(font, Vector2(r.position.x, y), num, HORIZONTAL_ALIGNMENT_RIGHT, r.size.x - 4, fs + 1, tc)
+	return r.size.x
 
 
 ## Tower and standings rows: this player's car (or the team's car on the pit
@@ -1633,7 +1705,14 @@ func _draw_gap(r: Rect2, label: String, car: int, pos: int, gap: String, trend: 
 		_text(r.position + Vector2(0, 22), label, 12, Color(1, 1, 1, 0.45), align, r.size.x)
 		_text(r.position + Vector2(0, 50), "LEADING" if label == "AHEAD" else "—", 20, Color(1, 1, 1, 0.5), align, r.size.x)
 		return
-	_text(r.position + Vector2(0, 22), "%s  P%d  %s" % [label, pos, short_name(sim.entries[car].at_wheel())], 13, Color(1, 1, 1, 0.65), align, r.size.x)
+	var line := "%s  P%d  %s" % [label, pos, short_name(sim.entries[car].at_wheel())]
+	_text(r.position + Vector2(0, 22), line, 13, Color(1, 1, 1, 0.65), align, r.size.x)
+	if multi_class():   # whose class it is, by the name (another class isn't a fight)
+		var cls := sim.defs[car].class_tag
+		var cw := _chip_width(CarCatalog.class_short(cls), "", 10)
+		var tw := font.get_string_size(line, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x
+		var cx := r.position.x + tw + 6.0 if align == HORIZONTAL_ALIGNMENT_LEFT else r.end.x - tw - 6.0 - cw
+		draw_class_chip(Rect2(cx, r.position.y + 9, cw, 16), cls, "", 10)
 	var col := Color.WHITE
 	if trend > 0.05:
 		col = SECTOR_GREEN

@@ -72,6 +72,11 @@ func _ready() -> void:
 	for i in session.sim.car_count():
 		car_views.append(world.add_car(session.sim.defs[i], session.sim.cars[i], session.sim.entries[i].driver_name,
 			i == session.local_car, i + 1, liveries[i]))
+	if RaceTelemetry.multi_class(session.sim):
+		# Multi-class: the roof number boards in the class colours, as in the WEC.
+		for i in session.sim.car_count():
+			var cls := session.sim.defs[i].class_tag
+			car_views[i].set_number_colour(CarCatalog.class_colour(cls), CarCatalog.class_text_colour(cls))
 	_refresh_highlights()
 	session.crew_changed.connect(func(_car): _refresh_highlights())
 	GameData.pref_changed.connect(_on_pref_changed)

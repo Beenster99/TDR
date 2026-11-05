@@ -30,6 +30,14 @@ static func plan(settings: RaceSettings, humans: Array, cars: Dictionary, driver
 	var fixed_class := settings.car_class != "" and settings.car_class != RaceSettings.CLASS_MULTI \
 		and CarCatalog.ids_in_class(cars, settings.car_class).any(func(id): return id in all_ids)
 	var class_ids: Array = CarCatalog.ids_in_class(cars, settings.car_class) if fixed_class else all_ids
+	# A multi-class race runs only the classes the host picked (2 or 3).
+	var multi := settings.car_class == RaceSettings.CLASS_MULTI
+	var race_classes: Array = []
+	if multi:
+		var avail: Array = Array(CarCatalog.classes(cars, settings.discipline))
+		race_classes = settings.race_classes(avail)
+		if race_classes.size() < avail.size():
+			class_ids = all_ids.filter(func(id): return cars[id].class_tag in race_classes)
 	# Human cars: their pick, unless it's outside a fixed class.
 	var human_cars := []
 	for h in humans:
@@ -39,7 +47,11 @@ static func plan(settings: RaceSettings, humans: Array, cars: Dictionary, driver
 	var ai_classes: Array = []
 	if fixed_class:
 		ai_classes = [settings.car_class]
-	elif settings.car_class == RaceSettings.CLASS_MULTI or humans.is_empty():
+	elif multi:
+		ai_classes = race_classes.duplicate()
+		if ai_classes.is_empty():
+			ai_classes = CarCatalog.classes(cars, settings.discipline)
+	elif humans.is_empty():
 		ai_classes = CarCatalog.classes(cars, settings.discipline)
 		if ai_classes.is_empty():
 			ai_classes = CarCatalog.classes(cars)
@@ -66,7 +78,7 @@ static func plan(settings: RaceSettings, humans: Array, cars: Dictionary, driver
 			e.car_id = d.get("car_id", "")  # a season's AI keep their team's car
 		var in_class: Array = CarCatalog.ids_in_class(cars, ai_classes[k % ai_classes.size()]).filter(func(id): return id in all_ids)
 		var pick: String = in_class[rng.randi_range(0, in_class.size() - 1)]
-		if not cars.has(e.car_id) or (fixed_class and not e.car_id in class_ids):
+		if not cars.has(e.car_id) or ((fixed_class or multi) and not e.car_id in class_ids):
 			e.car_id = pick
 		if not rx:  # rallycross cars race one all-weather tyre
 			_fit_tyres(e, "auto", start_weather)
@@ -245,6 +257,26 @@ static func _fit_tyres(e: RaceEntry, choice: String, start_weather: String) -> v
 
 static func _order_grid(entries: Array, order: String, cars: Dictionary, rng: RandomNumberGenerator) -> void:
 	match order:
+		"standard":
+			# A multi-class grid lines up class by class, the fastest class at
+			# the front (AI first, players at the back of their class).
+			var rank := {}
+			var k := 0
+			for c in CarCatalog.classes(cars, _discipline_of(entries, cars)):
+				rank[c] = k
+				k += 1
+			var classes_on := {}
+			for d in entries:
+				var c: CarDefinition = cars.get(d["car_id"])
+				classes_on[c.class_tag if c else ""] = true
+			if classes_on.size() > 1:
+				var keyed := []
+				for n in entries.size():
+					var c: CarDefinition = cars.get(entries[n]["car_id"])
+					keyed.append([int(rank.get(c.class_tag if c else "", 99)), n, entries[n]])
+				keyed.sort_custom(func(a, b): return a[0] < b[0] or (a[0] == b[0] and a[1] < b[1]))
+				for n in keyed.size():
+					entries[n] = keyed[n][2]
 		"random":
 			for i in range(entries.size() - 1, 0, -1):
 				var j := rng.randi_range(0, i)
@@ -258,6 +290,14 @@ static func _order_grid(entries: Array, order: String, cars: Dictionary, rng: Ra
 				var skill: float = t.get("pace", t.get("skill", 1.0)) if d.get("is_ai", false) else 1.0
 				return (c.peak_power_kw() / c.mass if c else 0.25) * lerpf(0.85, 1.0, skill)
 			entries.sort_custom(func(a, b): return pace.call(a) < pace.call(b))
+
+
+static func _discipline_of(entries: Array, cars: Dictionary) -> String:
+	for d in entries:
+		var c: CarDefinition = cars.get(d["car_id"])
+		if c:
+			return c.discipline
+	return "circuit"
 
 
 ## Turns start data into a RaceSim. Everyone builds the same sim from the

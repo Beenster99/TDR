@@ -3953,9 +3953,10 @@ func test_results_and_spectator(rep: Dictionary) -> void:
 	var gaps_ok := true
 	for k in range(1, rows.size()):
 		var r: Dictionary = rows[k]
-		if r["status"] == "" and str(r["gap"]) == "":
+		# Multi-class: gaps are to the class winner, who has none.
+		if r["status"] == "" and str(r["gap"]) == "" and not (d["multi"] and int(r["class_pos"]) == 1):
 			gaps_ok = false
-	check(gaps_ok, "every classified car behind the winner has a gap or laps down")
+	check(gaps_ok, "every classified car behind the winner (of its class) has a gap or laps down")
 	# Tyre wear (on in this race): each tyre's wear lap by lap, going up
 	# through a stint, and at the end of each stint.
 	var r0: Dictionary = rows[0]
