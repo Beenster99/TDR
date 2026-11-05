@@ -40,7 +40,7 @@ JOKER_END_M = 30.0    # the joker's ends, where it meets the lap, may touch the 
 CROSS_M = 60.0        # around a crossing (derby crossovers, Suzuka's bridge) no gap rule
 FULL_SHIFT_M = 40.0   # pit lane points up to this far beyond the edge move fully
 NO_SHIFT_M = 100.0    # and ones this far out not at all (roads leaving the circuit)
-SMOOTH_PTS = 6        # moving average over the shift, so the lane stays smooth
+SMOOTH_PTS = 20       # moving average over the shift, so the lane keeps its bends (6 tightened Spielberg's pit entry)
 INSIDE_MAX = 0.75     # inside a tight corner the road may widen to this times the radius
 CURVE_M = 10.0        # radius measured over this many metres either side
 
