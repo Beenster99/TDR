@@ -10,6 +10,8 @@ extends Node3D
 ## ground_height_at), otherwise the circuit is flat.
 
 const ROAD_SHADER := preload("res://modules/graphics/shaders/road.gdshader")
+## 1 m of close-up asphalt aggregate (tools/build_asphalt.py) the road shader tiles.
+const ASPHALT_DETAIL := preload("res://modules/graphics/textures/asphalt_detail.png")
 const TERRAIN_SHADER := preload("res://modules/graphics/shaders/terrain.gdshader")
 
 const K_ASPHALT := 1.0
@@ -58,6 +60,7 @@ func setup(p_track: TrackData, p_env: SimEnvironment = null) -> void:
 	road_material = ShaderMaterial.new()
 	road_material.shader = ROAD_SHADER
 	road_material.set_shader_parameter("noise", _noise_tex)
+	road_material.set_shader_parameter("detail", ASPHALT_DETAIL)
 	road_material.set_shader_parameter("kerb_len", 1.0)
 	terrain_material = ShaderMaterial.new()
 	terrain_material.shader = TERRAIN_SHADER
