@@ -38,8 +38,8 @@ The user's design (2026-11-03). Settings > Gameplay > **Co-op pit stops:
 play your crew job**, per player (off: the AI does that player's jobs).
 
 1. **The call.** The strategist calls the car in. The driver follows the pit
-   guide line to the pit entry; once the car is in the lane the guide drives
-   it to its box (`crew_auto`) and every player's camera closes in on the
+   guide line into the lane, down to the speed limit; from the limit line
+   the guide drives it to its box (`crew_auto`) and every player's camera closes in on the
    box, north up. On the pit wall the console steps aside for it.
 2. **Fuel and windscreen.** The strategist (or the two-player pit wall) is
    the **fuel man**: grab the hose at the rig, plug it into the filler, and
