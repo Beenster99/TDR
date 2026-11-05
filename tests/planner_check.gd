@@ -134,6 +134,11 @@ func _send() -> void:
 	check((p["plan"] as Dictionary).has("wheel_tyres") and (p["plan"] as Dictionary).has("psi"), "Send gives the crew the per-tyre plan")
 	check(not session.pending_swap(car).is_empty(), "Send queues the driver change")
 	check(str(msg.get("code", "")) == "pit_plan" and (msg.get("lines", []) as Array).size() >= 4, "Send radios the plan to the driver")
+	check(RadioPhrases.can_say(str(msg.get("say", "")), "engineer_male"),
+		"the race engineer's recorded voice can read the whole plan out: " + str(msg.get("say", "")))
+	var said := PitPlanner.spoken_lines(PackedStringArray(["Box, box. Box this lap.", "Driver change: Sam takes over."]))
+	check(said[1] == PitPlanner.DRIVER_CHANGE_SAID and RadioPhrases.can_say(" ".join(said), "engineer_male"),
+		"a pit plan with a driver change is read out without the player's name")
 	check(not planner.dirty(), "after Send nothing is waiting")
 	var w := session.sim.pits.service_for(car, p["plan"])
 	check((w["wheels"] as Array).size() == 4 and w["tyre_s"] > 0.0, "the stop will change all four tyres (%s)" % str(w["wheel_tyres"]))

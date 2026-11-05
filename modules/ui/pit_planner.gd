@@ -35,6 +35,8 @@ const H := 760.0
 const WHEEL_NAMES := ["front left", "front right", "rear left", "rear right"]
 const WHEEL_SHORT := ["FL", "FR", "RL", "RR"]
 const PSI_STEP := 0.5
+const DRIVER_CHANGE_PREFIX := "Driver change: "
+const DRIVER_CHANGE_SAID := "Driver change at this stop."
 const FUEL_STEP := 1.0              ## litres per click (Shift / the ±10 buttons: 10)
 
 var session: RaceSession
@@ -315,8 +317,18 @@ func message_lines() -> PackedStringArray:
 		if dmg:
 			lines.append("We fix the damage." if draft["repair"] else "No repairs, we leave the damage.")
 	if draft["driver_change"] and can_change_driver():
-		lines.append("Driver change: %s takes over." % _crew_name(int(draft["driver_to"])))
+		lines.append(DRIVER_CHANGE_PREFIX + "%s takes over." % _crew_name(int(draft["driver_to"])))
 	return lines
+
+
+## The plan as the driver hears it on the radio: the same lines, but the
+## driver change without the name (the race engineer's recorded voice
+## can't say players' names).
+static func spoken_lines(lines: PackedStringArray) -> PackedStringArray:
+	var out := PackedStringArray()
+	for line in lines:
+		out.append(DRIVER_CHANGE_SAID if line.begins_with(DRIVER_CHANGE_PREFIX) else line)
+	return out
 
 
 ## Cold pressure (psi) wheel w will run after the stop.
@@ -341,7 +353,7 @@ func send() -> Dictionary:
 		session.cancel_role_swap(car)
 	var lines := message_lines()
 	var msg := {"kind": "radio", "code": "pit_plan", "text": " ".join(lines), "lines": Array(lines),
-		"from": _my_name(), "role": str(session.local_role)}
+		"say": " ".join(spoken_lines(lines)), "from": _my_name(), "role": str(session.local_role)}
 	# The driver hears it (not when the driver is planning their own stop).
 	if session.local_car != car:
 		session.send_team_radio(car, msg)
