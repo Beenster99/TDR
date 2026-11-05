@@ -53,7 +53,8 @@ func passby(volume_db := 0.0) -> void:
 
 
 ## Reads a team radio message out loud over the radio: the click and squelch,
-## static under the computer's voice, then the squelch tail. Queues behind a
+## static under the race engineer's recorded voice (or the computer's), then
+## the squelch tail. Queues behind a
 ## message still being read. With no voice on the machine (or the read-out
 ## off in Settings > Sound) only the crackle plays.
 func radio(text: String) -> void:
@@ -69,6 +70,12 @@ func radio_stop() -> void:
 ## True when this machine has a voice to read radio messages out with.
 func radio_can_speak() -> bool:
 	return _radio != null and _radio.can_speak()
+
+
+## True when this message will be read out loud (the voice is on and can say
+## every word of it), so it needn't be shown on screen too.
+func radio_will_say(text: String) -> bool:
+	return _radio != null and _radio.will_say(text)
 
 
 ## Gives every button under a node click and focus sounds (menus, results).
