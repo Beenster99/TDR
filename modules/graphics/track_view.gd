@@ -83,6 +83,7 @@ func setup(p_track: TrackData, p_env: SimEnvironment = null) -> void:
 ## or tarmac as the track data says), with a narrow verge each side, drawn a
 ## touch above the lap where the two share the ground at each end.
 const JOKER_LIFT := 0.045
+const JOKER_FRAY_END_M := 18.0
 func _build_joker() -> void:
 	var path := track.joker_path
 	var h := track.joker_width * 0.5
@@ -92,38 +93,88 @@ func _build_joker() -> void:
 	# Separate strips for the road and each verge, so the surface kind
 	# doesn't blend across their edge (a blend through the kerb band would
 	# draw a red and white stripe there).
+	# The verges are drawn a quad at a time with one kind per quad, so where
+	# a verge runs along or over the lap it can be the lane's own surface
+	# instead of a gravel stripe across the lap, without a blend between them.
 	var strips := [[-h - 1.2, -h], [-h, -h * 0.5, 0.0, h * 0.5, h], [h, h + 1.2]]
 	var base := 0
 	for across in strips:
 		var cols: int = across.size()
+		var shoulder: bool = cols == 2
 		var hint := -1
+		var verts: Array[Vector3] = []
+		var colors: Array[Color] = []
+		var uvs: Array[Vector2] = []
+		var uv2s: Array[Vector2] = []
+		var near_lap: Array[bool] = []
 		for i in m:
 			var d := track.joker_cum[i]
 			var dir := (path[mini(i + 1, m - 1)] - path[maxi(i - 1, 0)]).normalized()
 			var nrm := Vector2(-dir.y, dir.x)
-			var dirt := track.joker_dirt_at(d)
-			var shoulder: bool = cols == 2
-			var kind := (K_GRAVEL if dirt > 0.5 else K_TARMAC) if shoulder else K_ASPHALT
+			var dirt := track.joker_dirt_look_at(d)
+			# where the lane lies over the lap it frays out into it (the road
+			# shader cuts a ragged edge from COLOR.b) instead of ending in a
+			# hard line: its edges and its two ends (its verges only at the
+			# ends: along the lap they're drawn as the lane's surface)
+			var end_close := 1.0 - clampf(minf(d, track.joker_length - d) / JOKER_FRAY_END_M, 0.0, 1.0)
+			var near := false
 			for c in cols:
 				var off: float = across[c]
 				var q := path[i] + nrm * off
 				var qt := track.project(q, hint)
 				hint = qt["idx"]
-				st.set_color(Color(1.0 - dirt, 1, 1, kind))
-				st.set_uv(Vector2(d, off))
-				st.set_uv2(Vector2(off, h - absf(off)))
-				st.add_vertex(Vector3(q.x, track.surface_height_at(q, qt["idx"]) + JOKER_LIFT, q.y))
+				var ql := track.project(q)   # (the lap may pass close by twice)
+				var o: float = ql["offset"]
+				var inside: float = -(absf(o) - ((ql["w_right"] if o >= 0.0 else ql["w_left"]) + track.kerb_width))
+				near = near or inside > -1.5
+				var on_lap := clampf((inside - 1.0) / 2.0, 0.0, 1.0)
+				var y := track.surface_height_at(q, qt["idx"])
+				var edge_close := 0.0 if shoulder else 1.0 - clampf((h - absf(off)) / (h * 0.5), 0.0, 1.0)
+				# (the edges only fray over tarmac: over the lap's own dirt
+				# there's no join to hide, and the grass can show through
+				# holes where the lap and lane share the ground)
+				var fray := on_lap * maxf(edge_close * (1.0 - track.dirt_look_at(ql["s"]).x), end_close)
+				colors.append(Color(1.0 - dirt, 1, 1.0 - fray, K_ASPHALT))
+				uvs.append(Vector2(d, off))
+				uv2s.append(Vector2(off, h - absf(off)))
+				verts.append(Vector3(q.x, y + JOKER_LIFT, q.y))
+			near_lap.append(near)
+		if not shoulder:
+			for k in verts.size():
+				st.set_color(colors[k])
+				st.set_uv(uvs[k])
+				st.set_uv2(uv2s[k])
+				st.add_vertex(verts[k])
+			for i in m - 1:
+				for l in cols - 1:
+					var a := base + i * cols + l
+					var b := a + cols
+					st.add_index(a)
+					st.add_index(b)
+					st.add_index(a + 1)
+					st.add_index(a + 1)
+					st.add_index(b)
+					st.add_index(b + 1)
+			base += m * cols
+			continue
 		for i in m - 1:
-			for l in cols - 1:
-				var a := base + i * cols + l
-				var b := a + cols
-				st.add_index(a)
-				st.add_index(b)
-				st.add_index(a + 1)
-				st.add_index(a + 1)
-				st.add_index(b)
-				st.add_index(b + 1)
-		base += m * cols
+			var kind := K_ASPHALT
+			if not (near_lap[i] or near_lap[i + 1]):
+				kind = K_GRAVEL if 1.0 - colors[i * 2].r > 0.5 else K_TARMAC
+			for k in [i * 2, i * 2 + 1, i * 2 + 2, i * 2 + 3]:
+				var col: Color = colors[k]
+				col.a = kind
+				st.set_color(col)
+				st.set_uv(uvs[k])
+				st.set_uv2(uv2s[k])
+				st.add_vertex(verts[k])
+			st.add_index(base)
+			st.add_index(base + 2)
+			st.add_index(base + 1)
+			st.add_index(base + 1)
+			st.add_index(base + 2)
+			st.add_index(base + 3)
+			base += 4
 	_mesh_node(st, road_material, "Joker")
 
 
@@ -513,8 +564,10 @@ func _ribbon(st: SurfaceTool, offs: Callable, kind: Callable, lift: float, lanes
 			var q := p + nrm * off
 			var edge := minf(off + track.width_left[k], track.width_right[k] - off)
 			var kd: float = kind.call(k)
-			var dirt := track.dirt_at(s) if kd > 0.875 and track.has_dirt() else 0.0
-			var c := Color(1.0 - dirt, 1, 1, kd)
+			# (on the road and kerbs: a wide ease the road shader turns into
+			# a ragged join, plus dirt the tyres drag out onto the tarmac)
+			var look := track.dirt_look_at(s) if kd > 0.625 and track.has_dirt() else Vector2.ZERO
+			var c := Color(1.0 - look.x, 1.0 - look.y, 1, kd)
 			st.set_color(c)
 			st.set_uv(Vector2(s, off))
 			st.set_uv2(Vector2(off - rl, edge))
