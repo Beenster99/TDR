@@ -11,6 +11,14 @@ Used by build_cars.py when a car's shape file has an "ai_body" block:
       "glass": [...regions...], "lights": [...regions...]
     }
 
+Keys added for the TripoSG cars (all optional):
+      "fit_width": true | "doors", "height": 1.25   stretch to the real width / height
+      "recentre": true          centre on the body, not the bounding box
+      "fit_pct", "fit_below", "fit_skip_wheels"   tune the width measurement
+      "wheel_cut_margin", "wheel_cut_inner", "arch_clear"   cut the AI's fused tyres
+      "delete_boxes": [{"x": [..], "y": [..], "z": [..]}]   remove AI artefacts
+      "mirror": {"x", "y", "z"}  where the mirrors are (split into mirror_l/r)
+
 The source mesh came from an AI image-to-3D model (Hunyuan3D 2.1) fed one
 freely licensed photo; see tools/ai_source/README.md. It is one fused
 shell, so this script:
@@ -134,15 +142,39 @@ def replace(car, cfg):
         w = c[1 - la] - (mn[1 - la] + mx[1 - la]) * 0.5
         v.co = Vector((car.x_rear + u * car.L, w * k, (c[2] - mn[2]) * k))
     # Optional: stretch width and height to the real car (an AI shell made
-    # from a three-quarter photo is often a little too wide or tall). Width
-    # is measured at the 99th percentile so the mirrors don't count.
+    # from a three-quarter photo is often a little too wide or tall). Width is
+    # the 99th percentile of |y| (so mirrors don't count), or with
+    # "fit_width": "doors" the median widest point along the doors.
+    if cfg.get("recentre"):    # centre on the body, not on a mirror that sticks out one side
+        ys = sorted(v.co.y for v in me.vertices)
+        cy = (ys[int(len(ys) * 0.01)] + ys[int(len(ys) * 0.99)]) * 0.5
+        for v in me.vertices:
+            v.co.y -= cy
     sy = sz = 1.0
     if cfg.get("fit_width"):
-        ys = sorted(abs(v.co.y) for v in me.vertices)
-        sy = car.W * 0.5 / max(ys[int(len(ys) * 0.99)], 1e-4)
+        boxes = cfg.get("delete_boxes", [])
+        ys = sorted(abs(v.co.y) for v in me.vertices
+                    if v.co.z < cfg.get("fit_below", 99.0)
+                    and not (cfg.get("fit_skip_wheels") and any(abs(v.co.x - ax) < car.R + 0.15 for ax in car.axles))
+                    and not any(b["x"][0] <= v.co.x <= b["x"][1] and b["z"][0] <= v.co.z <= b["z"][1] for b in boxes))
+        sy = car.W * 0.5 / max(ys[int(len(ys) * cfg.get("fit_pct", 0.99))], 1e-4)
+        if cfg.get("fit_width") == "doors":
+            # Robust: the median of the widest point of each slice along the doors
+            # (between the arches), so stray AI bits and fused tyres don't count.
+            xa, xb = car.axles[1] + car.R + 0.3, car.axles[0] - car.R - 0.3
+            zmax = max(v.co.z for v in me.vertices)
+            sl = {}
+            for v in me.vertices:
+                if xa < v.co.x < xb and zmax * 0.25 < v.co.z < zmax * 0.6:
+                    slot = int((v.co.x - xa) / 0.05)
+                    sl[slot] = max(sl.get(slot, 0.0), abs(v.co.y))
+            if sl:
+                ws = sorted(sl.values())
+                sy = car.W * 0.5 * cfg.get("door_width", 0.97) / ws[len(ws) // 2]
     if cfg.get("height"):
         cut0 = cfg["wing_cut"][0][0] if cfg.get("wing_cut") else -99.0   # the AI's wing doesn't count
         sz = cfg["height"] / max(v.co.z for v in me.vertices if v.co.x > cut0)
+    print("[ai_body] fit: width x%.3f height x%.3f" % (sy, sz))
     if sy != 1.0 or sz != 1.0:
         for v in me.vertices:
             v.co = Vector((v.co.x, v.co.y * sy, v.co.z * sz))
@@ -165,6 +197,10 @@ def replace(car, cfg):
                 continue
         if c.z < cfg.get("floor_cut", 0.06) and all(abs(c.x - ax) > R + 0.05 for ax in car.axles):
             dead.append(f)     # ragged skirt left where the source sat on the floor
+            continue
+        if any(b["x"][0] <= c.x <= b["x"][1] and b["y"][0] <= abs(c.y) <= b["y"][1] and b["z"][0] <= c.z <= b["z"][1]
+               for b in cfg.get("delete_boxes", [])):
+            dead.append(f)     # AI artefacts (a half-open door, a stray panel)
             continue
         ac = cfg.get("arch_clear", 0.0)     # also clear the AI's tyre sidewalls below the hub
         if ac and any(abs(c.x - ax) < R + ac and c.z < R * 1.05 and abs(c.y) > car.track * 0.5 - cfg.get("wheel_cut_inner", 0.2)
