@@ -87,6 +87,7 @@ var clock := 0.0                 ## seconds since the stage started (in the box:
 var enabled_override = null      ## tests: true / false instead of the player's setting
 var autoplay := false            ## testing (--crew-autoplay): plays like a sharp player
 var ring_colour := YELLOW        ## the ring under this player's crew member (team mates' are blue)
+var guide := true                ## draws where to go next in the 3D box (off for stand-in team mates in tests)
 
 # The player's crew member.
 var pos := Vector2.ZERO
@@ -214,17 +215,25 @@ func current_job() -> String:
 	return str(jobs[cur]) if cur < jobs.size() else ""
 
 
-## The player's hands are on their crew member: in the box, or while the car
-## comes in for anyone not at the wheel (and the driver once the guide has
-## the car in the lane).
+## The player's hands are on their crew member: in the box; while the car
+## comes in, once it's in the pit lane (a pit crew player laying out tyres:
+## from the call, they're in the garage already). The driver's hands are on
+## the wheel until the guide has the car in the lane.
 func hands_free() -> bool:
 	if stage == Stage.BOX:
 		return true
 	if stage != Stage.READY:
 		return false
-	if session.local_car != car:
-		return true
-	return _sim().pits.controls(car) and _pit()["phase"] in PitRules.IN_LANE
+	var in_lane: bool = _pit()["phase"] in PitRules.IN_LANE
+	if session.local_car == car:
+		return _sim().pits.controls(car) and in_lane
+	return current_job() == PitRules.JOB_LANCE or in_lane or not coop
+
+
+## The job's panel and guide are up: only once you're in the pits (the
+## camera's on the box), never while you're still driving in.
+func in_pits() -> bool:
+	return stage == Stage.DONE or wants_close_view()
 
 
 ## The race scene closes the camera in on the box while this is true: from
@@ -235,9 +244,7 @@ func wants_close_view() -> bool:
 		var tl := _tl()
 		var down: Array = tl.get("down", [INF, INF])
 		return clock < float(down[-1])
-	if stage != Stage.READY or not hands_free():
-		return false
-	return current_job() == PitRules.JOB_LANCE or _pit()["phase"] in PitRules.IN_LANE or not coop
+	return stage == Stage.READY and hands_free()
 
 
 ## Where the close camera looks: the car in its box, or the empty box.
@@ -627,9 +634,9 @@ func _step_fuel(dt: float, move: Vector2, grab: bool) -> void:
 	elif hold == Hold.HOSE and _near(filler[0]):
 		_send({"job": PitRules.JOB_FUEL, "act": "on"})
 	elif hold == Hold.NONE:
-		_flash_msg("Get the hose from the fuel rig", 1.2)
+		_flash_msg("Get the hose from the fuel rig first ({crew_grab})", 1.4)
 	else:
-		_flash_msg("Plug the hose into the car's filler", 1.2)
+		_flash_msg("Take the hose to the car's filler ({crew_grab} there)", 1.4)
 
 
 func _step_screen(dt: float, move: Vector2, use: bool) -> void:
@@ -777,7 +784,7 @@ func _step_gun(dt: float, move: Vector2, use: bool, grab: bool) -> void:
 						pos = ws[0]
 						face = ws[1]
 			elif at_wheel and pressed and hold != Hold.GUN:
-				_flash_msg("Pick up your wheel gun first", 1.2)
+				_flash_msg("Pick up your wheel gun first ({crew_grab})", 1.4)
 			# the nut's off: wait for the wheel man, then gun it on
 			if sent.has("%s:nut_off:%d:" % [me, w]) and job == Job.NONE:
 				job = Job.SWAP
@@ -933,6 +940,7 @@ func _old_tyre_here() -> int:
 ## Tells the 3D crew where the player's crew member is and what they're doing,
 ## and team mates on other machines (a few times a second).
 func _show(dt: float) -> void:
+	_show_guide()
 	if not is_active():
 		return
 	var j := current_job()
@@ -1032,7 +1040,7 @@ func _auto() -> Array:
 	var go := func(to: Vector2, r := REACH * 0.5) -> Array:
 		var d := to - pos
 		if d.length() > r:
-			return [d.normalized(), false, false]
+			return [d.normalized() * minf(1.0, d.length() / 0.8), false, false]   # eases in: no overshooting at low frame rates
 		return []
 	match j:
 		PitRules.JOB_FUEL:
@@ -1160,30 +1168,157 @@ func _sfx(n: String, db := 0.0, pitch := 1.0) -> void:
 		s.call("ui", n, db, pitch)
 
 
+# --- What to do, and where to go ------------------------------------------------------
+
+## The work this stop (the car's stop once it's in the box, the plan before).
+func _svc() -> Dictionary:
+	return _work() if stage == Stage.BOX else _sim().pits.service_for(car, _pit()["plan"])
+
+
+## The car goes up on its jacks this stop (tyres or repairs).
+func _lifts() -> bool:
+	var w := _svc()
+	return float(w.get("tyre_s", 0.0)) > 0.0 or float(w.get("repair_s", 0.0)) > 0.0 or not (w.get("wheels", []) as Array).is_empty()
+
+
+static func _wheel_name(w: int) -> String:
+	return WHEEL_NAMES[w].capitalize()
+
+
+## The steps of the job being done now, in order: [[text, done], ...]. The
+## first one not done is the one to do now. Text can name buttons ({crew_grab}).
+func job_steps() -> Array:
+	var j := current_job()
+	var out := []
+	match j:
+		PitRules.JOB_FUEL:
+			if _no_fuel():
+				return [["No fuel this stop: stand by at the rig", false]]
+			var on := sent.has("fuel:on::")
+			out = [["Grab the hose at the fuel rig", hold == Hold.HOSE or on],
+				["Plug it into the filler on the car", on],
+				["Take it off when the tank is full", sent.has("fuel:off::")]]
+		PitRules.JOB_SCREEN:
+			out = [["Run to the nose of the car", wipe > 0.0 or _near(_spot("screen")[0])],
+				["Wipe the windscreen clean", wipe >= SCREEN_WIPE_S]]
+		PitRules.JOB_LANCE:
+			var n := _prep_needs()
+			var ok := 0
+			for w in n["tyres"]:
+				ok += 1 if str(laid.get(w, "")) == str(n["tyres"][w]) else 0
+			if not (n["tyres"] as Dictionary).is_empty():
+				out.append(["Lay out the new tyres from the stacks  %d / %d" % [ok, n["tyres"].size()], ok == n["tyres"].size()])
+			if not (n["guns"] as Dictionary).is_empty():
+				out.append(["Lay out the wheel guns from the trolley  %d / %d" % [guns_laid.size(), n["guns"].size()],
+					guns_laid.size() >= n["guns"].size()])
+			if _lifts():
+				out.append(["Air lance in at the back of the car", sent.has("lance:in::")])
+		PitRules.JOB_GUN_L, PitRules.JOB_GUN_R:
+			var side := _side()
+			out.append(["Pick up your wheel gun", hold == Hold.GUN or sent.has("gun_taken:%d" % side) or not done.is_empty()])
+			for w in my_wheels():
+				out.append(["%s: undo the nut" % _wheel_name(w), done.has(w) or sent.has("%s:nut_off:%d:" % [j, w])])
+				out.append(["%s: do the new nut up" % _wheel_name(w), done.has(w)])
+			out.append(["Put the gun down", false])
+		PitRules.JOB_WHEEL_L, PitRules.JOB_WHEEL_R:
+			for w in my_wheels():
+				var off := sent.has("%s:wheel_off:%d:" % [j, w])
+				out.append(["%s: pull the old wheel off" % _wheel_name(w), off or done.has(w)])
+				out.append(["%s: put the old wheel down" % _wheel_name(w), (off and not (hold == Hold.OLD_TYRE and hold_wheel == w)) or done.has(w)])
+				out.append(["%s: fit the new wheel" % _wheel_name(w), done.has(w)])
+	return out
+
+
+## Where the player should go next: [ground spot, radius of the thing
+## there], or [] (nowhere new: working where they are).
+func guide_target() -> Array:
+	if not hands_free() or not in_pits():
+		return []
+	var j := current_job()
+	match j:
+		PitRules.JOB_FUEL:
+			if _no_fuel() or _hose_on():
+				return []
+			if hold == Hold.HOSE:
+				return [_spot("filler")[0], 0.5] if stage == Stage.BOX else []
+			return [_spot("rig")[0], 0.75]
+		PitRules.JOB_SCREEN:
+			return [_spot("screen")[0], 0.5]
+		PitRules.JOB_LANCE:
+			var n := _prep_needs()
+			if hold == Hold.NEW_TYRE:
+				var any = null
+				for w in n["tyres"]:
+					if laid.has(w):
+						continue
+					if PitCrews._kind_of(str(n["tyres"][w])) == hold_kind:
+						return [_spot("new_tyre", w)[0], 0.5]
+					any = w if any == null else any
+				return [_spot("new_tyre", int(any))[0], 0.5] if any != null else []
+			if hold == Hold.GUN:
+				for g in n["guns"]:
+					if not guns_laid.has(g):
+						return [_spot("gun", g)[0], 0.45]
+				return []
+			for w in laid:
+				if n["tyres"].has(w) and str(laid[w]) != str(n["tyres"][w]):
+					return [_spot("new_tyre", w)[0], 0.5]   # the wrong tyre: pick it back up
+			for w in n["tyres"]:
+				if not laid.has(w):
+					return [_spot("stack", PitCrews._kind_of(str(n["tyres"][w])))[0], 0.55]
+			for g in n["guns"]:
+				if not guns_laid.has(g):
+					return [_spot("trolley")[0], 0.7]
+			if _lifts() and not sent.has("lance:in::"):
+				return [_spot("lance")[0], 0.5]
+		PitRules.JOB_GUN_L, PitRules.JOB_GUN_R:
+			var w := next_wheel()
+			if w < 0:
+				return []
+			if hold != Hold.GUN and job == Job.NONE:
+				return [gun_at.get(_side(), _spot("gun", _side())[0]), 0.45]
+			if job == Job.NONE:
+				return [wheel_spot(w)[0], 0.5]
+		PitRules.JOB_WHEEL_L, PitRules.JOB_WHEEL_R:
+			var w := next_wheel()
+			if w < 0:
+				return []
+			match hold:
+				Hold.OLD_TYRE:
+					return [_spot("old_tyre", w)[0], 0.5]
+				Hold.NEW_TYRE:
+					return [wheel_spot(w)[0], 0.5]
+			if not sent.has("%s:wheel_off:%d:" % [j, w]):
+				return [wheel_spot(w)[0], 0.5]
+			var at = new_at.get(w, _spot("new_tyre", w)[0])
+			return [at, 0.5] if at != null else []
+	return []
+
+
+## The guide in the 3D box (PitCrews.set_guide) to where guide_target says.
+func _show_guide() -> void:
+	if crews == null or not guide or not crews.has_method("set_guide"):
+		return
+	var t := guide_target() if is_active() else []
+	if t.is_empty():
+		crews.set_guide(null, null)
+	else:
+		crews.set_guide(pos, t[0], float(t[1]), ring_colour, crews.ground_y(car))
+
+
 # --- Drawing ---------------------------------------------------------------------
 
-const W := 600.0
-const H := 132.0
+const W := 640.0
+const ROW := 26.0                ## a step's line
+const TOP := 48.0                ## the title bar
+const MARGIN := 24.0             ## from the screen's edge
+const KEY_BG := Color(0.95, 0.95, 0.92)
+const KEY_FG := Color(0.05, 0.06, 0.08)
 
 
 func _text(at: Vector2, s: String, fs := 16, col := Color.WHITE, align := HORIZONTAL_ALIGNMENT_LEFT, width := -1.0) -> void:
 	draw_string(font, at + Vector2(1, 1), s, align, width, fs, Color(0, 0, 0, 0.6))
 	draw_string(font, at, s, align, width, fs, col)
-
-
-func _draw() -> void:
-	if session == null or stage == Stage.IDLE or font == null:
-		return
-	var r := Rect2((size.x - W) * 0.5, size.y - H - 196.0, W, H)
-	draw_rect(r, PANEL)
-	draw_rect(r, Color(YELLOW, 0.45), false, 2.0)
-	if stage == Stage.DONE:
-		_draw_result(r)
-	else:
-		_draw_job(r)
-	if _flash_t > 0.0 and _flash != "":
-		_text(Vector2(r.position.x, r.position.y - 12), _flash, 20, RED if _flash.begins_with("LOOSE") or _flash.begins_with("Wrong") else YELLOW,
-			HORIZONTAL_ALIGNMENT_CENTER, W)
 
 
 ## A tip with the player's own buttons in: {crew_grab} and {crew_gun}
@@ -1193,142 +1328,287 @@ static func with_keys(tip: String) -> String:
 	return InputPrompt.fill(tip)
 
 
+## The buttons that run the crew member about, for the device in use:
+## "WASD" on the keyboard, "Left stick" on a pad.
+static func move_keys() -> String:
+	var kb := InputPrompt.keys(["crew_up", "crew_left", "crew_down", "crew_right"], "")
+	if InputPrompt.pad:
+		var p := InputPrompt.pair("crew_left", "crew_right")
+		return p if p.ends_with("stick") else InputPrompt.keys(["crew_up", "crew_left", "crew_down", "crew_right"], " ")
+	return kb if kb.length() <= 4 else InputPrompt.keys(["crew_up", "crew_left", "crew_down", "crew_right"], " ")
+
+
+## Splits text into plain runs and buttons: [[text, is_button], ...];
+## {crew_grab} etc. become the button's name, {move} the run keys.
+static func _runs(text: String) -> Array:
+	var out := []
+	var i := 0
+	while i < text.length():
+		var open := text.find("{", i)
+		var close := text.find("}", open) if open >= 0 else -1
+		if open < 0 or close < 0:
+			out.append([text.substr(i), false])
+			break
+		if open > i:
+			out.append([text.substr(i, open - i), false])
+		var name := text.substr(open + 1, close - open - 1)
+		if name == "move":
+			out.append([move_keys(), true])
+		elif InputMap.has_action(name) or InputSetup.is_ours(name):
+			out.append([InputPrompt.key(name), true])
+		else:
+			out.append([text.substr(open, close - open + 1), false])
+		i = close + 1
+	return out
+
+
+func _rich_width(text: String, fs: int) -> float:
+	var w := 0.0
+	for r in _runs(text):
+		w += font.get_string_size(str(r[0]), HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x + (14.0 if r[1] else 0.0)
+	return w
+
+
+## Draws text with its buttons as key caps (a light box with the key's name
+## in): the button for the device the player touched last.
+func _rich(at: Vector2, text: String, fs := 16, col := Color.WHITE) -> void:
+	var x := at.x
+	for r in _runs(text):
+		var s := str(r[0])
+		var w := font.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+		if r[1]:
+			var box := Rect2(x + 2, at.y - fs * 0.92, w + 10, fs * 1.24)
+			draw_rect(box, KEY_BG)
+			draw_rect(Rect2(box.position + Vector2(0, box.size.y - 3), Vector2(box.size.x, 3)), Color(0.55, 0.56, 0.6))
+			draw_string(font, Vector2(x + 7, at.y - 1), s, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, KEY_FG)
+			x += w + 14
+		else:
+			draw_string(font, Vector2(x, at.y) + Vector2(1, 1), s, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0, 0, 0, 0.6))
+			draw_string(font, Vector2(x, at.y), s, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col)
+			x += w
+
+
 func _bar(x: float, y: float, w: float, f: float, col: Color) -> void:
 	draw_rect(Rect2(x, y, w, 14), Color(1, 1, 1, 0.08))
 	draw_rect(Rect2(x, y, w * clampf(f, 0.0, 1.0), 14), col)
 
 
-func _draw_job(r: Rect2) -> void:
+## The panel's height for steps step lines (and a bar).
+func _panel_h(steps: int, bar: bool) -> float:
+	return TOP + steps * ROW + (24.0 if bar else 0.0) + 74.0
+
+
+func _draw() -> void:
+	if session == null or stage == Stage.IDLE or font == null:
+		return
+	if not in_pits():
+		return   # still driving in: nothing on screen until you're in the pits
+	var steps := job_steps() if stage != Stage.DONE else []
+	var bar := stage != Stage.DONE and _bar_kind() != ""
+	var h := 132.0 if stage == Stage.DONE else _panel_h(steps.size(), bar)
+	# bottom left, clear of the box in the middle of the screen and the HUD's dials
+	var r := Rect2(MARGIN, size.y - h - MARGIN, W, h)
+	draw_rect(r, PANEL)
+	draw_rect(Rect2(r.position, Vector2(W, 4)), YELLOW)
+	draw_rect(r, Color(YELLOW, 0.45), false, 2.0)
+	if stage == Stage.DONE:
+		_draw_result(r)
+	else:
+		_draw_job(r, steps)
+	if _flash_t > 0.0 and _flash != "":
+		var fs := 22
+		var col := RED if _flash.begins_with("LOOSE") or _flash.begins_with("Wrong") else YELLOW
+		var fw := _rich_width(_flash, fs)
+		var fb := Rect2(r.position.x + (W - fw) * 0.5 - 14, r.position.y - 46, fw + 28, 36)
+		draw_rect(fb, Color(PANEL, 0.92))
+		draw_rect(fb, Color(col, 0.8), false, 2.0)
+		_rich(Vector2(fb.position.x + 14, fb.position.y + 26), _flash, fs, col)
+
+
+## A step's mark: a green tick (done), a yellow arrow (now), a dim ring (to come).
+func _mark(c: Vector2, state: int) -> void:
+	match state:
+		0:
+			draw_circle(c, 8.0, Color(GREEN, 0.9))
+			draw_polyline(PackedVector2Array([c + Vector2(-4, 0), c + Vector2(-1, 3.5), c + Vector2(4.5, -3.5)]), Color(0.02, 0.1, 0.03), 2.2)
+		1:
+			draw_colored_polygon(PackedVector2Array([c + Vector2(-5, -7), c + Vector2(7, 0), c + Vector2(-5, 7)]), YELLOW)
+		_:
+			draw_arc(c, 6.5, 0.0, TAU, 16, Color(1, 1, 1, 0.4), 1.5)
+
+
+func _draw_job(r: Rect2, steps: Array) -> void:
 	var o := r.position
 	var j := current_job()
-	var title := "PIT CREW: %s" % JOB_TITLES.get(j, "DONE")
-	if jobs.size() > 1 and cur + 1 < jobs.size():
-		title += "   then %s" % JOB_TITLES[jobs[cur + 1]].to_lower()
-	_text(o + Vector2(16, 26), title, 18, YELLOW)
+	_text(o + Vector2(16, 32), "YOUR JOB:  %s" % JOB_TITLES.get(j, "DONE"), 21, YELLOW)
+	var status := ""
 	if stage == Stage.BOX:
-		_text(o + Vector2(16, 26), "%.1f s   standard %.1f s" % [clock, float(_work().get("total_s", 0.0))], 15,
-			Color.WHITE, HORIZONTAL_ALIGNMENT_RIGHT, W - 32)
+		status = "%.1f s   (standard %.1f s)" % [clock, float(_work().get("total_s", 0.0))]
+	else:
+		status = "CAR COMING IN"
+	_text(o + Vector2(16, 32), status, 15, Color.WHITE if stage == Stage.BOX else AMBER, HORIZONTAL_ALIGNMENT_RIGHT, W - 32)
+	# the steps
+	var now := -1
+	for k in steps.size():
+		if not bool(steps[k][1]):
+			now = k
+			break
+	var y := o.y + TOP
+	for k in steps.size():
+		var state := 0 if bool(steps[k][1]) else (1 if k == now else 2)
+		if state == 1:
+			draw_rect(Rect2(o.x + 8, y + 1, W - 16, ROW - 2), Color(YELLOW, 0.13))
+		_mark(Vector2(o.x + 26, y + ROW * 0.5), state)
+		var col := DIM if state == 0 else (Color.WHITE if state == 1 else Color(1, 1, 1, 0.5))
+		_rich(Vector2(o.x + 44, y + ROW * 0.5 + 6), str(steps[k][0]), 16, col)
+		y += ROW
+	# a gauge for the step being done
 	var gx := o.x + 16
-	var gy := o.y + 78
 	var gw := W - 32
-	var tip := ""
-	var tip_col := Color.WHITE
+	if _bar_kind() != "":
+		_draw_bar(gx, y + 6, gw)
+		y += 24
+	# now: what to press
+	var tip_col := [Color.WHITE]
+	var tip := _now_tip(j, tip_col)
+	draw_line(Vector2(o.x + 12, y + 6), Vector2(o.x + W - 12, y + 6), Color(1, 1, 1, 0.15))
+	if tip != "":
+		_rich(Vector2(gx, y + 34), tip, 19, tip_col[0])
+	# the controls, for the device in use
+	var then := ""
+	if jobs.size() > 1 and cur + 1 < jobs.size():
+		then = "Then: %s" % JOB_TITLES[jobs[cur + 1]].to_lower()
+	_rich(Vector2(gx, o.y + r.size.y - 12), "Run {move}   Grab / put down {crew_grab}   Use {crew_gun}", 13, DIM)
+	if then != "":
+		_text(Vector2(gx, o.y + r.size.y - 12), then, 13, DIM, HORIZONTAL_ALIGNMENT_RIGHT, gw)
+
+
+## The gauge shown under the steps: "fuel", "wipe", "nut" (undoing it),
+## "gun" (doing it up), or "".
+func _bar_kind() -> String:
+	match current_job():
+		PitRules.JOB_FUEL:
+			return "" if _no_fuel() else "fuel"
+		PitRules.JOB_SCREEN:
+			return "wipe"
+		PitRules.JOB_GUN_L, PitRules.JOB_GUN_R:
+			if job == Job.NUT:
+				return "nut"
+			if job == Job.GUN or job == Job.LOOSE:
+				return "gun"
+	return ""
+
+
+func _draw_bar(gx: float, gy: float, gw: float) -> void:
+	match _bar_kind():
+		"fuel":
+			var want := float(_svc().get("fuel_l", 0.0))
+			var got := fuel_in()
+			_bar(gx, gy, gw - 130, got / maxf(want, 0.1), Color(GREEN if got >= want - 0.05 else YELLOW, 0.75))
+			_text(Vector2(gx + gw - 120, gy + 13), "%.1f / %.0f L" % [got, want], 15)
+		"wipe":
+			_bar(gx, gy, gw, wipe / SCREEN_WIPE_S, Color(BLUE, 0.75))
+		"nut":
+			_bar(gx, gy, gw, (clock - job_t0) / NUT_OFF_S, Color(YELLOW, 0.75))
+		"gun":
+			var full := GUN_AUTO
+			draw_rect(Rect2(gx, gy, gw, 14), Color(1, 1, 1, 0.08))
+			draw_rect(Rect2(gx, gy, gw * GUN_LOOSE / full, 14), Color(RED, 0.35))
+			draw_rect(Rect2(gx + gw * GUN_LOOSE / full, gy, gw * (GUN_PERFECT - GUN_LOOSE) / full, 14), Color(BRIGHT, 0.75))
+			draw_rect(Rect2(gx + gw * GUN_PERFECT / full, gy, gw * (GUN_GOOD - GUN_PERFECT) / full, 14), Color(GREEN, 0.45))
+			draw_rect(Rect2(gx + gw * GUN_GOOD / full, gy, gw * (full - GUN_GOOD) / full, 14), Color(AMBER, 0.3))
+			if job == Job.GUN:
+				var mx := gx + gw * clampf(gauge() / full, 0.0, 1.0)
+				draw_rect(Rect2(mx - 2, gy - 4, 4, 22), Color.WHITE)
+
+
+## What to do right now, with its buttons: the tip, and its colour in col[0].
+func _now_tip(j: String, col: Array) -> String:
 	match j:
 		"":
-			tip = "Your jobs are done: the car goes when the crew are"
-			tip_col = GREEN
+			col[0] = GREEN
+			return "Your jobs are done: the car goes when the crew are"
 		PitRules.JOB_FUEL:
-			var want := float(_work().get("fuel_l", 0.0)) if stage == Stage.BOX else float(_sim().pits.service_for(car, _pit()["plan"])["fuel_l"])
+			var want := float(_svc().get("fuel_l", 0.0))
 			var got := fuel_in()
-			_text(o + Vector2(16, 56), "Fuel %.1f / %.1f L" % [got, want], 15)
-			_bar(gx, gy, gw, got / maxf(want, 0.1), Color(GREEN if got >= want - 0.05 else YELLOW, 0.7))
 			if stage != Stage.BOX:
-				tip = "Car coming in: be ready at the fuel rig"
-			elif _no_fuel():
-				tip = "No fuel this stop (none planned, or the tank's full): stand by"
-				tip_col = GREEN
-			elif _hose_on():
-				tip = "Take the hose off ({crew_grab}) when the tank's full" if got < want - 0.05 else "FULL: take the hose off now ({crew_grab})"
-				tip_col = YELLOW if got < want - 0.05 else GREEN
-			elif hold == Hold.HOSE:
-				tip = "Plug the hose into the car ({crew_grab} at the filler)"
-			else:
-				tip = "{crew_grab}: grab the hose at the fuel rig"
+				return "Wait at the fuel rig: the car's on its way"
+			if _no_fuel():
+				col[0] = GREEN
+				return "No fuel this stop (none planned, or the tank's full)"
+			if _hose_on():
+				col[0] = YELLOW if got < want - 0.05 else GREEN
+				return "Filling...  {crew_grab} to take the hose off when full" if got < want - 0.05 else "FULL!  {crew_grab}: take the hose off now"
+			if hold == Hold.HOSE:
+				col[0] = YELLOW
+				return "Run to the filler on the car, then {crew_grab} to plug in"
+			col[0] = YELLOW
+			return "{crew_grab} at the fuel rig to pick up the hose"
 		PitRules.JOB_SCREEN:
-			_bar(gx, gy, gw, wipe / SCREEN_WIPE_S, Color(BLUE, 0.7))
-			tip = "Car coming in: get to the nose" if stage != Stage.BOX else "Hold {crew_gun} at the windscreen to wipe it clean"
+			if stage != Stage.BOX:
+				return "Get to the nose: the car's on its way"
+			col[0] = YELLOW
+			return "Hold {crew_gun} at the nose to wipe the windscreen"
 		PitRules.JOB_LANCE:
-			var n := _prep_needs()
-			var x := o.x + 16
-			for w in n["tyres"]:
-				var ok := str(laid.get(w, "")) == str(n["tyres"][w])
-				var col := GREEN if ok else (RED if laid.has(w) else DIM)
-				_text(Vector2(x, o.y + 56), "%s %s" % [["FL", "FR", "RL", "RR"][w], _compound_name(str(n["tyres"][w])).left(5)], 13, col)
-				x += 92
-			for g in n["guns"]:
-				_text(Vector2(x, o.y + 56), "GUN %s" % ("L" if g == 0 else "R"), 13, GREEN if guns_laid.has(g) else DIM)
-				x += 64
 			if not prep_done():
-				tip = "Lay out the new tyres (stacks by the garage) and the wheel guns (trolley)"
+				col[0] = YELLOW
 				if hold == Hold.NEW_TYRE:
-					tip = "Carrying a %s tyre: put it by its wheel ({crew_grab})" % KIND_NAMES[hold_kind]
-				elif hold == Hold.GUN:
-					tip = "Carrying a wheel gun: lay it by the car ({crew_grab})"
-			elif stage == Stage.BOX:
-				tip = "Air lance in: {crew_grab} at the socket, back of the car"
-				tip_col = YELLOW
-			else:
-				tip = "All laid out: wait by the air lance socket for the car"
-				tip_col = GREEN
-		_:
-			var x := o.x + 16
-			for w in my_wheels():
-				var col := Color(1, 1, 1, 0.5)
-				if done.has(w):
-					col = {"perfect": BRIGHT, "good": GREEN, "slow": AMBER}.get(done[w], GREEN)
-				elif w == next_wheel():
-					col = YELLOW
-				draw_rect(Rect2(x, o.y + 42, 12, 22), col)
-				_text(Vector2(x + 18, o.y + 59), WHEEL_NAMES[w], 13, col)
-				x += 150
-			var res := _tyre_tip(j)
-			tip = res[0]
-			tip_col = res[1]
-	if tip != "":
-		_text(Vector2(gx, o.y + H - 12), with_keys(tip), 15, tip_col)
+					return "Carrying a %s tyre: {crew_grab} by its wheel to lay it out" % KIND_NAMES[hold_kind]
+				if hold == Hold.GUN:
+					return "Carrying a wheel gun: {crew_grab} beside the car to lay it down"
+				for w in laid:
+					if str(laid[w]) != str(_prep_needs()["tyres"].get(w, laid[w])):
+						return "Wrong tyre by the %s: {crew_grab} to pick it back up" % WHEEL_NAMES[w].to_lower()
+				return "{crew_grab} at the glowing ring to pick it up"
+			if stage == Stage.BOX:
+				col[0] = YELLOW
+				return "{crew_grab} at the socket, back of the car: air lance in"
+			col[0] = GREEN
+			return "All laid out: wait by the air lance socket"
+	var res := _tyre_tip(j)
+	col[0] = res[1]
+	return res[0]
 
 
-## What to do now on a tyre job: [tip, colour] (and draws the gun gauge).
+## What to do now on a tyre job: [tip, colour].
 func _tyre_tip(j: String) -> Array:
 	var w := next_wheel()
-	var gx := position.x + (size.x - W) * 0.5 + 16
-	var gy := size.y - H - 196.0 + 78
-	var gw := W - 32
 	if stage != Stage.BOX:
-		return ["Car coming in: get to the %s" % WHEEL_NAMES[w] if w >= 0 else "No tyres on your side this stop", Color.WHITE]
+		return ["Get to the %s: the car's on its way" % WHEEL_NAMES[w].to_lower() if w >= 0 else "No tyres on your side this stop", Color.WHITE]
 	if w < 0:
-		return ["Your side's done%s" % (": put the gun down ({crew_grab})" if hold == Hold.GUN else ""), GREEN]
+		return ["Your side's done%s" % (": {crew_grab} to put the gun down" if hold == Hold.GUN else ""), GREEN]
 	var tj := PitRules.tyre_job(_tl(), _side(), w)
 	if j.begins_with("gun"):
 		match job:
 			Job.NUT:
-				_bar(gx, gy, gw, (clock - job_t0) / NUT_OFF_S, Color(YELLOW, 0.7))
-				return ["Undoing the nut...", Color.WHITE]
+				return ["Keep holding {crew_gun}: undoing the nut...", Color.WHITE]
 			Job.SWAP:
 				return ["Nut off: the wheel man swaps the wheel...", Color.WHITE]
 			Job.LOOSE:
-				return ["HOLD {crew_gun} on the new nut, let go in the green", YELLOW]
+				return ["Hold {crew_gun} on the new nut, let go in the green", YELLOW]
 			Job.GUN:
-				var full := GUN_AUTO
-				draw_rect(Rect2(gx, gy, gw, 14), Color(1, 1, 1, 0.08))
-				draw_rect(Rect2(gx, gy, gw * GUN_LOOSE / full, 14), Color(RED, 0.35))
-				draw_rect(Rect2(gx + gw * GUN_LOOSE / full, gy, gw * (GUN_PERFECT - GUN_LOOSE) / full, 14), Color(BRIGHT, 0.75))
-				draw_rect(Rect2(gx + gw * GUN_PERFECT / full, gy, gw * (GUN_GOOD - GUN_PERFECT) / full, 14), Color(GREEN, 0.45))
-				draw_rect(Rect2(gx + gw * GUN_GOOD / full, gy, gw * (full - GUN_GOOD) / full, 14), Color(AMBER, 0.3))
-				var mx := gx + gw * clampf(gauge() / full, 0.0, 1.0)
-				draw_rect(Rect2(mx - 2, gy - 4, 4, 22), Color.WHITE)
-				return ["Let go in the green", Color.WHITE]
+				return ["Let go of {crew_gun} in the green", YELLOW]
 		if hold != Hold.GUN:
-			return ["Pick up your wheel gun ({crew_grab} or {crew_gun})", YELLOW]
+			return ["{crew_grab} at the glowing ring to pick up your wheel gun", YELLOW]
 		if not _near(wheel_spot(w)[0]):
-			return ["Run to the %s" % WHEEL_NAMES[w], Color.WHITE]
+			return ["Run to the %s (the glowing ring)" % WHEEL_NAMES[w].to_lower(), Color.WHITE]
 		if tj.is_empty() or float(tj.get("start", INF)) > clock:
 			return [_why_wait(tj), AMBER]
-		return ["HOLD {crew_gun} to undo the nut", YELLOW]
+		return ["Hold {crew_gun} to undo the nut", YELLOW]
 	# wheel man
 	var me := current_job()
 	match hold:
 		Hold.OLD_TYRE:
-			return ["Put the old wheel down, out of the way ({crew_grab})", YELLOW]
+			return ["Step back and {crew_grab} to put the old wheel down", YELLOW]
 		Hold.NEW_TYRE:
-			return ["Put the new wheel on the %s ({crew_grab} at the hub)" % WHEEL_NAMES[w], YELLOW]
+			return ["{crew_grab} at the %s hub to fit the new wheel" % WHEEL_NAMES[w].to_lower(), YELLOW]
 	if not sent.has("%s:wheel_off:%d:" % [me, w]):
 		if not _near(wheel_spot(w)[0]):
-			return ["Run to the %s" % WHEEL_NAMES[w], Color.WHITE]
+			return ["Run to the %s (the glowing ring)" % WHEEL_NAMES[w].to_lower(), Color.WHITE]
 		if tj.is_empty() or float(tj.get("nut_off", INF)) > clock:
 			return ["Wait for the gun man to undo the nut", AMBER]
-		return ["Pull the old wheel off ({crew_grab})", YELLOW]
-	return ["Pick up the new wheel by the corner ({crew_grab})", YELLOW]
+		return ["{crew_grab}: pull the old wheel off", YELLOW]
+	return ["{crew_grab} at the glowing ring to pick up the new wheel", YELLOW]
 
 
 func _draw_result(r: Rect2) -> void:
@@ -1342,8 +1622,8 @@ func _draw_result(r: Rect2) -> void:
 	if result.get("gave_up", false):
 		g = "THE CREW SENT THE CAR WITHOUT YOU"
 	var col := GREEN if st <= std else (AMBER if st <= std * 1.15 else RED)
-	_text(o + Vector2(16, 36), g, 22, col)
-	_text(o + Vector2(16, 68), "Stationary %.1f s  (standard %.1f s, %s%.1f s)" % [st, std, "+" if st >= std else "-", absf(st - std)], 17)
+	_text(o + Vector2(16, 40), g, 22, col)
+	_text(o + Vector2(16, 72), "Stationary %.1f s  (standard %.1f s, %s%.1f s)" % [st, std, "+" if st >= std else "-", absf(st - std)], 17)
 	var notes := []
 	if int(result.get("loose", 0)) > 0:
 		notes.append("%d loose nut%s" % [result["loose"], "s" if int(result["loose"]) > 1 else ""])
@@ -1351,4 +1631,4 @@ func _draw_result(r: Rect2) -> void:
 		notes.append("%d perfect wheel gun%s" % [result["perfect"], "s" if int(result["perfect"]) > 1 else ""])
 	if PitRules.JOB_FUEL in jobs:
 		notes.append("%.1f L in" % float(result.get("fuel_l", 0.0)))
-	_text(o + Vector2(16, 100), ", ".join(notes), 14, DIM, HORIZONTAL_ALIGNMENT_LEFT, W - 32)
+	_text(o + Vector2(16, 104), ", ".join(notes), 14, DIM, HORIZONTAL_ALIGNMENT_LEFT, W - 32)
