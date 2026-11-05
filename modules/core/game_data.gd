@@ -185,8 +185,8 @@ func _register_defaults() -> void:
 		"A gentle pull on the steering that helps you stay inside the track limits and on the driving line.")
 	register_setting("gameplay", "aid_driving_line", "Driving line", [[2, "Full"], [1, "Corners only"], [0, "Off"]], 2,
 		"The ideal line on the track. Full: all the way round the lap. Corners only: from the braking zone through each corner, hidden on the straights.")
-	register_setting("gameplay", "pit_drive_in", "Pit stops", [["self", "Drive in yourself"], ["auto", "Automatic"]], "self",
-		"Drive in yourself: when you've called a stop, follow the pit line, be down to the speed limit by the limit line and stop on your box (overshoot and it costs time). Automatic: the car drives itself in and out.")
+	register_setting("gameplay", "pit_drive_in", "Pit stops", [["limit", "Drive to the pit limit"], ["self", "Drive the whole stop"]], "limit",
+		"Either way you drive into the pit lane yourself: follow the pit line and be down to the speed limit by the limit line. Drive to the pit limit: from the limit line the car drives itself to your box. Drive the whole stop: you stop on your box yourself (overshoot and it costs time). A countdown on screen shows when the crew release the car and you have it back.")
 	register_setting("gameplay", "aid_pit_guide", "Pit lane guide", [[true, "On"], [false, "Off"]], true,
 		"When you drive in yourself: a line into the pit lane and onto your box, red where you must brake for the speed limit or to stop, plus distance and brake cues on screen.")
 	register_setting("gameplay", "pit_menu", "Pit call menu", [[true, "On"], [false, "Off"]], true,

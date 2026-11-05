@@ -211,8 +211,19 @@ func item_shown(id: String) -> bool:
 		"radio": return radio_time > 0.0 and not radio_msg.is_empty()
 		"messages": return message_time > 0.0
 		"lights": return sim.phase == RaceSim.Phase.COUNTDOWN
-		"pitguide": return pit_guide_on and sim.pits.self_drives(me) and str(sim.pits.guide_info(me)["stage"]) != ""
+		"pitguide": return pit_guide_on and _pit_guide_shown(me)
 	return true
+
+
+## The pit lane guide panel: while the driver is at the wheel for part of a
+## stop (into the lane, out of the box) and while the crew work; not while
+## the guide takes the car to the box.
+func _pit_guide_shown(me: int) -> bool:
+	var pits := session.sim.pits
+	if not pits.drives_in(me):
+		return false
+	var stage := str(pits.guide_info(me)["stage"])
+	return stage != "" and (stage == "service" or not pits.controls(me))
 
 
 ## An item's size at 100 %, in HUD units (1600 x 900 screen).
@@ -327,6 +338,7 @@ func _process(delta: float) -> void:
 	size = get_viewport_rect().size
 	message_time -= delta
 	radio_time -= delta
+	_watch_release(delta)
 	# A driver change can put this player at the wheel of a shared car (or take
 	# them out of it): switch to the matching layout.
 	if not editing and is_coop_driver() != coop:
@@ -406,6 +418,53 @@ func _draw() -> void:
 		_draw_give_back_pointer(me)
 	if me < 0 and not editing:
 		_text(Vector2(20, 40), "SPECTATING", 22)
+	if me >= 0 and not editing:
+		_draw_release_countdown()
+
+
+# --- Pit stop release countdown ------------------------------------------------
+
+const RELEASE_COUNT_S := 3.0     ## the countdown shows over the last seconds of a stop
+const RELEASE_GO_S := 0.9        ## then GO for this long once the car is the driver's
+var _release_left := -1.0        ## PitRules.release_in for this player's car, last frame
+var _release_go := 0.0
+
+
+## Notes when the crew release this player's car (for GO).
+func _watch_release(delta: float) -> void:
+	_release_go = maxf(_release_go - delta, 0.0)
+	if session == null or session.local_car < 0:
+		_release_left = -1.0
+		return
+	var me := session.local_car
+	var r := session.sim.pits.release_in(me)
+	if r < 0.0 and _release_left >= 0.0 and _release_left <= 1.0 \
+			and session.sim.pits.phase(me) == PitRules.PHASE_LEAVE:
+		_release_go = RELEASE_GO_S
+	_release_left = r
+
+
+## 3, 2, 1, GO in the middle of the screen as the crew finish a stop: the
+## moment the driver has the car back.
+func _draw_release_countdown() -> void:
+	var r := _release_left
+	var txt := ""
+	var col := Color(1, 0.82, 0.2)
+	if r >= 0.0 and r <= RELEASE_COUNT_S:
+		txt = str(maxi(ceili(r), 1))
+		col = Color(1, 0.3, 0.2) if r > 2.0 else Color(1, 0.82, 0.2)
+	elif _release_go > 0.0:
+		txt = "GO"
+		col = Color(0.35, 0.95, 0.45)
+	if txt == "":
+		return
+	var k := size.y / 900.0
+	var w := 260.0 * k
+	var c := Vector2(size.x * 0.5, size.y * 0.27)
+	draw_rect(Rect2(c - Vector2(w * 0.5, 96.0 * k), Vector2(w, 150.0 * k)), Color(0, 0, 0, 0.45))
+	_text(c + Vector2(-w * 0.5, -66.0 * k), "RELEASE" if txt != "GO" else "YOUR CAR", roundi(16.0 * k),
+		Color(1, 1, 1, 0.75), HORIZONTAL_ALIGNMENT_CENTER, w)
+	_text(c + Vector2(-w * 0.5, 36.0 * k), txt, roundi(96.0 * k), col, HORIZONTAL_ALIGNMENT_CENTER, w)
 
 
 ## Draws one item from (0, 0) in its own box of `sz` (100 % units).
@@ -804,7 +863,7 @@ func _draw_pit_panel(me: int) -> void:
 		var head := "PIT"
 		var hc := Color(1, 1, 1, 0.7)
 		match phase:
-			PitRules.PHASE_APPROACH: head = "BOXING: FOLLOW THE PIT LINE" if pits.self_drives(me) else "BOXING: CAR DRIVING TO THE PITS"
+			PitRules.PHASE_APPROACH: head = "BOXING: FOLLOW THE PIT LINE" if pits.drives_in(me) else "BOXING: CAR DRIVING TO THE PITS"
 			PitRules.PHASE_ENTRY: head = "PIT LANE: %d KM/H LIMIT" % roundi(sim.track.pit_speed_limit * 3.6)
 			PitRules.PHASE_LIMIT: head = "STOP ON YOUR BOX" if pits.self_drives(me) else "PIT LANE, TO YOUR BOX"
 			PitRules.PHASE_SERVICE: head = PitRules.service_text(p, "PIT STOP")

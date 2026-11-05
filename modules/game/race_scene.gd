@@ -408,22 +408,24 @@ var _self_drive_car := -1
 var _seen_pit := {}
 
 
-## Each tick: the player at the wheel drives their own pit stops (unless
-## they chose automatic, or the autodrive is driving for them); a car that's
-## no longer theirs (handed to an AI co-driver) goes back to the guide.
+## Each tick: the player at the wheel drives their own pit stops, up to the
+## pit limit line or (their choice) the whole stop, unless the autodrive is
+## driving for them; a car that's no longer theirs (handed to an AI
+## co-driver) goes back to the guide.
 func _update_self_drive() -> void:
 	var pits := session.sim.pits
 	if not pits.enabled:
 		return
 	var me := session.local_car
-	var want := me >= 0 and autodrive == null and str(GameData.prefs.get("pit_drive_in", "self")) == "self"
+	var want := me >= 0 and autodrive == null
 	var car := me if want else -1
 	if car != _self_drive_car:
 		if _self_drive_car >= 0 and session.owns(_self_drive_car):
-			pits.set_self_drive(_self_drive_car, false)
+			pits.set_drive_in(_self_drive_car, PitRules.DRIVE_GUIDED)
 		_self_drive_car = car
 	if car >= 0:
-		pits.set_self_drive(car, true)
+		var whole := str(GameData.prefs.get("pit_drive_in", "limit")) == "self"
+		pits.set_drive_in(car, PitRules.DRIVE_STOP if whole else PitRules.DRIVE_TO_LIMIT)
 		_pit_messages(car)
 
 
@@ -436,7 +438,7 @@ func _pit_messages(car: int) -> void:
 	if not was.is_empty():
 		if was["phase"] == PitRules.PHASE_APPROACH and ph == PitRules.PHASE_NONE and p["box"]:
 			hud.flash("Missed the pit entry: box next lap", 3.0)
-		if was["phase"] == PitRules.PHASE_LIMIT and ph == PitRules.PHASE_SERVICE:
+		if was["phase"] == PitRules.PHASE_LIMIT and ph == PitRules.PHASE_SERVICE and session.sim.pits.self_drives(car):
 			var extra := float((p.get("work", {}) as Dictionary).get("overshoot_s", 0.0))
 			hud.flash("Overshot your box: +%.1f s" % extra if extra > 0.0 else "On your marks", 2.0)
 		if bool(p.get("missed_box", false)) and not bool(was.get("missed", false)):
@@ -841,7 +843,7 @@ func _process(delta: float) -> void:
 func _update_pit_guide(delta: float) -> void:
 	var me := session.local_car
 	var pits := session.sim.pits
-	if world.pit_guide == null or me < 0 or not pits.self_drives(me) or not hud.pit_guide_on:
+	if world.pit_guide == null or me < 0 or not pits.drives_in(me) or not hud.pit_guide_on:
 		world.update_pit_guide(PitRules.GUIDE_NONE, 0.0, true, false, delta)
 		return
 	var p: Dictionary = session.sim.entries[me].pit
