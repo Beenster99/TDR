@@ -596,21 +596,16 @@ func _draw_speed(me: int) -> void:
 	var c := sim.cars[me]
 	var br := Vector2.ZERO
 	var sz := Vector2(250, 120)
-	# Like a GT3 car's TFT dash: the whole screen flashes the flag colour.
+	# Like a GT3 car's TFT dash: the whole screen shows the flag colour,
+	# held steady (no flashing) for as long as the flag is out.
 	var flag := dash_preview if dash_preview.a > 0.0 else dash_flag(me)
-	var lit := false
+	var lit := flag.a > 0.0
 	var ink := Color.WHITE
-	if flag.a > 0.0:
-		var flashing := not (flag == DASH_WHITE and sim.entries[me].finished
-			and sim.race_time - sim.entries[me].finish_time > DASH_WHITE_FLASH_S)
-		lit = not flashing or dash_preview.a > 0.0 or int(Time.get_ticks_msec() / DASH_FLASH_MS) % 2 == 0
 	if lit:
 		draw_rect(Rect2(br, sz), Color(flag, 0.92))
 		ink = Color(0.04, 0.04, 0.04) if flag.get_luminance() > 0.45 else Color.WHITE
 	else:
 		_panel(Rect2(br, sz))
-		if flag.a > 0.0:
-			draw_rect(Rect2(br, sz).grow(-2.0), Color(flag, 0.9), false, 4.0)
 	var dim := Color(ink, 0.7)
 	_text(br + Vector2(14, 56), "%3d" % int(Units.speed_value(c.speed())), 48, ink)
 	_text(br + Vector2(120, 56), Units.speed_unit(), 16, dim)
@@ -631,17 +626,13 @@ const DASH_RED := Color(0.95, 0.1, 0.1)
 const DASH_BLUE := Color(0.15, 0.45, 1.0)
 const DASH_WHITE := Color(1, 1, 1)
 const DASH_GREEN := Color(0.2, 0.85, 0.3)
-const DASH_FLASH_MS := 250
-## How long the dash flashes white after your own finish (then holds a frame).
-const DASH_WHITE_FLASH_S := 8.0
 ## How long the dash shows green once a yellow, VSC or safety car ends.
 const DASH_GREEN_S := 3.0
 ## A car this close behind (m) that has lapped us shows a blue flag.
 const DASH_BLUE_M := 80.0
 
 var _dash_was_yellow := false
-## Screenshot tools set this to show a flag on the dash, lit, without
-## flashing (alpha 0: off).
+## Screenshot tools set this to show a flag on the dash (alpha 0: off).
 var dash_preview := Color(0, 0, 0, 0)
 var _dash_green_until := -1.0
 

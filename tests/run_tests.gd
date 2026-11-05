@@ -1731,6 +1731,11 @@ func test_pit_crew_game() -> void:
 				want_play |= PitRules.job_bit(j)
 		check(games.all(func(g): return g.stage == PitCrewGame.Stage.READY) and int(p4["crew_play"]) == want_play and bool(p4["crew_auto"]),
 			"%d-player crew: called in, everyone takes their jobs (%s)" % [crew_size, ", ".join(games.map(func(g): return "+".join(g.jobs)))])
+		# Nothing on screen for the driver and the fuel man until the car's in
+		# the pits; a pit crew player is in the garage already, laying out.
+		check(not games[0].in_pits() and not games[0].hands_free() and not games[-1].in_pits()
+			and (crew_size == 2 or (games[1].in_pits() and not games[1].guide_target().is_empty())),
+			"%d-player crew: no pit stop panel until you're in the pits (pit crew player: from the call)" % crew_size)
 		# While the car comes round, a pit crew player lays out the tyres and guns.
 		for k in 60 * 25:
 			for g in games:
@@ -1746,10 +1751,16 @@ func test_pit_crew_game() -> void:
 			"in the box: everyone's camera closes in on the crew")
 		var guard := 0
 		var screen_first := true
+		var no_steps := []
+		var guided := {}
 		while p4["phase"] == PitRules.PHASE_SERVICE and guard < 60 * 40:
 			guard += 1
 			for g in games:
 				g.step(dt)
+				if g.current_job() != "" and g.job_steps().is_empty():
+					no_steps.append(g.current_job())
+				if not g.guide_target().is_empty():
+					guided[g.current_job()] = true
 			sim4.step(idle)
 			var jobs4: Dictionary = p4.get("crew_jobs", {})
 			if jobs4.has("wheel_l") and not jobs4.has("screen"):
@@ -1760,6 +1771,8 @@ func test_pit_crew_game() -> void:
 		check(ls.get("played", false) and float(ls["stationary_s"]) < float(ls["standard_s"]) * 1.05 + (PitRules.CREW_FUMBLE_S if int(ls["fumble"]) >= 0 else 0.0) and absf(float(ls["fuel_l"]) - 9.0) < 0.3,
 			"%d players play the stop: %.2f s vs standard %.2f s (AI fumble %d), %.1f L in" % [crew_size, ls.get("stationary_s", 0.0), ls.get("standard_s", 0.0), ls.get("fumble", -1), ls.get("fuel_l", 0.0)])
 		check(screen_first, "the driver's tyre job comes after the windscreen")
+		check(no_steps.is_empty() and guided.size() >= games.size(),
+			"every job lists its steps (%s missing) and the guide shows where to go (%s)" % [no_steps, guided.keys()])
 		check(games.all(func(g): return g.stage == PitCrewGame.Stage.DONE and g.cur >= g.jobs.size()), "everyone's jobs done, the result is shown")
 		for g in games:
 			g.free()
