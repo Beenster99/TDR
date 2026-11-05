@@ -34,7 +34,7 @@ sys.path.insert(0, HERE)
 from pit_limit_zone import limit_zone  # noqa: E402
 
 WIDTH_SCALE = 2.16    # circuits: 1.5x (Nov 2026), then 20% more on top, twice
-DISCIPLINE_SCALE = {"circuit": WIDTH_SCALE, "rallycross": 1.44, "derby": 1.44}
+DISCIPLINE_SCALE = {"circuit": WIDTH_SCALE, "rallycross": 1.44, "derby": 1.2}  # derby: crashes are the point, arenas stay put
 MIN_GAP_M = 10.0      # two stretches of road side by side stay at least this far apart
 JOKER_END_M = 30.0    # the joker's ends, where it meets the lap, may touch the road
 CROSS_M = 60.0        # around a crossing (derby crossovers, Suzuka's bridge) no gap rule
