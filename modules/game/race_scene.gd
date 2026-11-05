@@ -556,10 +556,15 @@ func _on_team_radio(car: int, msg: Dictionary) -> void:
 	crew.add_radio(msg)
 	var me := driver_radio.my_name() if session.local_car >= 0 else crew.radio.my_name()
 	if session.local_car == car and str(msg.get("role", "")) != RaceEntry.ROLE_DRIVER:
-		# The driver: on screen, and read out over the radio.
-		var lines: Array = msg.get("lines", [])
-		hud.show_radio(msg, clampf(4.0 + lines.size() * 2.2, 5.0, 16.0))
-		Sound.radio(str(msg.get("text", "")))
+		# The driver hears it over the radio, nothing on screen. Only when it
+		# can't be read out (voice off, or no voice for it) is it shown instead.
+		var spoken := str(msg.get("say", msg.get("text", "")))
+		if Sound.radio_will_say(spoken):
+			Sound.radio(spoken)
+		else:
+			var lines: Array = msg.get("lines", [])
+			hud.show_radio(msg, clampf(4.0 + lines.size() * 2.2, 5.0, 16.0))
+			Sound.radio(spoken)
 	elif str(msg.get("from", "")) != me:
 		Sound.ui("chime", -6.0)
 

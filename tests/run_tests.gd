@@ -91,6 +91,7 @@ func _init() -> void:
 	test_joker_lanes()
 	test_joker_driving_line()
 	test_handbrake()
+	test_radio_voice()
 	print("\n%s (%d failures, %.1fs)" % ["PASS" if failures == 0 else "FAIL", failures, (Time.get_ticks_msec() - t0) / 1000.0])
 	quit(1 if failures > 0 else 0)
 
@@ -389,7 +390,7 @@ func test_derby() -> void:
 		for k in 30:
 			CarPhysics.step(c, inp, def, d["tyres"][def.tyre_compound_id], env, t2, 1.0 / 120.0, 0.0, [], 0)
 		grip.append(absf(c.ay))
-	check(grip[1] < grip[0] * 0.9, "dirt grips less than tarmac (%.1f vs %.1f m/s2 sideways)" % [grip[1], grip[0]])
+	check(grip[1] < grip[0] * 0.97, "dirt grips a little less than tarmac (%.1f vs %.1f m/s2 sideways)" % [grip[1], grip[0]])
 	# A derby race: derby cars only, damage on, no safety car, wrecks retire,
 	# and it ends.
 	var s := RaceSettings.new()
@@ -440,10 +441,10 @@ func test_derby() -> void:
 		"compact arenas (longest %.0f m), a 16-car grid in %.0f m" % [longest, track.length - float(g15["s"])])
 	var loose := true
 	for id in ids:
-		loose = loose and d["cars"][id].dirt_rear_grip < 0.8
-	check(loose, "derby cars' tails step out on dirt (less rear grip there)")
-	# ...but the driven wheels still dig in: a launch on dirt is only a bit
-	# slower than on tarmac (rear-drive and front-drive alike).
+		loose = loose and d["cars"][id].dirt_rear_grip < 0.9 and d["cars"][id].dirt_rear_grip >= 0.75
+	check(loose, "derby cars' tails step out a little on dirt (rear grip 75-90% there)")
+	# ...but the driven wheels dig in (derby_tyre dirt_traction): a launch on
+	# dirt is about as quick as on tarmac (rear-drive and front-drive alike).
 	var mud := TrackCatalog.load_track("derby_mudflat_infinity")
 	var launch_ok := true
 	var launch_txt := ""
@@ -463,7 +464,7 @@ func test_derby() -> void:
 				CarPhysics.step(lc, lin, ld, d["tyres"][ld.tyre_compound_id], lenv, mud, 1.0 / 240.0, 0.0, [], 0)
 				k += 1
 			times.append(k / 240.0)
-		launch_ok = launch_ok and mud.dirt_at(250.0) > 0.9 and times[1] < times[0] * 1.4
+		launch_ok = launch_ok and mud.dirt_at(250.0) > 0.9 and times[1] < times[0] * 1.05
 		launch_txt += " %s %.1f/%.1f s" % [id.trim_prefix("derby_"), times[0], times[1]]
 	check(launch_ok, "derby cars get off the line on dirt (0-40 km/h tarmac/dirt:%s)" % launch_txt)
 	# The road runs right up to the arena walls: no gravel or run-off strip.
@@ -5522,3 +5523,47 @@ func test_handbrake() -> void:
 			au._update_tyres(1.0 / 60.0, 30.0, 1.0)
 		check(au._squeal_level < 0.01 and au._lock_level < 0.01, "sliding on %s: no tyre squeal" % ("gravel" if surf == TrackData.Surface.GRAVEL else "grass"))
 	au.free()
+
+
+## The race engineer's recorded voice can say every pit wall call and every
+## kind of pit plan line, numbers included.
+func test_radio_voice() -> void:
+	check(RadioPhrases.expand_numbers("Pressures: front left 27.5, rear right 26.0 psi.")
+		== "Pressures: front left twenty seven point five, rear right twenty six psi.", "numbers are read as words")
+	check(RadioPhrases.number_words(105) == "one hundred and five", "hundreds read the British way")
+	var lines: Array = ["Box, box. Box this lap.", "Plan for the next stop.", "No tyres.", "Fuel to the end.",
+		"No fuel.", "We fix the damage.", "No repairs, we leave the damage.", "Pressures: front left 27.5, rear right 26.0 psi.",
+		"Front downforce up 2 to 7.", "Rear downforce down 1 to 3.", "64 litres of fuel.", "118 litres of fuel.",
+		"Driver change at this stop."]
+	for c in TeamRadio.CREW_CALLS:
+		lines.append(c[2])
+	for name in _tyre_names():
+		lines.append("Four new %ss." % name)
+		for k in PitRules.WHEEL_LABELS:
+			if PitRules.WHEEL_LABELS[k] != "all four":
+				lines.append("New %ss, %s." % [name, PitRules.WHEEL_LABELS[k]])
+		lines.append("New %ss, %s." % [name, " and ".join(["front left", "rear right"])])
+	for voice in RadioPhrases.VOICES:
+		check(not RadioPhrases.bank(voice).is_empty(), "radio voice %s is baked" % voice)
+		var missing := []
+		for line in lines:
+			if not RadioPhrases.can_say(line, voice):
+				missing.append(line)
+		check(missing.is_empty(), "radio voice %s says every call and plan line (missing: %s)" % [voice, missing])
+		var whole := RadioPhrases.compose("Box, box. Box this lap.", voice)
+		check(whole.size() == 1, "a whole line is one clip, not pieces")
+		var parts := RadioPhrases.compose("Pressures: front left 27.5 psi.", voice)
+		check(parts.size() == 5 and float(parts[0][2]) > 0.1, "a pressure line is built from pieces with a pause after the colon")
+		for c in parts:
+			check(ResourceLoader.exists(str(c[0])), "clip %s is there" % c[0])
+	check(not RadioPhrases.can_say("Driver change: Zebedee takes over.", "engineer_male"),
+		"a player's name can't be said by the recorded voice (the driver hears the line without it)")
+
+
+func _tyre_names() -> Array:
+	var out := []
+	for f in DirAccess.get_files_at("res://modules/physics/data/"):
+		if f.ends_with(".json"):
+			var d = JSON.parse_string(FileAccess.get_file_as_string("res://modules/physics/data/" + f))
+			out.append(str(d["name"]).to_lower())
+	return out
