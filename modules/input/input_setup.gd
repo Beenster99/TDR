@@ -88,7 +88,7 @@ const REBINDABLE := [
 	["zoom_in", "Zoom in"], ["zoom_out", "Zoom out"], ["zoom_full", "Whole track"], ["camera_toggle", "Camera"],
 	["pit_box", "Box this lap"], ["pit_limiter", "Pit limiter"], ["pit_tyres", "Next tyres"], ["pit_fuel", "Next fuel"],
 	["pit_wheels", "Which tyres to change"], ["pit_driver", "Driver change"],
-	["strategy_screen", "Pit wall"], ["crew_tab", "Pit wall: switch tab"], ["team_radio", "Team radio"],
+	["strategy_screen", "Strategist screen"], ["crew_tab", "Pit wall: switch tab"], ["team_radio", "Team radio"],
 	["crew_gun", "Pit crew: use (wheel gun, windscreen)"], ["crew_grab", "Pit crew: grab / put down"], ["hud_tower", "Timing tower"], ["hud_edit", "Edit HUD layout"], ["restart_race", "Restart race"], ["back_to_menu", "Pause / menu"],
 ]
 ## Bindings shown (and changeable) per action: keyboard 1 and 2, controller 1 and 2.

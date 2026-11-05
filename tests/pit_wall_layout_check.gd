@@ -71,7 +71,7 @@ func _mouse(ci: Control, pos: Vector2, pressed: int = -1, held := false) -> void
 		ev = InputEventMouseButton.new()
 		ev.button_index = MOUSE_BUTTON_LEFT
 		ev.pressed = pressed == 1
-	ev.position = pos
+	ev.position = ci.get_global_transform_with_canvas() * pos   # the pit wall draws in a smaller canvas
 	ci._input(ev)
 
 
@@ -136,6 +136,10 @@ func _run() -> void:
 	var wall: StrategistScreen = scene.pit_wall
 	wall.open()
 	await _frames(4)
+	if out != "":
+		await _frames(30)
+		await RenderingServer.frame_post_draw
+		get_viewport().get_texture().get_image().save_png(out.get_basename() + "_wall.png")
 	var feed: Rect2
 	for pl in wall.layout.placed:
 		if pl[0] == "feed":
@@ -144,7 +148,7 @@ func _run() -> void:
 	await _drag(wall, feed.position + Vector2(feed.size.x * 0.25, 10), Vector2(30 + feed.size.x * 0.25, 70))
 	var moved := wall.layout.rect_of("feed", feed)
 	check(wall.layout.is_moved("feed") and moved.position.x < 40.0, "the feed moved to the left (%s)" % moved)
-	check((GameData.prefs[PanelLayout.PREF] as Dictionary).has("full") and (GameData.prefs[PanelLayout.PREF] as Dictionary).has("console"),
+	check((GameData.prefs[PanelLayout.PREF] as Dictionary).has("wall") and (GameData.prefs[PanelLayout.PREF] as Dictionary).has("console"),
 		"each pit wall screen keeps its own layout")
 	# Zoom the timing up with its corner grip so it reads better, then pick a car in it.
 	var tim: Rect2
@@ -165,8 +169,9 @@ func _run() -> void:
 	var pick: int = w_order[w_order.size() - 1]
 	var pk := w_order.size() - 1
 	var lr := wall.layout.content_rect("timing", tz)
-	var wrh := clampf((lr.size.y - 34) / maxf(w_order.size(), 1), 18.0, 28.0)
-	var ly := lr.position.y + 32 + pk * wrh + wrh * 0.5
+	# the rows start under the TIMING / PACE tabs (24 px)
+	var wrh := clampf((lr.size.y - 24 - 34) / maxf(w_order.size(), 1), 14.0, 28.0)
+	var ly := lr.position.y + 24 + 32 + pk * wrh + wrh * 0.5
 	var at := tz.position + (Vector2(lr.position.x + 300, ly) - tz.position) * zs
 	_mouse(wall, at, 1)
 	_mouse(wall, at, 0)

@@ -1,7 +1,7 @@
 {
   "id": "input",
   "name": "Input",
-  "version": "1.13.0",
+  "version": "1.13.1",
   "status": "active",
   "summary": "Keyboard and game controller: action bindings and turning them into CarInput (deadzones, steering curve, smoothing). The player's own bindings from Settings > Controller (two keys and two pad inputs per control, each one clearable (right-click, Delete or pad X), saved in GameData.prefs[\"controls\"]) and the stick dead zone.",
   "depends": {
