@@ -35,6 +35,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import build_tracks as bt  # noqa: E402
 from elevation import add_elevation  # noqa: E402
 from barriers import add_barriers  # noqa: E402
+import widen  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(os.path.dirname(HERE), "data")
@@ -412,6 +413,9 @@ def build(cfg, cache):
         print("   elevation unavailable:", e)
     add_barriers(out, cfg, cache)
     rx_grass_runoff(out)
+    # The game's road is wider than the real one (see widen.py); re-run
+    # raceline.py afterwards for a line on the wider road.
+    widen.widen_track(out)
     with open(os.path.join(DATA, tid + ".json"), "w") as f:
         json.dump(out, f, separators=(",", ":"))
 

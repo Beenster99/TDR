@@ -44,13 +44,20 @@ Tracks are built, not hand-written, by `modules/tracks/tools/build_tracks.py`.
    that starts and ends on the track, and that an AI car laps it cleanly.
 4. Add the source to `modules/tracks/data/ATTRIBUTION.md` if it's a new one.
 
-Circuits are drawn 1.5 times their real width (`WIDTH_SCALE` in
-`tools/widen.py`): at the real width, seen from above, the road felt too
-narrow to keep a car on. The centre line stays where it is, both edges move
-out, and the pit lane moves out with the edge beside it so the gap between
-track and lane stays the real one. `build_tracks.py` does this for every new
-circuit and writes `"width_scale"` in the file; rallycross circuits and derby
-arenas keep their own widths. To widen track files built before that, run
+Circuits are drawn 1.8 times their real width (`WIDTH_SCALE` in
+`tools/widen.py`: 1.5x, then 20% more on top): at the real width, seen from
+above, the road felt too narrow to keep a car on. Rallycross circuits and
+derby arenas are drawn 1.2 times their built width (`DISCIPLINE_SCALE`; the
+joker lane widens by the same). The centre line stays where it is, both edges
+move out, and the pit lane moves out with the edge beside it so the gap
+between track and lane stays the real one. Where two stretches of the road
+run side by side, an edge only widens as far as keeps them `MIN_GAP_M` (10 m)
+apart, or as far apart as they already were if that was closer (Cadwell
+Park's Hall Bends, Mallory Park, Snetterton, Yas Marina); crossings (Suzuka's
+bridge, derby crossovers) don't count. The rallycross road keeps the same
+gap to its joker lane. `build_tracks.py`, `build_rx_tracks.py` and
+`build_derby_tracks.py` do this for every new track and write
+`"width_scale"` in the file. To widen track files built before that, run
 `python3 modules/tracks/tools/widen.py [ids]`, then `tools/raceline.py` for
 the new racing lines and `modules/graphics/tools/fit_scenery.py` to drop
 scenery that now stands on the road or in the run-off.
