@@ -14,8 +14,9 @@ extends Control
 ## right-click steps back. Keys: 1-4 pick a tyre (FL FR RL RR, Shift adds),
 ## A all four, Q keep / W dry / E intermediate / R wet for the picked tyres,
 ## ↑ ↓ their pressure, Z X front downforce, C V rear downforce, F G fuel,
-## B box this lap, D driver change, Enter sends, Backspace starts again from
-## the car's plan, Esc closes. A controller works too: the D-pad and A.
+## B box this lap, D driver change, Enter sends (and closes), Backspace starts
+## again from the car's plan, Esc or Cancel closes and drops what wasn't sent.
+## A controller works too: the D-pad and A.
 ##
 ## Opened over the co-op pit wall (CrewConsole) and the full pit wall
 ## (StrategistScreen). Drawn immediate-mode in the 1600x900 canvas.
@@ -52,6 +53,8 @@ var _hits: Array = []                ## [Rect2, action, arg, steps (for wheel)]
 var _hover := Vector2(-1, -1)
 var _flash := ""
 var _flash_t := 0.0
+## Close the dialog once the plan is sent (the screen under it says so).
+var close_on_send := true
 
 
 func setup(p_session: RaceSession) -> void:
@@ -77,6 +80,17 @@ func open_for(p_car: int) -> void:
 func close() -> void:
 	visible = false
 	closed.emit()
+
+
+## Cancel: closes and drops any changes that weren't sent, so the next open
+## starts from what the crew and the driver already have.
+func cancel() -> void:
+	if dirty():
+		if _sent_draft.is_empty():
+			load_from_car()
+		else:
+			draft = _sent_draft.duplicate(true)
+	close()
 
 
 # --- The draft --------------------------------------------------------------------
@@ -400,9 +414,9 @@ func _input(event: InputEvent) -> void:
 		_key(event)
 	elif event is InputEventJoypadButton and event.is_pressed():
 		if event.is_action_pressed("ui_cancel"):
-			close()
+			cancel()
 		elif event.is_action_pressed("ui_accept"):
-			send()
+			_do("send", null, 1, false)
 		elif event.is_action_pressed("ui_up"):
 			psi_picked(1)
 		elif event.is_action_pressed("ui_down"):
@@ -424,8 +438,8 @@ func _key(event: InputEventKey) -> void:
 		return
 	var shift := event.shift_pressed or event.ctrl_pressed
 	match event.keycode:
-		KEY_ESCAPE: close()
-		KEY_ENTER, KEY_KP_ENTER: send()
+		KEY_ESCAPE: cancel()
+		KEY_ENTER, KEY_KP_ENTER: _do("send", null, 1, false)
 		KEY_BACKSPACE: load_from_car()
 		KEY_1, KEY_2, KEY_3, KEY_4: _pick(int(event.keycode - KEY_1), shift)
 		KEY_A: picked = [true, true, true, true]
@@ -457,8 +471,11 @@ func _pick(w: int, add: bool) -> void:
 
 func _do(action: String, arg, dir: int, add: bool) -> void:
 	match action:
-		"close": close()
-		"send": send()
+		"close", "cancel": cancel()
+		"send":
+			send()
+			if close_on_send:
+				close()
 		"reset": load_from_car()
 		"pick": _pick(int(arg), add)
 		"pick_set":
@@ -568,9 +585,9 @@ func _draw() -> void:
 	draw_rect(r, Color(1, 0.88, 0.35, 0.55), false, 2.0)
 	var sim := session.sim
 	var e := sim.entries[car]
-	_text(r.position + Vector2(20, 36), "PIT STOP PLAN", 24, YELLOW)
+	_text(r.position + Vector2(20, 36), "PIT STOP SETTINGS", 24, YELLOW)
 	var lap := mini(e.laps_done + 1, sim.settings.laps)
-	_text(r.position + Vector2(230, 35), "P%d  %s  ·  %s  ·  Lap %d/%d" % [e.position, e.at_wheel(),
+	_text(r.position + Vector2(280, 35), "P%d  %s  ·  %s  ·  Lap %d/%d" % [e.position, e.at_wheel(),
 		sim.defs[car].display_name, lap, sim.settings.laps], 17, Color.WHITE, HORIZONTAL_ALIGNMENT_LEFT, W - 300)
 	_button(Rect2(r.end.x - 52, r.position.y + 12, 36, 32), "✕", "close", null, false, true, 18)
 	draw_line(r.position + Vector2(16, 54), Vector2(r.end.x - 16, r.position.y + 54), Color(1, 1, 1, 0.12))
@@ -1006,12 +1023,13 @@ func _draw_controls(r: Rect2) -> void:
 		status = "Not sent yet: the crew and the driver don't know this plan"
 		scol = YELLOW
 	_text(Vector2(x, by + 2), status, 13, scol, HORIZONTAL_ALIGNMENT_LEFT, w)
-	_button(Rect2(x, by + 14, 120, 54), "Start again", "reset", null, false, true, 14)
+	_button(Rect2(x, by + 14, 104, 54), "Cancel", "cancel", null, false, true, 15)
+	_button(Rect2(x + 112, by + 14, 104, 54), "Start again", "reset", null, false, true, 14)
 	var to_driver := session.local_car != car
-	_button(Rect2(x + 130, by + 14, w - 130, 54), ("SEND TO DRIVER" if to_driver else "SET MY STOP") + "  " + InputPrompt.pick("⏎", InputPrompt.key("ui_accept")), "send", null,
+	_button(Rect2(x + 224, by + 14, w - 224, 54), ("SEND TO DRIVER" if to_driver else "SET MY STOP") + "  " + InputPrompt.pick("⏎", InputPrompt.key("ui_accept")), "send", null,
 		dirty(), true, 20, YELLOW)
-	_text(Vector2(x, r.end.y + 6), InputPrompt.pick("Wheel / right-click: change   Q W E R tyres   Z X / C V downforce   Esc close",
-		InputPrompt.fill("D-pad ←→: tyre for the picked wheels   ↑↓: pressure   {ui_accept} send   {ui_cancel} close   (mouse for the rest)")),
+	_text(Vector2(x, r.end.y + 6), InputPrompt.pick("Wheel / right-click: change   Q W E R tyres   Z X / C V downforce   Esc cancel",
+		InputPrompt.fill("D-pad ←→: tyre for the picked wheels   ↑↓: pressure   {ui_accept} send   {ui_cancel} cancel   (mouse for the rest)")),
 		12, Color(1, 1, 1, 0.45), HORIZONTAL_ALIGNMENT_LEFT, w)
 
 

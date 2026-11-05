@@ -7,8 +7,9 @@ hears nothing.
 ## Opening it
 
 - Co-op pit wall (CrewConsole): the first row, **Plan the stop**, on both tabs.
-- Full pit wall (StrategistScreen, P): the **PLAN THE STOP** button on the
-  selected car panel, or Enter.
+- Full pit wall (StrategistScreen, P): the **PIT STOP SETTINGS** button on the
+  OUR CAR panel, or Enter. It opens as a dialog in the middle of the screen,
+  titled PIT STOP SETTINGS.
 - A driver can open it from the full pit wall to plan their own stop; then
   the button says **SET MY STOP** and no radio message goes out.
 
@@ -33,7 +34,12 @@ Right: picked tyres (All, Fronts, Rears, Left, Right, then a compound or a
 pressure step for all of them), fuel, repairs, driver change (who takes
 over), the box call (box this lap, or keep the plan for later), the work
 queue in words with the stationary time and the total time lost, then
-**Start again** and **SEND TO DRIVER**.
+**Cancel**, **Start again** and **SEND TO DRIVER**.
+
+Cancel (or Esc, ✕, B on a pad) closes the dialog at any time and drops
+whatever wasn't sent: the next open starts from the plan the crew has. Send
+gives the crew the plan, radios the driver and closes the dialog; the pit
+wall says it was sent.
 
 Pressures and downforce can only change when the host allows car setups
 (race settings, Car setups: Free). Road cars have fixed wings.
