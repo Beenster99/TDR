@@ -565,7 +565,7 @@ func _load_dirt(ranges) -> void:
 		_dirt_pt[i] = _dirt_range_value(cum_s[i], dirt, length)
 
 
-static func _dirt_range_value(s: float, ranges: Array, loop_len: float) -> float:
+static func _dirt_range_value(s: float, ranges: Array, loop_len: float, blend := DIRT_BLEND_M) -> float:
 	var best := 0.0
 	for r in ranges:
 		var a: float = r[0]
@@ -581,8 +581,26 @@ static func _dirt_range_value(s: float, ranges: Array, loop_len: float) -> float
 				inside = minf(into, span - into)
 		else:
 			inside = minf(s - a, b - s)
-		best = maxf(best, clampf(0.5 + inside / DIRT_BLEND_M, 0.0, 1.0))
+		best = maxf(best, clampf(0.5 + inside / blend, 0.0, 1.0))
 	return best
+
+
+## How the lap's surface is drawn at distance s (graphics only; the grip is
+## dirt_at's): x = dirt eased over DIRT_LOOK_BLEND_M (0.5 still marks the
+## real join, so the ragged edge the road shader draws from it sits where the
+## grip changes), y = dirt dragged out onto the tarmac by the tyres, fading
+## over DIRT_TRAIL_M after a stretch ends (race direction).
+const DIRT_LOOK_BLEND_M := 14.0
+const DIRT_TRAIL_M := 45.0
+func dirt_look_at(s: float) -> Vector2:
+	if dirt.is_empty():
+		return Vector2.ZERO
+	var trail := 0.0
+	for r in dirt:
+		var past := fposmod(s - float(r[1]), length)
+		if past < DIRT_TRAIL_M:
+			trail = maxf(trail, 1.0 - past / DIRT_TRAIL_M)
+	return Vector2(_dirt_range_value(s, dirt, length, DIRT_LOOK_BLEND_M), trail)
 
 
 func has_dirt() -> bool:
@@ -755,6 +773,12 @@ func joker_heading_at(d: float) -> float:
 ## How loose the joker's surface is d metres along it (0 tarmac .. 1 dirt).
 func joker_dirt_at(d: float) -> float:
 	return _dirt_range_value(d, joker_dirt, 0.0) if not joker_dirt.is_empty() else 0.0
+
+
+## How the joker's surface is drawn d metres along it (graphics only), eased
+## like dirt_look_at's x.
+func joker_dirt_look_at(d: float) -> float:
+	return _dirt_range_value(d, joker_dirt, 0.0, DIRT_LOOK_BLEND_M) if not joker_dirt.is_empty() else 0.0
 
 
 ## The lap distance a car d metres along the joker counts as: the joker's
