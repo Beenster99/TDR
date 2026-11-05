@@ -1,6 +1,6 @@
 class_name StrategistScreen
 extends Control
-## The pit wall: a full-screen strategist view over the race. Timing tower
+## The Strategist screen (the full pit wall): a full-screen view over the race. Timing tower
 ## with every car's sector and lap times, last-5-lap average, gaps,
 ## intervals, tyres and where a stop now would rejoin; weather radar and
 ## forecast (WeatherRadar: rain radar over a map with range rings, where
@@ -509,8 +509,8 @@ func _draw() -> void:
 func _draw_header(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 	var lead := sim.entries[sim.running_order[0]] if not sim.running_order.is_empty() else null
 	var lap := mini(lead.laps_done + 1, sim.settings.laps) if lead else 0
-	_text(r.position + Vector2(0, 26), "PIT WALL", 26, YELLOW)
-	_text(r.position + Vector2(150, 26), "%s   ·   Lap %d / %d   ·   %s" % [sim.track.display_name, lap,
+	_text(r.position + Vector2(0, 26), "STRATEGIST", 26, YELLOW)
+	_text(r.position + Vector2(185, 26), "%s   ·   Lap %d / %d   ·   %s" % [sim.track.display_name, lap,
 		sim.settings.laps, fmt_lap(sim.race_time).trim_suffix("0")], 18)
 	var f := tel.forecast
 	_text(r.position + Vector2(r.size.x - 580 - (150.0 if layout.customised() else 0.0), 26), "%02d:%02d   %s   Air %d°   Track %d°   Wet %d%%" % [
@@ -949,7 +949,7 @@ func _draw_ours(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 		YELLOW if ours else Color.WHITE, HORIZONTAL_ALIGNMENT_LEFT, r.size.x - 360)
 	if _can_plan():
 		_button(Rect2(r.end.x - 250, r.position.y + 5, 240, 30), "PIT STOP SETTINGS" + ("" if InputPrompt.pad else "  ⏎"), "plan", 14, YELLOW)
-	var half := r.size.x * 0.5
+	var half := r.size.x * 0.43     # setup on the left, the car on the right
 	# Left: the setup now.
 	var y := r.position.y + 54
 	_text(Vector2(x, y), "SETUP NOW", 11, DIM)
@@ -1008,38 +1008,60 @@ func _draw_ours(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 		_text(Vector2(x, y), ln[0], 12, DIM)
 		_text(Vector2(x + 76, y), ln[1], 13, ln[2], HORIZONTAL_ALIGNMENT_LEFT, half - 100)
 		y += 19
-	# Right: the four tyres, laid out like the car.
-	var tr := Rect2(r.position.x + half + 4, r.position.y + 42, half - 14, r.size.y - 52)
-	var cw := (tr.size.x - 10) * 0.5
-	var chh := (tr.size.y - 10) * 0.5
+	# Right: the car from above with its four tyres (coloured by temperature)
+	# and a card for each tyre beside it, like the pit stop settings.
+	var tr := Rect2(r.position.x + half + 4, r.position.y + 42, r.size.x - half - 14, r.size.y - 52)
+	var L := minf(tr.size.y - 32, 300.0)
+	var Wd := L * 0.36
+	var c := tr.get_center() + Vector2(0, 2)
+	var top := c.y - L * 0.5
+	var tw := Wd * 0.3
+	var th := L * 0.19
+	var wpos := [Vector2(c.x - Wd * 0.5 - tw + 4, top + L * 0.16), Vector2(c.x + Wd * 0.5 - 4, top + L * 0.16),
+		Vector2(c.x - Wd * 0.5 - tw + 4, top + L * 0.70), Vector2(c.x + Wd * 0.5 - 4, top + L * 0.70)]
+	PitPlanner.draw_car_top(self, font, c, L, Wd, top, def.colour, str(e.position))
+	var cw := minf((tr.size.x - Wd - 2 * tw - 36) * 0.5, 210.0)
+	var chh := minf((tr.size.y - 10) * 0.5, 140.0)
 	var wear_on := sim.settings.tyre_wear_enabled
 	for w in 4:
-		var cr := Rect2(tr.position + Vector2((w % 2) * (cw + 10), (w / 2) * (chh + 10)), Vector2(cw, chh))
-		draw_rect(cr, Color(1, 1, 1, 0.035))
-		draw_rect(cr, Color(1, 1, 1, 0.1), false, 1.0)
 		var tc: TyreCompound = sim.wheel_compounds[i][w]
 		var temp := car.tyre_temp[w]
 		var hot := tc.hot_psi(float(psis[w]), temp)
-		var cx := cr.position.x + 10
+		var tcol := _temp_colour(temp, tc)
 		var ccol := PitPlanner.compound_colour(tc.id)
-		_text(Vector2(cx, cr.position.y + 19), WHEELS[w], 14, Color.WHITE)
-		draw_circle(Vector2(cx + 38, cr.position.y + 14), 6.0, ccol)
-		_text(Vector2(cx + 50, cr.position.y + 19), tc.display_name, 12, ccol.lightened(0.2), HORIZONTAL_ALIGNMENT_LEFT, cw - 64)
-		var col_w := (cw - 20) / 3.0
-		var vy := cr.position.y + 19 + maxf((chh - 19 - 26) * 0.5, 22.0)
-		_reading(Vector2(cx, vy), col_w, "%d°" % roundi(temp), "temp", _temp_colour(temp, tc))
-		_reading(Vector2(cx + col_w, vy), col_w, "%.1f" % hot, "hot psi", psi_colour(hot, tc))
+		# The tyre on the car: tread in its temperature colour, compound stripes.
+		var tyre := Rect2(wpos[w], Vector2(tw, th))
+		PitPlanner.card_on(self, tyre, Color(0.06, 0.06, 0.07), 5.0)
+		PitPlanner.card_on(self, tyre.grow(-3), Color(tcol, 0.75), 4.0)
+		draw_rect(Rect2(tyre.position.x + 2, tyre.position.y + 5, 2, tyre.size.y - 10), ccol)
+		draw_rect(Rect2(tyre.end.x - 4, tyre.position.y + 5, 2, tyre.size.y - 10), ccol)
+		if car.puncture[w] > 0.5:
+			PitPlanner.card_on(self, tyre, Color(0, 0, 0, 0), 5.0, RED)
+		_text(Vector2(tyre.position.x, tyre.get_center().y + 5), WHEELS[w], 12, Color(0, 0, 0, 0.85), HORIZONTAL_ALIGNMENT_CENTER, tyre.size.x)
+		# Its card, with a line to the tyre.
+		var cx := tr.position.x if w % 2 == 0 else tr.end.x - cw
+		var cy := tr.position.y if w < 2 else tr.end.y - chh
+		var cr := Rect2(cx, cy, cw, chh)
+		var from := Vector2(cr.end.x if w % 2 == 0 else cr.position.x, clampf(tyre.get_center().y, cr.position.y + 10, cr.end.y - 10))
+		draw_line(from, Vector2(tyre.position.x if w % 2 == 0 else tyre.end.x, tyre.get_center().y), Color(1, 1, 1, 0.18), 1.0)
+		PitPlanner.card_on(self, cr, Color(1, 1, 1, 0.04), 6.0, Color(1, 1, 1, 0.1))
+		var kx := cr.position.x + 10
+		_text(Vector2(kx, cr.position.y + 19), WHEELS[w], 13, Color.WHITE)
+		draw_circle(Vector2(kx + 34, cr.position.y + 14), 5.0, ccol)
+		_text(Vector2(kx + 44, cr.position.y + 19), tc.display_name, 12, ccol.lightened(0.2), HORIZONTAL_ALIGNMENT_LEFT, cw - 58)
+		var col_w := (cw - 20) * 0.5
+		var vy := cr.position.y + 19 + maxf((chh - 19 - 44) * 0.5, 20.0)
+		_reading(Vector2(kx, vy), col_w, "%d°" % roundi(temp), "temp", tcol, 20)
+		_reading(Vector2(kx + col_w, vy), col_w, "%.1f" % hot, "hot psi", psi_colour(hot, tc), 20)
 		if wear_on:
 			var wt := clampf(float(car.tyre_wear[w]), 0.0, 1.0)
-			_reading(Vector2(cx + col_w * 2, vy), col_w, "%d%%" % roundi((1.0 - wt) * 100.0), "left",
-				wear_colour(wt) if wt > 0.45 else Color.WHITE)
-			var bar := Rect2(cx, cr.end.y - 12, cw - 20, 5)
+			var wcol := wear_colour(wt) if wt > 0.45 else Color(0.86, 0.89, 0.94)
+			var bar := Rect2(kx, cr.end.y - 12, cw - 20, 5)
+			_text(Vector2(kx, bar.position.y - 5), "%d%% left" % roundi((1.0 - wt) * 100.0), 12, wcol if wt > 0.45 else Color.WHITE)
 			draw_rect(bar, Color(1, 1, 1, 0.1))
-			draw_rect(Rect2(bar.position, Vector2(bar.size.x * (1.0 - wt), bar.size.y)), wear_colour(wt) if wt > 0.45 else Color(0.86, 0.89, 0.94))
+			draw_rect(Rect2(bar.position, Vector2(bar.size.x * (1.0 - wt), bar.size.y)), wcol)
 		else:
-			_reading(Vector2(cx + col_w * 2, vy), col_w, "-", "wear off", DIM)
-		if car.puncture[w] > 0.5:
-			_chip(cr.end.x - 8, cr.position.y + 14, "PUNCTURE", RED)
+			_text(Vector2(kx, cr.end.y - 10), "wear off", 11, DIM)
 
 
 func _draw_car(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:

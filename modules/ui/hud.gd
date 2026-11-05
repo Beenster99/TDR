@@ -48,7 +48,7 @@ const ITEMS := [
 	["fuel", "Fuel"],
 	["sectors", "Sectors and gaps"],
 	["speed", "Speed, gear and revs"],
-	["hint", "Pit wall hint"],
+	["hint", "Strategist hint"],
 	["pitguide", "Pit lane guide"],
 	["lights", "Start lights"],
 	["flags", "Flags and race control"],
@@ -438,7 +438,7 @@ func _draw_item(id: String, me: int, sz: Vector2) -> void:
 				_placeholder(sz, "Fuel", "shows in races with fuel on")
 		"sectors": _draw_sectors_and_gaps(me)
 		"speed": _draw_speed(me)
-		"hint": _text(Vector2(0, 14), InputPrompt.key("strategy_screen") + "  Pit wall", 13, Color(1, 1, 1, 0.45), HORIZONTAL_ALIGNMENT_CENTER, sz.x)
+		"hint": _text(Vector2(0, 14), InputPrompt.key("strategy_screen") + "  Strategist", 13, Color(1, 1, 1, 0.45), HORIZONTAL_ALIGNMENT_CENTER, sz.x)
 		"lights": _draw_lights()
 		"pitguide": _draw_pit_guide(me)
 		"flags": _draw_race_control(me)

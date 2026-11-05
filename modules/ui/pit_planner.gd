@@ -683,7 +683,29 @@ func _draw_car_plan(r: Rect2) -> void:
 ## The car's body from above in its colour: nose, arches, glasshouse,
 ## splitter and rear wing (yellow when the plan changes them).
 func _draw_car_body(c: Vector2, L: float, Wd: float, top: float, now: Dictionary) -> void:
-	var body := session.sim.defs[car].colour
+	var hl := []
+	for key in ["wing_front", "wing_rear"]:
+		hl.append(absf(float(draft[key]) - float(now[key])) > 1e-4)
+	draw_car_top(self, font, c, L, Wd, top, session.sim.defs[car].colour, str(session.sim.entries[car].position), hl[0], hl[1])
+
+
+## A rounded card on any canvas item.
+static func card_on(ci: CanvasItem, r: Rect2, bg: Color, radius := 6.0, border := Color(0, 0, 0, 0)) -> void:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = bg
+	sb.set_corner_radius_all(int(radius))
+	if border.a > 0.0:
+		sb.border_color = border
+		sb.set_border_width_all(1)
+	sb.anti_aliasing = true
+	ci.draw_style_box(sb, r)
+
+
+## The car from above, nose up, L long and Wd wide from top: body in its
+## colour, bonnet vents, glasshouse, the roof number, splitter and rear wing
+## (yellow when hl_front / hl_rear). Shared with the strategist screen.
+static func draw_car_top(ci: CanvasItem, font: Font, c: Vector2, L: float, Wd: float, top: float, body: Color, number: String,
+		hl_front := false, hl_rear := false) -> void:
 	# Half-width along the car (0 nose .. 1 tail): arches front and rear.
 	var prof := [[0.0, 0.55], [0.04, 0.80], [0.10, 0.95], [0.20, 1.0], [0.30, 0.96], [0.45, 0.92], [0.60, 0.94],
 		[0.72, 1.0], [0.85, 0.99], [0.95, 0.93], [1.0, 0.82]]
@@ -696,20 +718,20 @@ func _draw_car_body(c: Vector2, L: float, Wd: float, top: float, now: Dictionary
 		right.append(Vector2(c.x + hw, y))
 	right.reverse()
 	var pts := left + right
-	draw_colored_polygon(pts, Color(0, 0, 0, 0.35))   # shadow
+	ci.draw_colored_polygon(pts, Color(0, 0, 0, 0.35))   # shadow
 	var shade := PackedVector2Array()
 	for q in pts:
 		shade.append(q + Vector2(4, 5))
-	draw_colored_polygon(shade, Color(0, 0, 0, 0.3))
-	draw_colored_polygon(pts, body.darkened(0.25))
+	ci.draw_colored_polygon(shade, Color(0, 0, 0, 0.3))
+	ci.draw_colored_polygon(pts, body.darkened(0.25))
 	var outline := pts.duplicate()
 	outline.append(pts[0])
-	draw_polyline(outline, body.lightened(0.35), 2.0, true)
+	ci.draw_polyline(outline, body.lightened(0.35), 2.0, true)
 	# Bonnet vents and centre line.
-	draw_line(Vector2(c.x, top + L * 0.05), Vector2(c.x, top + L * 0.30), Color(body.lightened(0.2), 0.5), 1.5)
+	ci.draw_line(Vector2(c.x, top + L * 0.05), Vector2(c.x, top + L * 0.30), Color(body.lightened(0.2), 0.5), 1.5)
 	for k in 2:
 		var sx := -1.0 if k == 0 else 1.0
-		_card(Rect2(c.x + sx * Wd * 0.2 - Wd * 0.06, top + L * 0.2, Wd * 0.12, L * 0.035), Color(0, 0, 0, 0.22), Color(0, 0, 0, 0), 3.0)
+		card_on(ci, Rect2(c.x + sx * Wd * 0.2 - Wd * 0.06, top + L * 0.2, Wd * 0.12, L * 0.035), Color(0, 0, 0, 0.22), 3.0)
 	# Glasshouse: windscreen, roof, rear window.
 	var g0 := top + L * 0.34
 	var g1 := top + L * 0.43
@@ -717,26 +739,24 @@ func _draw_car_body(c: Vector2, L: float, Wd: float, top: float, now: Dictionary
 	var g3 := top + L * 0.71
 	var ws := PackedVector2Array([Vector2(c.x - Wd * 0.30, g0), Vector2(c.x + Wd * 0.30, g0),
 		Vector2(c.x + Wd * 0.36, g1), Vector2(c.x - Wd * 0.36, g1)])
-	draw_colored_polygon(ws, Color(0.12, 0.18, 0.24))
-	draw_rect(Rect2(c.x - Wd * 0.36, g1, Wd * 0.72, g2 - g1), body.darkened(0.45))
+	ci.draw_colored_polygon(ws, Color(0.12, 0.18, 0.24))
+	ci.draw_rect(Rect2(c.x - Wd * 0.36, g1, Wd * 0.72, g2 - g1), body.darkened(0.45))
 	var rw := PackedVector2Array([Vector2(c.x - Wd * 0.36, g2), Vector2(c.x + Wd * 0.36, g2),
 		Vector2(c.x + Wd * 0.28, g3), Vector2(c.x - Wd * 0.28, g3)])
-	draw_colored_polygon(rw, Color(0.12, 0.18, 0.24))
+	ci.draw_colored_polygon(rw, Color(0.12, 0.18, 0.24))
 	# Roof number disc.
-	draw_circle(Vector2(c.x, (g1 + g2) * 0.5), Wd * 0.17, Color(1, 1, 1, 0.9))
-	_text(Vector2(c.x - Wd * 0.17, (g1 + g2) * 0.5 + 6), str(session.sim.entries[car].position), 16, Color(0.1, 0.1, 0.1),
-		HORIZONTAL_ALIGNMENT_CENTER, Wd * 0.34)
+	var fs := clampi(int(Wd * 0.15), 10, 16)
+	ci.draw_circle(Vector2(c.x, (g1 + g2) * 0.5), Wd * 0.17, Color(1, 1, 1, 0.9))
+	ci.draw_string(font, Vector2(c.x - Wd * 0.17, (g1 + g2) * 0.5 + fs * 0.38), number, HORIZONTAL_ALIGNMENT_CENTER, Wd * 0.34, fs,
+		Color(0.1, 0.1, 0.1))
 	# Splitter and rear wing (with end plates).
 	var sp := Rect2(c.x - Wd * 0.52, top - 9, Wd * 1.04, 7)
 	var wg := Rect2(c.x - Wd * 0.56, top + L + 4, Wd * 1.12, 12)
-	for part in [[sp, "wing_front"], [wg, "wing_rear"]]:
-		var key: String = part[1]
-		var changed := absf(float(draft[key]) - float(now[key])) > 1e-4
-		var pr: Rect2 = part[0]
-		_card(pr, YELLOW if changed else Color(0.16, 0.18, 0.2), Color(1, 1, 1, 0.35), 2.0)
+	card_on(ci, sp, YELLOW if hl_front else Color(0.16, 0.18, 0.2), 2.0, Color(1, 1, 1, 0.35))
+	card_on(ci, wg, YELLOW if hl_rear else Color(0.16, 0.18, 0.2), 2.0, Color(1, 1, 1, 0.35))
 	for sx in [-1.0, 1.0]:
-		draw_rect(Rect2(c.x + sx * Wd * 0.56 - (4.0 if sx > 0 else 0.0), top + L - 2, 4, 20), Color(0.1, 0.1, 0.12))
-		draw_line(Vector2(c.x + sx * Wd * 0.2, top + L - 6), Vector2(c.x + sx * Wd * 0.2, top + L + 4), Color(0.1, 0.1, 0.12), 3.0)
+		ci.draw_rect(Rect2(c.x + sx * Wd * 0.56 - (4.0 if sx > 0 else 0.0), top + L - 2, 4, 20), Color(0.1, 0.1, 0.12))
+		ci.draw_line(Vector2(c.x + sx * Wd * 0.2, top + L - 6), Vector2(c.x + sx * Wd * 0.2, top + L + 4), Color(0.1, 0.1, 0.12), 3.0)
 
 
 ## A splitter or wing: a segmented scale from least to most downforce, the
