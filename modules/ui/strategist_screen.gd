@@ -1,6 +1,6 @@
 class_name StrategistScreen
 extends Control
-## The pit wall: a full-screen strategist view over the race. Timing tower
+## The Strategist screen (the full pit wall): a full-screen view over the race. Timing tower
 ## with every car's sector and lap times, last-5-lap average, gaps,
 ## intervals, tyres and where a stop now would rejoin; weather radar and
 ## forecast (WeatherRadar: rain radar over a map with range rings, where
@@ -8,14 +8,22 @@ extends Control
 ## the selected car's details and pit window; and the feed of
 ## other teams' radio and strategy calls.
 ##
-## Mouse and keyboard first: click a car in the timing to look at it, click
-## ◀ ▶ on the feed (or roll the wheel over it) to filter it, "Plan the stop"
-## opens the PitPlanner for our car; ↑ ↓ choose a car, ← → filter, Enter
-## plans the stop, P or Esc closes. A controller works too (D-pad, B).
-## Pit wall players (not driving) can watch the selected car's onboard
-## camera (OnboardCamera) above the feed: Y / C switches front, rear, off.
-## Drawn immediate-mode at 1600x900 and scaled by
-## the window's stretch, so it stays sharp at 4K.
+## Everything fits on one screen, at a glance: the drivers table (timing /
+## pace) top left with the onboard camera of the selected car and the feed
+## under it; down the right the weather radar, OUR CAR (the setup the car
+## runs now and each tyre's temperature, hot pressure and wear) and the
+## selected car's details and pit window.
+##
+## Mouse and keyboard first: click a car in the timing to look at it (and
+## put the camera on it), click ◀ ▶ on the feed (or roll the wheel over it)
+## to filter it, "PIT STOP SETTINGS" opens the PitPlanner dialog in the
+## middle for our car (change everything the crew can do at the stop, Send to
+## driver, or Cancel at any time); ↑ ↓ choose a car, ← → filter, Enter opens
+## the pit stop settings, P or Esc closes. A controller works too (D-pad, B).
+## Y / C switches the onboard camera front, rear, off.
+## Drawn immediate-mode in a canvas UI_SCALE times the 1600x900 one (smaller
+## text, so it all fits) and scaled by the window's stretch, so it stays
+## sharp at 4K.
 ##
 ## The timing panel has two views, TIMING and PACE (click the tab or press
 ## Tab). PACE is one table of every car in our class with its last lap, its
@@ -27,11 +35,11 @@ extends Control
 ## down on us) carry a blue lap-down chip, with the next ones up the road
 ## listed under the pace table.
 ##
-## The panels (timing, weather radar, selected car, feed and the onboard
-## picture) move: drag a title bar (or the picture) to move one, the grip in
+## The panels (timing, weather radar, our car, selected car, feed and the
+## onboard picture) move: drag a title bar (or the picture) to move one, the grip in
 ## its bottom right corner to zoom it (text and all), its right or bottom
 ## edge to make it wider or taller (PanelLayout). Where they were left
-## is saved in GameData.prefs["pit_wall_layout"]["full"]. "Reset layout" in
+## is saved in GameData.prefs["pit_wall_layout"]["wall"]. "Reset layout" in
 ## the header puts them back.
 
 const FILTERS := [["All", []], ["Radio", ["radio"]], ["Strategy", ["strategy"]], ["Pit", ["pit"]],
@@ -49,6 +57,15 @@ const BG := Color(0.03, 0.05, 0.08, 0.98)
 const PANEL := Color(1, 1, 1, 0.05)
 const ORANGE := Color(1.0, 0.6, 0.25)       ## the car we're racing
 const BACKMARKER := Color(0.35, 0.6, 1.0)   ## a lap or more down on us
+## The screen draws at this size of the usual 1600x900 canvas, so its text is
+## smaller and everything fits on one screen.
+const UI_SCALE := 0.8
+## Setup lines in OUR CAR, two columns: [key, short label].
+const SETUP_COLS := [
+	[["wing_front", "Front splitter"], ["wing_rear", "Rear wing"], ["ride_front", "Ride height F"], ["ride_rear", "Ride height R"],
+		["spring_front", "Springs F"], ["spring_rear", "Springs R"], ["arb_front", "Anti-roll bar F"], ["arb_rear", "Anti-roll bar R"]],
+	[["camber_front", "Camber F"], ["camber_rear", "Camber R"], ["toe_front", "Toe F"], ["toe_rear", "Toe R"],
+		["brake_bias", "Brake bias"], ["diff_power", "Diff on power"], ["diff_coast", "Diff off power"], ["final_drive", "Gearing"]]]
 const VIEW_TIMING := 0
 const VIEW_PACE := 1
 ## The PACE table's columns: [key, heading, x (of a 1040 px table), sortable].
@@ -71,9 +88,9 @@ var _hits: Array = []                ## [Rect2, action, arg] from the last draw
 var _hover := Vector2(-1, -1)
 ## Onboard camera for the selected car (set by the race scene; null = none).
 var onboard: OnboardCamera
-var cam_mode := 0               ## 0 off, 1 front, 2 rear
+var cam_mode := 1               ## 0 off, 1 front, 2 rear
 ## Where the player has moved the panels.
-var layout := PanelLayout.new("full")
+var layout := PanelLayout.new("wall")
 var _cursor := Input.CURSOR_ARROW
 ## The weather radar panel (zoom, forecast loop).
 var radar := WeatherRadar.new()
@@ -89,7 +106,7 @@ var pace_desc := false
 func setup(p_session: RaceSession) -> void:
 	session = p_session
 	font = ThemeDB.fallback_font
-	set_anchors_preset(PRESET_FULL_RECT)
+	scale = Vector2.ONE * UI_SCALE
 	mouse_filter = MOUSE_FILTER_STOP
 	visible = false
 	selected = _our_car() if _our_car() >= 0 else 0
@@ -99,9 +116,10 @@ func setup(p_session: RaceSession) -> void:
 	_track_pts.append(t.points[0])
 	layout.spec("timing", Vector2(700, 300), Vector2(1400, 4000))
 	layout.spec("weather", Vector2(300, 200), Vector2(1600, 900))
-	layout.spec("car", Vector2(340, 236), Vector2(900, 420))
+	layout.spec("ours", Vector2(560, 300), Vector2(1400, 600))
+	layout.spec("car", Vector2(340, 236), Vector2(1400, 600))
 	layout.spec("feed", Vector2(280, 120))
-	layout.spec("pip", Vector2(240, 135), Vector2(1120, 630), 16.0 / 9.0, true)
+	layout.spec("pip", Vector2(240, 135), Vector2(1400, 788), 16.0 / 9.0, true)
 	var gd := get_node_or_null("/root/GameData")
 	if gd:
 		layout.load_from(gd.prefs)
@@ -129,9 +147,18 @@ func toggle() -> void:
 		open()
 
 
+## A point on the window (the canvas the events come in) in this screen's own
+## smaller canvas.
+func to_local_pos(p: Vector2) -> Vector2:
+	return get_global_transform_with_canvas().affine_inverse() * p
+
+
 func _input(event: InputEvent) -> void:
 	if not visible or (planner and planner.visible):
 		return
+	if event is InputEventMouse:
+		event = event.duplicate()
+		event.position = to_local_pos(event.position)
 	if event is InputEventMouseMotion:
 		_hover = event.position
 		layout.motion(event.position, event.button_mask & MOUSE_BUTTON_MASK_LEFT != 0)
@@ -215,6 +242,9 @@ func _click(pos: Vector2, button: int) -> void:
 			"plan":
 				if dir == 1:
 					open_planner.emit()
+			"cam":
+				if dir == 1 and _cam_allowed():
+					cam_mode = (cam_mode + 1) % 3
 			"view":
 				if absi(dir) == 1:
 					view = int(h[2])
@@ -264,7 +294,10 @@ func _notification(what: int) -> void:
 func _process(delta: float) -> void:
 	if not visible:
 		return
-	size = get_viewport_rect().size
+	position = Vector2.ZERO
+	size = get_viewport_rect().size / UI_SCALE
+	if planner and not planner.plan_sent.is_connected(_on_plan_sent):
+		planner.plan_sent.connect(_on_plan_sent)
 	radar.process(delta)
 	_note_time = maxf(_note_time - delta, 0.0)
 	if _pip_on():
@@ -272,9 +305,17 @@ func _process(delta: float) -> void:
 	queue_redraw()
 
 
-## The onboard camera is for the pit wall (players not driving).
+## A line on the screen once the pit stop settings went to the driver.
+func _on_plan_sent(_msg: Dictionary) -> void:
+	if not visible:
+		return
+	_note = "Pit stop settings sent to the driver" if planner.car != session.local_car else "Your next stop is set"
+	_note_time = 4.0
+
+
+## The onboard camera on any car (not on a machine with no 3D view).
 func _cam_allowed() -> bool:
-	return onboard != null and session.local_car < 0
+	return onboard != null
 
 
 func _pip_on() -> bool:
@@ -406,34 +447,42 @@ func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, vp), BG)
 	var sim := session.sim
 	var tel := session.telemetry
-	var table_w := clampf(vp.x * 0.66, 900.0, 1080.0)
 	_draw_header(Rect2(16, 10, vp.x - 32, 40), sim, tel)
-	layout.begin(Rect2(8, 54, vp.x - 16, vp.y - 54 - 26))
-	# As designed: timing on the left; radar, selected car, then the picture
-	# and the feed down the right. A moved panel goes where it was left, and
+	var top := 54.0
+	var bottom := vp.y - 28.0
+	var ch := bottom - top
+	layout.begin(Rect2(8, top - 4, vp.x - 16, ch + 8))
+	# As designed, all on one screen: the drivers table top left with the
+	# onboard camera and the feed under it; the weather radar, our car and the
+	# selected car down the right. A moved panel goes where it was left, and
 	# panels drawn later sit on top.
-	var d := {"timing": Rect2(16, 58, table_w, vp.y - 58 - 34)}
-	var rx := 16 + table_w + 14
-	var rw := vp.x - rx - 16
-	var radar_h := minf(rw * 0.62, 280.0)
-	d["weather"] = Rect2(rx, 58, rw, radar_h)
-	var car_h := 258.0 if sim.settings.tyre_wear_enabled else 236.0
-	d["car"] = Rect2(rx, 58 + radar_h + 10, rw, car_h)
-	var fy := 58 + radar_h + 10 + car_h + 10
-	# The picture takes the feed's place (the feed is back when it's off).
-	var ph := minf(rw * 9.0 / 16.0, vp.y - fy - 40)
-	_pip_at = layout.rect_of("pip", Rect2(rx + (rw - ph * 16.0 / 9.0) * 0.5, fy + 3, ph * 16.0 / 9.0, ph))
-	if _pip_on() and not layout.is_moved("pip"):
-		fy += _pip_at.size.y + 12
-	d["feed"] = Rect2(rx, fy, rw, vp.y - fy - 34)
+	var lw := clampf(vp.x * 0.5, 900.0, 1240.0)
+	var tim_h := roundf(ch * 0.67)
+	var d := {"timing": Rect2(12, top, lw, tim_h)}
+	var by := top + tim_h + 10.0
+	var bh := bottom - by
+	var cam_w := minf(bh * 16.0 / 9.0, lw * 0.62)
+	_pip_at = layout.rect_of("pip", Rect2(12, by, cam_w, cam_w * 9.0 / 16.0))
+	d["feed"] = Rect2(12 + cam_w + 10, by, lw - cam_w - 10, bh)
+	var rx := 12.0 + lw + 12.0
+	var rw := vp.x - rx - 12.0
+	var radar_h := clampf(ch * 0.29, 220.0, 340.0)
+	d["weather"] = Rect2(rx, top, rw, radar_h)
+	var ours_h := clampf(ch * 0.355, 300.0, 400.0)
+	d["ours"] = Rect2(rx, top + radar_h + 10, rw, ours_h)
+	var cy := top + radar_h + ours_h + 20
+	d["car"] = Rect2(rx, cy, rw, bottom - cy)
 	var draws := {"timing": func(r: Rect2): _draw_timing(r, sim, tel), "weather": func(r: Rect2): _draw_weather(r, tel),
-		"car": func(r: Rect2): _draw_car(r, sim, tel), "feed": func(r: Rect2): _draw_feed(r, tel)}
-	for id in layout.draw_order(["timing", "weather", "car", "feed"]):
+		"ours": func(r: Rect2): _draw_ours(r, sim, tel), "car": func(r: Rect2): _draw_car(r, sim, tel),
+		"feed": func(r: Rect2): _draw_feed(r, tel)}
+	for id in layout.draw_order(["timing", "weather", "ours", "car", "feed"]):
 		_in_panel(id, layout.place(id, d[id]), draws[id])
+	layout.place("pip", _pip_at)
+	_hits.append([_pip_at, "pip", null])
 	if _pip_on():
-		layout.place("pip", _pip_at)
-		_hits.append([_pip_at, "pip", null])
 		OnboardPip.draw(self, font, onboard, _pip_at, session, selected, cam_mode == 2)
+	else:
+		_draw_camera_off(_pip_at)
 	layout.draw_handles(self, _hover, font)
 	if layout.customised():
 		var rb := Rect2(vp.x - 196, 14, 132, 32)
@@ -448,7 +497,7 @@ func _draw() -> void:
 		if session.local_car >= 0 and session.sim.pits.enabled:
 			keys += "    %s / %s tyres to change" % [InputPrompt.button(JOY_BUTTON_LEFT_SHOULDER), InputPrompt.button(JOY_BUTTON_RIGHT_SHOULDER)]
 	if _can_plan() and not InputPrompt.pad:
-		keys += "    Enter plan the stop"
+		keys += "    Enter pit stop settings"
 	if _cam_allowed():
 		keys += "    %s onboard camera: %s" % [InputPrompt.key("camera_toggle"), ["off", "front", "rear"][cam_mode]]
 	_text(Vector2(16, vp.y - 12), keys + "    The race keeps running", 13, DIM)
@@ -460,8 +509,8 @@ func _draw() -> void:
 func _draw_header(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 	var lead := sim.entries[sim.running_order[0]] if not sim.running_order.is_empty() else null
 	var lap := mini(lead.laps_done + 1, sim.settings.laps) if lead else 0
-	_text(r.position + Vector2(0, 26), "PIT WALL", 26, YELLOW)
-	_text(r.position + Vector2(150, 26), "%s   ·   Lap %d / %d   ·   %s" % [sim.track.display_name, lap,
+	_text(r.position + Vector2(0, 26), "STRATEGIST", 26, YELLOW)
+	_text(r.position + Vector2(185, 26), "%s   ·   Lap %d / %d   ·   %s" % [sim.track.display_name, lap,
 		sim.settings.laps, fmt_lap(sim.race_time).trim_suffix("0")], 18)
 	var f := tel.forecast
 	_text(r.position + Vector2(r.size.x - 580 - (150.0 if layout.customised() else 0.0), 26), "%02d:%02d   %s   Air %d°   Track %d°   Wet %d%%" % [
@@ -564,8 +613,8 @@ func _draw_timing(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 	for key in cols:
 		cols[key] = r.position.x + cols[key] * k
 	var n := sim.running_order.size()
-	var rh := clampf((r.size.y - 34) / maxf(n, 1), 18.0, 28.0)
-	var fs := 15 if rh >= 22.0 else 13
+	var rh := clampf((r.size.y - 34) / maxf(n, 1), 14.0, 28.0)
+	var fs := 15 if rh >= 22.0 else (13 if rh >= 17.0 else 11)
 	var hy := r.position.y + 22
 	for h in [["pos", "P"], ["drv", "DRIVER"], ["car", "CAR"], ["last", "LAST"], ["avg3", "AVG 3"],
 			["avg5", "AVG 5"], ["best", "BEST"], ["gap", "GAP"], ["int", "INT"], ["tyre", "TYRES"], ["wear", "TYRE LEFT" if wear_on else ""], ["pit", "STOP NOW"]]:
@@ -798,8 +847,8 @@ func _pace_table(r: Rect2, ranks: Dictionary, me: int, riv: int) -> void:
 	if list.is_empty():
 		_text(Vector2(r.position.x, r.position.y + 50), "no laps yet", 14, DIM)
 		return
-	var rh := clampf((r.size.y - 34) / maxf(list.size(), 1), 17.0, 28.0)
-	var fs := 15 if rh >= 23.0 else 13
+	var rh := clampf((r.size.y - 34) / maxf(list.size(), 1), 14.0, 28.0)
+	var fs := 15 if rh >= 23.0 else (13 if rh >= 17.0 else 11)
 	for p in list.size():
 		var i: int = list[p]
 		var y := r.position.y + 30 + p * rh
@@ -852,16 +901,177 @@ func _draw_weather(r: Rect2, tel: RaceTelemetry) -> void:
 	radar.draw(self, font, r, tel.forecast, _track_pts, session.sim.track.short_name, _hover, _hits)
 
 
+## Where the onboard picture goes while the camera is off (or there is none).
+func _draw_camera_off(r: Rect2) -> void:
+	_panel(r, "ONBOARD CAMERA")
+	if not _cam_allowed():
+		_text(Vector2(r.position.x, r.get_center().y + 5), "No onboard camera on this screen", 14, DIM, HORIZONTAL_ALIGNMENT_CENTER, r.size.x)
+		return
+	_text(Vector2(r.position.x, r.get_center().y - 14), "Camera off", 15, DIM, HORIZONTAL_ALIGNMENT_CENTER, r.size.x)
+	_button(Rect2(r.get_center().x - 110, r.get_center().y + 2, 220, 30), "TURN ON  (%s)" % InputPrompt.key("camera_toggle"), "cam", 14)
+
+
+## A temperature, pressure or wear reading in a tyre card: big value, small label.
+func _reading(at: Vector2, w: float, value: String, label: String, col: Color, fs := 22) -> void:
+	_text(at, value, fs, col, HORIZONTAL_ALIGNMENT_LEFT, w)
+	_text(at + Vector2(0, 15), label, 11, DIM, HORIZONTAL_ALIGNMENT_LEFT, w)
+
+
+## Colour for a hot tyre pressure against the compound's best one: green in
+## the window, blue under it, orange and red over it.
+static func psi_colour(hot: float, tc: TyreCompound) -> Color:
+	var x := (hot - tc.optimal_hot_psi) / maxf(tc.pressure_window_psi, 0.1)
+	if absf(x) < 0.34:
+		return GREEN
+	if x < 0.0:
+		return Color(0.45, 0.65, 1.0) if x < -1.0 else Color(0.6, 0.85, 1.0)
+	return RED if x > 1.0 else Color(1.0, 0.7, 0.35)
+
+
+## Our car: the setup it runs now (the settings a stop can change in yellow)
+## and each tyre's compound, temperature, hot and cold pressure and wear, with
+## the PIT STOP SETTINGS button that opens the dialog. A screen with no car of
+## its own shows the selected car.
+func _draw_ours(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
+	var i := _our_car()
+	var ours := i >= 0
+	if not ours:
+		i = selected
+	if i < 0 or i >= sim.car_count():
+		return
+	_panel(r, "OUR CAR" if ours else "CAR")
+	var e := sim.entries[i]
+	var def := sim.defs[i]
+	var car := sim.cars[i]
+	var x := r.position.x + 10
+	draw_rect(Rect2(x + 64, r.position.y + 8, 5, 16), def.colour)
+	_text(Vector2(x + 76, r.position.y + 21), "P%d  %s  ·  %s" % [e.position, e.at_wheel(), def.display_name], 15,
+		YELLOW if ours else Color.WHITE, HORIZONTAL_ALIGNMENT_LEFT, r.size.x - 360)
+	if _can_plan():
+		_button(Rect2(r.end.x - 250, r.position.y + 5, 240, 30), "PIT STOP SETTINGS" + ("" if InputPrompt.pad else "  ⏎"), "plan", 14, YELLOW)
+	var half := r.size.x * 0.43     # setup on the left, the car on the right
+	# Left: the setup now.
+	var y := r.position.y + 54
+	_text(Vector2(x, y), "SETUP NOW", 11, DIM)
+	if sim.settings.tuning_enabled:
+		var tw := font.get_string_size("SETUP NOW", HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
+		_text(Vector2(x + tw + 12, y), "yellow: changes at a stop", 11, Color(YELLOW, 0.7))
+	var full := CarSetup.complete(def, def.tuning)
+	full.merge(sim.pits.current_setup(i), true)
+	var colw := (half - 24) * 0.5
+	for c in SETUP_COLS.size():
+		var cx := x + c * (colw + 8)
+		var ly := y + 20
+		for item in SETUP_COLS[c]:
+			var key: String = item[0]
+			var v := "fixed" if not CarSetup.adjustable(def, key) else CarSetup.format_value(def, key, float(full[key]))
+			if key == "final_drive":
+				v = "%.2f" % float(full[key])
+			var pit_key := sim.settings.tuning_enabled and key in PitRules.PIT_SETUP_KEYS and CarSetup.adjustable(def, key)
+			_text(Vector2(cx, ly), item[1], 12, DIM, HORIZONTAL_ALIGNMENT_LEFT, colw * 0.55)
+			_text(Vector2(cx + colw * 0.56, ly), v, 13, YELLOW if pit_key else Color.WHITE, HORIZONTAL_ALIGNMENT_LEFT, colw * 0.44)
+			ly += 19
+	y += 20 + 8 * 19 + 6
+	draw_line(Vector2(x, y - 12), Vector2(x + half - 20, y - 12), Color(1, 1, 1, 0.1))
+	var lines := []
+	if sim.settings.fuel_enabled:
+		var laps := sim.pits.fuel_laps(i)
+		lines.append(["Fuel", "%.1f L on board  ·  %s" % [car.fuel_l, "%.1f laps" % laps if laps < 99.0 else "-"],
+			RED if laps < 1.5 else Color.WHITE])
+	var psis := sim.pits.wheel_psi(i)
+	var cold := PackedStringArray()
+	for w in 4:
+		cold.append("%.1f" % (sim.wheel_compounds[i][w].cold_psi + float(psis[w])))
+	lines.append(["Cold psi", "FL %s  FR %s  ·  RL %s  RR %s" % [cold[0], cold[1], cold[2], cold[3]], Color.WHITE])
+	var tc0: TyreCompound = sim.wheel_compounds[i][0]
+	lines.append(["Hot psi", "best %.1f, green within ±%.1f" % [tc0.optimal_hot_psi, tc0.pressure_window_psi * 0.34], DIM])
+	if sim.damage_level != CarDamage.Level.OFF:
+		var rep := CarDamage.report(car)
+		var hurt := PackedStringArray()
+		for part in ["aero", "suspension", "alignment", "engine", "gearbox"]:
+			if float(rep[part]) > 0.02:
+				hurt.append("%s %d%%" % [part, roundi(float(rep[part]) * 100.0)])
+		var punct := (rep["punctures"] as Array).count(true)
+		if punct > 0:
+			hurt.append("%d puncture%s" % [punct, "" if punct == 1 else "s"])
+		lines.append(["Damage", "none" if hurt.is_empty() else ", ".join(hurt), GREEN if hurt.is_empty() else Color(1, 0.6, 0.4)])
+	if ours and sim.pits.enabled:
+		var plan: Dictionary = e.pit["plan"]
+		var work := sim.pits.service_for(i, plan)
+		var nxt := "tyres " + RaceHud.stop_tyres_text(sim, i, plan, work)
+		if not session.pending_swap(i).is_empty():
+			nxt += ", driver change"
+		lines.append(["Next stop", nxt, Color(1.0, 0.75, 0.4)])
+	for ln in lines:
+		if y > r.end.y - 6:
+			break
+		_text(Vector2(x, y), ln[0], 12, DIM)
+		_text(Vector2(x + 76, y), ln[1], 13, ln[2], HORIZONTAL_ALIGNMENT_LEFT, half - 100)
+		y += 19
+	# Right: the car from above with its four tyres (coloured by temperature)
+	# and a card for each tyre beside it, like the pit stop settings.
+	var tr := Rect2(r.position.x + half + 4, r.position.y + 42, r.size.x - half - 14, r.size.y - 52)
+	var L := minf(tr.size.y - 32, 300.0)
+	var Wd := L * 0.36
+	var c := tr.get_center() + Vector2(0, 2)
+	var top := c.y - L * 0.5
+	var tw := Wd * 0.3
+	var th := L * 0.19
+	var wpos := [Vector2(c.x - Wd * 0.5 - tw + 4, top + L * 0.16), Vector2(c.x + Wd * 0.5 - 4, top + L * 0.16),
+		Vector2(c.x - Wd * 0.5 - tw + 4, top + L * 0.70), Vector2(c.x + Wd * 0.5 - 4, top + L * 0.70)]
+	PitPlanner.draw_car_top(self, font, c, L, Wd, top, def.colour, str(e.position))
+	var cw := minf((tr.size.x - Wd - 2 * tw - 36) * 0.5, 210.0)
+	var chh := minf((tr.size.y - 10) * 0.5, 140.0)
+	var wear_on := sim.settings.tyre_wear_enabled
+	for w in 4:
+		var tc: TyreCompound = sim.wheel_compounds[i][w]
+		var temp := car.tyre_temp[w]
+		var hot := tc.hot_psi(float(psis[w]), temp)
+		var tcol := _temp_colour(temp, tc)
+		var ccol := PitPlanner.compound_colour(tc.id)
+		# The tyre on the car: tread in its temperature colour, compound stripes.
+		var tyre := Rect2(wpos[w], Vector2(tw, th))
+		PitPlanner.card_on(self, tyre, Color(0.06, 0.06, 0.07), 5.0)
+		PitPlanner.card_on(self, tyre.grow(-3), Color(tcol, 0.75), 4.0)
+		draw_rect(Rect2(tyre.position.x + 2, tyre.position.y + 5, 2, tyre.size.y - 10), ccol)
+		draw_rect(Rect2(tyre.end.x - 4, tyre.position.y + 5, 2, tyre.size.y - 10), ccol)
+		if car.puncture[w] > 0.5:
+			PitPlanner.card_on(self, tyre, Color(0, 0, 0, 0), 5.0, RED)
+		_text(Vector2(tyre.position.x, tyre.get_center().y + 5), WHEELS[w], 12, Color(0, 0, 0, 0.85), HORIZONTAL_ALIGNMENT_CENTER, tyre.size.x)
+		# Its card, with a line to the tyre.
+		var cx := tr.position.x if w % 2 == 0 else tr.end.x - cw
+		var cy := tr.position.y if w < 2 else tr.end.y - chh
+		var cr := Rect2(cx, cy, cw, chh)
+		var from := Vector2(cr.end.x if w % 2 == 0 else cr.position.x, clampf(tyre.get_center().y, cr.position.y + 10, cr.end.y - 10))
+		draw_line(from, Vector2(tyre.position.x if w % 2 == 0 else tyre.end.x, tyre.get_center().y), Color(1, 1, 1, 0.18), 1.0)
+		PitPlanner.card_on(self, cr, Color(1, 1, 1, 0.04), 6.0, Color(1, 1, 1, 0.1))
+		var kx := cr.position.x + 10
+		_text(Vector2(kx, cr.position.y + 19), WHEELS[w], 13, Color.WHITE)
+		draw_circle(Vector2(kx + 34, cr.position.y + 14), 5.0, ccol)
+		_text(Vector2(kx + 44, cr.position.y + 19), tc.display_name, 12, ccol.lightened(0.2), HORIZONTAL_ALIGNMENT_LEFT, cw - 58)
+		var col_w := (cw - 20) * 0.5
+		var vy := cr.position.y + 19 + maxf((chh - 19 - 44) * 0.5, 20.0)
+		_reading(Vector2(kx, vy), col_w, "%d°" % roundi(temp), "temp", tcol, 20)
+		_reading(Vector2(kx + col_w, vy), col_w, "%.1f" % hot, "hot psi", psi_colour(hot, tc), 20)
+		if wear_on:
+			var wt := clampf(float(car.tyre_wear[w]), 0.0, 1.0)
+			var wcol := wear_colour(wt) if wt > 0.45 else Color(0.86, 0.89, 0.94)
+			var bar := Rect2(kx, cr.end.y - 12, cw - 20, 5)
+			_text(Vector2(kx, bar.position.y - 5), "%d%% left" % roundi((1.0 - wt) * 100.0), 12, wcol if wt > 0.45 else Color.WHITE)
+			draw_rect(bar, Color(1, 1, 1, 0.1))
+			draw_rect(Rect2(bar.position, Vector2(bar.size.x * (1.0 - wt), bar.size.y)), wcol)
+		else:
+			_text(Vector2(kx, cr.end.y - 10), "wear off", 11, DIM)
+
+
 func _draw_car(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 	if selected < 0 or selected >= sim.car_count():
 		return
 	_panel(r, "SELECTED CAR")
 	var i := selected
-	if _can_plan():
-		_button(Rect2(r.end.x - 196, r.position.y + 6, 186, 28), "PLAN THE STOP  ⏎", "plan", 14, YELLOW)
 	if i != _our_car() and _our_car() >= 0:
 		var marked := rival_pick == i
-		_button(Rect2(r.end.x - 196 - 150, r.position.y + 6, 142, 28), "AUTO RIVAL" if marked else "MARK AS RIVAL", "rival", 13,
+		_button(Rect2(r.end.x - 152, r.position.y + 6, 142, 28), "AUTO RIVAL" if marked else "MARK AS RIVAL", "rival", 13,
 			Color.WHITE if marked else ORANGE)
 	var e := sim.entries[i]
 	var c := tel.cars[i]
@@ -908,10 +1118,13 @@ func _draw_car(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 	var hx := x
 	var hy := r.position.y + 176 + oy
 	var hw := w
-	var hh := r.end.y - hy - 8
+	var hh := minf(r.end.y - hy - 8, 110.0)
 	var n := mini(c.laps.size(), 12)
 	if n == 0:
 		return
+	if r.end.y - hy > 150.0:
+		_text(Vector2(hx, hy + 10), "LAST LAPS AGAINST THE 5-LAP AVERAGE (±2 s)", 11, DIM)
+		hy += 18
 	var ref := c.last5_avg if c.last5_avg > 0.0 else c.best_lap()
 	var bw := hw / 12.0
 	draw_line(Vector2(hx, hy + hh * 0.5), Vector2(hx + hw, hy + hh * 0.5), Color(1, 1, 1, 0.25), 1.0)
