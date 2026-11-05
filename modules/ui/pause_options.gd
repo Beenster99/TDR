@@ -14,7 +14,10 @@ const LOCKED_HELP := "Locked during a race: change it from the main menu's Setti
 
 ## The buttons shown, in order.
 static func button_ids(online: bool, host: bool) -> Array:
-	var ids := ["resume", "restart", "settings"]
+	var ids := ["resume"]
+	if online and host:
+		ids.append("resume_all")   # don't wait for a player who's gone quiet
+	ids.append_array(["restart", "settings"])
 	if online and host:
 		ids.append("lobby")
 	ids.append_array(["menu", "desktop"])
@@ -24,6 +27,7 @@ static func button_ids(online: bool, host: bool) -> Array:
 static func label_for(id: String, online: bool, host: bool) -> String:
 	match id:
 		"resume": return "Resume"
+		"resume_all": return "Resume for everyone now"
 		"restart": return "Restart race (everyone)" if online else "Restart race"
 		"settings": return "Settings"
 		"lobby": return "End race: everyone back to the lobby"
