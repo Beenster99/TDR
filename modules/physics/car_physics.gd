@@ -46,6 +46,18 @@ const KERB_PUNCTURE := 0.03     ## chance per second of a flat, sliding fast ove
 ## and the wear from just rolling, as if this much slip power (kW) at 50 m/s.
 const WEAR_GRIP_LOSS := 0.32
 const WEAR_BASE_KW := 2.0
+## Hard sliding (a lock-up, wheelspin without traction control, a spin, a
+## car scrubbed through a corner too fast) is worked out as full slip power
+## only up to SLIDE_KNEE_KW per tyre; past that, only this share of the
+## extra counts for wear and heat. Clean, quick driving (what the AI does)
+## stays under the knee, so it isn't changed. Without it a few seconds of
+## sliding cooked a tyre past 150 C and wore it out within a lap.
+const SLIDE_KNEE_KW := 16.0
+const SLIDE_WEAR_SHARE := 0.3
+const SLIDE_HEAT_SHARE := 0.5
+## Wear grows on a tyre run hotter than its window, up to this many times
+## the normal rate (it used to grow without a limit, so a hot tyre ran away).
+const WEAR_HOT_MAX := 2.5
 ## Setup (wave 4, see CarSetup in the cars module).
 ## Ground effect: downforce gained per mm the floor runs below its default
 ## height, and the floor touching the ground (bottoming) over this many mm
@@ -546,7 +558,7 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 		# Rolling heat follows the load against what that tyre carries at rest
 		# (the rear tyres are bigger for the bigger static load).
 		var fz_static := m * G * 0.5 * (b if i < 2 else a) / L
-		var heat := (t_c.heat_from_slip * p_kw + t_c.heat_from_rolling * speed * (fz[i] / fz_static)) \
+		var heat := (t_c.heat_from_slip * slide_power(p_kw, SLIDE_HEAT_SHARE) + t_c.heat_from_rolling * speed * (fz[i] / fz_static)) \
 			* p_heat[i] * (1.0 + CAMBER_HEAT * (camber - 2.0)) + TOE_HEAT * toe * speed / 50.0
 		var cool := t_c.cool_to_air * (1.0 + speed / t_c.cool_speed_ms) * (t - env.ambient_c) + t_c.cool_to_track * (t - env.track_c)
 		cool += t_c.cool_to_water * env.wetness_at(off_line) * (1.0 + speed / 40.0) * (t - env.ambient_c)
@@ -555,9 +567,18 @@ static func step(s: CarState, inp: CarInput, d: CarDefinition, tc: TyreCompound,
 			# Wear follows the sliding work, and grows fast on a tyre run
 			# hotter than its window (e.g. wets on a drying track).
 			var over := maxf(t - t_c.optimal_temp_c - t_c.temp_window_c * 0.5, 0.0) / t_c.temp_window_c
+			var hot := minf(1.0 + 3.0 * over, WEAR_HOT_MAX)
 			var press := absf(s.tyre_psi[i] - t_c.optimal_hot_psi) / t_c.pressure_window_psi
-			var w := t_c.wear_rate * wear_rate * (p_kw + WEAR_BASE_KW * speed / 50.0) * (1.0 + 3.0 * over) * (1.0 + 0.25 * press) * dt / 1000.0
+			var w := t_c.wear_rate * wear_rate * (slide_power(p_kw, SLIDE_WEAR_SHARE) + WEAR_BASE_KW * speed / 50.0) * hot * (1.0 + 0.25 * press) * dt / 1000.0
 			s.tyre_wear[i] = minf(s.tyre_wear[i] + w, 1.0)
+
+
+## Slip power (kW) as it counts for a tyre's wear or heat: all of it up to
+## SLIDE_KNEE_KW, then only `share` of the rest (see SLIDE_KNEE_KW).
+static func slide_power(p_kw: float, share: float) -> float:
+	if p_kw <= SLIDE_KNEE_KW:
+		return p_kw
+	return SLIDE_KNEE_KW + (p_kw - SLIDE_KNEE_KW) * share
 
 
 ## Grip left on a tyre with this much wear (0 = new .. 1 = worn out).
