@@ -133,6 +133,19 @@ def replace(car, cfg):
             u = 1.0 - u
         w = c[1 - la] - (mn[1 - la] + mx[1 - la]) * 0.5
         v.co = Vector((car.x_rear + u * car.L, w * k, (c[2] - mn[2]) * k))
+    # Optional: stretch width and height to the real car (an AI shell made
+    # from a three-quarter photo is often a little too wide or tall). Width
+    # is measured at the 99th percentile so the mirrors don't count.
+    sy = sz = 1.0
+    if cfg.get("fit_width"):
+        ys = sorted(abs(v.co.y) for v in me.vertices)
+        sy = car.W * 0.5 / max(ys[int(len(ys) * 0.99)], 1e-4)
+    if cfg.get("height"):
+        cut0 = cfg["wing_cut"][0][0] if cfg.get("wing_cut") else -99.0   # the AI's wing doesn't count
+        sz = cfg["height"] / max(v.co.z for v in me.vertices if v.co.x > cut0)
+    if sy != 1.0 or sz != 1.0:
+        for v in me.vertices:
+            v.co = Vector((v.co.x, v.co.y * sy, v.co.z * sz))
     me.update()
 
     bm = bmesh.new()
@@ -153,8 +166,13 @@ def replace(car, cfg):
         if c.z < cfg.get("floor_cut", 0.06) and all(abs(c.x - ax) > R + 0.05 for ax in car.axles):
             dead.append(f)     # ragged skirt left where the source sat on the floor
             continue
+        ac = cfg.get("arch_clear", 0.0)     # also clear the AI's tyre sidewalls below the hub
+        if ac and any(abs(c.x - ax) < R + ac and c.z < R * 1.05 and abs(c.y) > car.track * 0.5 - cfg.get("wheel_cut_inner", 0.2)
+                      for ax in car.axles):
+            dead.append(f)
+            continue
         for ax in car.axles:
-            if math.hypot(c.x - ax, c.z - R) < R + 0.02 and abs(c.y) > car.track * 0.5 - 0.2:
+            if math.hypot(c.x - ax, c.z - R) < R + cfg.get("wheel_cut_margin", 0.02) and abs(c.y) > car.track * 0.5 - cfg.get("wheel_cut_inner", 0.2):
                 dead.append(f)
                 break
     bmesh.ops.delete(bm, geom=dead, context="FACES")

@@ -1,0 +1,108 @@
+{
+  "id": "bmw_m2",
+  "name": "BMW M2 (G87)",
+  "description": "Front-engined 3.0 twin-turbo straight-six rear-wheel-drive coupe (2023-).",
+  "class_tag": "Road",
+  "colour": "#dcdcdc",
+  "mass_kg": 1725,
+  "weight_front": 0.53,
+  "wheelbase_m": 2.747,
+  "cg_height_m": 0.48,
+  "track_width_m": 1.61,
+  "length_m": 4.58,
+  "width_m": 1.887,
+  "body_offset_m": -0.149,
+  "inertia_factor": 1.0,
+  "engine": {
+    "idle_rpm": 800,
+    "redline_rpm": 7200,
+    "shift_up_rpm": 7000,
+    "shift_down_rpm": 4000,
+    "torque_curve": [
+      [
+        800,
+        258
+      ],
+      [
+        1950,
+        448
+      ],
+      [
+        2650,
+        574
+      ],
+      [
+        5870,
+        574
+      ],
+      [
+        6250,
+        515
+      ],
+      [
+        7200,
+        464
+      ]
+    ],
+    "engine_brake_nm": 66,
+    "cylinders": 6,
+    "sound": {
+      "family": "i6_turbo"
+    }
+  },
+  "gearbox": {
+    "ratios": [
+      5.0,
+      3.2,
+      2.14,
+      1.72,
+      1.31,
+      1.0,
+      0.82,
+      0.64
+    ],
+    "final_drive": 5.06,
+    "efficiency": 0.9
+  },
+  "drivetrain": "RWD",
+  "awd_front_split": 0.0,
+  "wheel_radius_m": 0.35,
+  "brakes": {
+    "max_force_n": 21000,
+    "bias_front": 0.62
+  },
+  "steering": {
+    "max_angle_deg": 30,
+    "rate_deg_s": 240
+  },
+  "aero": {
+    "cda": 0.8,
+    "cla": 0.45,
+    "balance_front": 0.45
+  },
+  "tyre_compound": "road_semi_slick",
+  "fuel": {
+    "capacity_l": 52,
+    "bsfc_l_per_kwh": 0.3
+  },
+  "tuning_ranges": {
+    "brake_bias_front": [
+      0.52,
+      0.72
+    ],
+    "aero_cla": [
+      0.15,
+      0.75
+    ],
+    "final_drive": [
+      4.65,
+      5.46
+    ]
+  },
+  "format": 1,
+  "chassis": {
+    "front_grip": 1.0,
+    "rear_grip": 1.06,
+    "roll_stiffness_front": 0.58
+  }
+}

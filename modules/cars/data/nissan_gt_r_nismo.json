@@ -1,0 +1,106 @@
+{
+  "id": "nissan_gt_r_nismo",
+  "name": "Nissan GT-R Nismo (R35)",
+  "description": "Front-engined 3.8 twin-turbo V6 four-wheel-drive coupe (2024 Nismo).",
+  "class_tag": "Road",
+  "colour": "#f0f0f0",
+  "mass_kg": 1725,
+  "weight_front": 0.54,
+  "wheelbase_m": 2.78,
+  "cg_height_m": 0.47,
+  "track_width_m": 1.6,
+  "length_m": 4.69,
+  "width_m": 1.895,
+  "body_offset_m": -0.066,
+  "inertia_factor": 1.0,
+  "engine": {
+    "idle_rpm": 900,
+    "redline_rpm": 7100,
+    "shift_up_rpm": 6900,
+    "shift_down_rpm": 3900,
+    "torque_curve": [
+      [
+        900,
+        293
+      ],
+      [
+        2900,
+        509
+      ],
+      [
+        3600,
+        652
+      ],
+      [
+        5600,
+        652
+      ],
+      [
+        6800,
+        620
+      ],
+      [
+        7100,
+        558
+      ]
+    ],
+    "engine_brake_nm": 66,
+    "cylinders": 6,
+    "sound": {
+      "family": "v6_turbo"
+    }
+  },
+  "gearbox": {
+    "ratios": [
+      4.06,
+      2.3,
+      1.6,
+      1.25,
+      1.0,
+      0.8
+    ],
+    "final_drive": 3.61,
+    "efficiency": 0.86
+  },
+  "drivetrain": "AWD",
+  "awd_front_split": 0.3,
+  "wheel_radius_m": 0.35,
+  "brakes": {
+    "max_force_n": 23000,
+    "bias_front": 0.62
+  },
+  "steering": {
+    "max_angle_deg": 30,
+    "rate_deg_s": 240
+  },
+  "aero": {
+    "cda": 0.82,
+    "cla": 0.7,
+    "balance_front": 0.45
+  },
+  "tyre_compound": "road_semi_slick",
+  "fuel": {
+    "capacity_l": 74,
+    "bsfc_l_per_kwh": 0.3
+  },
+  "tuning_ranges": {
+    "brake_bias_front": [
+      0.52,
+      0.72
+    ],
+    "aero_cla": [
+      0.4,
+      1.0
+    ],
+    "final_drive": [
+      3.32,
+      3.9
+    ]
+  },
+  "format": 1,
+  "chassis": {
+    "front_grip": 1.0,
+    "rear_grip": 1.04,
+    "roll_stiffness_front": 0.58
+  }
+}
