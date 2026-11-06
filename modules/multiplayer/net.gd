@@ -14,12 +14,15 @@ signal disconnected(reason: String)
 signal race_started(start_data: Dictionary)
 signal returned_to_lobby
 signal internet_status_changed
+## The shared pause changed (online race): waiting = peer ids of the players
+## still in the pause menu. Empty: the race goes again (see request_pause).
+signal pause_changed(waiting: Array)
 
 ## UDP port (Torque Shed uses 24680; this game has its own so both can run).
 const DEFAULT_PORT := 24690
 const MAX_PEERS := 16
 ## Bump whenever a message changes shape; mismatched games are told at the lobby.
-const PROTOCOL_VERSION := 27  # 27: every track 20% wider (track data differs), 26: AI mistakes setting (RaceSettings.ai_mistakes; every machine running AI must agree), 25: the safety car drives the racing line (sc_d in the race state), 24: tyre wear per corner in car states (the strategist and results see every car's wear), 23: pit lanes moved out so a solid pit wall fits (track data differs), 22: "Safety car: Off" (RaceSettings.flags_enabled), 21: circuits 1.5x wider (track data differs), 20: handbrake (driver input bit, held flag in car states), 19: co-op pit stops (crew jobs: fuel, windscreen, air lance, wheel and gun men; pit jobs in the lobby; crew poses), 18: Demolition Derby (cars in the air off jumps: air_h and vz in car states), 17: race type (discipline), joker laps and jokers taken, joker state in car states, 16: pit crew mini-game (pit plan "crew": players as wheel gunners), 15: per-wheel tyre compounds and pressures in pit plans and pit state, strategist pit plans read out on the radio, 14: car states stamped with the host's clock (synced by pings) so remote cars are placed in the present, 13: tyre choice per wheel, driver line-ups and AI co-drivers, 12: co-op crews (teams and roles in the lobby, role swaps, driver changes, team radio), 4: track elevation, 5: damage in car states, 6: barrier types and run-off surfaces, 7: race control in the race state, 8: pit stops, 9: car upgrades, liveries and upgrades_mode, 10: car setups (tuning), 11: seasons (season_info in the lobby)
+const PROTOCOL_VERSION := 29  # 29: every track another 20% wider (track data differs), 28: shared pause (Esc pauses the online race for everyone), 27: every track 20% wider (track data differs), 26: AI mistakes setting (RaceSettings.ai_mistakes; every machine running AI must agree), 25: the safety car drives the racing line (sc_d in the race state), 24: tyre wear per corner in car states (the strategist and results see every car's wear), 23: pit lanes moved out so a solid pit wall fits (track data differs), 22: "Safety car: Off" (RaceSettings.flags_enabled), 21: circuits 1.5x wider (track data differs), 20: handbrake (driver input bit, held flag in car states), 19: co-op pit stops (crew jobs: fuel, windscreen, air lance, wheel and gun men; pit jobs in the lobby; crew poses), 18: Demolition Derby (cars in the air off jumps: air_h and vz in car states), 17: race type (discipline), joker laps and jokers taken, joker state in car states, 16: pit crew mini-game (pit plan "crew": players as wheel gunners), 15: per-wheel tyre compounds and pressures in pit plans and pit state, strategist pit plans read out on the radio, 14: car states stamped with the host's clock (synced by pings) so remote cars are placed in the present, 13: tyre choice per wheel, driver line-ups and AI co-drivers, 12: co-op crews (teams and roles in the lobby, role swaps, driver changes, team radio), 4: track elevation, 5: damage in car states, 6: barrier types and run-off surfaces, 7: race control in the race state, 8: pit stops, 9: car upgrades, liveries and upgrades_mode, 10: car setups (tuning), 11: seasons (season_info in the lobby)
 const COMPRESSION := ENetConnection.COMPRESS_ZSTD
 ## How long a player's game may go silent before they're taken to have left (ms).
 const TIMEOUT_MS := 15000
@@ -46,6 +49,11 @@ var players: Dictionary = {}
 var settings := RaceSettings.new()
 var session: RaceSession = null
 var in_race := false
+## Shared pause (online race): the players still in the pause menu (peer ids).
+## Any player's Esc pauses the race for everyone and opens everyone's menu; it
+## goes again once they've all pressed Resume (or the host resumes for all).
+## The host keeps the list and shares it (_sync_pause).
+var pause_waiting: Array = []
 ## Season mode: a summary the host shares with everyone in the lobby
 ## (Season.summary(): name, round, next track, standings). Empty = single race.
 var season_info: Dictionary = {}
@@ -66,6 +74,7 @@ var start_planner: Callable
 
 
 func _ready() -> void:
+	process_mode = Node.PROCESS_MODE_ALWAYS   # pings and pause messages carry on while the race is paused
 	multiplayer.peer_connected.connect(_on_peer_connected)
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
 	multiplayer.connected_to_server.connect(_on_connected_to_server)
@@ -363,6 +372,9 @@ func _on_peer_disconnected(id: int) -> void:
 	if not is_server():
 		return
 	players.erase(id)
+	if pause_waiting.has(id):
+		pause_waiting.erase(id)
+		_share_pause()
 	if session:
 		session.on_peer_left(id)
 	_broadcast_lobby()
@@ -591,6 +603,7 @@ func start_race() -> void:
 @rpc("authority", "reliable")
 func _begin_race(start_data: Dictionary) -> void:
 	in_race = true
+	pause_waiting = []
 	var mode := RaceSession.Mode.SERVER if is_server() else RaceSession.Mode.CLIENT
 	session = RaceSession.create(mode, start_data, my_id(), self)
 	GameData.active_session = session
@@ -619,8 +632,53 @@ func end_race() -> void:
 @rpc("authority", "reliable")
 func _back_to_lobby() -> void:
 	in_race = false
+	pause_waiting = []
 	session = null
 	returned_to_lobby.emit()
+
+
+# --- Shared pause -------------------------------------------------------------
+
+## This player pressed Esc (true) or Resume (false) in an online race. Pausing
+## puts every player in the pause menu; the race goes again when all of them
+## have pressed Resume. all = the host resumes the race for everyone.
+func request_pause(on: bool, all := false) -> void:
+	if not is_online() or not in_race:
+		return
+	if is_server():
+		_on_pause_request(my_id(), on, all)
+	else:
+		_rpc_pause_request.rpc_id(1, on, all)
+
+
+func is_paused() -> bool:
+	return not pause_waiting.is_empty()
+
+
+@rpc("any_peer", "reliable", "call_remote", 4)
+func _rpc_pause_request(on: bool, all: bool) -> void:
+	if is_server():
+		_on_pause_request(multiplayer.get_remote_sender_id(), on, false)   # only the host resumes for all
+
+
+## Host: who's still in the pause menu.
+func _on_pause_request(id: int, on: bool, all: bool) -> void:
+	if not in_race:
+		return
+	pause_waiting = NetPause.next(pause_waiting, players.keys(), id, on, all)   # a dedicated server isn't a player
+	_share_pause()
+
+
+func _share_pause() -> void:
+	if is_online():
+		_rpc_pause.rpc(pause_waiting)
+	pause_changed.emit(pause_waiting)
+
+
+@rpc("authority", "reliable", "call_remote", 4)
+func _rpc_pause(waiting: Array) -> void:
+	pause_waiting = waiting
+	pause_changed.emit(waiting)
 
 
 # --- Clock sync (so every machine agrees on when a car state was taken) --------

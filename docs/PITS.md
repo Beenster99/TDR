@@ -21,6 +21,16 @@ Command line: `--fuel 2 --tyre-wear 2 --pit-stops 1 --drivers 2`.
 - **Tyre wear**: wear follows the sliding work on each tyre and grows quickly
   on a tyre run too hot (wets on a drying track). "Real" is about 3.5% a lap on
   slicks. A worn tyre loses up to a third of its grip, mostly near the end.
+  Every car, player or AI, wears by the same physics. Hard sliding (lock-ups,
+  wheelspin, spins, scrubbing through a corner too fast) still wears and heats
+  a tyre more, but past about 16 kW of slip power per tyre only part of the
+  extra counts (`CarPhysics.SLIDE_KNEE_KW`), and a tyre run too hot wears at
+  most 2.5x the normal rate (`WEAR_HOT_MAX`). Clean driving stays under the
+  knee, so the AI (which always has traction control and ABS) is barely
+  touched. Without these a few seconds of sliding could cook a tyre past
+  150 C and wear it out within a lap. On a clockwise track the front-left is
+  the outside front through most corners, so it wears fastest (front-right
+  on an anticlockwise one). Probe: `tests/wear_probe.gd`.
 - **Mandatory stops** must be made inside the pit window. Automatic window:
   from about a fifth of the race in to a fifth before the end, never the last
   lap (the boxes are past the finish line). A stop counts in the lap the car
@@ -37,9 +47,16 @@ Command line: `--fuel 2 --tyre-wear 2 --pit-stops 1 --drivers 2`.
    (co-op pit crew, when the host allows car setups) `setup`: new values for
    the front splitter, rear wing and tyre pressures, applied in the box (see
    docs/PIT_WALL_ROLES.md).
-2. **Driving in.** A player drives their own stop (Settings > Gameplay >
-   Pit stops: "Drive in yourself", the default; solo and co-op, whoever is
-   at the wheel): with a box call, a dashed pit guide line leads from the
+2. **Driving in.** A player always drives into the pit lane themselves
+   (solo and co-op, whoever is at the wheel). Settings > Gameplay > Pit
+   stops picks how much: "Drive to the pit limit" (the default,
+   `PitRules.DRIVE_TO_LIMIT`) hands the car to the guide at the limit
+   line, which takes it to the box; "Drive the whole stop"
+   (`DRIVE_STOP`) has them stop on the box too. Either way, the last 3 s
+   of the stop count down in the middle of the screen (RELEASE 3, 2, 1,
+   GO: `PitRules.release_in`) and the driver gets the car back as the crew
+   release it, with the limiter held on to the end of the limit. With a
+   box call, a dashed pit guide line leads from the
    track into the lane and onto their box (`PitRules.guide_line`, drawn by
    graphics `PitGuideView`), blue where the speed is fine, yellow to get
    ready, red where they must brake to make the limit by the limit line or
@@ -51,13 +68,13 @@ Command line: `--fuel 2 --tyre-wear 2 --pit-stops 1 --drivers 2`.
    stopped within 3 m short / 2 m past the marks and 2.6 m sideways is spot
    on; up to 12 m past costs 1 s + 0.35 s a metre (the crew move to the
    car); further than that the box is missed and the call stays for the
-   next lap. After the stop they drive out themselves. With "Automatic",
-   and for AI cars, the car is driven in from about 300 m before the pit
+   next lap. After the stop they drive out themselves. For AI cars (and a
+   player's car the autodrive drives) the car is driven in from about 300 m before the pit
    entry (the guide follows a route along the pit side of the track, then
    the lane), to its box and out to the end of the limit. A player can also
    just drive into the lane without a box call: from the limit line the
    guide takes the car to its box. A car handed to an AI co-driver mid-stop
-   goes back to the guide (`set_self_drive`).
+   goes back to the guide (`set_drive_in(i, DRIVE_GUIDED)`).
    **Single player pit call menu** (Settings > Gameplay > Pit call menu):
    calling a stop opens a quick menu and the race waits while it's open:
    tyres, which tyres, front splitter and rear wing (when the race allows

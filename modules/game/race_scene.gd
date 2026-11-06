@@ -72,6 +72,11 @@ func _ready() -> void:
 	for i in session.sim.car_count():
 		car_views.append(world.add_car(session.sim.defs[i], session.sim.cars[i], session.sim.entries[i].driver_name,
 			i == session.local_car, i + 1, liveries[i]))
+	if RaceTelemetry.multi_class(session.sim):
+		# Multi-class: the roof number boards in the class colours, as in the WEC.
+		for i in session.sim.car_count():
+			var cls := session.sim.defs[i].class_tag
+			car_views[i].set_number_colour(CarCatalog.class_colour(cls), CarCatalog.class_text_colour(cls))
 	_refresh_highlights()
 	session.crew_changed.connect(func(_car): _refresh_highlights())
 	GameData.pref_changed.connect(_on_pref_changed)
@@ -281,6 +286,8 @@ func _add_pause_menu(layer: CanvasLayer) -> void:
 	pause_menu.setup({"online": online, "host": host, "can_restart": blocked == "", "restart_blocked": blocked,
 		"can_edit_hud": session.local_car >= 0})
 	pause_menu.resumed.connect(_on_pause_closed)
+	pause_menu.resume_all_requested.connect(func(): Net.request_pause(false, true))
+	pause_menu.reopened.connect(func(): Net.request_pause(true))
 	pause_menu.restart_requested.connect(func():
 		_on_pause_closed()
 		if session.mode == RaceSession.Mode.SERVER:
@@ -303,16 +310,85 @@ func _add_pause_menu(layer: CanvasLayer) -> void:
 			hud.open_editor())
 	# Online: the host restarted the race; every machine starts the new one.
 	Net.race_started.connect(_on_net_race_started)
+	if online:
+		Net.pause_changed.connect(_on_net_pause_changed)
 
 
+## Esc / Start. Offline the race stops. Online it stops for everyone: the host
+## puts every player in the pause menu (_on_net_pause_changed).
 func _open_pause_menu() -> void:
-	if session.mode == RaceSession.Mode.OFFLINE:
-		get_tree().paused = true   # the race, its sounds and effects stop; the menu runs
+	get_tree().paused = true   # the race, its sounds and effects stop; the menu runs
 	pause_menu.open()
+	if session.mode != RaceSession.Mode.OFFLINE:
+		Net.request_pause(true)
 
 
+## Resume (or restart / quit). Online the race only goes again once every
+## player has resumed, so until then this player sees who it's waiting for.
 func _on_pause_closed() -> void:
+	if session.mode == RaceSession.Mode.OFFLINE:
+		get_tree().paused = false
+		return
+	Net.request_pause(false)
+	if Net.is_paused() and pause_menu.visible == false:
+		pause_menu.show_waiting(_waiting_text(Net.pause_waiting))
+
+
+## How long the online countdown runs after the last player resumes (s).
+const PAUSE_COUNTDOWN := 3
+var _pause_token := 0
+
+
+## Online: the shared pause changed (any machine's Esc or Resume, via the host).
+func _on_net_pause_changed(waiting: Array) -> void:
+	_pause_token += 1
+	if not waiting.is_empty():
+		get_tree().paused = true
+		if waiting.has(Net.my_id()):
+			if not pause_menu.visible or pause_menu.waiting_mode:
+				pause_menu.open()   # someone else paused: this player gets the menu too
+				_maybe_auto_resume()
+		elif not pause_menu.visible or pause_menu.waiting_mode:
+			pause_menu.show_waiting(_waiting_text(waiting))
+		pause_menu.set_waiting_text(_waiting_text(waiting))
+		print("[pause] %s: paused at %.1f s, waiting for %s" % [Net.local_name, session.sim.race_time, _names(waiting)])
+		return
+	if not get_tree().paused:
+		return
+	# Everyone's ready: count down, then go.
+	print("[pause] %s: everyone resumed, counting down" % Net.local_name)
+	var token := _pause_token
+	for n in range(PAUSE_COUNTDOWN, 0, -1):
+		pause_menu.show_waiting("Racing in %d" % n)
+		await get_tree().create_timer(1.0, true).timeout
+		if token != _pause_token or not is_inside_tree():
+			return   # paused again (or the race ended) during the countdown
+	pause_menu.close_quietly()
 	get_tree().paused = false
+	print("[pause] %s: racing again at %.1f s" % [Net.local_name, session.sim.race_time])
+
+
+## Testing (--auto-resume S): press Resume S seconds after the menu opened.
+func _maybe_auto_resume() -> void:
+	if GameData.arg("auto-resume"):
+		get_tree().create_timer(float(GameData.arg("auto-resume")), true).timeout.connect(func():
+			if pause_menu.visible and not pause_menu.waiting_mode:
+				print("[pause] %s pressed Resume" % Net.local_name)
+				pause_menu.resume())
+
+
+func _names(ids: Array) -> String:
+	var names := []
+	for id in ids:
+		names.append(str(Net.players.get(id, {}).get("name", "Player %d" % id)))
+	return ", ".join(names)
+
+
+func _waiting_text(waiting: Array) -> String:
+	var others := waiting.filter(func(id): return id != Net.my_id())
+	if others.is_empty():
+		return "PAUSED"
+	return "PAUSED  ·  waiting for %s to resume" % _names(others)
 
 
 func _on_net_race_started(_start_data: Dictionary) -> void:
@@ -337,22 +413,24 @@ var _self_drive_car := -1
 var _seen_pit := {}
 
 
-## Each tick: the player at the wheel drives their own pit stops (unless
-## they chose automatic, or the autodrive is driving for them); a car that's
-## no longer theirs (handed to an AI co-driver) goes back to the guide.
+## Each tick: the player at the wheel drives their own pit stops, up to the
+## pit limit line or (their choice) the whole stop, unless the autodrive is
+## driving for them; a car that's no longer theirs (handed to an AI
+## co-driver) goes back to the guide.
 func _update_self_drive() -> void:
 	var pits := session.sim.pits
 	if not pits.enabled:
 		return
 	var me := session.local_car
-	var want := me >= 0 and autodrive == null and str(GameData.prefs.get("pit_drive_in", "self")) == "self"
+	var want := me >= 0 and autodrive == null
 	var car := me if want else -1
 	if car != _self_drive_car:
 		if _self_drive_car >= 0 and session.owns(_self_drive_car):
-			pits.set_self_drive(_self_drive_car, false)
+			pits.set_drive_in(_self_drive_car, PitRules.DRIVE_GUIDED)
 		_self_drive_car = car
 	if car >= 0:
-		pits.set_self_drive(car, true)
+		var whole := str(GameData.prefs.get("pit_drive_in", "limit")) == "self"
+		pits.set_drive_in(car, PitRules.DRIVE_STOP if whole else PitRules.DRIVE_TO_LIMIT)
 		_pit_messages(car)
 
 
@@ -365,7 +443,7 @@ func _pit_messages(car: int) -> void:
 	if not was.is_empty():
 		if was["phase"] == PitRules.PHASE_APPROACH and ph == PitRules.PHASE_NONE and p["box"]:
 			hud.flash("Missed the pit entry: box next lap", 3.0)
-		if was["phase"] == PitRules.PHASE_LIMIT and ph == PitRules.PHASE_SERVICE:
+		if was["phase"] == PitRules.PHASE_LIMIT and ph == PitRules.PHASE_SERVICE and session.sim.pits.self_drives(car):
 			var extra := float((p.get("work", {}) as Dictionary).get("overshoot_s", 0.0))
 			hud.flash("Overshot your box: +%.1f s" % extra if extra > 0.0 else "On your marks", 2.0)
 		if bool(p.get("missed_box", false)) and not bool(was.get("missed", false)):
@@ -483,10 +561,15 @@ func _on_team_radio(car: int, msg: Dictionary) -> void:
 	crew.add_radio(msg)
 	var me := driver_radio.my_name() if session.local_car >= 0 else crew.radio.my_name()
 	if session.local_car == car and str(msg.get("role", "")) != RaceEntry.ROLE_DRIVER:
-		# The driver: on screen, and read out over the radio.
-		var lines: Array = msg.get("lines", [])
-		hud.show_radio(msg, clampf(4.0 + lines.size() * 2.2, 5.0, 16.0))
-		Sound.radio(str(msg.get("text", "")))
+		# The driver hears it over the radio, nothing on screen. Only when it
+		# can't be read out (voice off, or no voice for it) is it shown instead.
+		var spoken := str(msg.get("say", msg.get("text", "")))
+		if Sound.radio_will_say(spoken):
+			Sound.radio(spoken)
+		else:
+			var lines: Array = msg.get("lines", [])
+			hud.show_radio(msg, clampf(4.0 + lines.size() * 2.2, 5.0, 16.0))
+			Sound.radio(spoken)
 	elif str(msg.get("from", "")) != me:
 		Sound.ui("chime", -6.0)
 
@@ -499,6 +582,7 @@ func _open_planner() -> void:
 
 
 func _on_returned_to_lobby() -> void:
+	get_tree().paused = false
 	get_tree().change_scene_to_file(GameData.SCENE_MENU)
 
 
@@ -573,6 +657,14 @@ func _after_tick() -> void:
 		_forced["hand_over"] = true
 		print("[coop] %s: %s" % [Net.local_name, RaceHud.toggle_driver_change(session, session.local_car)])
 		session.request_pit(session.local_car, {"box": true})
+	# Testing: --pause-at 5: press Esc after 5 s of racing (online: pauses the
+	# race for everyone). --auto-resume 2: press Resume 2 s after the menu opens.
+	if GameData.arg("pause-at") and not _forced.has("pause") \
+			and session.sim.race_time >= float(GameData.arg("pause-at")):
+		_forced["pause"] = true
+		_open_pause_menu()
+		print("[pause] %s opened the menu at %.1f s, tree paused %s" % [Net.local_name, session.sim.race_time, get_tree().paused])
+		_maybe_auto_resume()
 	# Testing: --host-restart-at 5: the online host restarts the race for
 	# everyone (the pause menu's Restart) once, after 5 s of racing.
 	if GameData.arg("host-restart-at") and session.mode == RaceSession.Mode.SERVER \
@@ -756,7 +848,7 @@ func _process(delta: float) -> void:
 func _update_pit_guide(delta: float) -> void:
 	var me := session.local_car
 	var pits := session.sim.pits
-	if world.pit_guide == null or me < 0 or not pits.self_drives(me) or not hud.pit_guide_on:
+	if world.pit_guide == null or me < 0 or not pits.drives_in(me) or not hud.pit_guide_on:
 		world.update_pit_guide(PitRules.GUIDE_NONE, 0.0, true, false, delta)
 		return
 	var p: Dictionary = session.sim.entries[me].pit

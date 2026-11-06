@@ -7,7 +7,7 @@ extends Control
 ##   --server [--port 24690] [--laps 3] [--ai 4] [--min-players 1]   dedicated server
 ##   --host / --join 127.0.0.1 [--port 7777] [--name Bob]            skip the menu
 ##   --single [--laps 1] [--ai 3] [--car id]                         skip to a race
-##   --track id  --class GT3|Road|multi|open                         pick track / car class
+##   --track id  --class GT3|Road|multi|open  --classes Hypercar,LMP2,GT3   pick track / car class(es)
 ##   --race-type circuit|rallycross|derby                            race type (before --track)
 ##   --autodrive --ready --quit-after-race --time-scale 3            test bots
 ##   --resume-season id|latest  --menu-page season_new  --menu-shot out.png   (screenshots)
@@ -29,6 +29,10 @@ var join_name_label: Label
 var status_label: Label
 var car_stepper: Stepper
 var class_stepper: Stepper
+## A multi-class race's classes (2 or 3: Le Mans, WEC, GT3 v road cars ...),
+## shown under the class picker only while "Multi-class" is picked. The value
+## is the class names joined with commas, fastest class first.
+var mix_stepper: Stepper
 ## Race type (RaceSettings.discipline): circuit racing, rallycross ... It
 ## narrows the track and class lists and hides settings that don't apply.
 var race_type_stepper: Stepper
@@ -202,6 +206,12 @@ func _handle_cmdline() -> void:
 	if GameData.arg("class"):
 		var cls := str(GameData.arg("class"))
 		class_stepper.set_value("" if cls == "open" else cls)
+		_refresh_mix_visible()
+		_rebuild_car_options()
+	if GameData.arg("classes"):   # --classes Hypercar,GT3 (a multi-class line-up)
+		class_stepper.set_value(RaceSettings.CLASS_MULTI)
+		_refresh_mix_visible()
+		_set_mix(Array(str(GameData.arg("classes")).split(",")))
 		_rebuild_car_options()
 	tod_stepper.set_value(int(GameData.arg("time", tod_stepper.value)))
 	if GameData.arg("clock-speed"):
@@ -687,8 +697,13 @@ func _build_car_card() -> void:
 	var class_opts := _class_options("circuit")
 	var default_class: String = "GT3" if CarCatalog.ids_in_class(GameData.cars, "GT3").size() > 0 else class_opts[0][0]
 	class_stepper = Stepper.choice("Class", class_opts, default_class)
-	class_stepper.value_changed.connect(func(_v): _rebuild_car_options(); _limit_grid(); _push_settings())
+	class_stepper.value_changed.connect(func(_v): _refresh_mix_visible(); _rebuild_car_options(); _limit_grid(); _push_settings())
 	box.add_child(class_stepper)
+	var mix_opts := _mix_options("circuit")
+	mix_stepper = Stepper.choice("Classes", mix_opts, _default_mix(mix_opts))
+	mix_stepper.tooltip_text = "Which classes race together: pick 2 or 3."
+	mix_stepper.value_changed.connect(func(_v): _rebuild_car_options(); _push_settings())
+	box.add_child(mix_stepper)
 	# With every class on the grid (multi-class / open) the car list is long:
 	# this narrows it to one class. Shown only then.
 	var filter_opts := _filter_options("circuit")
@@ -751,9 +766,79 @@ func _class_options(discipline: String) -> Array:
 	for c in classes:
 		opts.append([c, "%s  (%d cars)" % [c, CarCatalog.ids_in_class(GameData.cars, c).size()]])
 	if classes.size() > 1:
-		opts.append([RaceSettings.CLASS_MULTI, "Multi-class (all cars)"])
+		opts.append([RaceSettings.CLASS_MULTI, "Multi-class (pick 2 or 3)"])
 		opts.append(["", "Open (AI match the players)"])
 	return opts
+
+
+## The class line-ups for a multi-class race: every 3-class and 2-class mix
+## of this race type's classes, fastest class first, the well-known ones
+## named (Le Mans, WEC, GT3 v road cars).
+func _mix_options(discipline: String) -> Array:
+	var classes := Array(CarCatalog.classes(GameData.cars, discipline))
+	var opts := []
+	var n := classes.size()
+	if n < 2:
+		return opts
+	var combos := []
+	for size in [3, 2]:
+		if size > n:
+			continue
+		var pick := func(from: int, chosen: Array, rec: Callable) -> void:
+			if chosen.size() == size:
+				combos.append(chosen.duplicate())
+				return
+			for k in range(from, n):
+				chosen.append(classes[k])
+				rec.call(k + 1, chosen, rec)
+				chosen.pop_back()
+		pick.call(0, [], pick)
+	for combo in combos:
+		opts.append([",".join(combo), mix_name(combo)])
+	if n > 3:
+		opts.append([",".join(classes), "All %d classes" % n])
+	return opts
+
+
+## A class line-up's name in the race set-up: "Le Mans: Hypercar, LMP2, GT3".
+static func mix_name(combo: Array) -> String:
+	var key := ",".join(combo)
+	match key:
+		"Hypercar,LMP2,GT3": return "Le Mans: HYP, LMP2, GT3"
+		"Hypercar,GT3": return "WEC: Hypercar v GT3"
+		"LMP2,GT3": return "ELMS: LMP2 v GT3"
+		"GT3,Road": return "GT3 v road cars"
+	return " v ".join(combo) if combo.size() == 2 else ", ".join(combo)
+
+
+func _default_mix(opts: Array) -> String:
+	for o in opts:
+		if o[0] == "Hypercar,LMP2,GT3":
+			return o[0]
+	return opts[0][0] if not opts.is_empty() else ""
+
+
+## The classes a multi-class race runs (empty when it isn't multi-class).
+func _mix_classes() -> Array:
+	if mix_stepper == null or str(class_stepper.value) != RaceSettings.CLASS_MULTI or str(mix_stepper.value) == "":
+		return []
+	return Array(str(mix_stepper.value).split(","))
+
+
+## The class line-up shows only while "Multi-class" is picked.
+func _refresh_mix_visible() -> void:
+	if mix_stepper:
+		mix_stepper.visible = class_stepper.visible and str(class_stepper.value) == RaceSettings.CLASS_MULTI \
+			and not mix_stepper.options.is_empty()
+
+
+## Sets the class line-up from a list of classes (a season, the host).
+func _set_mix(classes: Array) -> void:
+	if mix_stepper == null:
+		return
+	var key := ",".join(classes)
+	if key != "" and mix_stepper.options.any(func(o): return o[0] == key):
+		mix_stepper.set_value(key)
 
 
 func _filter_options(discipline: String) -> Array:
@@ -793,6 +878,12 @@ func _on_race_type_changed(push := true) -> void:
 		class_stepper.set_value(copts[0][0])
 	else:
 		class_stepper.set_value(class_stepper.value)
+	var mopts := _mix_options(dsc)
+	var keep_mix := str(mix_stepper.value)
+	mix_stepper.options = mopts
+	if not mopts.is_empty():
+		mix_stepper.set_value(keep_mix if mopts.any(func(o): return o[0] == keep_mix) else _default_mix(mopts))
+	_refresh_mix_visible()
 	car_filter_stepper.options = _filter_options(dsc)
 	car_filter_stepper.set_value("")
 	if recalled.is_empty() and push and not _building and (not Net.is_online() or Net.is_server()):
@@ -862,6 +953,7 @@ func _show(id: String) -> void:
 		join_name_label.text = "Joining as %s  (change it on your profile)" % name_edit.text
 	if id != "lobby":  # host-only settings are editable again off-line
 		class_stepper.disabled = false
+		mix_stepper.disabled = false
 		track_stepper.disabled = false
 		race_type_stepper.disabled = false
 		for st in _settings_steppers:
@@ -873,6 +965,7 @@ func _show(id: String) -> void:
 		pages[k].visible = k == id
 	# In a season the season picks the class and each round's track.
 	class_stepper.visible = not id in SEASON_PAGES
+	_refresh_mix_visible()
 	track_stepper.visible = not id in SEASON_PAGES
 	# Seasons are circuit racing.
 	var season_page := id.begins_with("season")
@@ -969,6 +1062,8 @@ func _layout(id: String) -> void:
 		# Class decides who's on the grid: a race setting here.
 		_move(class_stepper, _settings_holder)
 		_settings_holder.move_child(class_stepper, 0)
+		_move(mix_stepper, _settings_holder)
+		_settings_holder.move_child(mix_stepper, 1)
 	else:
 		if _settings_panel.get_parent():
 			_settings_panel.get_parent().remove_child(_settings_panel)
@@ -976,6 +1071,8 @@ func _layout(id: String) -> void:
 		pages[id].size_flags_vertical = SIZE_FILL
 		_move(class_stepper, _card_box(_car_card))
 		_card_box(_car_card).move_child(class_stepper, 1)
+		_move(mix_stepper, _card_box(_car_card))
+		_card_box(_car_card).move_child(mix_stepper, 2)
 
 
 ## Steppers in the set-up columns: shorter rows, values lined up, and (for
@@ -983,6 +1080,7 @@ func _layout(id: String) -> void:
 func _style_steppers(compact: bool) -> void:
 	var list: Array = _settings_steppers.duplicate()
 	list.append(class_stepper)
+	list.append(mix_stepper)
 	for st in list:
 		st.custom_minimum_size = Vector2(0, 33) if compact else Vector2(420, 40)
 		st.value_column = 190.0 if compact else 0.0
@@ -1062,9 +1160,22 @@ func _rebuild_car_options() -> void:
 	car_filter_stepper.visible = not fixed
 	var filter: String = "" if fixed else str(car_filter_stepper.value)
 	var dsc := _race_type()
-	var ids := CarCatalog.ids_in_class(GameData.cars, cls if fixed else filter).filter(func(id): return GameData.cars[id].discipline == dsc)
+	# A multi-class race: only the cars of the classes picked, and the class
+	# filter offers just those classes.
+	var mix := _mix_classes()
+	if not fixed:
+		var fopts := _filter_options(dsc)
+		if not mix.is_empty():
+			fopts = fopts.filter(func(o): return o[0] == "" or o[0] in mix)
+		if fopts != car_filter_stepper.options:
+			car_filter_stepper.options = fopts
+			if not fopts.any(func(o): return o[0] == filter):
+				filter = ""
+			car_filter_stepper.set_value(filter)
+	var in_mix := func(id: String) -> bool: return mix.is_empty() or GameData.cars[id].class_tag in mix
+	var ids := CarCatalog.ids_in_class(GameData.cars, cls if fixed else filter).filter(func(id): return GameData.cars[id].discipline == dsc and in_mix.call(id))
 	if ids.is_empty():
-		ids = CarCatalog.ids_in_class(GameData.cars, cls if fixed else "").filter(func(id): return GameData.cars[id].discipline == dsc)
+		ids = CarCatalog.ids_in_class(GameData.cars, cls if fixed else "").filter(func(id): return GameData.cars[id].discipline == dsc and in_mix.call(id))
 	var opts := []
 	for id in ids:
 		var c: CarDefinition = GameData.cars[id]
@@ -1100,6 +1211,7 @@ func _settings_from_ui() -> RaceSettings:
 	var s := RaceSettings.new()
 	s.track_id = track_stepper.value
 	s.car_class = class_stepper.value
+	s.multi_classes = _mix_classes()
 	s.laps = int(laps_stepper.value)
 	s.ai_count = int(ai_stepper.value)
 	s.ai_difficulty = float(difficulty_stepper.value)
@@ -1319,7 +1431,7 @@ func _refresh_crews() -> void:
 ## player on each change); a setting the host just changed lights up, and the
 ## settings card says what it was.
 func _flash_host_changes() -> void:
-	var list: Array = [race_type_stepper, track_stepper, class_stepper]
+	var list: Array = [race_type_stepper, track_stepper, class_stepper, mix_stepper]
 	list.append_array(_settings_steppers)
 	var changed := []
 	for st in list:
@@ -1547,6 +1659,7 @@ func _refresh_lobby() -> void:
 	for s in _settings_steppers:
 		s.disabled = not host or in_season
 	class_stepper.disabled = not host or in_season
+	mix_stepper.disabled = not host or in_season
 	track_stepper.disabled = not host or in_season
 	race_type_stepper.disabled = not host or in_season
 	lobby_season_label.visible = in_season
@@ -1561,6 +1674,10 @@ func _refresh_lobby() -> void:
 			track_stepper.set_value(Net.settings.track_id)
 		if class_stepper.value != Net.settings.car_class:
 			class_stepper.set_value(Net.settings.car_class)
+			_refresh_mix_visible()
+			_rebuild_car_options()
+		if not Net.settings.multi_classes.is_empty() and ",".join(Net.settings.multi_classes) != str(mix_stepper.value):
+			_set_mix(Net.settings.multi_classes)
 			_rebuild_car_options()
 		laps_stepper.set_value(Net.settings.laps)
 		ai_stepper.set_value(Net.settings.ai_count)
@@ -1820,6 +1937,10 @@ func _refresh_hub() -> void:
 	if class_stepper.value != cls:
 		class_stepper.set_value(cls)
 		_rebuild_car_options()
+	var smix: Array = s.base_settings.get("multi_classes", [])
+	if cls == RaceSettings.CLASS_MULTI and not smix.is_empty() and ",".join(smix) != str(mix_stepper.value):
+		_set_mix(smix)
+		_rebuild_car_options()
 	hub_title.text = "%s%s" % [s.name, "" if s.number <= 1 else "  ·  season %d" % s.number]
 	# The circuit card shows the next round.
 	if not s.is_complete() and _track_info(str(s.current_round()["track_id"])):
@@ -2078,7 +2199,7 @@ var _mem_restoring := false
 
 ## Pref key -> stepper for everything remembered (besides the race type).
 func _remembered_steppers() -> Dictionary:
-	return {"track": track_stepper, "class": class_stepper, "car_filter": car_filter_stepper, "car": car_stepper,
+	return {"track": track_stepper, "class": class_stepper, "classes": mix_stepper, "car_filter": car_filter_stepper, "car": car_stepper,
 		"tyre": tyre_stepper, "laps": laps_stepper, "ai": ai_stepper, "difficulty": difficulty_stepper, "mistakes": mistakes_stepper,
 		"time": tod_stepper, "clock": clock_stepper, "weather": weather_stepper,
 		"weather_changes": weather_change_stepper, "grid": grid_stepper, "fuel": fuel_stepper,
@@ -2149,7 +2270,8 @@ func _apply_remembered(values: Dictionary) -> void:
 			st.set_value(v)
 		else:
 			continue
-		if st == class_stepper or st == car_filter_stepper:
+		if st == class_stepper or st == car_filter_stepper or st == mix_stepper:
+			_refresh_mix_visible()
 			_rebuild_car_options()   # the car comes after these, so it's picked from the new list
 			_limit_grid()
 		elif st == car_stepper:

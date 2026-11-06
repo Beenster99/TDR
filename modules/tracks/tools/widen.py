@@ -4,7 +4,7 @@
 Real circuits are 10-15 m wide, but seen from above in the game that felt
 too narrow to keep a car on, so every track's road is a set times its
 real width: WIDTH_SCALE for circuits, then DISCIPLINE_SCALE for rallycross
-and derby (they started out wider, so they got only the second 20% pass).
+and derby (they started out wider, so they got only the 20% passes, two so far).
 Where two stretches of road run close side by side (Cadwell Park's hairpin
 and the straight below it, Mallory Park's Esses...) the road widens only as
 far as keeps them MIN_GAP_M apart, or as far apart as they already were. The centre line stays where it is and both edges move out; the
@@ -33,14 +33,14 @@ DATA = os.path.join(HERE, "..", "data")
 sys.path.insert(0, HERE)
 from pit_limit_zone import limit_zone  # noqa: E402
 
-WIDTH_SCALE = 1.8     # circuits: 1.5x (Nov 2026), then 20% more on top
-DISCIPLINE_SCALE = {"circuit": WIDTH_SCALE, "rallycross": 1.2, "derby": 1.2}
+WIDTH_SCALE = 2.16    # circuits: 1.5x (Nov 2026), then 20% more on top, twice
+DISCIPLINE_SCALE = {"circuit": WIDTH_SCALE, "rallycross": 1.44, "derby": 1.2}  # derby: crashes are the point, arenas stay put
 MIN_GAP_M = 10.0      # two stretches of road side by side stay at least this far apart
 JOKER_END_M = 30.0    # the joker's ends, where it meets the lap, may touch the road
 CROSS_M = 60.0        # around a crossing (derby crossovers, Suzuka's bridge) no gap rule
 FULL_SHIFT_M = 40.0   # pit lane points up to this far beyond the edge move fully
 NO_SHIFT_M = 100.0    # and ones this far out not at all (roads leaving the circuit)
-SMOOTH_PTS = 6        # moving average over the shift, so the lane stays smooth
+SMOOTH_PTS = 20       # moving average over the shift, so the lane keeps its bends (6 tightened Spielberg's pit entry)
 INSIDE_MAX = 0.75     # inside a tight corner the road may widen to this times the radius
 CURVE_M = 10.0        # radius measured over this many metres either side
 

@@ -11,7 +11,8 @@ const SIZE := Vector2(352, 198)    ## 16:9, in the 1600x900 canvas
 ## The picture's size in real screen pixels (the canvas is scaled to the
 ## window, so a 4K screen gets a 4K-sharp picture).
 static func pixel_size(ci: CanvasItem, r: Rect2) -> Vector2i:
-	var k := ci.get_viewport().get_final_transform().get_scale()
+	# The window's stretch and the screen's own scale (the pit wall draws smaller).
+	var k := ci.get_viewport().get_final_transform().get_scale() * ci.get_global_transform().get_scale()
 	return Vector2i(roundi(r.size.x * absf(k.x)), roundi(r.size.y * absf(k.y)))
 
 

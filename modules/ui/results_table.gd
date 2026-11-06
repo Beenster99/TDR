@@ -22,6 +22,10 @@ extends RefCounted
 ##    stints: [{compound, from, to, laps, wear_end: [fl, fr, rl, rr]}], stop_log: [{lap, stationary_s, tyre, fuel_l, driver}]}
 ## and for the analysis charts: max_laps, compounds: {id -> short name},
 ## wear (true when tyre wear was on in this race).
+## Multi-class races (multi true, classes: fastest class first): each row has
+## its class and class_pos (place in the class), its gap is to its class
+## winner, class_fastest marks the best lap in each class, and single-race
+## points go by the place in the class, as in the WEC.
 
 const SINGLE_RACE_POINTS := "f1"
 
@@ -40,10 +44,27 @@ static func build(sim: RaceSim, telemetry: RaceTelemetry, opts := {}) -> Diction
 	var pts: Dictionary = opts.get("points", {})
 	var points_name := str(opts.get("points_name", ""))
 	var has_points := not quali and not derby and (not pts.is_empty() or bool(opts.get("single_race_points", false)))
+	var multi := RaceTelemetry.multi_class(sim)
+	var classes: Array = []
+	if multi:
+		classes = Array(RaceTelemetry.race_classes(sim))
 	if has_points and pts.is_empty():
 		var ps := PointsSystem.from_preset(SINGLE_RACE_POINTS)
-		pts = Season.race_points(ps, SeasonResults.classification(sim), _fastest_key(sim, telemetry), "")
-		points_name = ps.display_name()
+		if multi:
+			# Each class scores on its own: the class winner gets the win's points.
+			for cls in classes:
+				var sub := []
+				var all_rows := SeasonResults.classification(sim)   # in running order
+				for p0 in all_rows.size():
+					if sim.defs[sim.running_order[p0]].class_tag == cls:
+						sub.append(all_rows[p0].duplicate())
+				for k in sub.size():
+					sub[k]["position"] = k + 1
+				pts.merge(Season.race_points(ps, sub, "", ""))
+			points_name = ps.display_name() + ", per class"
+		else:
+			pts = Season.race_points(ps, SeasonResults.classification(sim), _fastest_key(sim, telemetry), "")
+			points_name = ps.display_name()
 	var field_best := []
 	for s in sector_count:
 		field_best.append(telemetry.best_sectors[s] if telemetry and s < telemetry.best_sectors.size() else 0.0)
@@ -64,9 +85,17 @@ static func build(sim: RaceSim, telemetry: RaceTelemetry, opts := {}) -> Diction
 	var max_laps := 0
 	var leader_laps := 0
 	var leader_time := 0.0
+	# Multi-class: each class's winner (laps, time), places in the class and
+	# fastest lap in the class.
+	var cls_lead := {}
+	var cls_count := {}
+	var class_fastest := {}
 	for p in sim.running_order.size():
 		var i: int = sim.running_order[p]
 		var e: RaceEntry = sim.entries[i]
+		var cls := sim.defs[i].class_tag
+		var cls_pos := int(cls_count.get(cls, 0)) + 1
+		cls_count[cls] = cls_pos
 		var ct: CarTelemetry = telemetry.cars[i] if telemetry and i < telemetry.cars.size() else null
 		var best_no := 0
 		for k in e.lap_times.size():
@@ -93,13 +122,20 @@ static func build(sim: RaceSim, telemetry: RaceTelemetry, opts := {}) -> Diction
 		if p == 0:
 			leader_laps = e.laps_done
 			leader_time = time
+		if multi and cls_pos == 1:
+			cls_lead[cls] = [e.laps_done, time]
 		var gap := ""
-		if p > 0 and status == "" and not quali and not derby:
-			if e.laps_done < leader_laps:
-				var down := leader_laps - e.laps_done
+		var first := cls_pos == 1 if multi else p == 0
+		var ref_laps: int = int(cls_lead[cls][0]) if multi else leader_laps
+		var ref_time: float = float(cls_lead[cls][1]) if multi else leader_time
+		if not first and status == "" and not quali and not derby:
+			if e.laps_done < ref_laps:
+				var down := ref_laps - e.laps_done
 				gap = "+%d lap%s" % [down, "" if down == 1 else "s"]
-			elif time > 0.0 and leader_time > 0.0:
-				gap = "+%.3f" % (time - leader_time)
+			elif time > 0.0 and ref_time > 0.0:
+				gap = "+%.3f" % (time - ref_time)
+		if multi and e.best_lap > 0.0 and (not class_fastest.has(cls) or e.best_lap < float(class_fastest[cls][1])):
+			class_fastest[cls] = [i, e.best_lap]
 		var lap_log := []
 		var stints := []
 		# The laps the car came into the pits on (a stop counts in its in-lap).
@@ -142,6 +178,7 @@ static func build(sim: RaceSim, telemetry: RaceTelemetry, opts := {}) -> Diction
 			"points": int(pts.get(key, 0)) if has_points else 0, "fastest": false, "jokers": e.jokers,
 			"racing": not e.finished and not e.dnf,
 			"grid": grid, "gained": grid - (p + 1) if grid > 0 else 0, "lap_log": lap_log, "stints": stints,
+			"class": cls, "class_pos": cls_pos,
 			"stop_log": (ct.stops.duplicate(true) if ct else [])}
 		rows.append(row)
 		if e.best_lap > 0.0 and (fastest.is_empty() or e.best_lap < float(fastest["time"])):
@@ -149,6 +186,8 @@ static func build(sim: RaceSim, telemetry: RaceTelemetry, opts := {}) -> Diction
 	for r in rows:
 		if not fastest.is_empty() and r["car"] == fastest["car"]:
 			r["fastest"] = true
+		if multi and class_fastest.has(r["class"]) and int(class_fastest[r["class"]][0]) == int(r["car"]):
+			r["class_fastest"] = true
 	var pens := []
 	for pen in opts.get("penalties", []):
 		var c := int(pen.get("car", -1))
@@ -160,7 +199,7 @@ static func build(sim: RaceSim, telemetry: RaceTelemetry, opts := {}) -> Diction
 		"points_name": points_name, "quali": quali, "derby": derby,
 		"rallycross": sim.settings.is_rallycross() and sim.track.has_joker(), "joker_laps": sim.settings.joker_laps,
 		"pits": sim.pits.enabled, "max_laps": max_laps, "compounds": compounds,
-		"wear": sim.settings.tyre_wear_enabled}
+		"wear": sim.settings.tyre_wear_enabled, "multi": multi, "classes": classes}
 
 
 ## Each tyre's wear by the end of a stint (laps from..to): the most it got

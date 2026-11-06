@@ -28,6 +28,9 @@ var wear_rate: float = 0.0           ## used by tyre wear (wave 3/4)
 ## Share of the grip left on a loose surface (rallycross gravel and dirt).
 ## Slicks skate on it; a rallycross tyre is cut to dig in.
 var dirt_grip: float = 0.6
+## Extra bite for braking and drive on dirt on top of dirt_grip (the tread
+## digs in, so a derby car pulls hard out of a dirt hairpin). 1 = none.
+var dirt_traction: float = 1.0
 ## Tyre pressure (wave 4 setups): the hot pressure that grips best, how far
 ## off it costs grip, and the cold pressure that reaches it at the optimal
 ## temperature (pressure rises with temperature: p_hot = p_cold * T / T_cold).
@@ -65,6 +68,7 @@ static func from_dict(d: Dictionary) -> TyreCompound:
 	t.kind = d.get("kind", t.kind)
 	t.wear_rate = d.get("wear_rate", t.wear_rate)
 	t.dirt_grip = d.get("dirt_grip", t.dirt_grip)
+	t.dirt_traction = d.get("dirt_traction", t.dirt_traction)
 	t.optimal_hot_psi = d.get("optimal_hot_psi", t.optimal_hot_psi)
 	t.pressure_window_psi = d.get("pressure_window_psi", t.pressure_window_psi)
 	t.cold_psi = t.optimal_hot_psi * COLD_REF_K / (t.optimal_temp_c + 273.15)

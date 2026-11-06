@@ -23,7 +23,7 @@ of stops an AI wheel man fumbles a wheel (+1.5 s). The same race (seed)
 gives the same stops. The HUD tells the driver the stop time against a
 standard stop, and any fumble.
 
-The crew are jointed figures (hips, knees, shoulders, elbows) in race suits
+The crew are jointed figures (hips, knees, shoulders, elbows) in race suits (see "The models" below)
 with helmets, gloves and boots. They carry what they work with: wheels in
 both arms, the wheel gun, the hose nozzle, the windscreen cloth, the air
 lance, the lollipop, the extinguisher. New tyres are laid out by each corner
@@ -38,8 +38,8 @@ The user's design (2026-11-03). Settings > Gameplay > **Co-op pit stops:
 play your crew job**, per player (off: the AI does that player's jobs).
 
 1. **The call.** The strategist calls the car in. The driver follows the pit
-   guide line to the pit entry; once the car is in the lane the guide drives
-   it to its box (`crew_auto`) and every player's camera closes in on the
+   guide line into the lane, down to the speed limit; from the limit line
+   the guide drives it to its box (`crew_auto`) and every player's camera closes in on the
    box, north up. On the pit wall the console steps aside for it.
 2. **Fuel and windscreen.** The strategist (or the two-player pit wall) is
    the **fuel man**: grab the hose at the rig, plug it into the filler, and
@@ -92,6 +92,49 @@ keep their pick; a clash goes to the first free job.
 
 Grab and use are rebindable (Settings > Controller, "Pit crew: ...").
 
+### What you see (the job panel and the guide)
+
+Nothing about the stop is on screen while you're still driving in: the
+panel and the guide only come up once you're in the pits (the camera is on
+the box; a pit crew player laying out tyres is in the garage already, so for
+them that's from the call).
+
+- **The job panel**, bottom left (clear of the box in the middle of the
+  screen): your job, the stop clock, the job's steps in order (green tick
+  done, yellow arrow now, dim ring to come; `PitCrewGame.job_steps`), the
+  gauge for the step being done (fuel litres, windscreen, nut off, the gun
+  gauge with its red / perfect / good / slow bands), then a big line saying
+  exactly what to press now. Buttons are drawn as key caps with the key or
+  pad button you mapped, for the device you touched last, and the bottom
+  line lists run / grab / use the same way, so a keyboard player sees "WASD,
+  G, Space" and a pad player "Left stick, X, RT".
+- **The guide** in the 3D box (`PitCrews.set_guide`, from
+  `PitCrewGame.guide_target`): a glowing ring that breathes, with a ripple
+  going out from it, round the thing to go to next (the fuel rig, the
+  filler, the tyre stack with the right compound, the trolley, the lance
+  socket, your wheel gun, the wheel, the new tyre, a spot to put the old
+  wheel down), and a trail of dots marching from your crew member to it.
+  It's drawn over everything, so it shows through the car.
+
+### The models
+
+The crew, wheels, guns, fuel rig, tyre stacks and trolley are built from
+simple shapes merged into one mesh each with a colour per shape
+(`PitCrews.Kit`, vertex colours), so the detail costs no extra draws: a crew
+member is 10 meshes (it was 18). Crew wear race suits with a reflective band
+and cuffs, a contrast yoke and shoulder pads, a belt, knee pads, boots with
+soles, a back number panel, and a helmet with a team stripe, dark visor and
+chin bar. Wheels are slicks with rounded shoulders, a five-spoke graphite
+rim, a gold centre-lock nut and the compound's coloured ring on both
+sidewalls (red dry, green intermediate, blue wet; none on an old wheel); the
+stacks' blanket tops are the compound colour so they read from above. The
+wheel gun has a gold motor body, socket, top handle, pistol grip, trigger
+and yellow air line. The fuel rig is a gravity tower: hazard-striped base,
+frame, a tank with the team's band and a sight gauge, the red dead-man
+valve and outlet; the hose is thick and sags, ending in a dry-break nozzle.
+`tests/pit_crew_models_shot.tscn` renders them all close up (`top` for
+straight down).
+
 ### Rules (race module)
 
 - A stop never lasts longer than the crew's give-up time (`CREW_GIVE_UP` x
@@ -99,7 +142,7 @@ Grab and use are rebindable (Settings > Controller, "Pit crew: ...").
 - Single player has no crew game: the AI crew do the whole stop.
 - Your crew member has a yellow hoop on the ground; a team mate's is blue.
   Tips name the buttons you mapped, on the device you touched last: keyboard
-  and mouse, or the controller (`InputPrompt.fill`).
+  and mouse, or the controller (`InputPrompt`).
   With no fuel to put in, the fuel man stands by at the rig.
 - Before the car stops, each player's screen sends `crew: {job, play: true,
   lane_auto}` for each of its jobs (`PitRules.JOBS`: fuel, screen, lance,

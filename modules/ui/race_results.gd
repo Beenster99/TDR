@@ -38,7 +38,7 @@ const FADE_IN_S := 0.7      ## black to the results
 
 ## Columns: id, heading, width, alignment (0 left, 2 right).
 const COLUMNS := [
-	["pos", "POS", 44, 0], ["name", "DRIVER", 160, 0], ["car_name", "CAR", 150, 0], ["laps", "LAPS", 40, 2],
+	["pos", "POS", 44, 0], ["class", "CLASS", 80, 0], ["name", "DRIVER", 160, 0], ["car_name", "CAR", 150, 0], ["laps", "LAPS", 40, 2],
 	["time", "TIME / GAP", 100, 2], ["best_lap", "BEST LAP", 112, 2], ["avg_lap", "AVG LAP", 84, 2],
 	["s", "S", 66, 2], ["potential", "POTENTIAL", 88, 2], ["stops", "STOPS", 48, 2], ["pen", "PEN", 50, 2],
 	["points", "PTS", 40, 2],
@@ -63,6 +63,9 @@ var _analysis_btn: Button
 var _views_parent: VBoxContainer
 var _from_analysis := false
 var _row_nodes := {}            ## car -> row panel (to focus it again)
+## Multi-class races: show one class only ("" = every class), picked with the
+## class buttons over the table.
+var _class_filter := ""
 var _pending: Array = []        ## [d, opts] waiting until the table is back on screen
 const NEW_ROW_FLASH_S := 1.2    ## a car that has just finished lights up this long
 
@@ -258,6 +261,8 @@ func _build(d: Dictionary, opts: Dictionary) -> Control:
 	left.size_flags_horizontal = SIZE_EXPAND_FILL
 	left.add_theme_constant_override("separation", 8)
 	mid.add_child(left)
+	if d.get("multi", false):
+		left.add_child(_class_bar(d, opts))
 	left.add_child(_table_header(d))
 	_scroll = ScrollContainer.new()
 	_scroll.size_flags_vertical = SIZE_EXPAND_FILL
@@ -268,8 +273,11 @@ func _build(d: Dictionary, opts: Dictionary) -> Control:
 	rows.add_theme_constant_override("separation", 2)
 	rows.size_flags_horizontal = SIZE_EXPAND_FILL
 	_scroll.add_child(rows)
+	if not str(_class_filter) in d.get("classes", []):
+		_class_filter = ""
 	for r in d.get("rows", []):
-		rows.add_child(_row(d, r))
+		if _class_filter == "" or str(r.get("class", "")) == _class_filter:
+			rows.add_child(_row(d, r))
 	var pens: Array = d.get("penalties", [])
 	if not pens.is_empty():
 		rows.add_child(_gap(10))
@@ -374,6 +382,8 @@ func _columns(d: Dictionary) -> Array:
 			continue
 		if id == "stops" and not d.get("pits", false):
 			continue
+		if id == "class" and not d.get("multi", false):
+			continue
 		if id == "points" and not d.get("has_points", false):
 			continue
 		if id == "s":
@@ -385,6 +395,74 @@ func _columns(d: Dictionary) -> Array:
 			continue
 		out.append(c)
 	return out
+
+
+## Multi-class: buttons to show every class or one (the class's colour), and
+## the class winners.
+func _class_bar(d: Dictionary, opts: Dictionary) -> Control:
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 8)
+	h.add_child(_label("SHOW", 13, DIM))
+	var list: Array = [""]
+	list.append_array(d.get("classes", []))
+	for cls in list:
+		var b := Button.new()
+		b.text = "All classes" if cls == "" else str(cls)
+		b.toggle_mode = true
+		b.button_pressed = cls == _class_filter
+		b.custom_minimum_size = Vector2(110, 32)
+		b.add_theme_font_size_override("font_size", 15)
+		if cls != "":
+			var col := CarCatalog.class_colour(cls)
+			for st_name in ["normal", "hover", "pressed", "focus", "hover_pressed"]:
+				var sb := StyleBoxFlat.new()
+				var on: bool = st_name in ["pressed", "hover_pressed"] or (cls == _class_filter and st_name != "focus")
+				sb.bg_color = col if on else Color(col, 0.28 if st_name != "hover" else 0.45)
+				sb.set_corner_radius_all(4)
+				sb.set_content_margin_all(4)
+				if st_name == "focus":
+					sb.draw_center = false
+					sb.border_color = Color.WHITE
+					sb.set_border_width_all(2)
+				b.add_theme_stylebox_override(st_name, sb)
+			var tc := CarCatalog.class_text_colour(cls) if cls == _class_filter else Color.WHITE
+			for k in ["font_color", "font_hover_color", "font_focus_color"]:
+				b.add_theme_color_override(k, tc)
+			b.add_theme_color_override("font_pressed_color", CarCatalog.class_text_colour(cls))
+			b.add_theme_color_override("font_hover_pressed_color", CarCatalog.class_text_colour(cls))
+		b.pressed.connect(func():
+			_class_filter = cls
+			update_results(data, opts))
+		h.add_child(b)
+	# Who won each class.
+	var wins := []
+	for r in d.get("rows", []):
+		if int(r.get("class_pos", 0)) == 1 and not r.get("racing", false) and str(r.get("status", "")) == "":
+			wins.append("%s %s" % [CarCatalog.class_short(str(r["class"])), r["name"]])
+	if not wins.is_empty():
+		var sp := Control.new()
+		sp.size_flags_horizontal = SIZE_EXPAND_FILL
+		h.add_child(sp)
+		h.add_child(_label("CLASS WINNERS  " + "   ".join(wins), 14, GOLD))
+	return h
+
+
+## A class chip for a row: the class's short name and the car's place in it.
+func _class_chip(cls: String, pos: int, w: float, dim := false) -> Control:
+	var p := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(CarCatalog.class_colour(cls), 0.45 if dim else 1.0)
+	sb.set_corner_radius_all(3)
+	sb.content_margin_left = 5
+	sb.content_margin_right = 5
+	p.add_theme_stylebox_override("panel", sb)
+	p.custom_minimum_size = Vector2(w, 0)
+	p.mouse_filter = MOUSE_FILTER_IGNORE
+	var l := _label("%s  P%d" % [CarCatalog.class_short(cls), pos] if pos > 0 else CarCatalog.class_short(cls),
+		ROW_FONT - 1, CarCatalog.class_text_colour(cls))
+	l.mouse_filter = MOUSE_FILTER_IGNORE
+	p.add_child(l)
+	return p
 
 
 func _table_header(d: Dictionary) -> Control:
@@ -439,6 +517,9 @@ func _row(d: Dictionary, r: Dictionary) -> Control:
 	var field_best: Array = d.get("best_sectors", [])
 	for c in _columns(d):
 		var id: String = c[0]
+		if id == "class":
+			h.add_child(_class_chip(str(r.get("class", "")), 0 if racing else int(r.get("class_pos", 0)), c[2], racing))
+			continue
 		var text := ""
 		var col := Color.WHITE if not me else Color(1, 0.95, 0.82)
 		match id:
@@ -466,7 +547,7 @@ func _row(d: Dictionary, r: Dictionary) -> Control:
 					text = str(r["gap"])
 			"best_lap":
 				text = fmt_time(float(r["best_lap"])) if float(r["best_lap"]) > 0.0 else "-"
-				if r.get("fastest", false):
+				if r.get("fastest", false) or r.get("class_fastest", false):
 					col = PURPLE
 				if int(r.get("best_lap_no", 0)) > 0:
 					text += "  L%d" % int(r["best_lap_no"])

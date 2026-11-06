@@ -86,6 +86,8 @@ class Person:
 	var arm_r: Node3D
 	var elbow_l: Node3D
 	var elbow_r: Node3D
+	var hand_l: Node3D    ## wrists: what's held hangs off these
+	var hand_r: Node3D
 	var head: Node3D
 	var items: Dictionary = {}   ## Carry -> Node3D held in the hands
 	var pos := Vector2.ZERO
@@ -120,7 +122,8 @@ class Crew:
 	var new_tyres: Array = []     ## the new wheels laid out by each corner (Node3D x4)
 	var old_tyres: Array = []     ## the old wheels put down (x4)
 	var guns: Array = []          ## a wheel gun lying on the ground, each side (x2)
-	var hose: MeshInstance3D
+	var hose: MeshInstance3D      ## from the rig to the low point of the sag
+	var hose2: MeshInstance3D     ## and on to the nozzle
 	var rig := Vector2.ZERO       ## fuel rig, where the hose comes from
 	var lolly: MeshInstance3D     ## lollipop disc (red = wait, green = go)
 	var state := 0
@@ -379,10 +382,107 @@ func box_frame(car: int) -> Dictionary:
 	return {"pos": c.pos, "dir": c.dir, "out": c.out}
 
 
+## The ground's height at car's box (metres).
+func ground_y(car: int) -> float:
+	var c := _crew_for(car)
+	return c.y if c else 0.0
+
+
 ## The box's measurements for car's crew (crew_dims).
 func box_dims(car: int) -> Dictionary:
 	var c := _crew_for(car)
 	return c.dims if c else {}
+
+
+## Where this machine's player should go next in a box (ui PitCrewGame):
+## a pulsing target ring on the ground (radius: how big the thing there is)
+## and a trail of dots running from the player to it. to = null: no guide.
+## Drawn over everything, so it shows through the car and the crew.
+func set_guide(from, to, radius := 0.6, colour := Color(1.0, 0.85, 0.2), y := 0.0) -> void:
+	_guide_from = from
+	_guide_to = to
+	_guide_r = radius
+	_guide_col = colour
+	_guide_y = y
+	if to != null and _guide == null:
+		_build_guide()
+	if _guide:
+		_guide.visible = to != null and _show
+
+
+const GUIDE_DOTS := 14
+const GUIDE_DOT_STEP := 0.55   ## m between the dots of the trail
+
+var _guide: Node3D
+var _guide_ring: MeshInstance3D
+var _guide_pulse: MeshInstance3D
+var _guide_dots: Array = []
+var _guide_mat: StandardMaterial3D
+var _guide_pulse_mat: StandardMaterial3D
+var _guide_from = null
+var _guide_to = null
+var _guide_r := 0.6
+var _guide_col := Color(1.0, 0.85, 0.2)
+var _guide_y := 0.0
+
+
+func _guide_material(prio: int) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.no_depth_test = true
+	m.render_priority = prio
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	return m
+
+
+func _build_guide() -> void:
+	_guide = Node3D.new()
+	_guide.name = "CrewGuide"
+	add_child(_guide)
+	_guide_mat = _guide_material(3)
+	_guide_pulse_mat = _guide_material(3)
+	var ring := _tor(0.82, 1.0, 32)
+	_guide_ring = _part(_guide, ring, _guide_mat, Vector3.ZERO)
+	_guide_ring.scale = Vector3(1, 0.15, 1)
+	_guide_pulse = _part(_guide, ring, _guide_pulse_mat, Vector3.ZERO)
+	var dot := _cyl(0.085, 0.085, 0.02, 10)
+	for k in GUIDE_DOTS:
+		_guide_dots.append(_part(_guide, dot, _guide_mat, Vector3.ZERO))
+	for m in _all_meshes(_guide):
+		(m as MeshInstance3D).visibility_range_end = 0.0
+
+
+## Moves the guide: the ring breathes and a wider one ripples out from it;
+## the dots march towards the target.
+func _update_guide() -> void:
+	if _guide == null or not _guide.visible or _guide_to == null:
+		return
+	var to: Vector2 = _guide_to
+	var h := _guide_y + 0.06
+	var r := _guide_r * (1.0 + 0.08 * sin(_t * 6.0))
+	_guide_mat.albedo_color = Color(_guide_col, 0.95)
+	_guide_ring.position = Vector3(to.x, h, to.y)
+	_guide_ring.scale = Vector3(r, 0.15, r)
+	var f := fposmod(_t * 1.2, 1.0)
+	var pr := _guide_r * (1.0 + f * 0.9)
+	_guide_pulse.position = _guide_ring.position
+	_guide_pulse.scale = Vector3(pr, 0.1, pr)
+	_guide_pulse_mat.albedo_color = Color(_guide_col, 0.7 * (1.0 - f))
+	var from = _guide_from
+	var gap := 0.0
+	var dir := Vector2.ZERO
+	if from != null:
+		gap = (from as Vector2).distance_to(to) - _guide_r - 0.6
+		dir = (to - (from as Vector2)).normalized()
+	var shift := fposmod(_t * 1.6, GUIDE_DOT_STEP)
+	for k in GUIDE_DOTS:
+		var dm: MeshInstance3D = _guide_dots[k]
+		var along := 0.6 + k * GUIDE_DOT_STEP + shift
+		dm.visible = from != null and along < 0.6 + gap
+		if dm.visible:
+			var at: Vector2 = (from as Vector2) + dir * along
+			dm.position = Vector3(at.x, h, at.y)
 
 
 ## People are drawn only when the camera is this close (metres); crews far
@@ -394,6 +494,8 @@ func set_camera(centre: Vector2, d: float) -> void:
 	if show != _show:
 		_show = show
 		visible = show
+		if _guide:
+			_guide.visible = show and _guide_to != null
 
 
 func _crew_of(car: int) -> Crew:
@@ -486,6 +588,7 @@ func _process(delta: float) -> void:
 		return
 	delta = minf(delta, 0.05)
 	_t += delta
+	_update_guide()
 	for k in crews:
 		var c: Crew = crews[k]
 		if c.box_pos.distance_to(_cam_centre) > _cam_reach and c.state == Stop.NONE:
@@ -863,7 +966,8 @@ func _props(c: Crew) -> void:
 		mode = "rig"
 		if f.carry == Carry.HOSE:
 			mode = "car" if serving and fuel.size() >= 4 and e >= float(fuel[0]) and e <= float(fuel[3]) else "hand"
-	var a := Vector3(c.rig.x, c.y + 1.1, c.rig.y)
+	var outlet := c.rig - c.out * 0.55
+	var a := Vector3(outlet.x, c.y + 1.05, outlet.y)
 	var b := a + Vector3(0, -0.6, 0)
 	if mode == "hand":
 		var hand := f.pos + Vector2.from_angle(f.face) * 0.45
@@ -871,16 +975,28 @@ func _props(c: Crew) -> void:
 	elif mode == "car":
 		var fl: Vector2 = _sp(c, "filler")[0] - c.out * 0.45
 		b = Vector3(fl.x, c.y + 0.95, fl.y)
+	var show := a.distance_to(b) > 0.3 and active and (mode != "rig" or not fuel.is_empty())
+	c.hose.visible = show
+	c.hose2.visible = show
+	if show:
+		# a heavy hose sags between the rig and the nozzle
+		var mid := (a + b) * 0.5
+		mid.y = maxf(c.y + 0.08, mid.y - 0.3 * minf(1.0, a.distance_to(b) / 2.5))
+		_lay_hose(c.hose, a, mid)
+		_lay_hose(c.hose2, mid, b)
+
+
+## Stretches a length of hose (a unit length along x) from a to b.
+func _lay_hose(h: MeshInstance3D, a: Vector3, b: Vector3) -> void:
 	var d := b - a
-	var len := d.length()
-	c.hose.visible = len > 0.3 and active and (mode != "rig" or not fuel.is_empty())
-	if c.hose.visible:
-		var xa := d / len
-		var ya := xa.cross(Vector3.UP).normalized()
-		if ya.length_squared() < 0.5:
-			ya = Vector3.FORWARD
-		var za := xa.cross(ya)
-		c.hose.transform = Transform3D(Basis(xa * len, ya, za), (a + b) * 0.5)
+	var len := maxf(d.length(), 0.01)
+	var xa := d / len
+	var ya := xa.cross(Vector3.UP)
+	if ya.length_squared() < 0.01:
+		ya = Vector3.FORWARD
+	ya = ya.normalized()
+	var za := xa.cross(ya)
+	h.transform = Transform3D(Basis(xa * (len + 0.06), ya, za), (a + b) * 0.5)
 
 
 ## Stack index for a compound id: 0 dry, 1 intermediate, 2 wet.
@@ -893,15 +1009,113 @@ static func _kind_of(compound: String) -> int:
 
 
 func _place_tyre(c: Crew, t: Node3D, at: Vector2, kind: int) -> void:
-	t.position = Vector3(at.x, c.y + 0.16, at.y)
-	var band := t.get_node_or_null("Band") as MeshInstance3D
-	if band:
-		band.visible = kind >= 0
-		if kind >= 0:
-			band.material_override = _mat("band_%d" % kind, STACK_COLOURS[kind], 0.6)
+	t.position = Vector3(at.x, c.y + 0.17, at.y)
+	if t.get_meta("kind", -2) != kind:
+		t.set_meta("kind", kind)
+		_set_wheel_kind(t, kind)
 
 
 # --- Building --------------------------------------------------------------------
+#
+# Every detailed thing here (a crew member's limbs, the wheels, the wheel
+# guns, the fuel rig) is built from simple shapes merged into one mesh with
+# a colour per shape (Kit), so a detailed part is still one draw: the pit
+# lane has hundreds of people in it.
+
+## One mesh made of simple shapes, each its own colour (vertex colours).
+class Kit:
+	extends RefCounted
+	var v := PackedVector3Array()
+	var n := PackedVector3Array()
+	var c := PackedColorArray()
+	var idx := PackedInt32Array()
+
+	## Adds a shape: placed at at, turned by rot (radians, x y z), sized by scl
+	## (no negative sizes: they'd turn the faces inside out).
+	func add(mesh: PrimitiveMesh, col: Color, at := Vector3.ZERO, rot := Vector3.ZERO, scl := Vector3.ONE) -> Kit:
+		var b := Basis.from_euler(rot) * Basis.from_scale(scl)
+		var xf := Transform3D(b, at)
+		var nb := b.inverse().transposed()
+		var a := mesh.get_mesh_arrays()
+		var pv: PackedVector3Array = a[Mesh.ARRAY_VERTEX]
+		var pn: PackedVector3Array = a[Mesh.ARRAY_NORMAL]
+		var pi = a[Mesh.ARRAY_INDEX]
+		var base := v.size()
+		for k in pv.size():
+			v.append(xf * pv[k])
+			n.append((nb * pn[k]).normalized())
+			c.append(col)
+		if pi == null or (pi as PackedInt32Array).is_empty():
+			for k in pv.size():
+				idx.append(base + k)
+		else:
+			for k in pi:
+				idx.append(base + int(k))
+		return self
+
+	func build() -> ArrayMesh:
+		var arr := []
+		arr.resize(Mesh.ARRAY_MAX)
+		arr[Mesh.ARRAY_VERTEX] = v
+		arr[Mesh.ARRAY_NORMAL] = n
+		arr[Mesh.ARRAY_COLOR] = c
+		arr[Mesh.ARRAY_INDEX] = idx
+		var m := ArrayMesh.new()
+		m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+		return m
+
+
+static func _cyl(r_top: float, r_bot: float, h: float, seg := 16) -> CylinderMesh:
+	var m := CylinderMesh.new()
+	m.top_radius = r_top
+	m.bottom_radius = r_bot
+	m.height = h
+	m.radial_segments = seg
+	m.rings = 1
+	return m
+
+
+static func _bx(size: Vector3) -> BoxMesh:
+	var m := BoxMesh.new()
+	m.size = size
+	return m
+
+
+static func _sph(r: float, seg := 12, rings := 6) -> SphereMesh:
+	var m := SphereMesh.new()
+	m.radius = r
+	m.height = r * 2.0
+	m.radial_segments = seg
+	m.rings = rings
+	return m
+
+
+static func _cap(r: float, h: float, seg := 10) -> CapsuleMesh:
+	var m := CapsuleMesh.new()
+	m.radius = r
+	m.height = h
+	m.radial_segments = seg
+	m.rings = 2
+	return m
+
+
+static func _tor(inner: float, outer: float, seg := 24) -> TorusMesh:
+	var m := TorusMesh.new()
+	m.inner_radius = inner
+	m.outer_radius = outer
+	m.rings = seg
+	m.ring_segments = 6
+	return m
+
+
+const ALONG_X := Vector3(0, 0, PI * 0.5)   ## turns a Y-axis shape (cylinder, capsule) to lie along x
+const REFLECT := Color(0.9, 0.92, 0.88)   ## reflective suit stripes
+const RUBBER := Color(0.035, 0.035, 0.04)
+const STEEL := Color(0.72, 0.73, 0.76)
+const GRAPHITE := Color(0.16, 0.16, 0.18)
+const GOLD := Color(0.86, 0.66, 0.2)
+const HAZARD := Color(0.95, 0.78, 0.08)
+
 
 func _mat(key: String, col: Color, rough := 0.7, metal := 0.0) -> StandardMaterial3D:
 	if _meshes.has("m_" + key):
@@ -914,36 +1128,32 @@ func _mat(key: String, col: Color, rough := 0.7, metal := 0.0) -> StandardMateri
 	return m
 
 
+## The material for Kit meshes: their colours are in the mesh.
+func _vc(key: String, rough := 0.75, metal := 0.0) -> StandardMaterial3D:
+	if _meshes.has("vc_" + key):
+		return _meshes["vc_" + key]
+	var m := StandardMaterial3D.new()
+	m.vertex_color_use_as_albedo = true
+	m.vertex_color_is_srgb = true
+	m.roughness = rough
+	m.metallic = metal
+	_meshes["vc_" + key] = m
+	return m
+
+
+## A Kit mesh, built once per key.
+func _kit(key: String, make: Callable) -> ArrayMesh:
+	if not _meshes.has("k_" + key):
+		var k := Kit.new()
+		make.call(k)
+		_meshes["k_" + key] = k.build()
+	return _meshes["k_" + key]
+
+
 func _box_mesh(size: Vector3) -> BoxMesh:
 	var key := "b_%s" % size
 	if not _meshes.has(key):
-		var b := BoxMesh.new()
-		b.size = size
-		_meshes[key] = b
-	return _meshes[key]
-
-
-func _capsule(r: float, h: float) -> CapsuleMesh:
-	var key := "c_%.3f_%.3f" % [r, h]
-	if not _meshes.has(key):
-		var cm := CapsuleMesh.new()
-		cm.radius = r
-		cm.height = h
-		cm.radial_segments = 8
-		cm.rings = 2
-		_meshes[key] = cm
-	return _meshes[key]
-
-
-func _sphere(r: float) -> SphereMesh:
-	var key := "s_%.3f" % r
-	if not _meshes.has(key):
-		var sm := SphereMesh.new()
-		sm.radius = r
-		sm.height = r * 2.0
-		sm.radial_segments = 10
-		sm.rings = 6
-		_meshes[key] = sm
+		_meshes[key] = _bx(size)
 	return _meshes[key]
 
 
@@ -952,7 +1162,7 @@ func _part(parent: Node3D, mesh: Mesh, mat: Material, at: Vector3) -> MeshInstan
 	mi.mesh = mesh
 	mi.material_override = mat
 	mi.position = at
-	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF   # thousands of little meshes: no shadows
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF   # hundreds of little meshes: no shadows
 	mi.visibility_range_end = SHOW_DIST
 	parent.add_child(mi)
 	return mi
@@ -965,52 +1175,228 @@ func _joint(parent: Node3D, at: Vector3) -> Node3D:
 	return n
 
 
-func _tyre_mesh() -> CylinderMesh:
-	if not _meshes.has("tyre"):
-		var cy := CylinderMesh.new()
-		cy.top_radius = 0.34
-		cy.bottom_radius = 0.34
-		cy.height = 0.3
-		cy.radial_segments = 14
-		_meshes["tyre"] = cy
-	return _meshes["tyre"]
+# --- Wheels -------------------------------------------------------------------------
+
+## A racing wheel lying flat (axle up) into k at at: slick with rounded
+## shoulders, five-spoke graphite rim, the centre-lock nut, and (kind 0 dry /
+## 1 intermediate / 2 wet; -1 none) the compound's coloured ring on the
+## sidewall, both sides, so it reads from above and when carried.
+static func _wheel_parts(k: Kit, at: Vector3, kind: int) -> void:
+	k.add(_cyl(0.335, 0.335, 0.22, 28), RUBBER, at)
+	for s in [-1.0, 1.0]:
+		k.add(_tor(0.255, 0.345, 28), RUBBER, at + Vector3(0, s * 0.105, 0), Vector3.ZERO, Vector3(1, 0.75, 1))
+		if kind >= 0:
+			k.add(_tor(0.282, 0.305, 28), STACK_COLOURS[kind], at + Vector3(0, s * 0.142, 0), Vector3.ZERO, Vector3(1, 0.5, 1))
+		else:
+			k.add(_tor(0.282, 0.3, 28), Color(0.2, 0.2, 0.21), at + Vector3(0, s * 0.14, 0), Vector3.ZERO, Vector3(1, 0.4, 1))
+		k.add(_cyl(0.235, 0.235, 0.012, 24), Color(0.62, 0.63, 0.66), at + Vector3(0, s * 0.128, 0))   # rim lip
+		k.add(_cyl(0.215, 0.215, 0.012, 24), GRAPHITE, at + Vector3(0, s * 0.134, 0))                # rim face
+		for sp in 5:
+			var ang := sp * TAU / 5.0
+			k.add(_bx(Vector3(0.19, 0.02, 0.045)), Color(0.28, 0.28, 0.3),
+				at + Vector3(cos(ang) * 0.1, s * 0.142, sin(ang) * 0.1), Vector3(0, -ang, 0))
+		k.add(_cyl(0.05, 0.05, 0.04, 6), GOLD, at + Vector3(0, s * 0.155, 0))                       # centre-lock nut
+	k.add(_cyl(0.215, 0.215, 0.24, 20), Color(0.1, 0.1, 0.11), at)                                 # the rim barrel
 
 
-## A wheel: tyre, rim and (laid-out new ones) a coloured compound band.
-func _wheel_prop(parent: Node3D, upright: bool) -> Node3D:
+func _wheel_mesh(kind: int) -> ArrayMesh:
+	return _kit("wheel_%d" % kind, func(k: Kit): _wheel_parts(k, Vector3.ZERO, kind))
+
+
+## A wheel to put about: a node with one mesh child "Wheel" (kind: see
+## _wheel_parts). upright: stood on its tread (carried in the arms).
+func _wheel_prop(parent: Node3D, upright: bool, kind := -1) -> Node3D:
 	var n := Node3D.new()
 	parent.add_child(n)
-	var t := _part(n, _tyre_mesh(), _mat("rubber", Color(0.05, 0.05, 0.05), 0.85), Vector3.ZERO)
-	if not _meshes.has("rim"):
-		var rim := CylinderMesh.new()
-		rim.top_radius = 0.22
-		rim.bottom_radius = 0.22
-		rim.height = 0.31
-		rim.radial_segments = 12
-		_meshes["rim"] = rim
-		var band := CylinderMesh.new()
-		band.top_radius = 0.345
-		band.bottom_radius = 0.345
-		band.height = 0.05
-		band.radial_segments = 14
-		_meshes["band"] = band
-	var r := _part(n, _meshes["rim"], _mat("rim", Color(0.55, 0.56, 0.6), 0.3, 0.7), Vector3.ZERO)
-	var b := _part(n, _meshes["band"], _mat("band_0", STACK_COLOURS[0], 0.6), Vector3(0, 0.13, 0))
-	b.name = "Band"
+	var m := _part(n, _wheel_mesh(kind), _vc("wheel", 0.55, 0.25), Vector3.ZERO)
+	m.name = "Wheel"
 	if upright:
-		for m in [t, r, b]:
-			m.rotation.x = PI * 0.5
+		m.rotation.x = PI * 0.5
 	return n
+
+
+## Shows a wheel prop's compound ring (kind -1: none, an old wheel).
+func _set_wheel_kind(n: Node3D, kind: int) -> void:
+	var m := n.get_node_or_null("Wheel") as MeshInstance3D
+	if m:
+		m.mesh = _wheel_mesh(kind)
+
+
+# --- Tools --------------------------------------------------------------------------
+
+## The pneumatic wheel gun (barrel along +x): the socket at the front, the
+## gold motor body, a top carry handle, the pistol grip and trigger, the
+## yellow air line out of the bottom of the grip.
+func _gun_mesh() -> ArrayMesh:
+	return _kit("gun", func(k: Kit):
+		k.add(_cyl(0.058, 0.058, 0.22, 14), GOLD, Vector3(0.0, 0, 0), ALONG_X)                  # motor body
+		k.add(_cyl(0.062, 0.062, 0.035, 14), GRAPHITE, Vector3(-0.115, 0, 0), ALONG_X)          # back cap
+		k.add(_cyl(0.046, 0.05, 0.08, 12), STEEL, Vector3(0.15, 0, 0), ALONG_X)                 # anvil
+		k.add(_cyl(0.042, 0.042, 0.06, 6), RUBBER, Vector3(0.215, 0, 0), ALONG_X)               # hex socket
+		k.add(_bx(Vector3(0.05, 0.15, 0.06)), RUBBER, Vector3(-0.055, -0.1, 0), Vector3(0, 0, 0.28))   # grip
+		k.add(_bx(Vector3(0.022, 0.045, 0.03)), Color(0.85, 0.12, 0.08), Vector3(-0.005, -0.075, 0))   # trigger
+		k.add(_bx(Vector3(0.17, 0.022, 0.03)), RUBBER, Vector3(0.0, 0.1, 0))                    # top handle
+		for x in [-0.07, 0.07]:
+			k.add(_bx(Vector3(0.022, 0.05, 0.026)), RUBBER, Vector3(x, 0.072, 0))
+		k.add(_cyl(0.016, 0.016, 0.3, 6), HAZARD, Vector3(-0.13, -0.27, 0), Vector3(0, 0, 0.55)))   # air line
 
 
 func _gun_prop(parent: Node3D) -> Node3D:
 	var n := Node3D.new()
 	parent.add_child(n)
-	var metal := _mat("gun", Color(0.72, 0.72, 0.76), 0.3, 0.6)
-	_part(n, _box_mesh(Vector3(0.3, 0.11, 0.11)), metal, Vector3.ZERO)
-	_part(n, _box_mesh(Vector3(0.06, 0.16, 0.07)), _mat("gun_grip", Color(0.9, 0.75, 0.1), 0.5), Vector3(-0.08, -0.1, 0))
-	_part(n, _box_mesh(Vector3(0.08, 0.08, 0.08)), _mat("dark", Color(0.05, 0.05, 0.05)), Vector3(0.18, 0, 0))
+	var m := _part(n, _gun_mesh(), _vc("metal", 0.35, 0.45), Vector3.ZERO)
+	m.scale = Vector3.ONE * 1.25   # a touch big, so it reads from up in the sky
 	return n
+
+
+## The refuelling coupling on the end of the hose (along +x): the big
+## dry-break nozzle, its two handles and the red dead-man lever.
+func _nozzle_mesh() -> ArrayMesh:
+	return _kit("nozzle", func(k: Kit):
+		k.add(_cyl(0.07, 0.07, 0.26, 14), STEEL, Vector3(0.02, 0, 0), ALONG_X)
+		k.add(_cyl(0.085, 0.085, 0.05, 14), GRAPHITE, Vector3(0.16, 0, 0), ALONG_X)            # coupling ring
+		k.add(_cyl(0.055, 0.055, 0.05, 12), Color(0.95, 0.5, 0.05), Vector3(0.2, 0, 0), ALONG_X)   # dry-break face
+		k.add(_cyl(0.05, 0.05, 0.22, 10), RUBBER, Vector3(-0.2, 0, 0), ALONG_X)                # hose collar
+		for z in [-0.1, 0.1]:
+			k.add(_bx(Vector3(0.14, 0.03, 0.03)), RUBBER, Vector3(0.0, 0, z))
+			k.add(_bx(Vector3(0.03, 0.03, 0.05)), RUBBER, Vector3(-0.06, 0, z * 0.75))
+			k.add(_bx(Vector3(0.03, 0.03, 0.05)), RUBBER, Vector3(0.06, 0, z * 0.75))
+		k.add(_bx(Vector3(0.12, 0.025, 0.04)), Color(0.85, 0.1, 0.08), Vector3(0.0, 0.085, 0)))   # dead-man lever
+
+
+## The air lance (along +x): the long probe, its T handle and air hose.
+func _lance_mesh() -> ArrayMesh:
+	return _kit("lance", func(k: Kit):
+		k.add(_cyl(0.022, 0.022, 0.62, 8), STEEL, Vector3(0.24, 0, 0), ALONG_X)
+		k.add(_cyl(0.032, 0.032, 0.08, 8), Color(0.85, 0.12, 0.08), Vector3(0.56, 0, 0), ALONG_X)
+		k.add(_bx(Vector3(0.04, 0.04, 0.26)), RUBBER, Vector3(-0.07, 0, 0))
+		k.add(_cyl(0.016, 0.016, 0.3, 6), HAZARD, Vector3(-0.1, -0.13, 0), Vector3(0, 0, 0.4)))
+
+
+func _extinguisher_mesh() -> ArrayMesh:
+	return _kit("extinguisher", func(k: Kit):
+		k.add(_cap(0.085, 0.48, 12), Color(0.85, 0.08, 0.06), Vector3.ZERO)
+		k.add(_bx(Vector3(0.1, 0.05, 0.035)), RUBBER, Vector3(0.02, 0.26, 0))
+		k.add(_cyl(0.012, 0.012, 0.28, 6), RUBBER, Vector3(0.09, 0.12, 0), Vector3(0, 0, -0.25))
+		k.add(_cyl(0.025, 0.02, 0.08, 8), RUBBER, Vector3(0.12, -0.02, 0)))
+
+
+# --- The garage ---------------------------------------------------------------------
+
+## A stack of four wheels of a compound under the team's tyre blankets.
+func _stack_mesh(kind: int, team: Color) -> ArrayMesh:
+	return _kit("stack_%d_%s" % [kind, team.to_html()], func(k: Kit):
+		for h in 4:
+			_wheel_parts(k, Vector3(0, 0.12 + h * 0.25, 0), kind)
+		# heated blankets on the top two: team colour, compound coloured band
+		var blanket := team.darkened(0.25)
+		k.add(_cyl(0.36, 0.36, 0.52, 20), blanket, Vector3(0, 0.79, 0))
+		k.add(_cyl(0.33, 0.36, 0.06, 20), STACK_COLOURS[kind], Vector3(0, 1.08, 0))   # the top says which compound, from above
+		k.add(_cyl(0.11, 0.11, 0.012, 16), blanket, Vector3(0, 1.115, 0))
+		k.add(_cyl(0.365, 0.365, 0.09, 20), STACK_COLOURS[kind], Vector3(0, 0.82, 0))
+		k.add(_bx(Vector3(0.04, 0.2, 0.16)), RUBBER, Vector3(0.36, 0.72, 0)))   # heater controller
+
+
+## The wheel gun trolley: a cart on castors with a rack for the spare guns.
+func _trolley_mesh() -> ArrayMesh:
+	return _kit("trolley", func(k: Kit):
+		var red := Color(0.72, 0.1, 0.08)
+		k.add(_bx(Vector3(1.0, 0.05, 0.6)), red, Vector3(0, 0.22, 0))
+		k.add(_bx(Vector3(1.0, 0.05, 0.6)), red, Vector3(0, 0.88, 0))
+		for x in [-0.46, 0.46]:
+			for z in [-0.26, 0.26]:
+				k.add(_bx(Vector3(0.04, 0.7, 0.04)), STEEL, Vector3(x, 0.55, z))
+				k.add(_cyl(0.06, 0.06, 0.04, 10), RUBBER, Vector3(x, 0.07, z), Vector3(PI * 0.5, 0, 0))
+		k.add(_cyl(0.018, 0.018, 0.6, 8), STEEL, Vector3(-0.56, 1.0, 0), Vector3(PI * 0.5, 0, 0))   # push bar
+		k.add(_bx(Vector3(0.9, 0.18, 0.5)), Color(0.12, 0.12, 0.13), Vector3(0, 0.36, 0))           # air bottles / spares
+		k.add(_bx(Vector3(0.3, 0.12, 0.3)), HAZARD, Vector3(0.25, 0.5, 0)))
+
+
+## The fuel rig, a Le Mans style gravity tower (facing +x, towards the car):
+## base plate with hazard stripes, a frame, the tank up top with the team's
+## band and a sight gauge down its side, the red dead-man valve and the hose
+## outlet, and an extinguisher on the frame.
+func _rig_mesh(team: Color) -> ArrayMesh:
+	return _kit("rig_%s" % team.to_html(), func(k: Kit):
+		k.add(_bx(Vector3(1.0, 0.07, 0.9)), Color(0.22, 0.22, 0.24), Vector3(0, 0.035, 0))
+		for s in 5:   # hazard stripes on the front edge
+			k.add(_bx(Vector3(0.08, 0.075, 0.16)), HAZARD if s % 2 == 0 else RUBBER, Vector3(0.46, 0.04, -0.36 + s * 0.18))
+		for x in [-0.32, 0.32]:
+			for z in [-0.3, 0.3]:
+				k.add(_bx(Vector3(0.07, 1.6, 0.07)), Color(0.55, 0.56, 0.58), Vector3(x, 0.83, z))
+		k.add(_bx(Vector3(0.72, 0.06, 0.68)), Color(0.45, 0.46, 0.48), Vector3(0, 1.62, 0))
+		k.add(_cyl(0.4, 0.4, 0.95, 22), STEEL, Vector3(0, 2.12, 0))                              # the tank
+		k.add(_sph(0.4, 22, 8), STEEL, Vector3(0, 2.6, 0), Vector3.ZERO, Vector3(1, 0.32, 1))
+		k.add(_cyl(0.405, 0.405, 0.2, 22), team, Vector3(0, 2.2, 0))                             # team band
+		k.add(_cyl(0.07, 0.07, 0.12, 10), GRAPHITE, Vector3(0, 2.75, 0))                         # vent
+		k.add(_bx(Vector3(0.05, 0.82, 0.1)), RUBBER, Vector3(0.4, 2.12, -0.16))                  # sight gauge
+		k.add(_bx(Vector3(0.055, 0.6, 0.05)), Color(1.0, 0.72, 0.15), Vector3(0.41, 2.05, -0.16))
+		k.add(_cyl(0.07, 0.07, 1.05, 12), STEEL, Vector3(0.12, 1.05, 0))                         # downpipe
+		k.add(_bx(Vector3(0.24, 0.26, 0.24)), Color(0.85, 0.1, 0.08), Vector3(0.22, 1.05, 0))   # dead-man valve
+		k.add(_cyl(0.06, 0.06, 0.24, 10), STEEL, Vector3(0.42, 1.05, 0), ALONG_X)               # outlet
+		k.add(_bx(Vector3(0.2, 0.14, 0.02)), Color(0.96, 0.96, 0.96), Vector3(0.36, 1.4, 0.3))   # warning sign
+		k.add(_bx(Vector3(0.12, 0.08, 0.025)), Color(0.85, 0.1, 0.08), Vector3(0.36, 1.4, 0.3))
+		k.add(_cap(0.08, 0.45, 10), Color(0.85, 0.08, 0.06), Vector3(-0.42, 0.3, 0.3)))         # extinguisher
+
+
+# --- People -------------------------------------------------------------------------
+
+## A crew member's suit parts, one mesh each (Kit), in the team's colours.
+func _suit_meshes(suit: Color, helmet: Color) -> Dictionary:
+	var key := "%s_%s" % [suit.to_html(), helmet.to_html()]
+	if _meshes.has("suit_" + key):
+		return _meshes["suit_" + key]
+	var dark := suit.darkened(0.45)
+	var trim := Color(0.95, 0.95, 0.95) if suit.get_luminance() < 0.55 else Color(0.08, 0.08, 0.1)
+	var d := {}
+	# thigh (from the hip down)
+	var k := Kit.new()
+	k.add(_cap(0.088, 0.52), dark, Vector3(0, -0.23, 0))
+	k.add(_cyl(0.092, 0.092, 0.035, 10), REFLECT, Vector3(0, -0.36, 0))
+	d["thigh"] = k.build()
+	# shin, knee pad and race boot
+	k = Kit.new()
+	k.add(_cap(0.074, 0.48), dark, Vector3(0, -0.22, 0))
+	k.add(_bx(Vector3(0.07, 0.13, 0.13)), GRAPHITE, Vector3(0.06, -0.03, 0))
+	k.add(_bx(Vector3(0.22, 0.1, 0.12)), RUBBER, Vector3(0.04, -0.44, 0))
+	k.add(_sph(0.062, 10, 5), RUBBER, Vector3(0.15, -0.445, 0), Vector3.ZERO, Vector3(1, 0.75, 1))
+	k.add(_bx(Vector3(0.28, 0.025, 0.125)), Color(0.85, 0.85, 0.85), Vector3(0.06, -0.495, 0))
+	d["shin"] = k.build()
+	# torso: hips, belt, the suit with its reflective band, contrast yoke,
+	# collar, the number panel on the back and the team badge on the chest
+	k = Kit.new()
+	k.add(_bx(Vector3(0.24, 0.2, 0.36)), dark, Vector3(0, 0.08, 0))
+	k.add(_bx(Vector3(0.26, 0.06, 0.38)), RUBBER, Vector3(0, 0.19, 0))
+	k.add(_cap(0.215, 0.56, 12), suit, Vector3(0, 0.43, 0), Vector3.ZERO, Vector3(0.62, 1, 1.02))
+	k.add(_cyl(0.22, 0.22, 0.05, 12), REFLECT, Vector3(0, 0.33, 0), Vector3.ZERO, Vector3(0.63, 1, 1.03))
+	k.add(_bx(Vector3(0.2, 0.06, 0.4)), trim, Vector3(0, 0.62, 0))
+	k.add(_cyl(0.075, 0.08, 0.07, 10), dark, Vector3(0, 0.67, 0))
+	k.add(_bx(Vector3(0.02, 0.16, 0.2)), trim, Vector3(-0.14, 0.44, 0))
+	k.add(_bx(Vector3(0.02, 0.06, 0.08)), trim, Vector3(0.14, 0.5, 0.1))
+	d["torso"] = k.build()
+	# helmet: neck, shell in the helmet colour with a team stripe front to
+	# back, the dark visor and the chin bar
+	k = Kit.new()
+	k.add(_cap(0.05, 0.13, 8), dark, Vector3(0, 0.02, 0))
+	k.add(_sph(0.155, 14, 8), helmet, Vector3(0, 0.17, 0), Vector3.ZERO, Vector3(1.08, 1, 0.96))
+	k.add(_sph(0.158, 14, 8), suit, Vector3(0, 0.172, 0), Vector3.ZERO, Vector3(1.09, 1, 0.3))
+	k.add(_sph(0.13, 14, 6), Color(0.03, 0.04, 0.07), Vector3(0.1, 0.165, 0), Vector3.ZERO, Vector3(0.55, 0.42, 1.12))
+	k.add(_bx(Vector3(0.1, 0.05, 0.2)), helmet, Vector3(0.1, 0.07, 0))
+	d["head"] = k.build()
+	# upper arm with a team-coloured shoulder pad
+	k = Kit.new()
+	k.add(_cap(0.062, 0.36), suit, Vector3(0, -0.15, 0))
+	k.add(_sph(0.075, 10, 5), trim, Vector3(0, -0.01, 0), Vector3.ZERO, Vector3(1, 0.8, 1))
+	d["upper_arm"] = k.build()
+	# forearm, reflective cuff and glove
+	k = Kit.new()
+	k.add(_cap(0.056, 0.33), suit, Vector3(0, -0.14, 0))
+	k.add(_cyl(0.06, 0.06, 0.04, 10), REFLECT, Vector3(0, -0.25, 0))
+	k.add(_sph(0.06, 10, 5), RUBBER, Vector3(0.01, -0.31, 0), Vector3.ZERO, Vector3(1.05, 1.25, 0.8))
+	k.add(_cap(0.02, 0.08, 6), RUBBER, Vector3(0.05, -0.29, 0.03), Vector3(0.6, 0, 0.3))
+	d["forearm"] = k.build()
+	_meshes["suit_" + key] = d
+	return d
 
 
 ## A crew member. holds: the Carry items they ever have in their hands.
@@ -1021,89 +1407,72 @@ func _person(c: Crew, suit: Color, helmet: Color, holds: Array = []) -> Person:
 	p.root.position.y = c.y
 	p.body = Node3D.new()
 	p.root.add_child(p.body)
-	var suit_m := _mat("suit_%s" % suit.to_html(), suit, 0.8)
-	var dark_m := _mat("suit_dark_%s" % suit.to_html(), suit.darkened(0.45), 0.85)
-	var stripe := _mat("stripe", Color(0.95, 0.95, 0.9), 0.4, 0.2)
-	var helm := _mat("helm_%s" % helmet.to_html(), helmet, 0.25, 0.1)
-	var visor := _mat("visor", Color(0.03, 0.04, 0.06), 0.05, 0.3)
-	var glove := _mat("glove", Color(0.08, 0.08, 0.09), 0.7)
-	var boot := _mat("boot", Color(0.06, 0.06, 0.07), 0.6)
+	var parts := _suit_meshes(suit, helmet)
+	var cloth := _vc("suit", 0.8)
+	var gloss := _vc("helmet", 0.22, 0.1)
 	# Legs: hip -> thigh -> knee -> shin -> boot. +x is forward (the way they face).
 	for s in [-1.0, 1.0]:
 		var hip := _joint(p.body, Vector3(0, 0.92, s * 0.11))
-		_part(hip, _capsule(0.085, 0.5), dark_m, Vector3(0, -0.23, 0))
+		_part(hip, parts["thigh"], cloth, Vector3.ZERO)
 		var knee := _joint(hip, Vector3(0, -0.46, 0))
-		_part(knee, _capsule(0.07, 0.48), dark_m, Vector3(0, -0.22, 0))
-		_part(knee, _box_mesh(Vector3(0.24, 0.08, 0.11)), boot, Vector3(0.05, -0.44, 0))
+		_part(knee, parts["shin"], cloth, Vector3.ZERO)
 		if s < 0.0:
 			p.leg_l = hip
 			p.knee_l = knee
 		else:
 			p.leg_r = hip
 			p.knee_r = knee
-	# Torso: race suit, reflective stripe, team-coloured shoulders.
 	p.upper = _joint(p.body, Vector3(0, 0.92, 0))
-	_part(p.upper, _box_mesh(Vector3(0.24, 0.2, 0.36)), dark_m, Vector3(0, 0.08, 0))
-	_part(p.upper, _box_mesh(Vector3(0.26, 0.42, 0.44)), suit_m, Vector3(0, 0.36, 0))
-	_part(p.upper, _box_mesh(Vector3(0.27, 0.05, 0.45)), stripe, Vector3(0, 0.3, 0))
-	# Head: helmet with a visor.
+	_part(p.upper, parts["torso"], cloth, Vector3.ZERO)
 	p.head = _joint(p.upper, Vector3(0, 0.62, 0))
-	_part(p.head, _capsule(0.05, 0.12), dark_m, Vector3(0, 0.02, 0))
-	_part(p.head, _sphere(0.15), helm, Vector3(0, 0.17, 0))
-	_part(p.head, _box_mesh(Vector3(0.07, 0.09, 0.22)), visor, Vector3(0.12, 0.17, 0))
+	_part(p.head, parts["head"], gloss, Vector3.ZERO)
 	# Arms: shoulder -> upper arm -> elbow -> forearm -> glove.
 	for s in [-1.0, 1.0]:
 		var sh := _joint(p.upper, Vector3(0, 0.53, s * 0.27))
-		_part(sh, _capsule(0.06, 0.34), suit_m, Vector3(0, -0.15, 0))
+		_part(sh, parts["upper_arm"], cloth, Vector3.ZERO)
 		var el := _joint(sh, Vector3(0, -0.3, 0))
-		_part(el, _capsule(0.055, 0.32), suit_m, Vector3(0, -0.14, 0))
+		_part(el, parts["forearm"], cloth, Vector3.ZERO)
 		var hand := _joint(el, Vector3(0, -0.3, 0))
-		_part(hand, _sphere(0.055), glove, Vector3.ZERO)
 		if s < 0.0:
 			p.arm_l = sh
 			p.elbow_l = el
+			p.hand_l = hand
 		else:
 			p.arm_r = sh
 			p.elbow_r = el
+			p.hand_r = hand
 	# What they can hold. The right hand holds tools; a wheel sits in front of
 	# the chest between both hands.
-	var hand_r: Node3D = p.elbow_r.get_child(p.elbow_r.get_child_count() - 1)
-	var hand_l: Node3D = p.elbow_l.get_child(p.elbow_l.get_child_count() - 1)
 	if Carry.TYRE in holds:
 		var tyre := _joint(p.upper, Vector3(0.42, 0.25, 0))
-		_wheel_prop(tyre, true).get_node("Band").visible = false
+		_wheel_prop(tyre, true)
 		p.items[Carry.TYRE] = tyre
 	if Carry.GUN in holds:
-		var gun := _joint(hand_r, Vector3(0.05, -0.04, 0))
+		var gun := _joint(p.hand_r, Vector3(0.05, -0.04, 0))
 		_gun_prop(gun)
 		p.items[Carry.GUN] = gun
 	if Carry.HOSE in holds:
-		var hose := _joint(hand_r, Vector3(0.1, -0.02, -0.12))
-		_part(hose, _box_mesh(Vector3(0.36, 0.12, 0.12)), _mat("nozzle", Color(0.85, 0.85, 0.8), 0.4, 0.5), Vector3.ZERO)
+		var hose := _joint(p.hand_r, Vector3(0.1, -0.02, -0.12))
+		_part(hose, _nozzle_mesh(), _vc("metal", 0.35, 0.45), Vector3.ZERO)
 		p.items[Carry.HOSE] = hose
 	if Carry.CLOTH in holds:
-		var cloth := _joint(hand_l, Vector3(0.04, -0.04, 0))
-		_part(cloth, _box_mesh(Vector3(0.18, 0.03, 0.14)), _mat("cloth", Color(0.95, 0.95, 1.0), 0.9), Vector3.ZERO)
-		p.items[Carry.CLOTH] = cloth
+		var cloth_n := _joint(p.hand_l, Vector3(0.04, -0.04, 0))
+		_part(cloth_n, _box_mesh(Vector3(0.2, 0.03, 0.16)), _mat("cloth", Color(0.95, 0.95, 1.0), 0.9), Vector3.ZERO)
+		p.items[Carry.CLOTH] = cloth_n
 	if Carry.LANCE in holds:
-		var lance := _joint(hand_r, Vector3(0.08, -0.04, 0))
-		_part(lance, _box_mesh(Vector3(0.55, 0.06, 0.06)), _mat("lance", Color(0.75, 0.15, 0.1), 0.4, 0.4), Vector3(0.22, 0, 0))
+		var lance := _joint(p.hand_r, Vector3(0.08, -0.04, 0))
+		_part(lance, _lance_mesh(), _vc("metal", 0.35, 0.45), Vector3.ZERO)
 		p.items[Carry.LANCE] = lance
 	if Carry.EXTINGUISHER in holds:
-		var ext := _joint(hand_r, Vector3(0, -0.2, 0))
-		_part(ext, _capsule(0.08, 0.45), _mat("extinguisher", Color(0.85, 0.08, 0.06), 0.4, 0.2), Vector3.ZERO)
+		var ext := _joint(p.hand_r, Vector3(0, -0.2, 0))
+		_part(ext, _extinguisher_mesh(), _vc("metal", 0.4, 0.2), Vector3.ZERO)
 		p.items[Carry.EXTINGUISHER] = ext
 	for k in p.items:
 		(p.items[k] as Node3D).visible = false
 	# A player's crew member: a yellow hoop on the ground, drawn over
 	# everything so the eye finds them at once.
 	if not _meshes.has("ring"):
-		var ring := TorusMesh.new()
-		ring.inner_radius = 0.62
-		ring.outer_radius = 0.86
-		ring.rings = 24
-		ring.ring_segments = 6
-		_meshes["ring"] = ring
+		_meshes["ring"] = _tor(0.62, 0.86, 24)
 	var rm := StandardMaterial3D.new()
 	rm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	rm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
@@ -1152,8 +1521,7 @@ func _build_crew(c: Crew) -> void:
 		p.next_wander = _rng.randf_range(0.0, 6.0)
 		c.people.append(p)
 		if i == LOLLIPOP:
-			var hand_l: Node3D = p.elbow_l.get_child(p.elbow_l.get_child_count() - 1)
-			var lp := _joint(hand_l, Vector3.ZERO)
+			var lp := _joint(p.hand_l, Vector3.ZERO)
 			_part(lp, _box_mesh(Vector3(0.04, 1.1, 0.04)), _mat("dark", Color.BLACK), Vector3(0, -0.5, 0))
 			var disc := CylinderMesh.new()
 			disc.top_radius = 0.32
@@ -1166,11 +1534,10 @@ func _build_crew(c: Crew) -> void:
 			lp.visible = false
 	# new wheels laid out, old wheels put down, guns on the ground
 	for k in 4:
-		var nt := _wheel_prop(self, false)
+		var nt := _wheel_prop(self, false, 0)
 		nt.visible = false
 		c.new_tyres.append(nt)
 		var ot := _wheel_prop(self, false)
-		ot.get_node("Band").visible = false
 		ot.visible = false
 		c.old_tyres.append(ot)
 	for g in 2:
@@ -1180,23 +1547,12 @@ func _build_crew(c: Crew) -> void:
 	# garage props: tyre stacks (dry, intermediate, wet) under blankets, the
 	# gun trolley, the fuel rig
 	var frame := {"pos": c.pos, "dir": c.dir, "out": c.out}
+	var wheel_mat := _vc("wheel", 0.55, 0.25)
 	for k in 3:
 		var at: Vector2 = crew_spot(frame, c.dims, "stack", k)[0] + c.out * 0.55
-		for h in 4:
-			var t := _wheel_prop(self, false)
-			t.position = Vector3(at.x, c.y + 0.15 + h * 0.3, at.y)
-			(t.get_node("Band") as MeshInstance3D).material_override = _mat("band_%d" % k, STACK_COLOURS[k], 0.6)
-		if not _meshes.has("cover"):
-			var cover := CylinderMesh.new()
-			cover.top_radius = 0.36
-			cover.bottom_radius = 0.37
-			cover.height = 0.5
-			cover.radial_segments = 14
-			_meshes["cover"] = cover
-		var blanket := _mat("blanket_%d_%s" % [k, suit.to_html()], suit.darkened(0.15).lerp(STACK_COLOURS[k], 0.35), 0.9)
-		_part(self, _meshes["cover"], blanket, Vector3(at.x, c.y + 1.3, at.y))
+		_part(self, _stack_mesh(k, suit), wheel_mat, Vector3(at.x, c.y, at.y))
 	var trolley: Vector2 = crew_spot(frame, c.dims, "trolley")[0] + c.out * 0.6
-	var tr := _part(self, _box_mesh(Vector3(1.0, 0.9, 0.6)), _mat("trolley", Color(0.7, 0.1, 0.1), 0.4, 0.4), Vector3(trolley.x, c.y + 0.45, trolley.y))
+	var tr := _part(self, _trolley_mesh(), _vc("metal", 0.4, 0.35), Vector3(trolley.x, c.y, trolley.y))
 	tr.rotation.y = -c.dir.angle()
 	for g in 2:
 		var spare := _gun_prop(self)
@@ -1204,10 +1560,14 @@ func _build_crew(c: Crew) -> void:
 		spare.position = Vector3(sp.x, c.y + 0.96, sp.y)
 		spare.rotation.y = -c.dir.angle()
 	c.rig = _at(c, -1.2, gw - 0.3)
-	_part(self, _box_mesh(Vector3(0.6, 2.0, 0.6)), _mat("rig", Color(0.85, 0.85, 0.82), 0.5, 0.3), Vector3(c.rig.x, c.y + 1.0, c.rig.y))
-	var hose_mesh := _box_mesh(Vector3(1.0, 0.07, 0.07))
-	c.hose = _part(self, hose_mesh, _mat("dark", Color.BLACK), Vector3.ZERO)
+	var rig := _part(self, _rig_mesh(suit), _vc("metal", 0.4, 0.35), Vector3(c.rig.x, c.y, c.rig.y))
+	rig.rotation.y = -(-c.out).angle()   # its outlet towards the car
+	# the hose: two lengths of thick rubber that sag between rig and nozzle
+	var hose_mesh := _kit("hose", func(k: Kit): k.add(_cyl(0.042, 0.042, 1.0, 8), RUBBER, Vector3.ZERO, ALONG_X))
+	c.hose = _part(self, hose_mesh, _vc("suit", 0.8), Vector3.ZERO)
 	c.hose.visible = false
+	c.hose2 = _part(self, hose_mesh, _vc("suit", 0.8), Vector3.ZERO)
+	c.hose2.visible = false
 	# strategist on the pit wall, opposite the garage
 	var wall := _at(c, 0.0, -(track.pit_width * 0.5 + 0.6) - track.pit_width * 0.25 - 0.1)
 	var s := _person(c, suit, helmet)

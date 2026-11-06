@@ -7,8 +7,9 @@ hears nothing.
 ## Opening it
 
 - Co-op pit wall (CrewConsole): the first row, **Plan the stop**, on both tabs.
-- Full pit wall (StrategistScreen, P): the **PLAN THE STOP** button on the
-  selected car panel, or Enter.
+- Full pit wall (StrategistScreen, P): the **PIT STOP SETTINGS** button on the
+  OUR CAR panel, or Enter. It opens as a dialog in the middle of the screen,
+  titled PIT STOP SETTINGS.
 - A driver can open it from the full pit wall to plan their own stop; then
   the button says **SET MY STOP** and no radio message goes out.
 
@@ -33,7 +34,12 @@ Right: picked tyres (All, Fronts, Rears, Left, Right, then a compound or a
 pressure step for all of them), fuel, repairs, driver change (who takes
 over), the box call (box this lap, or keep the plan for later), the work
 queue in words with the stationary time and the total time lost, then
-**Start again** and **SEND TO DRIVER**.
+**Cancel**, **Start again** and **SEND TO DRIVER**.
+
+Cancel (or Esc, ✕, B on a pad) closes the dialog at any time and drops
+whatever wasn't sent: the next open starts from the plan the crew has. Send
+gives the crew the plan, radios the driver and closes the dialog; the pit
+wall says it was sent.
 
 Pressures and downforce can only change when the host allows car setups
 (race settings, Car setups: Free). Road cars have fixed wings.
@@ -64,15 +70,23 @@ pressure, left/right compound for the picked tyres, A sends, B closes.
    call (HUD keys, AI, the pit crew tab).
 2. The driver change as a role swap that waits for the car in its box
    (`request_role_swap`), or cancels one that was waiting.
-3. A team radio message `{kind: "radio", code: "pit_plan", text, lines}`.
-   The driver sees it as a box on the race screen, one job per line, and
-   hears it read out: the radio click and squelch, static under the
-   computer's own voice, then the squelch tail (audio `Sound.radio`). Every
-   pit wall call to the driver is read out the same way.
+3. A team radio message `{kind: "radio", code: "pit_plan", text, lines, say}`.
+   The driver only hears it, nothing goes on the race screen: the radio
+   click and squelch, static under the race engineer's voice, then the
+   squelch tail (audio `Sound.radio`). `say` is the plan as spoken, with the
+   driver change said without the player's name
+   (`PitPlanner.spoken_lines`). Every pit wall call to the driver is read
+   out the same way.
 
-The read-out uses the operating system's text-to-speech (Windows SAPI on
-Windows). Settings > Sound has **Team radio** (volume) and **Radio
-read-out** (on/off). With no voice installed only the crackle plays.
+The race engineer's voice is recorded clips (audio `RadioPhrases`, baked by
+`modules/audio/tools/radio_voice_bake.py` with the Kokoro neural voice,
+Apache 2.0): whole lines where it has them, and pieces for numbers and wheel
+choices. Settings > Sound has **Team radio** (volume) and **Radio voice**:
+race engineer male or female, the computer's own voice (Windows SAPI), or
+off. Only when the message can't be heard (voice off, or a line the clips
+can't say and no computer voice) does the driver get the box on screen
+instead, one job per line. A new radio call or plan line needs a re-bake;
+`tests/run_tests.gd` (`test_radio_voice`) fails until it's there.
 
 ## Mixed tyres in the physics
 

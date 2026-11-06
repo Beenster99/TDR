@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Top Down Racer Release Notes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<style>
+/* Same layout as the Torque Shed release notes, every release: masthead, at a glance,
+   one entry per feature (rail on the left: area, day, part of the game), then Try it / Known limits / Coming next. */
+:root {
+  --paper: #efede7; --sheet: #ffffff; --ink: #1b1d20; --muted: #5b6168; --rule: #d5d2c9;
+  --accent: #c0341d; --link: #1d6b8a;
+  --display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --body: "Literata", Georgia, "Times New Roman", serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #121417; --sheet: #1b1e22; --ink: #e5e6e8; --muted: #9ca3aa; --rule: #2d3238;
+    --accent: #ff7552; --link: #6cc3e0; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #121417; --sheet: #1b1e22; --ink: #e5e6e8; --muted: #9ca3aa; --rule: #2d3238;
+  --accent: #ff7552; --link: #6cc3e0; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--paper); color: var(--ink); font-family: var(--body); font-size: 17px; line-height: 1.6; margin: 0;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.wrap { max-width: 1060px; margin: 0 auto; padding-block: 40px 72px; }
+h1, h2, h3 { font-family: var(--display); font-weight: 700; line-height: 1.05; text-wrap: balance; margin: 0; letter-spacing: 0.01em; }
+a { color: var(--link); text-underline-offset: 3px; }
+header.top { display: grid; gap: 18px; padding-bottom: 28px; border-bottom: 2px solid var(--ink); }
+.kicker { font-family: var(--mono); font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px 18px; }
+h1 { font-size: clamp(46px, 8vw, 84px); text-transform: uppercase; }
+h1 span { color: var(--accent); }
+.lede { max-width: 64ch; font-size: 19px; margin: 0; }
+.cta { display: flex; flex-wrap: wrap; gap: 10px; }
+.play { font-family: var(--display); font-size: 19px; letter-spacing: 0.04em; text-transform: uppercase; padding: 8px 16px; border: 2px solid var(--ink); color: var(--ink); background: var(--sheet); overflow-wrap: anywhere; }
+.play.main { background: var(--accent); border-color: var(--accent); color: #fff; }
+.glance { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); margin-block: 28px 8px; }
+.glance div { background: var(--sheet); padding: 14px 16px; min-width: 0; }
+.glance b { display: block; font-family: var(--display); font-size: 21px; letter-spacing: 0.02em; text-transform: uppercase; }
+.glance p { margin: 4px 0 0; font-size: 15px; color: var(--muted); }
+.log { margin-top: 44px; display: grid; }
+.entry { display: grid; grid-template-columns: 118px minmax(0, 1fr); gap: 28px; padding-block: 34px; border-top: 1px solid var(--rule); }
+.rail .m { font-family: var(--display); font-size: 40px; color: var(--accent); line-height: 1; text-transform: uppercase; }
+.rail .d { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-top: 6px; letter-spacing: 0.04em; }
+.rail .area { font-family: var(--mono); font-size: 11px; color: var(--link); margin-top: 10px; letter-spacing: 0.06em; text-transform: uppercase; }
+.body { min-width: 0; }
+.body h2 { font-size: clamp(28px, 4vw, 38px); text-transform: uppercase; }
+.body .sum { margin: 8px 0 14px; max-width: 66ch; }
+.body ul { margin: 0 0 18px; padding-left: 1.2em; max-width: 68ch; }
+.body li { margin-block: 3px; }
+.body li::marker { color: var(--accent); }
+.after { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 28px; margin-top: 40px; padding-top: 30px; border-top: 2px solid var(--ink); }
+.after h3 { font-size: 26px; text-transform: uppercase; margin-bottom: 8px; }
+.after ul { margin: 0; padding-left: 1.1em; }
+.after li { margin-block: 4px; }
+.after li::marker { color: var(--link); }
+footer { margin-top: 44px; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+@media (max-width: 720px) {
+  .entry { grid-template-columns: 1fr; gap: 10px; }
+  .rail { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  .rail .d, .rail .area { margin-top: 0; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="kicker"><span>Release notes</span><span>5 Nov 2026</span><span>v0.12.0</span><span>Multi-class, wider tracks, strategist</span></div>
+    <h1>Top Down <span>Racer</span></h1>
+    <p class="lede">Choose which classes share the track in a multi-class race, with class colours everywhere. Tracks are another 20% wider. The strategist fits on one screen, you drive yourself into the pit lane with a release countdown, co-op pit stops are clearer, and a real race engineer's voice talks to you on the radio. Online, Escape pauses for everyone, and roads now look like real asphalt.</p>
+    <div class="cta">
+      <span class="play main">Download TopDownRacer-v0.12.0-windows.zip</span>
+    </div>
+    <section class="glance" aria-label="At a glance">
+      <div><b>Multi-class</b><p>Pick 2 or 3 classes; class colours on every screen.</p></div>
+      <div><b>Wider tracks</b><p>Circuits now 2.16 times their real width.</p></div>
+      <div><b>Strategist</b><p>Everything on one screen, pit settings as a dialog.</p></div>
+      <div><b>Pit entry</b><p>You drive in; RELEASE 3, 2, 1, GO on the way out.</p></div>
+      <div><b>Co-op crew</b><p>Step list, key caps and a glowing guide.</p></div>
+      <div><b>Engineer voice</b><p>A natural voice reads the radio to the driver.</p></div>
+      <div><b>Online pause</b><p>Escape pauses everyone until all resume.</p></div>
+      <div><b>Asphalt</b><p>Real road texture, rubbered line, wet pores.</p></div>
+    </section>
+  </header>
+
+  <main class="log">
+
+    <article class="entry" id="multiclass">
+      <div class="rail"><div class="m">Race</div><div class="d">5 Nov</div><div class="area">Multi-class</div></div>
+      <div class="body">
+        <h2>Pick the classes in a multi-class race</h2>
+        <p class="sum">Multi-class now asks which classes race: Le Mans (Hypercar, LMP2, GT3), WEC Hypercar against GT3, or any 2 or 3 classes.</p>
+        <ul>
+          <li>The grid lines up class by class, and the choice is remembered, sent to guests and used by seasons.</li>
+          <li>Every class has its own colour and short name: chips on the timing tower, standings and gap panels, and roof number boards in class colours.</li>
+          <li>Results get a class column, class winners, a class filter, per-class gaps and points, and the best lap per class in purple.</li>
+          <li>On the pit wall, an ON THE ROAD strip and arrows say whether the cars ahead and behind are racing you or just traffic.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="wider">
+      <div class="rail"><div class="m">Tracks</div><div class="d">5 Nov</div><div class="area">Circuits</div></div>
+      <div class="body">
+        <h2>Tracks another 20% wider</h2>
+        <p class="sum">Circuits are now 2.16 times their real width, and rallycross circuits and joker lanes 1.44 times their built width.</p>
+        <ul>
+          <li>Derby arenas stay as they were, since wider meant too few crashes.</li>
+          <li>Side-by-side stretches still keep 10 m apart, pit lanes follow the new edge, and racing lines are worked out again.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="strategist">
+      <div class="rail"><div class="m">Wall</div><div class="d">5 Nov</div><div class="area">Strategist</div></div>
+      <div class="body">
+        <h2>The strategist on one screen</h2>
+        <p class="sum">Everything now fits on one screen: drivers table, onboard camera, feed, weather radar, your car's setup and the selected car.</p>
+        <ul>
+          <li>Your car is drawn from above with a card per tyre for temperature, hot pressure and wear.</li>
+          <li>PIT STOP SETTINGS opens the planner in the middle. Cancel drops unsent changes, and Send to driver closes it.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="pits">
+      <div class="rail"><div class="m">Pits</div><div class="d">5 Nov</div><div class="area">Pit lane</div></div>
+      <div class="body">
+        <h2>You drive into the pit lane, with a release countdown</h2>
+        <p class="sum">You now always drive into the pit lane yourself.</p>
+        <ul>
+          <li>New default, "Drive to the pit limit": the guide takes over from the limit line to the box. "Drive the whole stop" keeps the full self-drive. The fully automatic option is gone.</li>
+          <li>The last 3 seconds of a stop count down in the middle of the screen (RELEASE 3, 2, 1, GO), and you get the car back as the crew let it go.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="coop">
+      <div class="rail"><div class="m">Co-op</div><div class="d">5 Nov</div><div class="area">Pit crew</div></div>
+      <div class="body">
+        <h2>Clearer co-op pit stops</h2>
+        <p class="sum">The pit crew job is easier to follow.</p>
+        <ul>
+          <li>A panel lists your job's steps with ticks, a gauge and a big "do this now" line, with buttons shown as key caps for the keyboard or pad you used last.</li>
+          <li>Nothing about the stop shows until the car is in the pits.</li>
+          <li>A glowing target ring and a trail of dots lead your crew member to the next thing to do.</li>
+          <li>The crew, wheels, wheel guns, fuel rig and tyre stacks are rebuilt in more detail, and draw faster.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="radio">
+      <div class="rail"><div class="m">Sound</div><div class="d">5 Nov</div><div class="area">Team radio</div></div>
+      <div class="body">
+        <h2>A real race engineer on the radio</h2>
+        <p class="sum">The driver now hears pit wall messages as a natural race engineer's voice instead of the computer's voice, male or female.</p>
+        <ul>
+          <li>The on-screen message box only appears when the voice is off.</li>
+          <li>Choose the voice in Settings &gt; Sound &gt; Radio voice. The computer voice stays as a choice.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="pause">
+      <div class="rail"><div class="m">Online</div><div class="d">5 Nov</div><div class="area">Pause</div></div>
+      <div class="body">
+        <h2>Escape pauses an online race for everyone</h2>
+        <p class="sum">Any player pressing Escape now pauses the race on every machine and opens everyone's pause menu, so all can change settings.</p>
+        <ul>
+          <li>Players who resume see who the race is waiting for. Once everyone has pressed Resume (or the host resumes for all), a 3 second countdown restarts the race.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="look">
+      <div class="rail"><div class="m">Track</div><div class="d">5 Nov</div><div class="area">Graphics</div></div>
+      <div class="body">
+        <h2>Real asphalt and better rallycross dirt</h2>
+        <p class="sum">Roads now look like real asphalt: stone in bitumen, paving joints, repair patches, crack sealing, tyre streaks and a rubbered racing line.</p>
+        <ul>
+          <li>Gravel has real pebbles, and in the rain the road's pores fill with water first.</li>
+          <li>Rallycross dirt now frays into the tarmac with dust and loose stones, and tyres carry dirt out along the racing line.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="physics">
+      <div class="rail"><div class="m">Drive</div><div class="d">5 Nov</div><div class="area">Physics</div></div>
+      <div class="body">
+        <h2>Fair tyre wear and derby traction</h2>
+        <p class="sum">A few seconds of hard sliding no longer cooks a tyre, so your tyres wear like the AI's.</p>
+        <ul>
+          <li>Derby cars get much more traction on dirt, so they no longer crawl and spin in the hairpins.</li>
+          <li>The GT3 dash now holds the flag colour steady instead of flashing.</li>
+        </ul>
+      </div>
+    </article>
+
+  </main>
+
+  <section class="after">
+    <div>
+      <h3>Try it</h3>
+      <ul>
+        <li>Unzip the folder and double-click TopDownRacer.exe, as before.</li>
+        <li>Online, everyone needs v0.12.0. Older games are turned away at the lobby.</li>
+        <li>Set up a Le Mans multi-class race with Hypercars, LMP2 and GT3.</li>
+        <li>Make a pit stop and watch for the release countdown.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Known limits</h3>
+      <ul>
+        <li>The 10 road cars are still being built and aren't in this release.</li>
+        <li>Online, handing a co-op car back from an AI co-driver to a player is still unreliable.</li>
+        <li>Co-op isn't available in Rallycross or Demolition Derby.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Coming next</h3>
+      <ul>
+        <li>The road cars.</li>
+        <li>Your notes from playing this build.</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>Build of main at 6c33548 with PRs #116 to #127.</footer>
+</div>
+</body>
+</html>

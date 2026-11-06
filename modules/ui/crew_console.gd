@@ -515,7 +515,7 @@ func _build_items() -> void:
 				if plan.has("setup"):
 					_items.append(["setup_reset", "Setup changes", "Cancel them", true])
 	else:
-		_items.append(["pit_wall", "Full pit wall", "radar, all timing (%s)" % InputPrompt.key("strategy_screen"), true])
+		_items.append(["pit_wall", "Strategist screen", "radar, all timing (%s)" % InputPrompt.key("strategy_screen"), true])
 		_items.append(["watch", "Watch", sim.entries[watch_car].driver_name if watch_car >= 0 else "-", true])
 		if onboard:
 			var who := "-"
@@ -616,7 +616,7 @@ func _draw() -> void:
 	var hy := mid.position.y - 10 if mid.position.y > 90 else mid.end.y + 18
 	_text(Vector2(mid.position.x, hy), InputPrompt.fill(InputPrompt.pick("Click: act   Right-click / wheel: change   ↑↓ ←→ {ui_accept}   ",
 		"D-pad ↑↓ choose   ←→ change   {ui_accept} act   ") + ("{crew_tab} switch tab   " if tabs.size() > 1 else "")
-		+ "{team_radio} radio   {strategy_screen} pit wall   Drag a title bar to move, the corner to zoom"), 13, Color(1, 1, 1, 0.75), HORIZONTAL_ALIGNMENT_LEFT, maxf(mid.size.x, 760.0))
+		+ "{team_radio} radio   {strategy_screen} strategist   Drag a title bar to move, the corner to zoom"), 13, Color(1, 1, 1, 0.75), HORIZONTAL_ALIGNMENT_LEFT, maxf(mid.size.x, 760.0))
 	layout.draw_handles(self, _hover, font)
 
 
