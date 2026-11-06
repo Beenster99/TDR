@@ -8,7 +8,8 @@ the stop time is whatever that crew's timeline comes to
 `PitCrews`): the car controller (lollipop); the refueller, who carries the
 hose over from the rig and plugs it in, with the fire extinguisher and
 cut-off valve attendants; a mechanic wiping the windscreen while the fuel
-goes in; a mechanic on the air lance (the car rises on its air jacks); on
+goes in; once the fuel is in and the hose is off, a mechanic on the air
+lance (the car rises on its air jacks); on
 each side a **gun man** and a **wheel man**, front then rear (the gun man
 undoes the nut, the wheel man pulls the old wheel, puts it down, picks up
 the new one laid out by the corner and puts it on, the gun man does it up);
@@ -51,7 +52,7 @@ play your crew job**, per player (off: the AI does that player's jobs).
    called in: lay out the right new tyres by each corner being changed
    (from the garage stacks: a wrong compound doesn't count, pick it back up)
    and a wheel gun each side (from the trolley). When the car stops, plug
-   the air lance in at the back (the car rises). In a two-player crew the AI
+   the air lance in at the back once the fuel is in (the car rises). In a two-player crew the AI
    has the tyres and guns out already and does the lance.
 4. **Tyres.** Once the hose is off, the driver and a pit crew player each
    do the tyre job they picked in the lobby: left / right **gun man** (pick

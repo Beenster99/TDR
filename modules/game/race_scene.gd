@@ -1123,14 +1123,7 @@ func _on_events(evs: Array) -> void:
 				if e["car"] == session.local_car:
 					hud.flash("Finished P%d" % e["position"], 4.0)
 			"pit_stop":
-				if e["car"] == session.local_car:
-					var std := float(e.get("standard_s", 0.0))
-					var txt := "Pit stop %.1f s" % e["stationary_s"]
-					if std > 0.0 and not e.get("played", false):
-						txt += "  (%s%.1f s on a standard stop)" % ["+" if float(e["stationary_s"]) >= std else "-", absf(float(e["stationary_s"]) - std)]
-					if int(e.get("fumble", -1)) >= 0:
-						txt += "  The crew fumbled the %s" % RaceHud.wheels_text(["fl", "fr", "rl", "rr"][int(e["fumble"])])
-					hud.flash(txt, 3.5)
+				pass   # the HUD's stop timer shows the stop's time and whether it was clean
 			"safety_car":
 				var says := {"sc": "SAFETY CAR DEPLOYED", "vsc": "VIRTUAL SAFETY CAR", "vsc_ending": "VSC ENDING",
 					"lapped_may_overtake": "LAPPED CARS MAY OVERTAKE", "in_this_lap": "SAFETY CAR IN THIS LAP",
