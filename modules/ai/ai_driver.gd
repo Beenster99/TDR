@@ -49,6 +49,13 @@ const REJOIN_WAIT_OUT := 1.5
 const REJOIN_EDGE_IN := 0.5
 const REJOIN_HOLD_M := 400.0
 const REJOIN_WAIT_SPEED := 8.0
+## Picking up the line from scratch (race start, after a big shunt): square
+## metres added for a line point running the other way (half for one at
+## right angles), so at a crossover the car picks its own road.
+const CROSS_HEADING_M2 := 400.0
+## Demolition Derby: no ramming until this far into the race (m), so the
+## grid gets away together instead of piling into the row in front.
+const DERBY_RAM_FROM_M := 120.0
 
 ## What the driver is doing right now (for HUD / debugging).
 enum Mood { RACING, ATTACKING, DEFENDING, YIELDING, MISTAKE, RECOVERING }
@@ -424,7 +431,7 @@ func _build_speed_profile() -> void:
 	_profile_age = 0
 
 
-func _nearest(pos: Vector2) -> int:
+func _nearest(pos: Vector2, dir := Vector2.ZERO) -> int:
 	var n := line.size()
 	var best := 0
 	var best_d := INF
@@ -437,8 +444,22 @@ func _nearest(pos: Vector2) -> int:
 				best = k
 		if best_d < 40.0 * 40.0:
 			return best
+	return _nearest_any(pos, dir)
+
+
+## Nearest line point anywhere on the lap. Where the road crosses itself (a
+## Demolition Derby crossover) two points can be about as near: given the
+## way the car points (dir, or zero), a point whose line runs the other way
+## or across counts as further away, so the car keeps to its own road.
+func _nearest_any(pos: Vector2, dir: Vector2) -> int:
+	var n := line.size()
+	var best := 0
+	var best_d := INF
 	for k in n:
 		var d := pos.distance_squared_to(line[k])
+		if dir != Vector2.ZERO:
+			var fk := line[(k + 1) % n] - line[k]
+			d += CROSS_HEADING_M2 * (1.0 - dir.dot(fk.normalized()))
 		if d < best_d:
 			best_d = d
 			best = k
@@ -506,7 +527,10 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 		stuck_idx = -1
 		return inp
 	_joker_plan(sim, me)
-	idx = _nearest(car.pos)
+	var look_dir := car.vel.normalized() if car.speed() > 3.0 else car.forward()
+	if idx < 0:
+		idx = _nearest_any(car.pos, look_dir)
+	idx = _nearest(car.pos, look_dir)
 	var speed := car.speed()
 	var fwd := car.forward()
 	var rgt := car.right()
@@ -584,6 +608,9 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 	var behind_lx := -INF
 	# Demolition Derby: no braking for the car ahead; go for it instead.
 	var derby := sim.settings.is_derby()
+	# ...but not off the grid: every car has one in front, and ramming from
+	# the start piled the whole field up in the first 30 m.
+	var derby_ram := derby and (sim.entries[me].distance > DERBY_RAM_FROM_M or sim.entries[me].laps_done > 0)
 	var ram := -1
 	var ram_lx := INF
 	for j in sim.cars.size():
@@ -628,12 +655,14 @@ func get_input(sim: RaceSim, me: int) -> CarInput:
 			if lx < ahead_lx and absf(ly) < half_w + o_half + 2.5:
 				ahead = j
 				ahead_lx = lx
-			if derby and not sim.entries[j].dnf and lx < 40.0 and absf(ly) < 7.0 and lx < ram_lx:
+			if derby_ram and not sim.entries[j].dnf and lx < 40.0 and absf(ly) < 7.0 and lx < ram_lx:
 				ram = j
 				ram_lx = lx
-			if absf(ly) < half_w + o_half + 0.4 and not (derby and not sim.entries[j].dnf):
+			if absf(ly) < half_w + o_half + 0.4 and not (derby_ram and not sim.entries[j].dnf):
 				var gap := 3.0 + speed * lerpf(0.32, 0.16, p.aggression)
-				if _start_hold and o_v > speed - 1.0:
+				if derby:
+					gap = 0.5 + speed * 0.05  # derby start: bumper to bumper, a nudge is fine
+				elif _start_hold and o_v > speed - 1.0:
 					gap = 2.0 + speed * 0.12  # off the line: everyone goes together, nose to tail
 				elif sim.entries[me].laps_done == 0:
 					gap *= 1.5  # opening lap: brake a little earlier in the pack

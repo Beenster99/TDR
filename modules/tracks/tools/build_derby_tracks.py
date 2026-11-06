@@ -26,6 +26,7 @@ import widen  # noqa: E402
 STEP = 2.0          # metres between centre-line points
 GRID_CLEAR = 85.0   # no jumps this far behind the start line (the grid: 16 cars, 2 abreast)
 CROSS_CLEAR = 22.0  # no jumps this close to a crossover
+START_CLEAR = 25.0  # nor a crossover this soon after the start line
 RUNOFF = 1.0        # the road runs right up to the walls: just this strip (still road) before them
 SCALE = 1.5         # every arena layout is drawn this much bigger than its curve
                     # (the AI got lost in the tight 2026-11-03 arenas)
@@ -68,6 +69,29 @@ def pretzel(a, b):
     return f
 
 
+def oval(straight, radius):
+    """A short-track oval (banger racing): two straights joined by two
+    half-circle turns, run anticlockwise (every turn a left-hander).
+    t = 0 is the start of the front straight."""
+    per = 2.0 * straight + 2.0 * math.pi * radius
+
+    def f(t):
+        d = per * t / (2.0 * math.pi)
+        if d < straight:                                   # front straight
+            return (-straight * 0.5 + d, radius)
+        d -= straight
+        if d < math.pi * radius:                           # turn 1-2
+            a = math.pi * 0.5 - d / radius
+            return (straight * 0.5 + radius * math.cos(a), radius * math.sin(a))
+        d -= math.pi * radius
+        if d < straight:                                   # back straight
+            return (straight * 0.5 - d, -radius)
+        d -= straight                                      # turn 3-4
+        a = -math.pi * 0.5 - d / radius
+        return (-straight * 0.5 + radius * math.cos(a), radius * math.sin(a))
+    return f
+
+
 def sample(curve, n=4000):
     pts = [tuple(SCALE * v for v in curve(2.0 * math.pi * i / n)) for i in range(n)]
     # resample at STEP metres
@@ -101,7 +125,13 @@ def seg_cross(p1, p2, p3, p4):
 
 
 def crossings(pts):
+    """Where the line crosses itself, as pairs of distances along the lap.
+    Measured along the points (not index x STEP): the seam where sample()
+    closed the loop is a short step, and it can fall anywhere in the lap."""
     n = len(pts)
+    cum = [0.0]
+    for i in range(1, n):
+        cum.append(cum[-1] + math.dist(pts[i - 1], pts[i]))
     out = []
     for i in range(n):
         for j in range(i + 3, n):
@@ -109,7 +139,9 @@ def crossings(pts):
                 continue
             r = seg_cross(pts[i], pts[(i + 1) % n], pts[j], pts[(j + 1) % n])
             if r:
-                out.append(((i + r[0]) * STEP, (j + r[1]) * STEP))
+                si = cum[i] + r[0] * math.dist(pts[i], pts[(i + 1) % n])
+                sj = cum[j] + r[1] * math.dist(pts[j], pts[(j + 1) % n])
+                out.append((si, sj))
     return out
 
 
@@ -140,10 +172,47 @@ def build(spec):
     L = n * STEP
     # start line: the straightest point the spec asks for (fraction of lap)
     start = int(spec.get("start", 0.0) * n) % n
-    pts = pts[start:] + pts[:start]
-    if spec.get("reverse"):
-        pts = [pts[0]] + list(reversed(pts[1:]))
-    xs = crossings(pts)
+    # The grid must not sit on a crossover (cars starting on the X picked the
+    # other road and the field piled up): move the line on until the grid and
+    # the first metres after the line are clear. Dirt and jumps are given as
+    # fractions of the lap from the line, so they move back by the same
+    # amount and stay where they were on the ground.
+    def placed(sh):
+        p2 = pts[(start + sh) % n:] + pts[:(start + sh) % n]
+        if spec.get("reverse"):
+            p2 = [p2[0]] + list(reversed(p2[1:]))
+        return p2
+
+    shift = 0
+    if any(c > L - GRID_CLEAR - 10.0 or c < START_CLEAR for pair in crossings(placed(0)) for c in pair):
+        # The straightest clear spot within a quarter lap either way: the
+        # grid and the run to the first turn want a straight.
+        best = None
+        for sh in range(-n // 4, n // 4):
+            p2 = placed(sh)
+            if any(c > L - GRID_CLEAR - 10.0 or c < START_CLEAR for pair in crossings(p2) for c in pair):
+                continue
+            kk = curvature(p2)
+            bend = max(abs(kk[i]) for i in range(-int(GRID_CLEAR / STEP), int(60.0 / STEP)))
+            score = bend + abs(sh) * STEP * 0.00002
+            if best is None or score < best[0]:
+                best = (score, sh)
+        if best is None:
+            raise SystemExit(spec["id"] + ": no start line clear of the crossovers")
+        shift = best[1]
+    p2 = placed(shift)
+    xs = crossings(p2)
+    if shift:
+        print("  %s: start line moved %+.0f m, clear of the crossovers" % (spec["id"], shift * STEP))
+        f = shift / n * (-1.0 if spec.get("reverse") else 1.0)
+        spec = dict(spec)
+        dirt = []
+        for a, b in spec.get("dirt", []):
+            a, b = (a - f) % 1.0, (b - f) % 1.0
+            dirt += [[a, b]] if a < b else [[a, 1.0], [0.0, b]]   # split where it runs over the line
+        spec["dirt"] = dirt
+        spec["jumps"] = [(j - f) % 1.0 for j in spec.get("jumps", [])]
+    pts = p2
     k = curvature(pts)
     half = spec["width"] * SCALE * 0.5
     cl = [[round(p[0], 2), round(p[1], 2), half, half] for p in pts]
@@ -235,6 +304,7 @@ def build(spec):
         "default_environment": spec.get("env", {"ambient_c": 17, "track_c": 22, "time_of_day_h": 19.5, "weather": "dry"}),
         "pit_lane": None,
         "climate": spec.get("climate", {"ambient_day_c": 19, "ambient_night_c": 11, "rain_chance": 0.3}),
+        "layout": spec.get("layout", "arena"),
         "dirt": dirt,
         "jumps": jumps,
         "crossovers": [[round(a, 1), round(b, 1)] for a, b in xs],
@@ -257,10 +327,6 @@ TRACKS = [
      "description": "The classic county-fair figure eight: two loops and one crossover in the middle where every lap someone gets T-boned. Dirt on the far loop and a table-top jump on the way back.",
      "curve": figure8_stadium(58.0, 30.0), "width": 12.0, "start": 0.12,
      "dirt": [[0.55, 0.92]], "jumps": [0.7], "jump_shape": (8.0, 5.0, 10.0, 2.2)},
-    {"id": "derby_scrapyard_knot", "name": "Scrapyard Knot", "short": "Scrapyard", "location": "Breaker's yard",
-     "description": "Three crossovers tied in a knot through a breaker's yard. Mostly loose dirt, two jumps, and nowhere to hide.",
-     "curve": trefoil(16.0), "width": 11.0, "start": 0.05,
-     "dirt": [[0.0, 0.18], [0.3, 0.62], [0.74, 0.96]], "jumps": [0.33, 0.62]},
     {"id": "derby_harbour_bowtie", "name": "Harbour Bowtie", "short": "Harbour", "location": "Dockside container yard",
      "description": "Two long straights across the docks meet in an X, with tight hairpins at each end. Tarmac straights, dirt in the hairpins and a big jump off the quay.",
      "curve": bowtie(78.0, 34.0), "width": 12.0, "start": 0.08,
@@ -275,6 +341,19 @@ TRACKS = [
      "dirt": [[0.1, 0.95]], "jumps": [0.22, 0.5],
      "climate": {"ambient_day_c": 14, "ambient_night_c": 7, "rain_chance": 0.55},
      "env": {"ambient_c": 13, "track_c": 15, "time_of_day_h": 16.0, "weather": "overcast"}},
+    # Ovals: banger racing's short tracks. No crossovers and no jumps, just
+    # flat out round two turns, anticlockwise, and into the car in front.
+    {"id": "derby_claypit_oval", "name": "Claypit Dirt Oval", "short": "Claypit", "location": "Brickworks speedway",
+     "description": "A quarter-mile shale oval behind the old brickworks. Loose dirt all the way round, two long straights and two tight turns: flat out and into the car in front.",
+     "curve": oval(90.0, 30.0), "width": 12.0, "start": 0.8 * 90.0 / (180.0 + 2.0 * math.pi * 30.0),
+     "dirt": [[0.0, 1.0]], "layout": "oval",
+     "climate": {"ambient_day_c": 16, "ambient_night_c": 9, "rain_chance": 0.4},
+     "env": {"ambient_c": 15, "track_c": 18, "time_of_day_h": 18.5, "weather": "dry"}},
+    {"id": "derby_gasworks_oval", "name": "Gasworks Tarmac Oval", "short": "Gasworks", "location": "Town stadium",
+     "description": "A tarmac stock-car oval round the football pitch in the shadow of the gasworks. Fast straights, tight turns and nowhere to go when it piles up.",
+     "curve": oval(110.0, 34.0), "width": 12.0, "start": 0.8 * 110.0 / (220.0 + 2.0 * math.pi * 34.0),
+     "layout": "oval",
+     "env": {"ambient_c": 16, "track_c": 21, "time_of_day_h": 20.0, "weather": "dry"}},
 ]
 
 
