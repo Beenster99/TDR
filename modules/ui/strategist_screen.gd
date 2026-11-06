@@ -1040,28 +1040,14 @@ func _draw_ours(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 	if _can_plan():
 		_button(Rect2(r.end.x - 250, r.position.y + 5, 240, 30), "PIT STOP SETTINGS" + ("" if InputPrompt.pad else "  ⏎"), "plan", 14, YELLOW)
 	var half := r.size.x * 0.43     # setup on the left, the car on the right
-	# Left: the setup now.
 	var y := r.position.y + 54
-	_text(Vector2(x, y), "SETUP NOW", 11, DIM)
-	if sim.settings.tuning_enabled:
-		var tw := font.get_string_size("SETUP NOW", HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
-		_text(Vector2(x + tw + 12, y), "yellow: changes at a stop", 11, Color(YELLOW, 0.7))
-	var full := CarSetup.complete(def, def.tuning)
-	full.merge(sim.pits.current_setup(i), true)
-	var colw := (half - 24) * 0.5
-	for c in SETUP_COLS.size():
-		var cx := x + c * (colw + 8)
-		var ly := y + 20
-		for item in SETUP_COLS[c]:
-			var key: String = item[0]
-			var v := "fixed" if not CarSetup.adjustable(def, key) else CarSetup.format_value(def, key, float(full[key]))
-			if key == "final_drive":
-				v = "%.2f" % float(full[key])
-			var pit_key := sim.settings.tuning_enabled and key in PitRules.PIT_SETUP_KEYS and CarSetup.adjustable(def, key)
-			_text(Vector2(cx, ly), item[1], 12, DIM, HORIZONTAL_ALIGNMENT_LEFT, colw * 0.55)
-			_text(Vector2(cx + colw * 0.56, ly), v, 13, YELLOW if pit_key else Color.WHITE, HORIZONTAL_ALIGNMENT_LEFT, colw * 0.44)
-			ly += 19
-	y += 20 + 8 * 19 + 6
+	# Damaged: the damage advice takes the setup's place (the setup is still
+	# in the pit stop settings).
+	var adv := DamageAdvice.assess(sim, tel, i)
+	if int(adv["level"]) >= DamageAdvice.LIGHT:
+		y = _draw_damage(Rect2(x - 4, y - 16, half - 12, 20 + 8 * 19 + 2), adv) + 22
+	else:
+		y = _draw_setup(x, y, half, sim, i, def) + 6
 	draw_line(Vector2(x, y - 12), Vector2(x + half - 20, y - 12), Color(1, 1, 1, 0.1))
 	var lines := []
 	if sim.settings.fuel_enabled:
@@ -1084,7 +1070,12 @@ func _draw_ours(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 		var punct := (rep["punctures"] as Array).count(true)
 		if punct > 0:
 			hurt.append("%d puncture%s" % [punct, "" if punct == 1 else "s"])
-		lines.append(["Damage", "none" if hurt.is_empty() else ", ".join(hurt), GREEN if hurt.is_empty() else Color(1, 0.6, 0.4)])
+		var dmg_txt := "none" if hurt.is_empty() else ", ".join(hurt)
+		if int(adv["level"]) == DamageAdvice.SCUFFS:
+			dmg_txt = "scuffs only, not worth a repair"
+		if int(adv["level"]) >= DamageAdvice.LIGHT:
+			dmg_txt = "%s, see above" % (adv["level_text"] as String).to_lower()
+		lines.append(["Damage", dmg_txt, GREEN if hurt.is_empty() else DamageAdvice.level_colour(int(adv["level"]))])
 	if ours and sim.pits.enabled:
 		var plan: Dictionary = e.pit["plan"]
 		var work := sim.pits.service_for(i, plan)
@@ -1152,6 +1143,91 @@ func _draw_ours(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:
 			draw_rect(Rect2(bar.position, Vector2(bar.size.x * (1.0 - wt), bar.size.y)), wcol)
 		else:
 			_text(Vector2(kx, cr.end.y - 10), "wear off", 11, DIM)
+
+
+## OUR CAR's setup now, in two columns; returns the y under it.
+func _draw_setup(x: float, y: float, half: float, sim: RaceSim, i: int, def: CarDefinition) -> float:
+	_text(Vector2(x, y), "SETUP NOW", 11, DIM)
+	if sim.settings.tuning_enabled:
+		var tw := font.get_string_size("SETUP NOW", HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
+		_text(Vector2(x + tw + 12, y), "yellow: changes at a stop", 11, Color(YELLOW, 0.7))
+	var full := CarSetup.complete(def, def.tuning)
+	full.merge(sim.pits.current_setup(i), true)
+	var colw := (half - 24) * 0.5
+	for c in SETUP_COLS.size():
+		var cx := x + c * (colw + 8)
+		var ly := y + 20
+		for item in SETUP_COLS[c]:
+			var key: String = item[0]
+			var v := "fixed" if not CarSetup.adjustable(def, key) else CarSetup.format_value(def, key, float(full[key]))
+			if key == "final_drive":
+				v = "%.2f" % float(full[key])
+			var pit_key := sim.settings.tuning_enabled and key in PitRules.PIT_SETUP_KEYS and CarSetup.adjustable(def, key)
+			_text(Vector2(cx, ly), item[1], 12, DIM, HORIZONTAL_ALIGNMENT_LEFT, colw * 0.55)
+			_text(Vector2(cx + colw * 0.56, ly), v, 13, YELLOW if pit_key else Color.WHITE, HORIZONTAL_ALIGNMENT_LEFT, colw * 0.44)
+			ly += 19
+	return y + 20 + 8 * 19
+
+
+## The damage advice card (DamageAdvice.assess): how bad, the call, lap time
+## lost, the repair time, what it costs to the flag, each damaged part, and
+## why. Returns the y under it.
+func _draw_damage(r: Rect2, adv: Dictionary) -> float:
+	var level := int(adv["level"])
+	var lcol := DamageAdvice.level_colour(level)
+	PitPlanner.card_on(self, r, Color(lcol, 0.07), 6.0, Color(lcol, 0.45))
+	var x := r.position.x + 10
+	var w := r.size.x - 20
+	var y := r.position.y + 19
+	_text(Vector2(x, y), "DAMAGE", 11, DIM)
+	var tw := font.get_string_size("DAMAGE", HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
+	var lt: String = adv["level_text"]
+	var lw := font.get_string_size(lt, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x + 12
+	PitPlanner.card_on(self, Rect2(x + tw + 8, y - 12, lw, 16), Color(lcol, 0.9), 4.0)
+	_text(Vector2(x + tw + 14, y), lt, 11, Color(0.05, 0.05, 0.06))
+	var call: String = adv["call"]
+	if call != "":
+		_text(Vector2(x, y + 1), call, 17, DamageAdvice.call_colour(call), HORIZONTAL_ALIGNMENT_RIGHT, w)
+	# The three numbers that decide it.
+	y += 30
+	var cw := w / 3.0
+	var loss := float(adv["loss_lap"])
+	_reading(Vector2(x, y), cw - 6, "+%.1f s" % loss if loss >= 0.05 else "< 0.1 s", "per lap (estimate)",
+		RED if loss >= 1.0 else (YELLOW if loss >= 0.3 else Color.WHITE), 19)
+	var rep := float(adv["repair_s"])
+	_reading(Vector2(x + cw, y), cw - 6, "%.0f s" % rep if rep > 0.0 else "none", "repair in the box", Color.WHITE, 19)
+	var laps := int(adv["laps_left"])
+	_reading(Vector2(x + 2 * cw, y), cw - 6, "%.0f s" % float(adv["cost_out"]) if laps > 0 else "-",
+		"to the flag, %d lap%s" % [laps, "" if laps == 1 else "s"], Color.WHITE, 19)
+	# Each damaged part: how bad, time a lap, repair time.
+	y += 34
+	for p in adv["parts"]:
+		if y > r.end.y - 44:
+			break
+		var pct := float(p["pct"])
+		var pcol := DamageAdvice.level_colour(DamageAdvice.LIGHT if pct < 30.0 else (DamageAdvice.MODERATE if pct < 60.0 else DamageAdvice.HEAVY))
+		_text(Vector2(x, y), p["label"], 12, DIM, HORIZONTAL_ALIGNMENT_LEFT, w * 0.3)
+		var bar := Rect2(x + w * 0.3, y - 8, w * 0.2, 6)
+		draw_rect(bar, Color(1, 1, 1, 0.1))
+		if p["part"] == "tyres":
+			_text(Vector2(bar.position.x, y), "%d flat" % roundi(pct / 100.0), 12, RED)
+		else:
+			draw_rect(Rect2(bar.position, Vector2(bar.size.x * clampf(pct / 100.0, 0.0, 1.0), bar.size.y)), pcol)
+			_text(Vector2(bar.end.x + 6, y), "%d%%" % roundi(pct), 12, pcol)
+		_text(Vector2(x + w * 0.6, y), "+%.1f s/lap" % float(p["loss_s"]), 12, Color.WHITE, HORIZONTAL_ALIGNMENT_LEFT, w * 0.2)
+		var fix := "fix %.0f s" % float(p["repair_s"]) if bool(p["fixed"]) and float(p["repair_s"]) > 0.0 \
+			else ("new tyre" if p["part"] == "tyres" else ("free" if bool(p["fixed"]) else "too light to fix"))
+		_text(Vector2(x, y), fix, 12, DIM, HORIZONTAL_ALIGNMENT_RIGHT, w)
+		y += 17
+	# Why, and any risk.
+	y = maxf(y + 2, r.end.y - 38)
+	var why: String = adv["why"]
+	if (adv["risk"] as String) != "":
+		why = (adv["risk"] as String) + " " + why
+	for ln in _wrap(why, w, 12).slice(0, 2):
+		_text(Vector2(x, y), ln, 12, Color(1, 0.55, 0.45) if (adv["risk"] as String) != "" else Color(0.85, 0.88, 0.95))
+		y += 15
+	return r.end.y
 
 
 func _draw_car(r: Rect2, sim: RaceSim, tel: RaceTelemetry) -> void:

@@ -43,6 +43,7 @@ func _init() -> void:
 	test_pit_setup_changes()
 	test_pit_crew_game()
 	test_pit_stop_rules()
+	test_damage_advice()
 	test_pit_self_drive()
 	test_car_setups()
 	test_upgrades()
@@ -1481,6 +1482,40 @@ func test_pit_setup_changes() -> void:
 ## tyres and guns laid out, air lance, wheel and gun men), the guide driving a
 ## co-op car down the lane, where a stop rejoins, and the game itself
 ## (solo gun man, two- and three-player co-op crews).
+func test_damage_advice() -> void:
+	print("damage advice")
+	var d := _data()
+	var st := RaceSettings.new()
+	st.laps = 10
+	st.ai_count = 3
+	st.set_damage_level("full")
+	var start := RaceFactory.plan(st, [{"name": "P", "car_id": "v8_mid_berlinetta"}], d["cars"], d["drivers"])
+	var sim := RaceFactory.build_sim(start, d["cars"], d["tyres"], d["track"])
+	sim.phase = RaceSim.Phase.RACING
+	var c := sim.cars[0]
+	check(int(DamageAdvice.assess(sim, null, 0)["level"]) == DamageAdvice.NONE, "no damage: no advice")
+	# Lap time lost grows with the damage, part by part.
+	for part in DamageAdvice.LOSS:
+		var a := DamageAdvice.part_loss_share(part, 0.2)
+		var b := DamageAdvice.part_loss_share(part, 0.6)
+		check(a > 0.0 and b > a and DamageAdvice.part_loss_share(part, 0.0) == 0.0, "%s: more damage, more time lost (%.3f < %.3f)" % [part, a, b])
+	c.damage_aero = 0.35
+	c.damage_suspension = 0.2
+	var adv := DamageAdvice.assess(sim, null, 0)
+	check(int(adv["level"]) == DamageAdvice.MODERATE, "aero 35% is moderate damage")
+	check(absf(float(adv["repair_s"]) - CarDamage.repair_time(c, PitRules.repair_parts(c))) < 0.01, "repair time is the pit stop's (%.1f s)" % adv["repair_s"])
+	check(adv["call"] in [DamageAdvice.BOX_NOW, DamageAdvice.STAY_OUT, DamageAdvice.YOUR_CALL, DamageAdvice.FIX_AT_STOP, DamageAdvice.SKIP_REPAIR],
+		"it makes a call: %s" % adv["call"])
+	c.puncture[2] = 1.0
+	adv = DamageAdvice.assess(sim, null, 0)
+	check(adv["call"] == DamageAdvice.BOX_NOW and int(adv["level"]) == DamageAdvice.CRITICAL, "a flat tyre: box now")
+	CarDamage.repair(c)
+	c.damage_aero = 0.05
+	c.body_damage[0] = 0.1
+	adv = DamageAdvice.assess(sim, null, 0)
+	check(int(adv["level"]) == DamageAdvice.SCUFFS and float(adv["repair_s"]) == 0.0, "a scuff isn't worth a repair")
+
+
 func test_pit_stop_rules() -> void:
 	print("pit stop rules")
 	var d := _data()

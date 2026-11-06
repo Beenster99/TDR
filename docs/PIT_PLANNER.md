@@ -98,6 +98,32 @@ trim on the setup's front/rear pressure (`pit["psi_trim"]`,
 `CarState.psi_trim`). Both travel in the pit state, so clients and a driver
 change (the car moving to another machine) keep them.
 
+## Damage advice
+
+When our car is damaged (LIGHT or worse), OUR CAR on the Strategist screen
+shows a DAMAGE card where the setup normally is (the setup is still in PIT
+STOP SETTINGS). `DamageAdvice.assess` (telemetry) works it out:
+
+- **How bad:** SCUFFS (below `PitRules.REPAIR_MIN`, the crew won't touch it),
+  LIGHT, MODERATE, HEAVY, or CRITICAL (a flat tyre, a leaking engine, a
+  gearbox losing gears).
+- **Lap time lost:** an estimate per part from `DamageAdvice.LOSS`, the share
+  of a clean lap each part costs, measured with `tests/damage_pace_probe.gd`
+  (a GT3 at Brands Hatch, Spa and Monza), times the car's 5-lap average.
+- **Repair time:** exactly what the stop would take, from
+  `PitRules.service_for` / `repair_parts` (the same rule for every car).
+- **The call:** the time lost to the flag staying damaged against the cost
+  of fixing it. With a stop due anyway (a mandatory stop, not enough fuel or
+  a tyre that won't last) the cost is the repair time: FIX AT YOUR STOP, or
+  BOX NOW if it costs 0.8 s a lap or more; STOP, BUT DON'T REPAIR when the
+  repair costs more than it saves. With no stop due the cost is a stop just
+  for the repairs (tyres kept, no fuel): BOX NOW or STAY OUT, with the laps to
+  go from which a stop would pay. Within 2.5 s it is YOUR CALL. A flat tyre
+  or a leaking engine is always BOX NOW. The places the repair would give
+  away (cars behind within the time it costs) are named.
+
+The pit stop settings show the call in one line under Repairs.
+
 ## Tests
 
 - `tests/run_tests.gd` (pit tests) for the rules.
@@ -106,3 +132,5 @@ change (the car moving to another machine) keep them.
   with pressures, downforce, fuel and a driver change, sends it and checks
   the stop fitted it. With xvfb, `-- out.png` saves shots of the planner,
   the console and the driver's screen.
+- `tests/damage_advice_shot.tscn`: damages our car five ways and checks the
+  advice (with xvfb, `-- <prefix>` saves the Strategist screen for each).
