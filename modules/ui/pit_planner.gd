@@ -1011,6 +1011,12 @@ func _draw_controls(r: Rect2) -> void:
 		_button(Rect2(x + 110, y, 170, 30), "Fix everything" if draft["repair"] else "No repairs", "repair", null, draft["repair"])
 		_text(Vector2(x + 292, y + 21), dmg_txt, 14, DIM if parts.is_empty() else RED)
 		y += 40
+		# The strategist's damage advice (DamageAdvice), in one line.
+		var adv := DamageAdvice.assess(sim, session.telemetry, car)
+		if int(adv["level"]) >= DamageAdvice.LIGHT and adv["call"] != "":
+			_text(Vector2(x + 110, y + 4), "Advice: %s · +%.1f s a lap, repairs %.0f s" % [adv["call"], adv["loss_lap"], adv["repair_s"]],
+				13, DamageAdvice.call_colour(adv["call"]), HORIZONTAL_ALIGNMENT_LEFT, w - 110)
+			y += 20
 	_text(Vector2(x, y + 21), "Driver" + _shortcut(" (D)"), 15)
 	if can_change_driver():
 		var label := "Change: %s takes over" % _crew_name(int(draft["driver_to"])) if draft["driver_change"] else "No driver change"
