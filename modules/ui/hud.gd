@@ -342,6 +342,7 @@ func _process(delta: float) -> void:
 	message_time -= delta
 	radio_time -= delta
 	_watch_release(delta)
+	_watch_stop(delta)
 	# A driver change can put this player at the wheel of a shared car (or take
 	# them out of it): switch to the matching layout.
 	if not editing and is_coop_driver() != coop:
@@ -422,7 +423,96 @@ func _draw() -> void:
 	if me < 0 and not editing:
 		_text(Vector2(20, 40), "SPECTATING", 22)
 	if me >= 0 and not editing:
+		_draw_stop_timer(me)
 		_draw_release_countdown()
+
+
+# --- Pit stop timer --------------------------------------------------------------
+
+const STOP_SUMMARY_S := 5.0      ## the stop's summary stays up this long after the release
+var _stops_seen := -1            ## this player's car's stop count, last frame
+var _stop_summary := 0.0         ## seconds left showing the last stop's summary
+
+
+func _watch_stop(delta: float) -> void:
+	_stop_summary = maxf(_stop_summary - delta, 0.0)
+	if session == null or session.local_car < 0 or not session.sim.pits.enabled:
+		_stops_seen = -1
+		return
+	var stops := int(session.sim.entries[session.local_car].pit["stops"])
+	if _stops_seen >= 0 and stops > _stops_seen:
+		_stop_summary = STOP_SUMMARY_S
+	_stops_seen = stops
+
+
+## The stop timer in the middle of the screen while this player's car is in
+## its box (the clock, the step the crew are on, anything that went wrong),
+## then for a few seconds the stop's time and whether it was clean.
+func _draw_stop_timer(me: int) -> void:
+	var sim := session.sim
+	if not sim.pits.enabled:
+		return
+	var p: Dictionary = sim.entries[me].pit
+	var live := sim.pits.phase(me) == PitRules.PHASE_SERVICE
+	if not live and _stop_summary <= 0.0:
+		return
+	var at := 0.0
+	var std := 0.0
+	var notes: Array = []
+	var head := ""
+	var head_col := Color(1, 1, 1, 0.75)
+	var step := ""
+	var clock_col := Color.WHITE
+	if live:
+		at = float(p["service_total"]) - float(p["service_left"])
+		std = float(p.get("service_std", 0.0))
+		notes = PitRules.stop_notes(p, at)
+		step = PitRules.stop_step(p, at)
+		head = "PIT STOP"
+		if notes.any(func(n: Dictionary) -> bool: return bool(n["issue"])):
+			clock_col = Color(1, 0.62, 0.25)
+	else:
+		var last: Dictionary = p.get("last_stop", {})
+		if last.is_empty():
+			return
+		at = float(last.get("stationary_s", 0.0))
+		std = float(last.get("standard_s", 0.0))
+		notes = last.get("notes", [])
+		var clean := bool(last.get("clean", true))
+		head = "CLEAN STOP" if clean else "STOP: NOT CLEAN"
+		head_col = Color(0.35, 0.95, 0.45) if clean else Color(1, 0.62, 0.25)
+		clock_col = head_col
+		if notes.is_empty():
+			notes = [{"text": "No problems: tyres, fuel and release on time", "s": 0.0, "issue": false}]
+	# Just under the release countdown (and above the car, which the camera
+	# keeps in the middle of the screen).
+	var k := size.y / 900.0
+	var w := 380.0 * k
+	var line := 20.0 * k
+	var body := 74.0 * k + (24.0 * k if step != "" else 0.0)
+	var h := body + line * notes.size() + 8.0 * k
+	var top := Vector2(size.x * 0.5 - w * 0.5, size.y * 0.335)
+	draw_rect(Rect2(top, Vector2(w, h)), Color(0, 0, 0, 0.5))
+	var x := top.x + 14.0 * k
+	var iw := w - 28.0 * k
+	_text(Vector2(x, top.y + 22.0 * k), head, roundi(15.0 * k), head_col)
+	if std > 0.0:
+		_text(Vector2(x, top.y + 22.0 * k), "standard %.1f s" % std, roundi(13.0 * k), Color(1, 1, 1, 0.55),
+			HORIZONTAL_ALIGNMENT_RIGHT, iw)
+	_text(Vector2(x, top.y + 68.0 * k), "%.1f s" % at, roundi(44.0 * k), clock_col, HORIZONTAL_ALIGNMENT_CENTER, iw)
+	var y := top.y + 74.0 * k
+	if step != "":
+		_text(Vector2(x, y + 18.0 * k), step, roundi(17.0 * k), Color(1, 0.82, 0.2), HORIZONTAL_ALIGNMENT_CENTER, iw)
+		y += 24.0 * k
+	for n in notes:
+		var issue := bool(n["issue"])
+		var col := Color(1, 0.55, 0.3) if issue else Color(1, 1, 1, 0.75)
+		var cost := "+%.1f s" % float(n["s"]) if float(n["s"]) > 0.05 else ""
+		_text(Vector2(x, y + 16.0 * k), ("!  " if issue else "") + str(n["text"]), roundi(14.0 * k), col,
+			HORIZONTAL_ALIGNMENT_LEFT, iw - (56.0 * k if cost != "" else 0.0))
+		if cost != "":
+			_text(Vector2(x, y + 16.0 * k), cost, roundi(14.0 * k), col, HORIZONTAL_ALIGNMENT_RIGHT, iw)
+		y += line
 
 
 # --- Pit stop release countdown ------------------------------------------------

@@ -5,6 +5,8 @@ extends Node
 ##   box      - in the lane at the limit, closing on the box marks
 ##   menu     - the pit call menu over the race (single player)
 ##   release  - in the box, the countdown to the crew releasing the car
+##   stop     - the stop timer mid-stop, after overshooting the box
+##   clean    - the stop timer's summary after a clean stop
 ##   godot --path . res://tests/pit_guide_shot.tscn -- <out.png> <scenario> [track] [seconds]
 
 var session: RaceSession
@@ -89,6 +91,23 @@ func _physics_process(_delta: float) -> void:
 				p["limiter"] = true
 			"menu":
 				scene.pit_menu.open(mine)
+			"stop", "clean":
+				# The stop timer: "stop" mid-stop after overshooting the box
+				# (the crew push the car back), "clean" the summary after a
+				# clean stop's release.
+				var box: Dictionary = t.pit_box(sim.pits.box_index(mine))
+				var over := 2.5 if scenario == "stop" else 0.0
+				_place(me, box["pos"] + Vector2.from_angle(box["heading"]) * (over + 0.4), box["heading"] + 0.08, 0.0)
+				me.fuel_l = 20.0
+				me.damage_aero = 0.0
+				var p: Dictionary = sim.entries[mine].pit
+				session.request_pit(mine, {"box": true, "tyre": PitRules.TYRE_DRY, "fuel": 18.0 if scenario == "stop" else 0.0, "repair": false})
+				p["phase"] = PitRules.PHASE_LIMIT
+				p["auto"] = false
+				p["limiter"] = true
+				p["entry_lap"] = 1
+				p["lane_speeding"] = int(p["speeding"])
+				sim.pits._arrive(mine, PitRules.BOX_OVERSHOOT_S + PitRules.BOX_OVERSHOOT_S_PER_M * over if over > 0.0 else 0.0)
 			"release":
 				var box: Dictionary = t.pit_box(sim.pits.box_index(mine))
 				_place(me, box["pos"], box["heading"], 0.0)

@@ -42,6 +42,7 @@ func _init() -> void:
 	test_pit_lookups_match()
 	test_pit_setup_changes()
 	test_pit_crew_game()
+	test_pit_stop_rules()
 	test_pit_self_drive()
 	test_car_setups()
 	test_upgrades()
@@ -1083,7 +1084,7 @@ func test_pit_rules() -> void:
 	c.damage_aero = 0.5
 	var w := pits.service_for(0, {"tyre": PitRules.TYRE_INTER, "fuel": 30.0, "repair": true})
 	check(w["tyre"] == "intermediate" and is_equal_approx(w["fuel_l"], 30.0), "plan: inters and 30 L")
-	check(is_equal_approx(w["total_s"], PitRules.STOP_BASE_S + float(w["tyre_s"]) + float(w["fuel_s"]) + PitRules.HOSE_S * 0.5 + float(w["repair_s"])) and float(w["repair_s"]) > 0.0,
+	check(is_equal_approx(w["total_s"], PitRules.STOP_BASE_S + float(w["tyre_s"]) + float(w["fuel_s"]) + PitRules.HOSE_S * 1.5 + float(w["repair_s"])) and float(w["repair_s"]) > 0.0,
 		"stop time = base + fuel, then tyres + repairs (%.1f s)" % w["total_s"])
 	var keep := pits.service_for(0, {"tyre": PitRules.TYRE_KEEP, "fuel": 0.0, "repair": false})
 	check(keep["tyre"] == "" and is_equal_approx(keep["total_s"], PitRules.STOP_BASE_S), "a stop with nothing to do is just the base time")
@@ -1480,6 +1481,92 @@ func test_pit_setup_changes() -> void:
 ## tyres and guns laid out, air lance, wheel and gun men), the guide driving a
 ## co-op car down the lane, where a stop rejoins, and the game itself
 ## (solo gun man, two- and three-player co-op crews).
+func test_pit_stop_rules() -> void:
+	print("pit stop rules")
+	var d := _data()
+	var st := RaceSettings.new()
+	st.laps = 10
+	st.ai_count = 3
+	st.fuel_enabled = true
+	st.damage_enabled = true
+	var start := RaceFactory.plan(st, [{"name": "P", "car_id": "v8_mid_berlinetta"}], d["cars"], d["drivers"])
+	var sim := RaceFactory.build_sim(start, d["cars"], d["tyres"], d["track"])
+	var pits := sim.pits
+	sim.phase = RaceSim.Phase.RACING
+	var me := -1
+	var ai := -1
+	for k in sim.car_count():
+		if sim.entries[k].is_ai and ai < 0:
+			ai = k
+		elif not sim.entries[k].is_ai:
+			me = k
+	check(me >= 0 and ai >= 0, "a player and an AI car")
+	# Repairs: the same rule and the same time for a player's car and an AI's.
+	for k in [me, ai]:
+		sim.cars[k].damage_aero = 0.03
+		sim.cars[k].damage_suspension = 0.0
+	var plan := {"tyre": PitRules.TYRE_KEEP, "fuel": 0.0, "repair": true}
+	check(float(pits.service_for(me, plan)["repair_s"]) == 0.0 and float(pits.service_for(ai, plan)["repair_s"]) == 0.0,
+		"a scuff (3%) isn't repaired, for anyone")
+	for k in [me, ai]:
+		sim.cars[k].damage_aero = 0.3
+		sim.cars[k].damage_suspension = 0.2
+	var rp := float(pits.service_for(me, plan)["repair_s"])
+	check(rp > 0.0 and is_equal_approx(rp, float(pits.service_for(ai, plan)["repair_s"])), "the same damage takes the same repair time (%.1f s)" % rp)
+	var strat := AIPitStrategy.new(DriverTraits.new(), 1)
+	check(bool(strat._plan(sim, ai)["repair"]), "the AI asks for repairs like a player's crew does")
+	var tyres := {"tyre": PitRules.TYRE_DRY, "wheels": "all", "fuel": 0.0, "repair": false}
+	check(is_equal_approx(float(pits.service_for(me, tyres)["tyre_s"]), float(pits.service_for(ai, tyres)["tyre_s"])),
+		"the same tyre change takes the same time")
+	for k in [me, ai]:
+		var tl := pits.crew_timeline(k, pits.service_for(k, tyres))
+		check(absf(float(tl["release"]) - float(tl["standard"])) <= float(tl["standard"]) * 0.1 + (PitRules.CREW_FUMBLE_S if tl["fumble"] >= 0 else 0.0),
+			"car %d's crew within 10%% of the standard (%.2f s v %.2f s)" % [k, tl["release"], tl["standard"]])
+	# Every car ends up square in its box, wherever it stopped near it.
+	var t := sim.track
+	for k in [me, ai]:
+		sim.cars[k].damage_aero = 0.0
+		sim.cars[k].damage_suspension = 0.0
+		var box := t.pit_box(pits.box_index(k))
+		var c := sim.cars[k]
+		c.pos = (box["pos"] as Vector2) + Vector2.from_angle(box["heading"]) * -1.2 + Vector2.from_angle(box["heading"] + PI * 0.5) * 0.8
+		c.heading = float(box["heading"]) + 0.25
+		c.vel = Vector2.ZERO
+		c.fuel_l = 5.0
+		pits.set_plan(k, {"tyre": PitRules.TYRE_DRY, "fuel": 10.0, "repair": true})
+		sim.entries[k].pit["entry_lap"] = 1
+		pits._arrive(k)
+	var idle := []
+	for k in sim.car_count():
+		idle.append(CarInput.neutral())
+	var notes_live := []
+	for _n in 60 * 3:
+		sim.step(idle)
+		notes_live = PitRules.stop_notes(sim.entries[me].pit, 1.0)
+	for k in [me, ai]:
+		var box := t.pit_box(pits.box_index(k))
+		var c := sim.cars[k]
+		check(c.pos.distance_to(box["pos"]) < 0.05 and absf(wrapf(c.heading - float(box["heading"]), -PI, PI)) < 0.01,
+			"car %d is square on its box's marks (%.2f m, %.1f deg)" % [k, c.pos.distance_to(box["pos"]), rad_to_deg(wrapf(c.heading - float(box["heading"]), -PI, PI))])
+	var p: Dictionary = sim.entries[me].pit
+	check(PitRules.stop_step(p, 0.5) == "REFUELLING  +  WINDSCREEN", "the stop timer: refuelling and the windscreen first (%s)" % PitRules.stop_step(p, 0.5))
+	var tl0: Dictionary = p["work"]["crew"]
+	check(PitRules.stop_step(p, float(tl0["up"][0]) + 0.1) == "AIR JACKS UP" and PitRules.stop_step(p, float(tl0["up"][1]) + 0.1) == "TYRES",
+		"then the air jacks, then the tyres")
+	check(notes_live.all(func(n): return not n["issue"]) or int(tl0["fumble"]) >= 0, "nothing wrong so far")
+	for _n in 60 * 30:
+		sim.step(idle)
+		if pits.phase(me) != PitRules.PHASE_SERVICE:
+			break
+	var last: Dictionary = sim.entries[me].pit["last_stop"]
+	check(last.has("clean") and last.has("notes") and bool(last["clean"]) == (int(tl0["fumble"]) < 0),
+		"the stop's summary says whether it was clean (%s)" % str(last.get("notes", [])))
+	# An overshoot is an issue: not a clean stop.
+	var fake := {"work": {"overshoot_s": 1.4, "crew": {}}, "speeding": 1, "lane_speeding": 0}
+	var issues := PitRules.stop_notes(fake, 3.0)
+	check(issues.size() == 2 and issues.all(func(n): return n["issue"]), "overshooting the box and pit lane speeding are issues")
+
+
 func test_pit_crew_game() -> void:
 	print("pit crew game")
 	var d := _data()
@@ -1512,6 +1599,8 @@ func test_pit_crew_game() -> void:
 			and float(tl["release"]) > float(tl["down"][1]), "car up, tyres, car down, release, in that order")
 		check(float(j0["start"]) >= float(tl["fuel"][3]) - 1e-6 and float(ty[1][0]["start"]) >= float(tl["fuel"][3]) - 1e-6,
 			"the tyres wait until the hose is off (%.2f s >= %.2f s)" % [j0["start"], tl["fuel"][3]])
+		check(float(tl["up"][0]) >= float(tl["fuel"][3]) - 1e-6 and float(tl["screen"][0]) < float(tl["fuel"][3]),
+			"fuel and windscreen first, then the air jacks (up at %.2f s, hose off %.2f s)" % [tl["up"][0], tl["fuel"][3]])
 		var spread := PitRules.CREW_TEAM_SPREAD + PitRules.CREW_JOB_SPREAD + 0.01
 		var slack: float = PitRules.CREW_FUMBLE_S if tl["fumble"] >= 0 else 0.0
 		check(float(tl["release"]) > float(tl["standard"]) * (1.0 - spread) and float(tl["release"]) < float(tl["standard"]) * (1.0 + spread) + slack,
@@ -1536,7 +1625,7 @@ func test_pit_crew_game() -> void:
 	check(int(p["crew_play"]) == PitRules.job_bit("gun_l"), "the gun man's call to play reaches the pit state")
 	pits._arrive(i)
 	var std := float(p["service_std"])
-	check(is_equal_approx(std, PitRules.STOP_BASE_S + 10.0 + PitRules.HOSE_S * 0.5 + PitRules.TYRE_CHANGE_S), "standard: 30 L, then four tyres (%.1f s)" % std)
+	check(is_equal_approx(std, PitRules.STOP_BASE_S + 10.0 + PitRules.HOSE_S * 1.5 + PitRules.TYRE_CHANGE_S), "standard: 30 L, then four tyres (%.1f s)" % std)
 	check(is_equal_approx(float(p["service_left"]), std * PitRules.CREW_GIVE_UP), "the crew wait for the player up to %.1f x standard" % PitRules.CREW_GIVE_UP)
 	var tl0: Dictionary = p["work"]["crew"]
 	check(is_inf(float(tl0["release"])) and bool(tl0["tyres"][0][0]["gun_player"]) and not is_inf(float(tl0["tyres"][1][1]["on"])),

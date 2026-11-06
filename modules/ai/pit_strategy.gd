@@ -140,7 +140,6 @@ func _reason_to_box(sim: RaceSim, me: int, lap: int) -> String:
 
 
 func _plan(sim: RaceSim, me: int) -> Dictionary:
-	var c := sim.cars[me]
 	var tyre := PitRules.TYRE_AUTO
 	match reason:
 		"wet":
@@ -149,8 +148,8 @@ func _plan(sim: RaceSim, me: int) -> Dictionary:
 			tyre = PitRules.TYRE_INTER
 		"dry":
 			tyre = PitRules.TYRE_DRY if not _rain_soon(sim) else PitRules.TYRE_INTER
-	var damage := maxf(c.damage_engine, maxf(c.damage_aero, c.damage_suspension))
-	var plan := {"tyre": tyre, "wheels": _wheels(sim, me, tyre), "fuel": PitRules.FUEL_AUTO, "repair": damage > 0.08}
+	# Repairs: the same rule as a player's crew (PitRules.repair_parts).
+	var plan := {"tyre": tyre, "wheels": _wheels(sim, me, tyre), "fuel": PitRules.FUEL_AUTO, "repair": true}
 	plan["driver_change"] = _driver_change_due(sim, me)
 	return plan
 

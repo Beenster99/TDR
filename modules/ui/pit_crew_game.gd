@@ -731,6 +731,11 @@ func _step_lance(grab: bool) -> void:
 	var lifts := float(_work().get("tyre_s", 0.0)) > 0.0 or float(_work().get("repair_s", 0.0)) > 0.0
 	var lance_done: bool = sent.has("lance:in::") or not lifts
 	if not lance_done and grab and hold == Hold.NONE and _near(_spot("lance")[0]):
+		# The car only goes up once the fuel is in and the hose is off.
+		var fuel: Array = _tl().get("fuel", [])
+		if fuel.size() == 4 and (is_inf(float(fuel[3])) or float(fuel[3]) > clock):
+			_flash_msg("Wait: the car goes up once the fuel is in", 1.2)
+			return
 		_send({"job": PitRules.JOB_LANCE, "act": "in"})
 		lance_done = true
 	if lance_done and prep_done():
@@ -1212,7 +1217,7 @@ func job_steps() -> Array:
 				out.append(["Lay out the wheel guns from the trolley  %d / %d" % [guns_laid.size(), n["guns"].size()],
 					guns_laid.size() >= n["guns"].size()])
 			if _lifts():
-				out.append(["Air lance in at the back of the car", sent.has("lance:in::")])
+				out.append(["Air lance in at the back of the car once the fuel is in", sent.has("lance:in::")])
 		PitRules.JOB_GUN_L, PitRules.JOB_GUN_R:
 			var side := _side()
 			out.append(["Pick up your wheel gun", hold == Hold.GUN or sent.has("gun_taken:%d" % side) or not done.is_empty()])
