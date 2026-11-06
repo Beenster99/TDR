@@ -119,7 +119,7 @@ def car(spec):
         # On loose dirt the tail steps out a lot (old road tyres, worn
         # suspension): rear-drive cars most, front-drive least.
         "chassis": {"front_grip": 0.94, "rear_grip": 1.0, "roll_stiffness_front": 0.6,
-                    "dirt_rear_grip": {"RWD": 0.78, "AWD": 0.82, "FWD": 0.86}[drive]},
+                    "dirt_rear_grip": {"RWD": 0.9, "AWD": 0.92, "FWD": 0.94}[drive]},
     }
 
 

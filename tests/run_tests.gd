@@ -333,7 +333,8 @@ func test_derby() -> void:
 	print("demolition derby")
 	var d := _data()
 	var arenas := TrackCatalog.ids_for(TrackCatalog.list_all(), "derby")
-	check(arenas.size() == 5, "%d derby arenas" % arenas.size())
+	check(arenas.size() == 6 and not "derby_scrapyard_knot" in arenas and "derby_claypit_oval" in arenas
+		and "derby_gasworks_oval" in arenas, "%d derby arenas, two of them ovals" % arenas.size())
 	var ids := CarCatalog.ids_in_class(d["cars"], "Derby")
 	var models_ok := true
 	for id in ids:
@@ -355,21 +356,32 @@ func test_derby() -> void:
 	for id in arenas:
 		var t := TrackCatalog.load_track(id)
 		var problems: Array[String] = []
-		if t.crossovers.is_empty():
+		var oval := id.ends_with("_oval")   # ovals: no crossovers, no jumps
+		if t.crossovers.is_empty() and not oval:
 			problems.append("no crossover")
 		for cx in t.crossovers:
 			if t.position_at(cx.x).distance_to(t.position_at(cx.y)) > 1.0:
 				problems.append("crossover at %.0f m doesn't meet" % cx.x)
 			if absf(t.height_at(cx.x) - t.height_at(cx.y)) > 0.05:
 				problems.append("crossover at %.0f m isn't flat" % cx.x)
-		if t.jumps.is_empty() or not t.allows_air():
+		if (t.jumps.is_empty() or not t.allows_air()) and not oval:
 			problems.append("no jumps")
-		if t.dirt.is_empty() or t.dirt_at((float(t.dirt[0][0]) + float(t.dirt[0][1])) * 0.5) < 0.99:
+		if oval and not t.crossovers.is_empty():
+			problems.append("an oval with a crossover")
+		if id != "derby_gasworks_oval" and (t.dirt.is_empty() or t.dirt_at((float(t.dirt[0][0]) + float(t.dirt[0][1])) * 0.5) < 0.99):
 			problems.append("no dirt")
+		if id == "derby_gasworks_oval" and not t.dirt.is_empty():
+			problems.append("dirt on the tarmac oval")
+		# The grid stays clear of the crossovers (cars starting on an X
+		# picked the wrong road and the field piled up).
+		for cx in t.crossovers:
+			for c in [cx.x, cx.y]:
+				if fposmod(c - t.grid_slot(15)["s"], t.length) < t.length - float(t.grid_slot(15)["s"]) + 15.0:
+					problems.append("grid on the crossover at %.0f m" % c)
 		var lap := _derby_lap(t, d)
 		if lap["time"] <= 0.0:
 			problems.append("AI didn't finish a lap")
-		if lap["air"] < 0.25:
+		if lap["air"] < 0.25 and not oval:
 			problems.append("never left the ground (%.2f m)" % lap["air"])
 		for pr in problems:
 			printerr("       ", t.id, ": ", pr)
@@ -443,8 +455,8 @@ func test_derby() -> void:
 		"compact arenas (longest %.0f m), a 16-car grid in %.0f m" % [longest, track.length - float(g15["s"])])
 	var loose := true
 	for id in ids:
-		loose = loose and d["cars"][id].dirt_rear_grip < 0.9 and d["cars"][id].dirt_rear_grip >= 0.75
-	check(loose, "derby cars' tails step out a little on dirt (rear grip 75-90% there)")
+		loose = loose and d["cars"][id].dirt_rear_grip < 0.95 and d["cars"][id].dirt_rear_grip >= 0.88
+	check(loose, "derby cars' tails step out a little on dirt (rear grip 88-95% there)")
 	# ...but the driven wheels dig in (derby_tyre dirt_traction): a launch on
 	# dirt is about as quick as on tarmac (rear-drive and front-drive alike).
 	var mud := TrackCatalog.load_track("derby_mudflat_infinity")

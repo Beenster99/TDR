@@ -213,13 +213,26 @@ func _set_driving_aids() -> void:
 func _add_driving_aids() -> void:
 	var i := session.local_car if session.local_car >= 0 else maxi(session.team_car, 0)
 	_driving_line = DrivingLine.build(session.sim.track, session.sim.defs[i], session.sim.compounds[i])
-	world.add_driving_aids(_driving_line, int(GameData.prefs.get("aid_driving_line", DrivingLineView.LINE_FULL)),
-		bool(GameData.prefs.get("aid_braking_zones", true)))
+	world.add_driving_aids(_driving_line, _line_mode(),
+		_brake_zones())
 	if session.sim.settings.is_rallycross() and session.sim.track.has_joker():
 		_joker_line = DrivingLine.build_joker(session.sim.track, session.sim.defs[i], session.sim.compounds[i])
 		if _joker_line:
-			world.add_joker_line(_joker_line, int(GameData.prefs.get("aid_driving_line", DrivingLineView.LINE_FULL)),
-				bool(GameData.prefs.get("aid_braking_zones", true)))
+			world.add_joker_line(_joker_line, _line_mode(),
+				_brake_zones())
+
+
+## The driving line setting (full, corners only, off). A Demolition Derby
+## has no driving line: there's no best way round, only the car in front.
+func _line_mode() -> int:
+	if session.sim.settings.is_derby():
+		return DrivingLineView.LINE_OFF
+	return int(GameData.prefs.get("aid_driving_line", DrivingLineView.LINE_FULL))
+
+
+## The line's braking colours: none in a Demolition Derby either.
+func _brake_zones() -> bool:
+	return not session.sim.settings.is_derby() and bool(GameData.prefs.get("aid_braking_zones", true))
 
 
 ## Rallycross: while the player still owes the joker, the joker line shows
@@ -261,12 +274,12 @@ func _on_pref_changed(key, _v) -> void:
 		var view := DrivingLineView.new()
 		view.name = "DrivingLineAid"
 		world.add_child(view)
-		view.setup(_driving_line, world.track_view, int(GameData.prefs.get("aid_driving_line", DrivingLineView.LINE_FULL)),
-			bool(GameData.prefs.get("aid_braking_zones", true)))
+		view.setup(_driving_line, world.track_view, _line_mode(),
+			_brake_zones())
 		world.driving_line = view
 		if _joker_line:
-			world.add_joker_line(_joker_line, int(GameData.prefs.get("aid_driving_line", DrivingLineView.LINE_FULL)),
-				bool(GameData.prefs.get("aid_braking_zones", true)))
+			world.add_joker_line(_joker_line, _line_mode(),
+				_brake_zones())
 	elif k == "aid_pit_guide":
 		hud.pit_guide_on = bool(GameData.prefs.get("aid_pit_guide", true))
 

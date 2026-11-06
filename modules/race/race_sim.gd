@@ -181,7 +181,9 @@ func _make_car_on_grid(slot: int, def: CarDefinition) -> CarState:
 	# Tyres start between air and track temperature (no blankets).
 	var t0 := lerpf(env.ambient_c, env.track_c, 0.4)
 	c.tyre_temp = PackedFloat64Array([t0, t0, t0, t0])
-	var q := track.project(c.pos)
+	# Search near the slot's own stretch of road: a derby grid can sit on a
+	# crossover, where the other road is just as near.
+	var q := track.project(c.pos, track.index_at(g["s"]))
 	c.track_idx = q["idx"]
 	c.track_s = q["s"]
 	entries[slot].distance = c.track_s - track.length
