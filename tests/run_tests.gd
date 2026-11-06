@@ -1502,7 +1502,7 @@ func test_damage_advice() -> void:
 	c.damage_aero = 0.35
 	c.damage_suspension = 0.2
 	var adv := DamageAdvice.assess(sim, null, 0)
-	check(int(adv["level"]) == DamageAdvice.MODERATE, "aero 35%% is moderate damage")
+	check(int(adv["level"]) == DamageAdvice.MODERATE, "aero 35% is moderate damage")
 	check(absf(float(adv["repair_s"]) - CarDamage.repair_time(c, PitRules.repair_parts(c))) < 0.01, "repair time is the pit stop's (%.1f s)" % adv["repair_s"])
 	check(adv["call"] in [DamageAdvice.BOX_NOW, DamageAdvice.STAY_OUT, DamageAdvice.YOUR_CALL, DamageAdvice.FIX_AT_STOP, DamageAdvice.SKIP_REPAIR],
 		"it makes a call: %s" % adv["call"])
