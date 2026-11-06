@@ -98,7 +98,11 @@ Command line: `--fuel 2 --tyre-wear 2 --pit-stops 1 --drivers 2`.
    stop. A driver change keeps the car in the box for at least 5 s.
    Repairs follow the same rule for every car, player or AI
    (`PitRules.repair_parts`): a part is fixed when it is at least 8%
-   damaged (`REPAIR_MIN`); scuffs below that aren't worth the time.
+   damaged (`REPAIR_MIN`); scuffs below that aren't worth the time. An AI
+   team may leave light body or suspension damage (under 30%, never the
+   engine or gearbox, never on a stop made for the damage) when fixing it
+   would let the car behind by, to keep track position; more often with an
+   aggressive driver (`AIPitStrategy._keep_damage`, said on the radio).
    The driver sees a **stop timer** in the middle of the screen: the clock,
    the step the crew are on, and any problems (an overshot box, a fumbled
    wheel, pit lane speeding, a slow player crew) with the time they cost;

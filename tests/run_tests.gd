@@ -1515,6 +1515,32 @@ func test_pit_stop_rules() -> void:
 	check(rp > 0.0 and is_equal_approx(rp, float(pits.service_for(ai, plan)["repair_s"])), "the same damage takes the same repair time (%.1f s)" % rp)
 	var strat := AIPitStrategy.new(DriverTraits.new(), 1)
 	check(bool(strat._plan(sim, ai)["repair"]), "the AI asks for repairs like a player's crew does")
+	# Light damage that would cost a place to fix: some teams leave it.
+	sim.cars[ai].damage_aero = 0.15
+	sim.cars[ai].damage_suspension = 0.0
+	var est := pits.rejoin_estimate(ai)
+	if int(est["ahead"]) >= 0:
+		# Put the player's car 3 s behind where the AI would rejoin.
+		var ghost := sim.entries[int(est["ahead"])].distance - float(est["gap_ahead"]) * float(est["speed"])
+		sim.entries[me].distance = ghost - 3.0 * float(est["speed"])
+		est = pits.rejoin_estimate(ai)
+	var kept := 0
+	for n in 40:
+		strat.rng.seed = n
+		kept += 0 if bool(strat._plan(sim, ai)["repair"]) else 1
+	var rs := float(pits.service_for(ai, plan)["repair_s"])
+	if float(est.get("gap_behind", -1.0)) >= 0.0 and float(est["gap_behind"]) < rs:
+		check(kept > 0 and kept < 40, "light damage: some AI teams keep track position (%d of 40)" % kept)
+	else:
+		check(kept == 0, "light damage with nobody close behind: always repaired")
+	strat.reason = "damage"
+	check(bool(strat._plan(sim, ai)["repair"]), "a stop for the damage always repairs it")
+	strat.reason = ""
+	sim.cars[ai].damage_engine = 0.3
+	check(bool(strat._plan(sim, ai)["repair"]), "mechanical damage is always repaired")
+	sim.cars[ai].damage_engine = 0.0
+	sim.cars[ai].damage_aero = 0.3
+	sim.cars[ai].damage_suspension = 0.2
 	var tyres := {"tyre": PitRules.TYRE_DRY, "wheels": "all", "fuel": 0.0, "repair": false}
 	check(is_equal_approx(float(pits.service_for(me, tyres)["tyre_s"]), float(pits.service_for(ai, tyres)["tyre_s"])),
 		"the same tyre change takes the same time")

@@ -11,7 +11,8 @@ extends RefCounted
 ##    are left), or the wrong tyres for the weather (wet skill decides how long
 ##    a driver stays out on slicks in the wet; forecast rain keeps them out on
 ##    wets).
-##  * damage worth repairing.
+##  * damage worth repairing (light damage may be left to keep track
+##    position when fixing it would let the car behind by: _keep_damage).
 ##  * gaps: a planned stop waits a lap if the car would come out in traffic
 ##    and the window allows; aggressive drivers stop early to undercut a car
 ##    just ahead.
@@ -20,6 +21,13 @@ extends RefCounted
 ## The plan (tyres, fuel, repairs) goes to the race's PitRules, which then
 ## drives the car into the pits.
 
+## Leaving damage to keep track position (_keep_damage): only below these
+## levels, and with this chance (+ more for an aggressive driver).
+const KEEP_DAMAGE_MAX := 0.3
+const KEEP_MECHANICAL_MAX := 0.15
+const KEEP_CHANCE := 0.35
+const KEEP_CHANCE_AGGRESSION := 0.4
+
 var profile: DriverTraits
 var rng := RandomNumberGenerator.new()
 ## Optional race data (telemetry module) for gaps and the forecast. Anything
@@ -27,6 +35,7 @@ var rng := RandomNumberGenerator.new()
 var telemetry = null
 var planned_laps: Array[int] = []
 var reason := ""                 ## why the car is boxing (for the radio / HUD)
+var kept_damage := false        ## the last stop's plan leaves light damage unfixed (track position)
 var _decided_lap := -1
 var _delayed := 0
 
@@ -148,10 +157,37 @@ func _plan(sim: RaceSim, me: int) -> Dictionary:
 			tyre = PitRules.TYRE_INTER
 		"dry":
 			tyre = PitRules.TYRE_DRY if not _rain_soon(sim) else PitRules.TYRE_INTER
-	# Repairs: the same rule as a player's crew (PitRules.repair_parts).
+	# Repairs: the same rule as a player's crew (PitRules.repair_parts),
+	# unless the team leave light damage to keep their place on the track.
 	var plan := {"tyre": tyre, "wheels": _wheels(sim, me, tyre), "fuel": PitRules.FUEL_AUTO, "repair": true}
 	plan["driver_change"] = _driver_change_due(sim, me)
+	kept_damage = _keep_damage(sim, me, plan)
+	if kept_damage:
+		plan["repair"] = false
 	return plan
+
+
+## Light damage costing a place to fix: the car behind would get by while
+## the crew work on it. Some teams (more often with an aggressive driver)
+## leave it and keep the track position. Never for a stop made for the
+## damage, mechanical damage (engine, gearbox) or heavy body / suspension
+## damage.
+func _keep_damage(sim: RaceSim, me: int, plan: Dictionary) -> bool:
+	if reason == "damage" or sim.damage_level == CarDamage.Level.OFF:
+		return false
+	var c := sim.cars[me]
+	if c.damage_engine >= KEEP_MECHANICAL_MAX or c.damage_gearbox >= KEEP_MECHANICAL_MAX:
+		return false
+	if maxf(c.damage_aero, maxf(c.damage_suspension, absf(c.alignment))) >= KEEP_DAMAGE_MAX:
+		return false
+	var repair_s := float(sim.pits.service_for(me, plan)["repair_s"])
+	if repair_s <= 0.0:
+		return false
+	var est := sim.pits.rejoin_estimate(me)
+	var behind := float(est.get("gap_behind", -1.0))
+	if behind < 0.0 or behind > repair_s:
+		return false   # nobody close enough behind: the repair costs no place
+	return rng.randf() < KEEP_CHANCE + KEEP_CHANCE_AGGRESSION * profile.aggression
 
 
 ## Which tyres to change: when the compound stays the same and one axle has
@@ -251,4 +287,7 @@ func _radio(sim: RaceSim, me: int, plan: Dictionary) -> void:
 		"undercut": "Going for the undercut, box now.",
 		"safety car": "Safety car, box box, it's a cheap stop.",
 	}
-	sim.call("post_event", {"type": "radio", "car": me, "topic": "pit", "text": lines.get(reason, "Boxing this lap.")})
+	var text: String = lines.get(reason, "Boxing this lap.")
+	if kept_damage:
+		text += " We're leaving the damage, keep the track position."
+	sim.call("post_event", {"type": "radio", "car": me, "topic": "pit", "text": text})
