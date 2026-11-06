@@ -1,0 +1,103 @@
+{
+  "id": "mazda_mx5_nd",
+  "name": "Mazda MX-5 2.0 (ND)",
+  "description": "Front-engined 2.0 four-cylinder lightweight roadster (2015-).",
+  "class_tag": "Road",
+  "colour": "#b01e23",
+  "mass_kg": 1080,
+  "weight_front": 0.5,
+  "wheelbase_m": 2.31,
+  "cg_height_m": 0.43,
+  "track_width_m": 1.5,
+  "length_m": 3.915,
+  "width_m": 1.735,
+  "body_offset_m": -0.002,
+  "inertia_factor": 1.0,
+  "engine": {
+    "idle_rpm": 850,
+    "redline_rpm": 7500,
+    "shift_up_rpm": 7300,
+    "shift_down_rpm": 4100,
+    "torque_curve": [
+      [
+        850,
+        123
+      ],
+      [
+        2400,
+        174
+      ],
+      [
+        4000,
+        205
+      ],
+      [
+        7000,
+        184
+      ],
+      [
+        7500,
+        166
+      ]
+    ],
+    "engine_brake_nm": 54,
+    "cylinders": 4,
+    "sound": {
+      "family": "i4_turbo",
+      "turbo": false
+    }
+  },
+  "gearbox": {
+    "ratios": [
+      3.76,
+      2.27,
+      1.65,
+      1.26,
+      1.0,
+      0.84
+    ],
+    "final_drive": 4.63,
+    "efficiency": 0.9
+  },
+  "drivetrain": "RWD",
+  "awd_front_split": 0.0,
+  "wheel_radius_m": 0.31,
+  "brakes": {
+    "max_force_n": 12500,
+    "bias_front": 0.6
+  },
+  "steering": {
+    "max_angle_deg": 34,
+    "rate_deg_s": 290
+  },
+  "aero": {
+    "cda": 0.68,
+    "cla": 0.0,
+    "balance_front": 0.45
+  },
+  "tyre_compound": "road_semi_slick",
+  "fuel": {
+    "capacity_l": 45,
+    "bsfc_l_per_kwh": 0.3
+  },
+  "tuning_ranges": {
+    "brake_bias_front": [
+      0.5,
+      0.7
+    ],
+    "aero_cla": [
+      0.0,
+      0.3
+    ],
+    "final_drive": [
+      4.26,
+      5.0
+    ]
+  },
+  "format": 1,
+  "chassis": {
+    "front_grip": 1.0,
+    "rear_grip": 1.04,
+    "roll_stiffness_front": 0.58
+  }
+}

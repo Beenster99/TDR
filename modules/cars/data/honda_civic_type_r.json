@@ -1,0 +1,106 @@
+{
+  "id": "honda_civic_type_r",
+  "name": "Honda Civic Type R (FL5)",
+  "description": "Front-engined 2.0 turbo four-cylinder front-wheel-drive hot hatch (2022-).",
+  "class_tag": "Road",
+  "colour": "#1f8ee0",
+  "mass_kg": 1430,
+  "weight_front": 0.62,
+  "wheelbase_m": 2.735,
+  "cg_height_m": 0.5,
+  "track_width_m": 1.625,
+  "length_m": 4.595,
+  "width_m": 1.89,
+  "body_offset_m": -0.308,
+  "inertia_factor": 1.0,
+  "engine": {
+    "idle_rpm": 850,
+    "redline_rpm": 7000,
+    "shift_up_rpm": 6800,
+    "shift_down_rpm": 3900,
+    "torque_curve": [
+      [
+        850,
+        189
+      ],
+      [
+        1900,
+        328
+      ],
+      [
+        2600,
+        420
+      ],
+      [
+        4000,
+        420
+      ],
+      [
+        6500,
+        355
+      ],
+      [
+        7000,
+        319
+      ]
+    ],
+    "engine_brake_nm": 54,
+    "cylinders": 4,
+    "sound": {
+      "family": "i4_turbo"
+    }
+  },
+  "gearbox": {
+    "ratios": [
+      3.63,
+      2.12,
+      1.53,
+      1.13,
+      0.91,
+      0.73
+    ],
+    "final_drive": 4.26,
+    "efficiency": 0.86
+  },
+  "drivetrain": "FWD",
+  "awd_front_split": 1.0,
+  "wheel_radius_m": 0.334,
+  "brakes": {
+    "max_force_n": 17500,
+    "bias_front": 0.66
+  },
+  "steering": {
+    "max_angle_deg": 31,
+    "rate_deg_s": 250
+  },
+  "aero": {
+    "cda": 0.72,
+    "cla": 0.45,
+    "balance_front": 0.5
+  },
+  "tyre_compound": "road_semi_slick",
+  "fuel": {
+    "capacity_l": 47,
+    "bsfc_l_per_kwh": 0.3
+  },
+  "tuning_ranges": {
+    "brake_bias_front": [
+      0.56,
+      0.76
+    ],
+    "aero_cla": [
+      0.15,
+      0.75
+    ],
+    "final_drive": [
+      3.92,
+      4.6
+    ]
+  },
+  "format": 1,
+  "chassis": {
+    "front_grip": 1.02,
+    "rear_grip": 1.0,
+    "roll_stiffness_front": 0.6
+  }
+}

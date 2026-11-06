@@ -1,0 +1,106 @@
+{
+  "id": "toyota_gr_yaris",
+  "name": "Toyota GR Yaris",
+  "description": "Front-engined 1.6 turbo three-cylinder four-wheel-drive hot hatch (2020-).",
+  "class_tag": "Road",
+  "colour": "#e8e8e8",
+  "mass_kg": 1280,
+  "weight_front": 0.6,
+  "wheelbase_m": 2.56,
+  "cg_height_m": 0.5,
+  "track_width_m": 1.535,
+  "length_m": 3.995,
+  "width_m": 1.805,
+  "body_offset_m": -0.143,
+  "inertia_factor": 1.0,
+  "engine": {
+    "idle_rpm": 900,
+    "redline_rpm": 7000,
+    "shift_up_rpm": 6800,
+    "shift_down_rpm": 3900,
+    "torque_curve": [
+      [
+        900,
+        162
+      ],
+      [
+        2300,
+        281
+      ],
+      [
+        3000,
+        359
+      ],
+      [
+        4600,
+        359
+      ],
+      [
+        6500,
+        282
+      ],
+      [
+        7000,
+        253
+      ]
+    ],
+    "engine_brake_nm": 48,
+    "cylinders": 3,
+    "sound": {
+      "family": "i4_turbo"
+    }
+  },
+  "gearbox": {
+    "ratios": [
+      3.54,
+      2.24,
+      1.54,
+      1.16,
+      0.93,
+      0.79
+    ],
+    "final_drive": 4.51,
+    "efficiency": 0.86
+  },
+  "drivetrain": "AWD",
+  "awd_front_split": 0.4,
+  "wheel_radius_m": 0.32,
+  "brakes": {
+    "max_force_n": 15500,
+    "bias_front": 0.64
+  },
+  "steering": {
+    "max_angle_deg": 32,
+    "rate_deg_s": 260
+  },
+  "aero": {
+    "cda": 0.74,
+    "cla": 0.35,
+    "balance_front": 0.48
+  },
+  "tyre_compound": "road_semi_slick",
+  "fuel": {
+    "capacity_l": 50,
+    "bsfc_l_per_kwh": 0.3
+  },
+  "tuning_ranges": {
+    "brake_bias_front": [
+      0.54,
+      0.74
+    ],
+    "aero_cla": [
+      0.05,
+      0.65
+    ],
+    "final_drive": [
+      4.15,
+      4.87
+    ]
+  },
+  "format": 1,
+  "chassis": {
+    "front_grip": 1.0,
+    "rear_grip": 1.0,
+    "roll_stiffness_front": 0.6
+  }
+}

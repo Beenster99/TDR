@@ -1,0 +1,107 @@
+{
+  "id": "alpine_a110_s",
+  "name": "Alpine A110 S",
+  "description": "Mid-engined 1.8 turbo four-cylinder lightweight coupe (2019-).",
+  "class_tag": "Road",
+  "colour": "#1f4fb0",
+  "mass_kg": 1110,
+  "weight_front": 0.44,
+  "wheelbase_m": 2.42,
+  "cg_height_m": 0.44,
+  "track_width_m": 1.555,
+  "length_m": 4.18,
+  "width_m": 1.798,
+  "body_offset_m": 0.125,
+  "inertia_factor": 1.0,
+  "engine": {
+    "idle_rpm": 850,
+    "redline_rpm": 6800,
+    "shift_up_rpm": 6600,
+    "shift_down_rpm": 3700,
+    "torque_curve": [
+      [
+        850,
+        153
+      ],
+      [
+        1700,
+        265
+      ],
+      [
+        2400,
+        340
+      ],
+      [
+        6000,
+        340
+      ],
+      [
+        6300,
+        335
+      ],
+      [
+        6800,
+        301
+      ]
+    ],
+    "engine_brake_nm": 54,
+    "cylinders": 4,
+    "sound": {
+      "family": "i4_turbo"
+    }
+  },
+  "gearbox": {
+    "ratios": [
+      4.21,
+      2.51,
+      1.67,
+      1.24,
+      1.0,
+      0.86,
+      0.73
+    ],
+    "final_drive": 3.97,
+    "efficiency": 0.9
+  },
+  "drivetrain": "RWD",
+  "awd_front_split": 0.0,
+  "wheel_radius_m": 0.32,
+  "brakes": {
+    "max_force_n": 15000,
+    "bias_front": 0.6
+  },
+  "steering": {
+    "max_angle_deg": 33,
+    "rate_deg_s": 280
+  },
+  "aero": {
+    "cda": 0.7,
+    "cla": 0.4,
+    "balance_front": 0.44
+  },
+  "tyre_compound": "road_semi_slick",
+  "fuel": {
+    "capacity_l": 45,
+    "bsfc_l_per_kwh": 0.3
+  },
+  "tuning_ranges": {
+    "brake_bias_front": [
+      0.5,
+      0.7
+    ],
+    "aero_cla": [
+      0.1,
+      0.7
+    ],
+    "final_drive": [
+      3.65,
+      4.28
+    ]
+  },
+  "format": 1,
+  "chassis": {
+    "front_grip": 1.0,
+    "rear_grip": 1.08,
+    "roll_stiffness_front": 0.6
+  }
+}
