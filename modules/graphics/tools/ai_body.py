@@ -18,6 +18,7 @@ Keys added for the TripoSG cars (all optional):
       "wheel_cut_margin", "wheel_cut_inner", "arch_clear"   cut the AI's fused tyres
       "delete_boxes": [{"x": [..], "y": [..], "z": [..]}]   remove AI artefacts
       "mirror": {"x", "y", "z"}  where the mirrors are (split into mirror_l/r)
+      "trim": [0.0, 0.002]      drop stray bits off the ends of the source's long axis
 
 The source mesh came from an AI image-to-3D model (Hunyuan3D 2.1) fed one
 freely licensed photo; see tools/ai_source/README.md. It is one fused
@@ -110,7 +111,8 @@ def replace(car, cfg):
             bpy.data.objects.remove(ob, do_unlink=True)
     before = set(bpy.data.objects)
     bpy.ops.import_scene.gltf(filepath=os.path.join(SRC, cfg["source"]))
-    new = [o for o in bpy.data.objects if o not in before]
+    new = [o.name for o in bpy.data.objects if o not in before]
+    new = [bpy.data.objects[n] for n in new]
     meshes = [o for o in new if o.type == "MESH"]
     for o in bpy.data.objects:
         o.select_set(False)
@@ -120,9 +122,9 @@ def replace(car, cfg):
     if len(meshes) > 1:
         bpy.ops.object.join()
     ob = bpy.context.view_layer.objects.active
-    for o in new:
-        if o != ob and o.name in bpy.data.objects:
-            bpy.data.objects.remove(o, do_unlink=True)
+    keep_name = ob.name
+    for n in [o.name for o in bpy.data.objects if o not in before and o.name != keep_name]:
+        bpy.data.objects.remove(bpy.data.objects[n], do_unlink=True)
     ob.parent = None
     bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
     me = ob.data
@@ -133,6 +135,23 @@ def replace(car, cfg):
     mn = [min(v[i] for v in vs) for i in range(3)]
     mx = [max(v[i] for v in vs) for i in range(3)]
     la = 0 if ext[0] > ext[1] else 1
+    # "trim": [a, b] shares of the vertices to drop at the low and high end of
+    # the shell's long axis (source space, before any flip), e.g. 0.002: stray
+    # bits such as a tow strap sticking out would otherwise set the length.
+    tr = cfg.get("trim")
+    if tr:
+        srt = sorted(v[la] for v in vs)
+        lo = srt[int(tr[0] * (len(srt) - 1))]
+        hi = srt[int((1.0 - tr[1]) * (len(srt) - 1))]
+        bm0 = bmesh.new()
+        bm0.from_mesh(me)
+        bmesh.ops.delete(bm0, geom=[v for v in bm0.verts if not lo <= v.co[la] <= hi], context="VERTS")
+        bm0.to_mesh(me)
+        bm0.free()
+        vs = [v.co.copy() for v in me.vertices]
+        ext = [max(v[i] for v in vs) - min(v[i] for v in vs) for i in range(3)]
+        mn = [min(v[i] for v in vs) for i in range(3)]
+        mx = [max(v[i] for v in vs) for i in range(3)]
     k = car.L / ext[la]
     for v in me.vertices:
         c = v.co
@@ -237,7 +256,7 @@ def replace(car, cfg):
     # 4. Paint regions. First cut clean edges along each region's straight
     # borders (bisect), so glass edges are lines, not the jagged triangles.
     me.materials.clear()
-    names = ["paint", "interior", "light_head", "light_tail", "grille", "carbon"]
+    names = ["paint", "interior", "light_head", "light_tail", "grille", "carbon", "light_lens", "vent"]
     for n in names:
         me.materials.append(MATS[n])
     idx = {n: i for i, n in enumerate(names)}

@@ -25,7 +25,7 @@ mirror_r, interior, wheel_fl/fr/rl/rr (each with a spinning wheel and a
 static brake caliper). Empties: number_roof, number_door_l, number_door_r.
 
 Materials (Godot finds them by name): paint (the livery), carbon, glass,
-grille, vent, intake, light_head, light_tail, light_drl, tyre, rim, disc,
+grille, vent, intake, light_head, light_lens, light_tail, light_drl, tyre, rim, disc,
 caliper, underbody, interior, helmet, mirror_glass.
 
 UVs: UV0 is a livery unwrap. u runs 0 at the nose to 1 at the tail, and v
@@ -172,6 +172,10 @@ def setup_materials(shape):
     material("vent", (0.01, 0.01, 0.01), 0.0, 0.7)
     material("intake", (0.008, 0.008, 0.008), 0.0, 0.8)
     material("light_head", (0.85, 0.88, 0.9), 0.6, 0.08, emission=((1.0, 0.97, 0.9), 0.0))
+    # The clear cover over a headlight cluster: dark smoked glass, so from above a
+    # headlight reads as a glossy dark lens with the lamp (light_head) inside it,
+    # not a pale patch on the body.
+    material("light_lens", (0.035, 0.04, 0.05), 0.5, 0.04)
     material("light_tail", (0.45, 0.02, 0.02), 0.2, 0.15, emission=((1.0, 0.05, 0.02), 0.0))
     material("light_drl", (0.9, 0.9, 0.95), 0.3, 0.1, emission=((0.9, 0.95, 1.0), 0.0))
     material("tyre", (0.035, 0.035, 0.035), 0.0, 0.85)
