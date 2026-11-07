@@ -325,18 +325,30 @@
  "rim_colour": "#c8ccd0",
  "ai_body": {
   "source": "porsche_911_gt3_r.glb",
+  "flip": true,
+  "pre_cut_z": 0.8,
+  "trim": [
+   0.002,
+   0.002
+  ],
+  "fit_width": "doors",
+  "height": 1.24,
+  "recentre": true,
+  "wheel_cut_margin": 0.02,
+  "wheel_cut_inner": 0.28,
+  "arch_clear": 0.12,
   "wing_cut": [
    [
-    -0.25,
-    1.24
+    -0.9,
+    1.15
    ],
    [
-    -1.35,
-    0.96
+    -1.4,
+    0.95
    ],
    [
-    -2.3,
-    0.96
+    -2.4,
+    0.88
    ]
   ],
   "regions": [
@@ -408,18 +420,36 @@
    {
     "mat": "light_head",
     "x": [
-     2.12,
-     2.44
+     2.18,
+     2.4
     ],
     "y": [
-     0.5,
-     0.82
+     0.56,
+     0.76
     ],
     "z": [
-     0.45,
+     0.52,
+     0.72
+    ],
+    "face": "front",
+    "n": 0.15
+   },
+   {
+    "mat": "light_lens",
+    "x": [
+     2.08,
+     2.48
+    ],
+    "y": [
+     0.48,
+     0.86
+    ],
+    "z": [
+     0.44,
      0.8
     ],
-    "ellipse": true
+    "face": "front",
+    "n": 0.15
    },
    {
     "mat": "light_tail",
@@ -467,6 +497,22 @@
     ],
     "face": "rear",
     "n": 0.4
+   }
+  ],
+  "delete_boxes": [
+   {
+    "x": [
+     -2.6,
+     -1.8
+    ],
+    "y": [
+     0.95,
+     1.4
+    ],
+    "z": [
+     0.5,
+     1.6
+    ]
    }
   ],
   "roof_number_x": 0.12
