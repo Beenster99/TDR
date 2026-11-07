@@ -146,6 +146,26 @@ def replace(car, cfg):
         bm0 = bmesh.new()
         bm0.from_mesh(me)
         bmesh.ops.delete(bm0, geom=[v for v in bm0.verts if v.co[2] > zt], context="VERTS")
+        # what is left of the stray object is usually cut loose now: keep the biggest piece
+        bm0.verts.index_update()
+        seen, best = set(), []
+        for v0 in bm0.verts:
+            if v0.index in seen:
+                continue
+            comp, stack = [], [v0]
+            seen.add(v0.index)
+            while stack:
+                v = stack.pop()
+                comp.append(v)
+                for e in v.link_edges:
+                    o = e.other_vert(v)
+                    if o.index not in seen:
+                        seen.add(o.index)
+                        stack.append(o)
+            if len(comp) > len(best):
+                best = comp
+        keep = {v.index for v in best}
+        bmesh.ops.delete(bm0, geom=[v for v in bm0.verts if v.index not in keep], context="VERTS")
         bm0.to_mesh(me)
         bm0.free()
         vs = [v.co.copy() for v in me.vertices]
