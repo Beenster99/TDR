@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Top Down Racer Release Notes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<style>
+/* Same layout as the Torque Shed release notes, every release: masthead, at a glance,
+   one entry per feature (rail on the left: area, day, part of the game), then Try it / Known limits / Coming next. */
+:root {
+  --paper: #efede7; --sheet: #ffffff; --ink: #1b1d20; --muted: #5b6168; --rule: #d5d2c9;
+  --accent: #c0341d; --link: #1d6b8a;
+  --display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --body: "Literata", Georgia, "Times New Roman", serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #121417; --sheet: #1b1e22; --ink: #e5e6e8; --muted: #9ca3aa; --rule: #2d3238;
+    --accent: #ff7552; --link: #6cc3e0; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #121417; --sheet: #1b1e22; --ink: #e5e6e8; --muted: #9ca3aa; --rule: #2d3238;
+  --accent: #ff7552; --link: #6cc3e0; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--paper); color: var(--ink); font-family: var(--body); font-size: 17px; line-height: 1.6; margin: 0;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.wrap { max-width: 1060px; margin: 0 auto; padding-block: 40px 72px; }
+h1, h2, h3 { font-family: var(--display); font-weight: 700; line-height: 1.05; text-wrap: balance; margin: 0; letter-spacing: 0.01em; }
+a { color: var(--link); text-underline-offset: 3px; }
+header.top { display: grid; gap: 18px; padding-bottom: 28px; border-bottom: 2px solid var(--ink); }
+.kicker { font-family: var(--mono); font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px 18px; }
+h1 { font-size: clamp(46px, 8vw, 84px); text-transform: uppercase; }
+h1 span { color: var(--accent); }
+.lede { max-width: 64ch; font-size: 19px; margin: 0; }
+.cta { display: flex; flex-wrap: wrap; gap: 10px; }
+.play { font-family: var(--display); font-size: 19px; letter-spacing: 0.04em; text-transform: uppercase; padding: 8px 16px; border: 2px solid var(--ink); color: var(--ink); background: var(--sheet); overflow-wrap: anywhere; }
+.play.main { background: var(--accent); border-color: var(--accent); color: #fff; }
+.glance { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); margin-block: 28px 8px; }
+.glance div { background: var(--sheet); padding: 14px 16px; min-width: 0; }
+.glance b { display: block; font-family: var(--display); font-size: 21px; letter-spacing: 0.02em; text-transform: uppercase; }
+.glance p { margin: 4px 0 0; font-size: 15px; color: var(--muted); }
+.log { margin-top: 44px; display: grid; }
+.entry { display: grid; grid-template-columns: 118px minmax(0, 1fr); gap: 28px; padding-block: 34px; border-top: 1px solid var(--rule); }
+.rail .m { font-family: var(--display); font-size: 40px; color: var(--accent); line-height: 1; text-transform: uppercase; }
+.rail .d { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-top: 6px; letter-spacing: 0.04em; }
+.rail .area { font-family: var(--mono); font-size: 11px; color: var(--link); margin-top: 10px; letter-spacing: 0.06em; text-transform: uppercase; }
+.body { min-width: 0; }
+.body h2 { font-size: clamp(28px, 4vw, 38px); text-transform: uppercase; }
+.body .sum { margin: 8px 0 14px; max-width: 66ch; }
+.body ul { margin: 0 0 18px; padding-left: 1.2em; max-width: 68ch; }
+.body li { margin-block: 3px; }
+.body li::marker { color: var(--accent); }
+.after { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 28px; margin-top: 40px; padding-top: 30px; border-top: 2px solid var(--ink); }
+.after h3 { font-size: 26px; text-transform: uppercase; margin-bottom: 8px; }
+.after ul { margin: 0; padding-left: 1.1em; }
+.after li { margin-block: 4px; }
+.after li::marker { color: var(--link); }
+footer { margin-top: 44px; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+@media (max-width: 720px) {
+  .entry { grid-template-columns: 1fr; gap: 10px; }
+  .rail { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  .rail .d, .rail .area { margin-top: 0; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="kicker"><span>Release notes</span><span>7 Nov 2026</span><span>v0.14.0</span><span>New race car bodies, derby round 5</span></div>
+    <h1>Top Down <span>Racer</span></h1>
+    <p class="lede">Every GT3, LMP2 and Hypercar has a new, more accurate 3D body, each built from a photo of the real race car and fitted to its real size. Demolition Derby gets more grip on dirt, cleaner starts, AI that keeps to its own road at crossovers, and two new oval arenas.</p>
+    <div class="cta">
+      <span class="play main">Download TopDownRacer-v0.14.0-windows.zip</span>
+    </div>
+    <section class="glance" aria-label="At a glance">
+      <div><b>New bodies</b><p>Every GT3, LMP2 and Hypercar remodelled.</p></div>
+      <div><b>Derby grip</b><p>Cars slide less and drive harder on dirt.</p></div>
+      <div><b>Cleaner starts</b><p>No ramming for the first 120 m.</p></div>
+      <div><b>Two ovals</b><p>Claypit Dirt Oval and Gasworks Tarmac Oval.</p></div>
+    </section>
+  </header>
+
+  <main class="log">
+
+    <article class="entry" id="bodies">
+      <div class="rail"><div class="m">Cars</div><div class="d">7 Nov</div><div class="area">Graphics</div></div>
+      <div class="body">
+        <h2>New bodies for every race car</h2>
+        <p class="sum">All the GT3, LMP2 and Hypercar models have new 3D bodies, made with TripoSG (MIT licence) from freely licensed photos of the real cars and fitted to their real dimensions.</p>
+        <ul>
+          <li>Hypercars: Porsche 963, Ferrari 499P, Cadillac V-Series.R, Toyota GR010 Hybrid and Peugeot 9X8.</li>
+          <li>LMP2: Oreca 07 and Ligier JS P217.</li>
+          <li>GT3: BMW M4, Ferrari 296, Lamborghini Hurac&aacute;n Evo2, McLaren 720S, Mercedes-AMG and Porsche 911 GT3 R.</li>
+          <li>Headlights get a proper lens look, and the glass is cut cleanly.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="entry" id="derby">
+      <div class="rail"><div class="m">Derby</div><div class="d">7 Nov</div><div class="area">Arenas</div></div>
+      <div class="body">
+        <h2>Demolition Derby, round 5</h2>
+        <p class="sum">Derby races are cleaner at the start and fairer through the crossovers.</p>
+        <ul>
+          <li>On dirt the back of the car slides less and digs in harder for drive.</li>
+          <li>No grid sits on a crossover any more, and there's no ramming for the first 120 m, so the field leaves bumper to bumper.</li>
+          <li>At a crossover the AI keeps to its own road instead of turning onto the other one.</li>
+          <li>Two new arenas: Claypit Dirt Oval and Gasworks Tarmac Oval. Scrapyard Knot is gone.</li>
+          <li>The driving line is always off in a derby, since there's no best way round, only the car in front.</li>
+        </ul>
+      </div>
+    </article>
+
+  </main>
+
+  <section class="after">
+    <div>
+      <h3>Try it</h3>
+      <ul>
+        <li>Unzip the folder and double-click TopDownRacer.exe, as before.</li>
+        <li>Online, everyone should update to v0.14.0 together.</li>
+        <li>Zoom in close on a Le Mans grid to see the new bodies.</li>
+        <li>Try a derby on Claypit Dirt Oval.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Known limits</h3>
+      <ul>
+        <li>Online, handing a co-op car back from an AI co-driver to a player is still unreliable.</li>
+        <li>Co-op isn't available in Rallycross or Demolition Derby.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Coming next</h3>
+      <ul>
+        <li>Your notes from playing this build.</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>Build of main at 8ab9eea with PRs #134 and #135.</footer>
+</div>
+</body>
+</html>
