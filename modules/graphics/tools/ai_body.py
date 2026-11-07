@@ -18,6 +18,7 @@ Keys added for the TripoSG cars (all optional):
       "wheel_cut_margin", "wheel_cut_inner", "arch_clear"   cut the AI's fused tyres
       "delete_boxes": [{"x": [..], "y": [..], "z": [..]}]   remove AI artefacts
       "mirror": {"x", "y", "z"}  where the mirrors are (split into mirror_l/r)
+      "pre_cut_z": 0.6          drop everything above this share of the source's height
       "trim": [0.0, 0.002]      drop stray bits off the ends of the source's long axis
 
 The source mesh came from an AI image-to-3D model (Hunyuan3D 2.1) fed one
@@ -139,6 +140,18 @@ def replace(car, cfg):
     # the shell's long axis (source space, before any flip), e.g. 0.002: stray
     # bits such as a tow strap sticking out would otherwise set the length.
     tr = cfg.get("trim")
+    pz = cfg.get("pre_cut_z")     # drop everything above this share of the source's height (a stray AI plank)
+    if pz:
+        zt = mn[2] + pz * ext[2]
+        bm0 = bmesh.new()
+        bm0.from_mesh(me)
+        bmesh.ops.delete(bm0, geom=[v for v in bm0.verts if v.co[2] > zt], context="VERTS")
+        bm0.to_mesh(me)
+        bm0.free()
+        vs = [v.co.copy() for v in me.vertices]
+        ext = [max(v[i] for v in vs) - min(v[i] for v in vs) for i in range(3)]
+        mn = [min(v[i] for v in vs) for i in range(3)]
+        mx = [max(v[i] for v in vs) for i in range(3)]
     if tr:
         srt = sorted(v[la] for v in vs)
         lo = srt[int(tr[0] * (len(srt) - 1))]
