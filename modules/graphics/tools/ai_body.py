@@ -21,8 +21,8 @@ Keys added for the TripoSG cars (all optional):
       "pre_cut_z": 0.6          drop everything above this share of the source's height
       "trim": [0.0, 0.002]      drop stray bits off the ends of the source's long axis
 
-The source mesh came from an AI image-to-3D model (Hunyuan3D 2.1) fed one
-freely licensed photo; see tools/ai_source/README.md. It is one fused
+The source mesh came from an AI image-to-3D model (TripoSG, MIT licence) fed
+one freely licensed photo; see tools/ai_source/README.md. It is one fused
 shell, so this script:
 
   1. scales it to the car's real length (uniformly) and centres it on the

@@ -109,8 +109,8 @@ Every car model is built in Blender from the car's real dimensions:
   `blender -b --python modules/graphics/tools/build_cars.py -- --liveries-only`.
 
 AI-made bodies: a car whose shape file has an `ai_body` block gets its body
-from a mesh made by an AI image-to-3D model (Hunyuan3D 2.1, from one freely
-licensed photo; the Porsche 911 GT3 R so far). `tools/ai_body.py` scales it
+from a mesh made by an AI image-to-3D model (TripoSG, MIT licence, from one
+freely licensed photo; the GT3s, prototypes and road cars). `tools/ai_body.py` scales it
 to the real length on the real axles, cuts off the AI's own wing and fused
 wheels (ours go on instead, with the upgrade wings), smooths it, cuts clean
 glass edges and paints the lights, then splits it into the same parts as
@@ -122,7 +122,7 @@ Each model is split into parts so upgrades and damage can swap or move them:
 `wing_rear`, `mirror_l`, `mirror_r`, `interior`, and `wheel_fl/fr/rl/rr`
 (each with a spinning `_spin` part and a fixed `_caliper`). Materials are
 found by name: `paint` is the livery; others include `carbon`, `glass`,
-`light_head`, `light_tail`, `tyre`, `rim` and `caliper`.
+`light_head`, `light_lens` (smoked headlight glass), `light_tail`, `tyre`, `rim` and `caliper`.
 
 Upgrade parts (wave 4, see docs/BUSINESS.md) are built into every model and
 hidden until a car has them: `splitter_up`, `wing_rear_up2`, `wing_rear_up3`
